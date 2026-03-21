@@ -1,0 +1,61 @@
+const service = require("../services/executionResult.service");
+
+module.exports = async function (fastify) {
+
+  // CREATE RESULT
+  fastify.post("/execution-results", async (req) => {
+
+    fastify.validate({
+      execution_id: { required: true, type: "string" },
+      test_case_id: { required: true, type: "string" },
+      app_type_id: { required: true, type: "string" },
+      status: { required: true, enum: ["passed", "failed", "blocked"] },
+      duration_ms: { required: false, type: "number" },
+      error: { required: false, type: "string" },
+      logs: { required: false, type: "string" },
+      executed_by: { required: false, type: "string" }
+    }, req.body);
+
+    return service.createExecutionResult(req.body);
+  });
+
+
+  // GET RESULTS (FILTERABLE)
+  fastify.get("/execution-results", async (req) => {
+
+    const { execution_id, test_case_id, app_type_id } = req.query;
+
+    return service.getExecutionResults({
+      execution_id,
+      test_case_id,
+      app_type_id
+    });
+  });
+
+
+  // GET SINGLE RESULT
+  fastify.get("/execution-results/:id", async (req) => {
+    return service.getExecutionResult(req.params.id);
+  });
+
+
+  // UPDATE RESULT
+  fastify.put("/execution-results/:id", async (req) => {
+
+    fastify.validate({
+      status: { required: false, enum: ["passed", "failed", "blocked"] },
+      duration_ms: { required: false, type: "number" },
+      error: { required: false, type: "string" },
+      logs: { required: false, type: "string" }
+    }, req.body);
+
+    return service.updateExecutionResult(req.params.id, req.body);
+  });
+
+
+  // DELETE RESULT
+  fastify.delete("/execution-results/:id", async (req) => {
+    return service.deleteExecutionResult(req.params.id);
+  });
+
+};

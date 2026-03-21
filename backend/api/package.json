@@ -1,0 +1,12 @@
+{
+  "name": "testiny-api",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "fastify": "^4.25.0",
+    "better-sqlite3": "^9.4.0",
+    "uuid": "^9.0.1"
+  }
+}

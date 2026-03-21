@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  db:
+    build: ./db
+    container_name: testiny-db
+    volumes:
+      - ./data:/data
+      - ./db:/app/db
+    environment:
+      - DB_PATH=/data/testiny.db
+
+  api:
+    build: ./api
+    container_name: testiny-api
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/data
+    environment:
+      - DB_PATH=/data/testiny.db
+    depends_on:
+      - db
