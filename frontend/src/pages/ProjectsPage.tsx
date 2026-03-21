@@ -4,19 +4,26 @@ import { api } from "../lib/api";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
-import { DataTable } from "../components/DataTable";
+import { SubnavTabs } from "../components/SubnavTabs";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 import { useAuth } from "../auth/AuthContext";
-import type { AppType, Project, ProjectMember, Requirement } from "../types";
+import type { AppType, Requirement } from "../types";
+
+type ProjectSection = "members" | "appTypes" | "requirements";
 
 export function ProjectsPage() {
   const queryClient = useQueryClient();
   const { session } = useAuth();
   const { projects, users, roles, projectMembers, appTypes, requirements } = useWorkspaceData();
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [section, setSection] = useState<ProjectSection>("members");
   const [message, setMessage] = useState("");
 
-  const selectedProject = projects.data?.find((project) => project.id === selectedProjectId) || projects.data?.[0];
+  const projectItems = projects.data || [];
+  const selectedProject = useMemo(
+    () => projectItems.find((project) => project.id === selectedProjectId) || projectItems[0],
+    [projectItems, selectedProjectId]
+  );
   const projectId = selectedProject?.id;
 
   const scopedMembers = useMemo(
@@ -80,13 +87,11 @@ export function ProjectsPage() {
   const handleProjectCreate = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
-
     createProject.mutate({
       name: String(formData.get("name") || ""),
       description: String(formData.get("description") || ""),
       created_by: session!.user.id
     });
-
     event.currentTarget.reset();
   };
 
@@ -94,14 +99,14 @@ export function ProjectsPage() {
     <div className="page-content">
       <PageHeader
         eyebrow="Projects & Scope"
-        title="Connect ownership, platforms, and requirement intent"
-        description="Projects anchor the rest of the workspace. Once selected, bind team access, app-type boundaries, and scoped requirements in one view."
+        title="Browse one project at a time without losing context"
+        description="Turn the project area into a scoped workspace: pick a project, review its summary, then move through memberships, app boundaries, and requirements in smaller views."
       />
 
       {message ? <p className="inline-message">{message}</p> : null}
 
       <div className="workspace-grid">
-        <Panel title="Projects" subtitle="Select a project to reveal scoped relationships">
+        <Panel title="Projects" subtitle="Treat this as the project rail for the rest of the page.">
           <form className="form-grid" onSubmit={handleProjectCreate}>
             <FormField label="Project name">
               <input name="name" required placeholder="Checkout modernization" />
@@ -112,152 +117,217 @@ export function ProjectsPage() {
             <button className="primary-button" type="submit">Create project</button>
           </form>
 
-          <div className="segmented-list">
-            {(projects.data || []).map((project) => (
+          <div className="record-list">
+            {projectItems.map((project) => (
               <button
                 key={project.id}
-                className={projectId === project.id ? "segment is-active" : "segment"}
+                className={selectedProject?.id === project.id ? "record-card is-active" : "record-card"}
                 onClick={() => setSelectedProjectId(project.id)}
                 type="button"
               >
-                <strong>{project.name}</strong>
-                <span>{project.description || "No description yet"}</span>
+                <div>
+                  <strong>{project.name}</strong>
+                  <span>{project.description || "No description yet"}</span>
+                </div>
               </button>
             ))}
           </div>
+          {!projectItems.length ? <div className="empty-state compact">No projects created yet.</div> : null}
         </Panel>
 
         <div className="stack-grid">
-          <Panel title="Project members" subtitle={projectId ? `Assignments for ${selectedProject?.name}` : "Select a project first"}>
-            <form className="inline-form" onSubmit={(event) => {
-              event.preventDefault();
-              if (!projectId) {
-                return;
-              }
-              const formData = new FormData(event.currentTarget);
-              createMember.mutate({
-                project_id: projectId,
-                user_id: String(formData.get("user_id") || ""),
-                role_id: String(formData.get("role_id") || "")
-              });
-              event.currentTarget.reset();
-            }}>
-              <select name="user_id" required defaultValue="">
-                <option value="" disabled>Select user</option>
-                {(users.data || []).map((user) => <option key={user.id} value={user.id}>{user.name || user.email}</option>)}
-              </select>
-              <select name="role_id" required defaultValue="">
-                <option value="" disabled>Select role</option>
-                {(roles.data || []).map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
-              </select>
-              <button className="primary-button" disabled={!projectId} type="submit">Add member</button>
-            </form>
-
-            <DataTable<ProjectMember>
-              emptyMessage="No project members yet."
-              rows={scopedMembers}
-              columns={[
-                { key: "user", label: "User", render: (row) => users.data?.find((user) => user.id === row.user_id)?.email || row.user_id },
-                { key: "role", label: "Role", render: (row) => roles.data?.find((role) => role.id === row.role_id)?.name || row.role_id },
-                {
-                  key: "actions",
-                  label: "Actions",
-                  render: (row) => <button className="ghost-button danger" onClick={() => void api.projectMembers.delete(row.id).then(invalidate).catch((error: Error) => setMessage(error.message))}>Remove</button>
-                }
-              ]}
-            />
+          <Panel title={selectedProject ? selectedProject.name : "Project summary"} subtitle={selectedProject ? "Quick orientation before you dive into related records." : "Select a project to reveal its scoped data."}>
+            {selectedProject ? (
+              <div className="detail-stack">
+                <div className="detail-summary">
+                  <strong>{selectedProject.name}</strong>
+                  <span>{selectedProject.description || "No description provided yet."}</span>
+                </div>
+                <div className="metric-strip">
+                  <div className="mini-card">
+                    <strong>{scopedMembers.length}</strong>
+                    <span>Members</span>
+                  </div>
+                  <div className="mini-card">
+                    <strong>{scopedAppTypes.length}</strong>
+                    <span>App types</span>
+                  </div>
+                  <div className="mini-card">
+                    <strong>{scopedRequirements.length}</strong>
+                    <span>Requirements</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="empty-state compact">Choose a project to continue.</div>
+            )}
           </Panel>
 
-          <Panel title="App types" subtitle="Platform or boundary definitions for the selected project">
-            <form className="inline-form" onSubmit={(event) => {
-              event.preventDefault();
-              if (!projectId) {
-                return;
-              }
-              const formData = new FormData(event.currentTarget);
-              createAppType.mutate({
-                project_id: projectId,
-                name: String(formData.get("name") || ""),
-                type: String(formData.get("type") || "web") as AppType["type"],
-                is_unified: String(formData.get("is_unified") || "") === "on"
-              });
-              event.currentTarget.reset();
-            }}>
-              <input name="name" required placeholder="Web app" />
-              <select name="type" defaultValue="web">
-                <option value="web">web</option>
-                <option value="api">api</option>
-                <option value="android">android</option>
-                <option value="ios">ios</option>
-                <option value="unified">unified</option>
-              </select>
-              <label className="checkbox-field">
-                <input name="is_unified" type="checkbox" />
-                Unified
-              </label>
-              <button className="primary-button" disabled={!projectId} type="submit">Add app type</button>
-            </form>
+          <SubnavTabs
+            value={section}
+            onChange={setSection}
+            items={[
+              { value: "members", label: "Members", meta: `${scopedMembers.length}` },
+              { value: "appTypes", label: "App Types", meta: `${scopedAppTypes.length}` },
+              { value: "requirements", label: "Requirements", meta: `${scopedRequirements.length}` }
+            ]}
+          />
 
-            <DataTable<AppType>
-              emptyMessage="No app types defined."
-              rows={scopedAppTypes}
-              columns={[
-                { key: "name", label: "Name", render: (row) => row.name },
-                { key: "type", label: "Type", render: (row) => row.type },
-                {
-                  key: "actions",
-                  label: "Actions",
-                  render: (row) => <button className="ghost-button danger" onClick={() => void api.appTypes.delete(row.id).then(invalidate).catch((error: Error) => setMessage(error.message))}>Delete</button>
-                }
-              ]}
-            />
-          </Panel>
+          {section === "members" ? (
+            <Panel title="Project members" subtitle={projectId ? `Assignments for ${selectedProject?.name}` : "Select a project first"}>
+              <form
+                className="elevated-toolbar"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (!projectId) return;
+                  const formData = new FormData(event.currentTarget);
+                  createMember.mutate({
+                    project_id: projectId,
+                    user_id: String(formData.get("user_id") || ""),
+                    role_id: String(formData.get("role_id") || "")
+                  });
+                  event.currentTarget.reset();
+                }}
+              >
+                <select name="user_id" required defaultValue="">
+                  <option value="" disabled>Select user</option>
+                  {(users.data || []).map((user) => <option key={user.id} value={user.id}>{user.name || user.email}</option>)}
+                </select>
+                <select name="role_id" required defaultValue="">
+                  <option value="" disabled>Select role</option>
+                  {(roles.data || []).map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+                </select>
+                <button className="primary-button" disabled={!projectId} type="submit">Add member</button>
+              </form>
 
-          <Panel title="Requirements" subtitle="Scope statements tied directly to project planning">
-            <form className="form-grid" onSubmit={(event) => {
-              event.preventDefault();
-              if (!projectId) {
-                return;
-              }
-              const formData = new FormData(event.currentTarget);
-              createRequirement.mutate({
-                project_id: projectId,
-                title: String(formData.get("title") || ""),
-                description: String(formData.get("description") || ""),
-                priority: Number(formData.get("priority") || 3),
-                status: String(formData.get("status") || "")
-              });
-              event.currentTarget.reset();
-            }}>
-              <FormField label="Title">
-                <input name="title" required placeholder="User can complete checkout" />
-              </FormField>
-              <FormField label="Description">
-                <textarea name="description" rows={2} />
-              </FormField>
-              <FormField label="Priority">
-                <input name="priority" defaultValue="3" min="1" max="5" type="number" />
-              </FormField>
-              <FormField label="Status">
-                <input name="status" placeholder="open" />
-              </FormField>
-              <button className="primary-button" disabled={!projectId} type="submit">Add requirement</button>
-            </form>
+              <div className="record-grid">
+                {scopedMembers.map((member) => {
+                  const user = users.data?.find((item) => item.id === member.user_id);
+                  const role = roles.data?.find((item) => item.id === member.role_id);
+                  return (
+                    <article className="mini-card" key={member.id}>
+                      <strong>{user?.name || user?.email || member.user_id}</strong>
+                      <span>{role?.name || member.role_id}</span>
+                      <button
+                        className="ghost-button danger"
+                        onClick={() => void api.projectMembers.delete(member.id).then(invalidate).catch((error: Error) => setMessage(error.message))}
+                        type="button"
+                      >
+                        Remove
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+              {!scopedMembers.length ? <div className="empty-state compact">No members assigned yet.</div> : null}
+            </Panel>
+          ) : null}
 
-            <DataTable<Requirement>
-              emptyMessage="No requirements mapped."
-              rows={scopedRequirements}
-              columns={[
-                { key: "title", label: "Requirement", render: (row) => <div><strong>{row.title}</strong><span>{row.description || "No description"}</span></div> },
-                { key: "priority", label: "Priority", render: (row) => row.priority ?? "n/a" },
-                {
-                  key: "actions",
-                  label: "Actions",
-                  render: (row) => <button className="ghost-button danger" onClick={() => void api.requirements.delete(row.id).then(invalidate).catch((error: Error) => setMessage(error.message))}>Delete</button>
-                }
-              ]}
-            />
-          </Panel>
+          {section === "appTypes" ? (
+            <Panel title="App types" subtitle="Keep platform boundaries readable and lightweight.">
+              <form
+                className="elevated-toolbar"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (!projectId) return;
+                  const formData = new FormData(event.currentTarget);
+                  createAppType.mutate({
+                    project_id: projectId,
+                    name: String(formData.get("name") || ""),
+                    type: String(formData.get("type") || "web") as AppType["type"],
+                    is_unified: String(formData.get("is_unified") || "") === "on"
+                  });
+                  event.currentTarget.reset();
+                }}
+              >
+                <input name="name" required placeholder="Web app" />
+                <select name="type" defaultValue="web">
+                  <option value="web">web</option>
+                  <option value="api">api</option>
+                  <option value="android">android</option>
+                  <option value="ios">ios</option>
+                  <option value="unified">unified</option>
+                </select>
+                <label className="checkbox-field">
+                  <input name="is_unified" type="checkbox" />
+                  Unified
+                </label>
+                <button className="primary-button" disabled={!projectId} type="submit">Add app type</button>
+              </form>
+
+              <div className="record-grid">
+                {scopedAppTypes.map((item) => (
+                  <article className="mini-card" key={item.id}>
+                    <strong>{item.name}</strong>
+                    <span>{item.type}{item.is_unified ? " · unified" : ""}</span>
+                    <button
+                      className="ghost-button danger"
+                      onClick={() => void api.appTypes.delete(item.id).then(invalidate).catch((error: Error) => setMessage(error.message))}
+                      type="button"
+                    >
+                      Delete
+                    </button>
+                  </article>
+                ))}
+              </div>
+              {!scopedAppTypes.length ? <div className="empty-state compact">No app types defined yet.</div> : null}
+            </Panel>
+          ) : null}
+
+          {section === "requirements" ? (
+            <Panel title="Requirements" subtitle="Show scope records as readable cards instead of another dense table.">
+              <form
+                className="form-grid"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (!projectId) return;
+                  const formData = new FormData(event.currentTarget);
+                  createRequirement.mutate({
+                    project_id: projectId,
+                    title: String(formData.get("title") || ""),
+                    description: String(formData.get("description") || ""),
+                    priority: Number(formData.get("priority") || 3),
+                    status: String(formData.get("status") || "")
+                  });
+                  event.currentTarget.reset();
+                }}
+              >
+                <div className="record-grid">
+                  <FormField label="Title">
+                    <input name="title" required placeholder="User can complete checkout" />
+                  </FormField>
+                  <FormField label="Description">
+                    <textarea name="description" rows={3} />
+                  </FormField>
+                  <FormField label="Priority">
+                    <input name="priority" defaultValue="3" min="1" max="5" type="number" />
+                  </FormField>
+                  <FormField label="Status">
+                    <input name="status" placeholder="open" />
+                  </FormField>
+                </div>
+                <button className="primary-button" disabled={!projectId} type="submit">Add requirement</button>
+              </form>
+
+              <div className="record-grid">
+                {scopedRequirements.map((item: Requirement) => (
+                  <article className="mini-card" key={item.id}>
+                    <strong>{item.title}</strong>
+                    <span>{item.description || "No description"}</span>
+                    <span>Priority {item.priority ?? "n/a"} · {item.status || "unset"}</span>
+                    <button
+                      className="ghost-button danger"
+                      onClick={() => void api.requirements.delete(item.id).then(invalidate).catch((error: Error) => setMessage(error.message))}
+                      type="button"
+                    >
+                      Delete
+                    </button>
+                  </article>
+                ))}
+              </div>
+              {!scopedRequirements.length ? <div className="empty-state compact">No requirements mapped yet.</div> : null}
+            </Panel>
+          ) : null}
         </div>
       </div>
     </div>

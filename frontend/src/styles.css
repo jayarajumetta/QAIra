@@ -281,6 +281,38 @@ textarea {
   gap: 1.25rem;
 }
 
+.subnav-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.subnav-tab {
+  border: 1px solid rgba(85, 63, 32, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--muted);
+  padding: 0.9rem 1rem;
+  min-width: 150px;
+  text-align: left;
+  display: grid;
+  gap: 0.2rem;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.subnav-tab strong {
+  color: var(--text);
+}
+
+.subnav-tab span {
+  font-size: 0.82rem;
+}
+
+.subnav-tab.is-active {
+  background: linear-gradient(180deg, rgba(255, 251, 245, 0.96), rgba(246, 232, 212, 0.96));
+  border-color: rgba(181, 82, 51, 0.24);
+}
+
 .page-header {
   background: rgba(255, 252, 246, 0.72);
   border: 1px solid var(--line);
@@ -328,6 +360,13 @@ textarea {
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
 }
 
+.design-layout {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(240px, 280px) minmax(280px, 360px) minmax(0, 1fr);
+  align-items: start;
+}
+
 .stack-grid {
   grid-template-columns: 1fr;
 }
@@ -351,6 +390,207 @@ textarea {
 
 .panel-head h3 {
   margin: 0;
+}
+
+.record-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.record-card {
+  border: 1px solid rgba(85, 63, 32, 0.08);
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 20px;
+  padding: 1rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.record-card strong,
+.mini-card strong,
+.detail-summary strong {
+  display: block;
+}
+
+.record-card span,
+.record-card small,
+.mini-card span,
+.detail-summary span {
+  color: var(--muted);
+}
+
+.record-card.is-active {
+  background: linear-gradient(180deg, rgba(255, 250, 243, 0.98), rgba(243, 229, 206, 0.98));
+  border-color: rgba(181, 82, 51, 0.24);
+}
+
+.record-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.mini-card {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(85, 63, 32, 0.08);
+  border-radius: 20px;
+  padding: 1rem;
+  display: grid;
+  gap: 0.55rem;
+  align-content: start;
+}
+
+.detail-stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.detail-summary {
+  display: grid;
+  gap: 0.25rem;
+  padding: 1rem;
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 251, 245, 0.96), rgba(242, 233, 220, 0.96));
+  border: 1px solid rgba(85, 63, 32, 0.08);
+}
+
+.metric-strip {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.metric-strip .mini-card {
+  min-height: 100%;
+}
+
+.metric-strip .mini-card strong {
+  font-size: 1.25rem;
+}
+
+.design-context-bar {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.context-field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.context-field span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.design-sidebar-actions,
+.design-list-toolbar {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.design-list-toolbar.secondary {
+  margin-top: -0.25rem;
+}
+
+.design-filter-chip.is-active {
+  outline: 1px solid rgba(181, 82, 51, 0.24);
+}
+
+.suite-sidebar-list,
+.test-case-list,
+.step-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.record-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.selection-checkbox {
+  display: inline-flex;
+  align-items: flex-start;
+  padding-top: 0.2rem;
+}
+
+.selection-checkbox input {
+  width: auto;
+}
+
+.step-editor {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.step-card,
+.step-create {
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(85, 63, 32, 0.08);
+  border-radius: 20px;
+  padding: 1rem;
+}
+
+.step-card {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.step-card-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(33, 21, 6, 0.36);
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  z-index: 40;
+}
+
+.modal-card {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 2.5rem);
+  overflow: auto;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  border-radius: 28px;
+  padding: 1.4rem;
+}
+
+.modal-case-picker {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(85, 63, 32, 0.08);
+}
+
+.modal-case-option {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.modal-case-option input {
+  width: auto;
 }
 
 .table-wrap {
@@ -416,11 +656,27 @@ textarea {
 }
 
 .inline-form,
-.toolbar-row {
+.toolbar-row,
+.elevated-toolbar {
   display: flex;
   gap: 0.75rem;
   flex-wrap: wrap;
   margin-bottom: 1rem;
+}
+
+.elevated-toolbar {
+  padding: 0.9rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(85, 63, 32, 0.08);
+}
+
+.empty-state.compact {
+  min-height: auto;
+  padding: 1rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.45);
+  border: 1px dashed rgba(85, 63, 32, 0.14);
 }
 
 .checkbox-field {
@@ -464,7 +720,9 @@ textarea {
 
   .three-column-grid,
   .two-column-grid,
-  .workspace-grid {
+  .workspace-grid,
+  .design-layout,
+  .design-context-bar {
     grid-template-columns: 1fr;
   }
 }
@@ -500,5 +758,10 @@ textarea {
 
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+
+  .record-card,
+  .subnav-tab {
+    min-width: 0;
   }
 }
