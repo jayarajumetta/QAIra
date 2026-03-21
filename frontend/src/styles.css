@@ -495,6 +495,10 @@ textarea {
   margin-bottom: 1rem;
 }
 
+.design-sidebar-actions.compact {
+  margin-top: -0.35rem;
+}
+
 .design-list-toolbar.secondary {
   margin-top: -0.25rem;
 }
@@ -513,6 +517,19 @@ textarea {
 .record-card-body {
   flex: 1;
   min-width: 0;
+}
+
+.count-pill {
+  display: inline-flex;
+  min-width: 2rem;
+  justify-content: center;
+  align-items: center;
+  padding: 0.35rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(181, 82, 51, 0.12);
+  color: var(--primary-strong);
+  font-size: 0.82rem;
+  font-weight: 600;
 }
 
 .selection-checkbox {
@@ -551,6 +568,31 @@ textarea {
   justify-content: space-between;
   gap: 0.75rem;
   align-items: center;
+}
+
+.step-card.is-expanded {
+  background: linear-gradient(180deg, rgba(255, 251, 245, 0.96), rgba(243, 231, 214, 0.96));
+}
+
+.step-card-toggle {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  text-align: left;
+  color: inherit;
+}
+
+.step-card-toggle span {
+  color: var(--muted);
+}
+
+.step-card-body {
+  display: grid;
+  gap: 0.8rem;
 }
 
 .modal-backdrop {

@@ -72,6 +72,51 @@ exports.updateTestStep = (id, data) => {
   return { updated: true };
 };
 
+exports.reorderTestSteps = (testCaseId, stepIds = []) => {
+  const testCase = db.prepare(`
+    SELECT id FROM test_cases WHERE id = ?
+  `).get(testCaseId);
+
+  if (!testCase) throw new Error("Test case not found");
+  if (!Array.isArray(stepIds) || !stepIds.length) {
+    throw new Error("step_ids must be a non-empty array");
+  }
+
+  const existingSteps = db.prepare(`
+    SELECT id
+    FROM test_steps
+    WHERE test_case_id = ?
+    ORDER BY step_order ASC
+  `).all(testCaseId);
+
+  if (existingSteps.length !== stepIds.length) {
+    throw new Error("step_ids must include every step in the test case");
+  }
+
+  const existingIds = existingSteps.map((step) => step.id).sort();
+  const proposedIds = [...new Set(stepIds)].sort();
+
+  if (existingIds.length !== proposedIds.length || existingIds.some((id, index) => id !== proposedIds[index])) {
+    throw new Error("step_ids must match the steps belonging to the test case");
+  }
+
+  const updateStatement = db.prepare(`
+    UPDATE test_steps
+    SET step_order = ?
+    WHERE id = ?
+  `);
+
+  const transaction = db.transaction((ids) => {
+    ids.forEach((stepId, index) => {
+      updateStatement.run(index + 1, stepId);
+    });
+  });
+
+  transaction(stepIds);
+
+  return { reordered: true };
+};
+
 exports.deleteTestStep = (id) => {
   exports.getTestStep(id);
 

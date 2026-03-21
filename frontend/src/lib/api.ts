@@ -172,6 +172,11 @@ export const api = {
       request<{ id: string }>("/test-suites", { method: "POST", body: JSON.stringify(input) }),
     update: (id: string, input: Partial<{ name: string; parent_id: string }>) =>
       request<{ updated: boolean }>(`/test-suites/${id}`, { method: "PUT", body: JSON.stringify(input) }),
+    assignTestCases: (id: string, test_case_ids: string[]) =>
+      request<{ updated: boolean; assigned: number }>(`/test-suites/${id}/assign-test-cases`, {
+        method: "POST",
+        body: JSON.stringify({ test_case_ids })
+      }),
     delete: (id: string) => request<{ deleted: boolean }>(`/test-suites/${id}`, { method: "DELETE" })
   },
   testCases: {
@@ -190,6 +195,11 @@ export const api = {
       request<{ id: string }>("/test-steps", { method: "POST", body: JSON.stringify(input) }),
     update: (id: string, input: Partial<{ test_case_id: string; step_order: number; action: string; expected_result: string }>) =>
       request<{ updated: boolean }>(`/test-steps/${id}`, { method: "PUT", body: JSON.stringify(input) }),
+    reorder: (test_case_id: string, step_ids: string[]) =>
+      request<{ reordered: boolean }>(`/test-cases/${test_case_id}/test-steps/reorder`, {
+        method: "POST",
+        body: JSON.stringify({ step_ids })
+      }),
     delete: (id: string) => request<{ deleted: boolean }>(`/test-steps/${id}`, { method: "DELETE" })
   },
   executions: {

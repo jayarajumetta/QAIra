@@ -26,6 +26,14 @@ fastify.decorate("validate", (schema, data = {}) => {
       throw new Error(`Field '${field}' must be a boolean`);
     }
 
+    if (rules.type === "array" && !Array.isArray(value)) {
+      throw new Error(`Field '${field}' must be an array`);
+    }
+
+    if (rules.type === "array" && rules.items === "string" && !value.every((item) => typeof item === "string")) {
+      throw new Error(`Field '${field}' must contain only strings`);
+    }
+
     if (rules.minLength && typeof value === "string" && value.length < rules.minLength) {
       throw new Error(`Field '${field}' must be at least ${rules.minLength} characters`);
     }

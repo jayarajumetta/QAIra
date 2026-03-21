@@ -29,6 +29,14 @@ module.exports = async function (fastify) {
     return service.updateTestSuite(req.params.id, req.body);
   });
 
+  fastify.post("/test-suites/:id/assign-test-cases", async (req) => {
+    fastify.validate({
+      test_case_ids: { required: true, type: "array", items: "string" }
+    }, req.body);
+
+    return service.assignTestCases(req.params.id, req.body.test_case_ids);
+  });
+
   fastify.delete("/test-suites/:id", async (req) => {
     return service.deleteTestSuite(req.params.id);
   });
