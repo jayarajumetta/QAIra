@@ -5,6 +5,7 @@ QAIra is a Fastify + SQLite backend for QA project management. The API follows a
 - route modules define HTTP endpoints and input validation
 - service modules contain CRUD logic and relational checks
 - SQLite is the source of truth for the domain model
+- `frontend/` provides a React + TypeScript workspace UI bound to the API
 
 ## Repository Layout
 
@@ -12,6 +13,7 @@ QAIra is a Fastify + SQLite backend for QA project management. The API follows a
 - `backend/db`: SQLite schema and seed SQL
 - `backend/data`: SQLite database file
 - `backend/docker-compose.yml`: local container orchestration for DB init + API
+- `frontend`: Vite + React application for signup, login, session restoration, and resource management
 
 ## Database Model
 
@@ -37,6 +39,7 @@ Seed data source: [backend/db/seed.sql](/Users/jayarajumetta/MJ/qaira/backend/db
 
 Implemented CRUD resources:
 
+- `auth`
 - `users`
 - `roles`
 - `projects`
@@ -53,7 +56,22 @@ Main route registration lives in [backend/api/src/routes/index.js](/Users/jayara
 
 Machine-readable API spec: [openapi.yaml](/Users/jayarajumetta/MJ/qaira/openapi.yaml)
 
+Frontend entrypoint: [frontend/src/App.tsx](/Users/jayarajumetta/MJ/qaira/frontend/src/App.tsx)
+Frontend container build: [frontend/Dockerfile](/Users/jayarajumetta/MJ/qaira/frontend/Dockerfile)
+
 ## API Endpoints
+
+### Auth
+
+- `POST /auth/signup`
+- `POST /auth/login`
+- `GET /auth/session`
+
+Body fields:
+
+- `email` required for signup and login
+- `password` required for signup and login
+- `name` optional for signup
 
 ### Users
 
@@ -265,15 +283,16 @@ Body fields:
 
 ## Run The Database
 
-### Quick Start From Repo Root
+### Quick Start From Backend Folder
 
-Use the root entrypoint script to start both the SQLite DB initializer and the API without going into the `backend` folder:
+Use the backend-local entrypoint script:
 
 ```bash
+cd backend
 ./start.sh
 ```
 
-This wraps the existing Compose setup in `backend/docker-compose.yml`.
+This wraps the existing Compose setup in [backend/docker-compose.yml](/Users/jayarajumetta/MJ/qaira/backend/docker-compose.yml).
 
 To exercise the API end-to-end with sample data and example CRUD calls:
 
@@ -344,6 +363,91 @@ API entrypoints:
 
 - [backend/api/src/server.js](/Users/jayarajumetta/MJ/qaira/backend/api/src/server.js)
 - [backend/api/src/app.js](/Users/jayarajumetta/MJ/qaira/backend/api/src/app.js)
+
+Session notes:
+
+- auth endpoints now issue a signed bearer token
+- `GET /auth/session` expects `Authorization: Bearer <token>`
+- set `SESSION_SECRET` in the API environment for anything beyond local development
+
+## Run The Frontend
+
+Install dependencies and start the web app:
+
+```bash
+cd frontend
+npm install
+cp .env.example .env
+npm run dev
+```
+
+Frontend defaults:
+
+- app URL: `http://localhost:5173`
+- API base URL: `http://localhost:3000`
+- override the API target with `VITE_API_BASE_URL`
+
+What the frontend includes:
+
+- signup, login, logout, and session restoration
+- overview dashboard
+- people and roles management
+- project, membership, app-type, and requirement management
+- test suite, case, and step management
+- execution and execution-result management
+
+## Run The Frontend In Docker
+
+Frontend-only container:
+
+```bash
+cd frontend
+./start.sh
+```
+
+Frontend default URL:
+
+- `http://localhost:8080`
+
+Override the backend target at runtime:
+
+```bash
+cd frontend
+QAIRA_API_BASE_URL=http://192.168.1.25:3000 ./start.sh
+```
+
+This runtime variable is injected when the container starts, so the same frontend image can point to different backend machines.
+
+## Run Full Stack With One Compose File
+
+From the repo root:
+
+```bash
+docker compose -f docker-compose.full.yml up --build
+```
+
+This starts:
+
+- SQLite DB initializer
+- Fastify API on `http://localhost:3000`
+- Frontend on `http://localhost:8080`
+
+If frontend and backend run on different machines:
+
+1. Start backend on the API host and ensure port `3000` is reachable.
+2. Start frontend on the UI host with `QAIRA_API_BASE_URL` set to the backend machine URL.
+
+Example:
+
+```bash
+cd frontend
+QAIRA_API_BASE_URL=http://10.0.0.15:3000 docker compose up --build
+```
+
+Note:
+
+- if the backend is remote, ensure port `3000` is reachable and set `CORS_ORIGIN` on the API if you want to restrict which frontend origins may call it
+- set `SESSION_SECRET` for the API in non-local environments
 
 ## Notes On Behavior
 

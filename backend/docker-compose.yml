@@ -21,5 +21,7 @@ services:
       - ./data:/data
     environment:
       - DB_PATH=/data/testiny.db
+      - SESSION_SECRET=${SESSION_SECRET:-qaira-dev-secret}
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
     depends_on:
       - db

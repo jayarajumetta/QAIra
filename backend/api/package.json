@@ -5,6 +5,7 @@
     "start": "node src/server.js"
   },
   "dependencies": {
+    "@fastify/cors": "^8.5.0",
     "fastify": "^4.25.0",
     "better-sqlite3": "^9.4.0",
     "uuid": "^9.0.1"

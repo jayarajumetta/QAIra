@@ -1,4 +1,5 @@
 const fastify = require("fastify")({ logger: true });
+const cors = require("@fastify/cors");
 
 fastify.decorate("validate", (schema, data = {}) => {
   for (const [field, rules] of Object.entries(schema)) {
@@ -35,6 +36,11 @@ fastify.decorate("validate", (schema, data = {}) => {
   }
 });
 
+fastify.register(cors, {
+  origin: process.env.CORS_ORIGIN || true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+});
 fastify.register(require("./plugins/errorHandler"));
 fastify.register(require("./routes"));
 

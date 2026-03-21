@@ -1,0 +1,39 @@
+services:
+  db:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: testiny-db
+    volumes:
+      - ./backend/data:/data
+      - ./backend/db:/app/db
+    environment:
+      DB_PATH: /data/testiny.db
+
+  api:
+    build:
+      context: ./backend/api
+      dockerfile: Dockerfile
+    container_name: testiny-api
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend/data:/data
+    environment:
+      DB_PATH: /data/testiny.db
+      SESSION_SECRET: ${SESSION_SECRET:-qaira-dev-secret}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+    depends_on:
+      - db
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: qaira-frontend
+    ports:
+      - "8080:80"
+    environment:
+      QAIRA_API_BASE_URL: ${QAIRA_API_BASE_URL:-http://localhost:3000}
+    depends_on:
+      - api

@@ -1,4 +1,5 @@
 module.exports = async function (fastify) {
+    fastify.register(require("./auth.routes"));
     fastify.register(require("./users"));
     fastify.register(require("./roles.routes"));
     fastify.register(require("./projects.routes"));

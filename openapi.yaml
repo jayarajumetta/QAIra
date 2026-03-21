@@ -10,6 +10,7 @@ servers:
   - url: http://localhost:3000
     description: Local development server
 tags:
+  - name: Auth
   - name: Users
   - name: Roles
   - name: Projects
@@ -22,6 +23,65 @@ tags:
   - name: Executions
   - name: Execution Results
 paths:
+  /auth/signup:
+    post:
+      tags: [Auth]
+      summary: Create account and start a session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignupRequest"
+      responses:
+        "200":
+          description: Session payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login and return a signed session token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Session payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+  /auth/session:
+    get:
+      tags: [Auth]
+      summary: Resolve the current session from a Bearer token
+      parameters:
+        - name: Authorization
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Bearer token returned by the auth endpoints.
+      responses:
+        "200":
+          description: Session payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+
   /users:
     get:
       tags: [Users]
@@ -955,6 +1015,26 @@ components:
         email: { type: string, format: email }
         name: { type: string, nullable: true }
         created_at: { type: string }
+    SessionResponse:
+      type: object
+      properties:
+        token: { type: string }
+        user:
+          $ref: "#/components/schemas/User"
+      required: [token, user]
+    SignupRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 6 }
+        name: { type: string }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 6 }
     CreateUserRequest:
       type: object
       required: [email, password_hash]
