@@ -7,6 +7,7 @@ const navItems = [
   { to: "/people", label: "People & Access" },
   { to: "/projects", label: "Projects & Scope" },
   { to: "/design", label: "Test Design" },
+  { to: "/requirements", label: "Requirements" },
   { to: "/test-cases", label: "Test Cases" },
   { to: "/executions", label: "Executions" }
 ];
@@ -28,8 +29,8 @@ export function AppShell() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div>
-          <div className="brand-mark">QA</div>
+        <div className="sidebar-top">
+          <div className="brand-mark">QAIra</div>
           <h1>QAIra Workspace</h1>
           <p className="sidebar-copy">
             Orchestrate projects, coverage design, execution runs, and results from one place.

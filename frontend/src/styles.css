@@ -42,6 +42,41 @@
     linear-gradient(180deg, #18120d 0%, #0f0c09 100%);
 }
 
+:root[data-theme="dark"] .sidebar {
+  background:
+    linear-gradient(180deg, rgba(32, 25, 19, 0.94), rgba(24, 18, 13, 0.96)),
+    radial-gradient(circle at top, rgba(220, 130, 95, 0.16), transparent 40%);
+}
+
+:root[data-theme="dark"] .nav-link {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="dark"] .nav-link.is-active {
+  background: linear-gradient(180deg, rgba(61, 46, 33, 0.98), rgba(44, 33, 24, 0.96));
+}
+
+:root[data-theme="dark"] .user-chip,
+:root[data-theme="dark"] .record-card,
+:root[data-theme="dark"] .mini-card,
+:root[data-theme="dark"] .step-card,
+:root[data-theme="dark"] .step-create,
+:root[data-theme="dark"] .modal-case-picker,
+:root[data-theme="dark"] .stack-item,
+:root[data-theme="dark"] .segment,
+:root[data-theme="dark"] .elevated-toolbar {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="dark"] .page-header,
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .stat-card,
+:root[data-theme="dark"] .design-context-bar.is-sticky {
+  background:
+    linear-gradient(180deg, rgba(34, 28, 22, 0.92), rgba(28, 23, 18, 0.9)),
+    radial-gradient(circle at top right, rgba(220, 130, 95, 0.12), transparent 32%);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -49,6 +84,10 @@
 html, body, #root {
   min-height: 100%;
   margin: 0;
+}
+
+html {
+  scrollbar-gutter: stable;
 }
 
 body {
@@ -241,21 +280,35 @@ textarea {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 290px minmax(0, 1fr);
+  grid-template-columns: 310px minmax(0, 1fr);
+  gap: 1rem;
   min-height: 100vh;
+  padding: 1rem;
+  align-items: start;
 }
 
 .sidebar {
-  margin: 1rem;
-  border-radius: 30px;
+  position: sticky;
+  top: 1rem;
+  height: calc(100vh - 2rem);
+  border-radius: 34px;
   padding: 1.4rem;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  gap: 1rem;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(255, 250, 244, 0.96), rgba(245, 233, 216, 0.92)),
+    radial-gradient(circle at top, rgba(212, 104, 64, 0.12), transparent 40%);
 }
 
 .sidebar h1 {
   margin: 0;
+}
+
+.sidebar-top {
+  display: grid;
+  gap: 0.75rem;
 }
 
 .sidebar-copy {
@@ -265,20 +318,29 @@ textarea {
 .nav-list {
   display: grid;
   gap: 0.5rem;
-  margin: 2rem 0;
+  margin: 0;
+  flex: 1;
+  align-content: start;
+  overflow: auto;
+  padding-right: 0.2rem;
 }
 
 .nav-link {
   color: var(--muted);
   text-decoration: none;
-  padding: 0.95rem 1rem;
-  border-radius: 18px;
+  padding: 1rem 1.05rem;
+  border-radius: 20px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.48);
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
 }
 
 .nav-link.is-active {
-  background: rgba(181, 82, 51, 0.12);
+  background: linear-gradient(180deg, rgba(255, 251, 246, 0.98), rgba(245, 231, 210, 0.96));
   color: var(--primary-strong);
+  border-color: rgba(181, 82, 51, 0.22);
   font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
 .sidebar-footer {
@@ -287,10 +349,11 @@ textarea {
 }
 
 .user-chip {
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.72);
   padding: 0.9rem 1rem;
   border-radius: 18px;
   display: grid;
+  border: 1px solid rgba(85, 63, 32, 0.08);
 }
 
 .user-chip span {
@@ -298,12 +361,15 @@ textarea {
 }
 
 .workspace-main {
-  padding: 1.25rem 1.25rem 2rem 0;
+  min-width: 0;
+  min-height: calc(100vh - 2rem);
+  padding: 0 0 1rem;
 }
 
 .page-content {
   display: grid;
   gap: 1.25rem;
+  min-width: 0;
 }
 
 .subnav-tabs {
@@ -339,14 +405,17 @@ textarea {
 }
 
 .page-header {
-  background: rgba(255, 252, 246, 0.72);
+  background:
+    linear-gradient(140deg, rgba(255, 252, 246, 0.88), rgba(248, 239, 225, 0.84)),
+    radial-gradient(circle at top right, rgba(181, 82, 51, 0.1), transparent 30%);
   border: 1px solid var(--line);
   border-radius: 28px;
-  padding: 1.5rem 1.8rem;
+  padding: 1.6rem 1.9rem;
   display: flex;
   justify-content: space-between;
   gap: 1rem;
   align-items: flex-end;
+  box-shadow: var(--shadow);
 }
 
 .page-actions {
@@ -407,6 +476,8 @@ textarea {
 .panel {
   border-radius: 26px;
   padding: 1.25rem;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 246, 0.9), rgba(248, 238, 223, 0.82));
 }
 
 .stat-card span,
@@ -431,7 +502,7 @@ textarea {
 
 .record-card {
   border: 1px solid rgba(85, 63, 32, 0.08);
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.78);
   border-radius: 20px;
   padding: 1rem;
   display: flex;
@@ -458,6 +529,7 @@ textarea {
 .record-card.is-active {
   background: linear-gradient(180deg, rgba(255, 250, 243, 0.98), rgba(243, 229, 206, 0.98));
   border-color: rgba(181, 82, 51, 0.24);
+  box-shadow: 0 14px 28px rgba(64, 40, 11, 0.08);
 }
 
 .record-grid {
@@ -519,6 +591,44 @@ textarea {
 
 .metric-strip .mini-card strong {
   font-size: 1.25rem;
+}
+
+.progress-meter {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.progress-meter-track {
+  position: relative;
+  width: 100%;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: rgba(104, 90, 71, 0.12);
+  overflow: hidden;
+}
+
+.progress-meter-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #cb6946 0%, #f1b17a 45%, #49a56f 100%);
+  transition: width 180ms ease;
+}
+
+.progress-meter-copy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.65rem;
+  align-items: baseline;
+}
+
+.progress-meter-copy strong {
+  font-size: 0.92rem;
+}
+
+.progress-meter-copy span,
+.progress-meter-copy small {
+  color: var(--muted);
 }
 
 .design-context-bar {
@@ -894,11 +1004,12 @@ textarea {
   }
 
   .workspace-main {
-    padding: 0 1rem 1rem;
+    padding: 0 0 1rem;
   }
 
   .sidebar {
-    margin-bottom: 0;
+    position: static;
+    height: auto;
   }
 
   .stats-grid {

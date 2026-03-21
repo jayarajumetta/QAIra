@@ -140,7 +140,7 @@ export function ProjectsPage() {
                   </div>
                   <div className="mini-card">
                     <strong>{(requirements.data || []).filter((item) => item.project_id === projectId).length}</strong>
-                    <span>Requirements in Design</span>
+                    <span>Requirements</span>
                   </div>
                 </div>
               </div>

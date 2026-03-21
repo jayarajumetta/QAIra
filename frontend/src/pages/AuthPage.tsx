@@ -44,7 +44,7 @@ export function AuthPage() {
   return (
     <div className="auth-layout">
       <section className="auth-hero">
-        <div className="brand-mark large">QA</div>
+        <div className="brand-mark large">QAIra</div>
         <p className="eyebrow">Quality Operations Hub</p>
         <h1>Design, execute, and trace QA work without losing the plot.</h1>
         <p>

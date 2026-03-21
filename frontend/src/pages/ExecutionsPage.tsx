@@ -5,6 +5,7 @@ import { useAuth } from "../auth/AuthContext";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { ProgressMeter } from "../components/ProgressMeter";
 import { StatusBadge } from "../components/StatusBadge";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { api } from "../lib/api";
@@ -452,9 +453,10 @@ export function ExecutionsPage() {
                 <div className="record-card-body">
                   <strong>{execution.name || "Unnamed execution"}</strong>
                   <span>{projects.find((project) => project.id === execution.project_id)?.name || execution.project_id}</span>
-                  <span>
-                    {(executionSummaryById[execution.id]?.passed || 0)}/{(executionSummaryById[execution.id]?.total || 0)} passed · {(executionSummaryById[execution.id]?.percent || 0)}%
-                  </span>
+                  <ProgressMeter
+                    detail={`${executionSummaryById[execution.id]?.passed || 0}/${executionSummaryById[execution.id]?.total || 0} passed`}
+                    value={executionSummaryById[execution.id]?.percent || 0}
+                  />
                 </div>
                 <StatusBadge value={execution.status} />
               </button>
@@ -468,8 +470,7 @@ export function ExecutionsPage() {
             <div className="suite-tree">
               <div className="metric-strip">
                 <div className="mini-card">
-                  <strong>{executionProgress.percent}%</strong>
-                  <span>Execution progress</span>
+                  <ProgressMeter detail={`${executionProgress.completedCases}/${executionProgress.totalCases} complete`} label="Execution progress" value={executionProgress.percent} />
                 </div>
                 <div className="mini-card">
                   <strong>{executionProgress.completedCases}/{executionProgress.totalCases}</strong>
@@ -501,7 +502,7 @@ export function ExecutionsPage() {
                     >
                       <div className="record-card-body">
                         <strong>{suite.name}</strong>
-                        <span>{suiteMetric?.count || 0} cases · {suiteMetric?.percent || 0}% complete</span>
+                        <ProgressMeter detail={`${suiteMetric?.count || 0} cases`} label="Suite completion" value={suiteMetric?.percent || 0} />
                       </div>
                       <StatusBadge value={suiteMetric?.status || "queued"} />
                     </button>

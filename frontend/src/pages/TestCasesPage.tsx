@@ -193,7 +193,9 @@ export function TestCasesPage() {
       queryClient.invalidateQueries({ queryKey: ["global-test-cases", appTypeId] }),
       queryClient.invalidateQueries({ queryKey: ["global-test-case-results", appTypeId] }),
       queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] }),
-      queryClient.invalidateQueries({ queryKey: ["requirements", projectId] })
+      queryClient.invalidateQueries({ queryKey: ["requirements", projectId] }),
+      queryClient.invalidateQueries({ queryKey: ["design-test-cases", appTypeId] }),
+      queryClient.invalidateQueries({ queryKey: ["test-cases"] })
     ]);
   };
 

@@ -32,7 +32,6 @@ export function DesignPage() {
   const [appTypeId, setAppTypeId] = useState("");
   const [selectedSuiteId, setSelectedSuiteId] = useState("");
   const [selectedTestCaseId, setSelectedTestCaseId] = useState("");
-  const [selectedRequirementId, setSelectedRequirementId] = useState("");
   const [selectedTestCaseIds, setSelectedTestCaseIds] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -87,11 +86,6 @@ export function DesignPage() {
   });
   const createTestCaseMutation = useMutation({ mutationFn: api.testCases.create });
   const deleteSuiteMutation = useMutation({ mutationFn: api.testSuites.delete });
-  const createRequirementMutation = useMutation({ mutationFn: api.requirements.create });
-  const replaceRequirementMappingsMutation = useMutation({
-    mutationFn: ({ requirementId, testCaseIds }: { requirementId: string; testCaseIds: string[] }) =>
-      api.requirementTestCases.replace(requirementId, testCaseIds)
-  });
   const updateTestCaseMutation = useMutation({
     mutationFn: ({ id, input }: { id: string; input: Partial<{ suite_id: string; suite_ids: string[]; title: string; description: string; priority: number; status: string; requirement_id: string }> }) =>
       api.testCases.update(id, input)
@@ -184,22 +178,10 @@ export function DesignPage() {
   const selectedAppType = appTypes.find((appType) => appType.id === appTypeId) || null;
   const selectedSuite = suites.find((suite) => suite.id === selectedSuiteId) || null;
   const selectedTestCase = appTypeCases.find((testCase) => testCase.id === selectedTestCaseId) || null;
-  const selectedRequirement = requirements.find((requirement) => requirement.id === selectedRequirementId) || requirements[0] || null;
   const sortedSteps = useMemo(
     () => [...steps].sort((left, right) => left.step_order - right.step_order),
     [steps]
   );
-  const [selectedRequirementCaseIds, setSelectedRequirementCaseIds] = useState<string[]>([]);
-
-  useEffect(() => {
-    if (selectedRequirement) {
-      setSelectedRequirementId(selectedRequirement.id);
-      setSelectedRequirementCaseIds(selectedRequirement.test_case_ids || []);
-    } else {
-      setSelectedRequirementId("");
-      setSelectedRequirementCaseIds([]);
-    }
-  }, [selectedRequirement?.id]);
 
   useEffect(() => {
     setSelectedTestCaseIds((current) => current.filter((id) => filteredCases.some((testCase) => testCase.id === id)));
@@ -289,14 +271,13 @@ export function DesignPage() {
   const refreshSuites = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["design-suites", appTypeId] }),
+      queryClient.invalidateQueries({ queryKey: ["requirements", projectId] }),
       queryClient.invalidateQueries({ queryKey: ["test-suites"] }),
       queryClient.invalidateQueries({ queryKey: ["design-test-cases"] }),
-      queryClient.invalidateQueries({ queryKey: ["test-cases"] })
+      queryClient.invalidateQueries({ queryKey: ["test-cases"] }),
+      queryClient.invalidateQueries({ queryKey: ["global-test-cases", appTypeId] }),
+      queryClient.invalidateQueries({ queryKey: ["global-test-case-results", appTypeId] })
     ]);
-  };
-
-  const refreshRequirements = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["requirements", projectId] });
   };
 
   const handleProjectChange = (value: string) => {
@@ -437,7 +418,7 @@ export function DesignPage() {
   };
 
   const handleDeleteSuite = async () => {
-    if (!selectedSuite) {
+    if (!selectedSuite || !window.confirm(`Delete suite "${selectedSuite.name}"? Linked test cases will be kept, but this suite mapping will be removed.`)) {
       return;
     }
 
@@ -445,6 +426,7 @@ export function DesignPage() {
       await deleteSuiteMutation.mutateAsync(selectedSuite.id);
       setSelectedSuiteId("");
       setSelectedTestCaseId("");
+      setSelectedTestCaseIds([]);
       setMessage("Suite deleted.");
       await refreshSuites();
     } catch (error) {
@@ -453,7 +435,7 @@ export function DesignPage() {
   };
 
   const handleDeleteTestCase = async () => {
-    if (!selectedTestCase) {
+    if (!selectedTestCase || !window.confirm(`Delete test case "${selectedTestCase.title}"? This will remove its steps and mappings.`)) {
       return;
     }
 
@@ -462,8 +444,14 @@ export function DesignPage() {
       updateCasesCache((current) => current.filter((testCase) => testCase.id !== selectedTestCase.id));
       queryClient.removeQueries({ queryKey: ["design-test-steps", selectedTestCase.id] });
       setSelectedTestCaseId("");
+      setSelectedTestCaseIds((current) => current.filter((id) => id !== selectedTestCase.id));
       setIsCreatingCase(false);
       setMessage("Test case deleted.");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["requirements", projectId] }),
+        queryClient.invalidateQueries({ queryKey: ["global-test-cases", appTypeId] }),
+        queryClient.invalidateQueries({ queryKey: ["global-test-case-results", appTypeId] })
+      ]);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to delete test case");
     }
@@ -724,126 +712,6 @@ export function DesignPage() {
           onReorderSteps={handleReorderSteps}
         />
       </div>
-
-      <Panel title="Requirements" subtitle="Requirements now live inside Test Design so linking and coverage stay close together.">
-        <form
-          className="form-grid"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!projectId) {
-              return;
-            }
-            const formData = new FormData(event.currentTarget);
-            createRequirementMutation.mutate({
-              project_id: projectId,
-              title: String(formData.get("title") || ""),
-              description: String(formData.get("description") || ""),
-              priority: Number(formData.get("priority") || 3),
-              status: String(formData.get("status") || "")
-            }, {
-              onSuccess: async () => {
-                setMessage("Requirement added.");
-                await refreshRequirements();
-              },
-              onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to add requirement")
-            });
-            event.currentTarget.reset();
-          }}
-        >
-          <div className="record-grid">
-            <FormField label="Title">
-              <input name="title" required placeholder="User can complete checkout" />
-            </FormField>
-            <FormField label="Description">
-              <textarea name="description" rows={3} />
-            </FormField>
-            <FormField label="Priority">
-              <input name="priority" defaultValue="3" min="1" max="5" type="number" />
-            </FormField>
-            <FormField label="Status">
-              <input name="status" placeholder="open" />
-            </FormField>
-          </div>
-          <button className="primary-button" disabled={!projectId} type="submit">Add requirement</button>
-        </form>
-
-        <div className="workspace-grid">
-          <div className="record-list">
-            {requirements.map((item) => (
-              <button
-                key={item.id}
-                className={selectedRequirement?.id === item.id ? "record-card is-active" : "record-card"}
-                onClick={() => {
-                  setSelectedRequirementId(item.id);
-                  setSelectedRequirementCaseIds(item.test_case_ids || []);
-                }}
-                type="button"
-              >
-                <div className="record-card-body">
-                  <strong>{item.title}</strong>
-                  <span>{item.description || "No description"}</span>
-                  <span>Priority {item.priority ?? "n/a"} · {item.status || "unset"}</span>
-                </div>
-                <span className="count-pill">{(item.test_case_ids || []).length}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="detail-stack">
-            {selectedRequirement ? (
-              <div className="detail-summary">
-                <strong>{selectedRequirement.title}</strong>
-                <span>{selectedRequirement.description || "No description"}</span>
-                <span>Linked to {(selectedRequirement.test_case_ids || []).length} test cases</span>
-              </div>
-            ) : (
-              <div className="empty-state compact">Select a requirement to link it to test cases.</div>
-            )}
-
-            {selectedRequirement ? (
-              <div className="modal-case-picker">
-                {appTypeCases.map((testCase) => (
-                  <label className="modal-case-option" key={testCase.id}>
-                    <input
-                      checked={selectedRequirementCaseIds.includes(testCase.id)}
-                      onChange={(event) => {
-                        setSelectedRequirementCaseIds((current) =>
-                          event.target.checked ? [...current, testCase.id] : current.filter((id) => id !== testCase.id)
-                        );
-                      }}
-                      type="checkbox"
-                    />
-                    <span>{testCase.title}</span>
-                  </label>
-                ))}
-                {!appTypeCases.length ? <div className="empty-state compact">No test cases available in this app type yet.</div> : null}
-                <div className="action-row">
-                  <button
-                    className="primary-button"
-                    onClick={() => {
-                      void replaceRequirementMappingsMutation.mutateAsync({
-                        requirementId: selectedRequirement.id,
-                        testCaseIds: selectedRequirementCaseIds
-                      }).then(async () => {
-                        setMessage("Requirement links updated.");
-                        await Promise.all([
-                          refreshRequirements(),
-                          queryClient.invalidateQueries({ queryKey: ["design-test-cases", appTypeId] }),
-                          queryClient.invalidateQueries({ queryKey: ["global-test-cases", appTypeId] })
-                        ]);
-                      }).catch((error: Error) => setMessage(error.message));
-                    }}
-                    type="button"
-                  >
-                    Save links
-                  </button>
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </div>
-        {!requirements.length ? <div className="empty-state compact">No requirements mapped to this project yet.</div> : null}
-      </Panel>
 
       {isSuiteModalOpen ? (
         <SuiteModal

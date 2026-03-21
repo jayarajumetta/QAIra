@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { ProgressMeter } from "../components/ProgressMeter";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
@@ -69,7 +70,7 @@ export function OverviewPage() {
                   <div>
                     <strong>{execution.name || "Unnamed execution"}</strong>
                     <span>{execution.project_id}</span>
-                    <span>{stats.passed}/{stats.total} passed · {percent}%</span>
+                    <ProgressMeter detail={`${stats.passed}/${stats.total} passed`} value={percent} />
                   </div>
                   <StatusBadge value={execution.status} />
                 </button>

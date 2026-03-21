@@ -119,14 +119,30 @@ exports.deleteTestSuite = (id) => {
     throw new Error("Cannot delete test suite with child suites");
   }
 
-  db.prepare(`
-    DELETE FROM suite_test_cases
-    WHERE suite_id = ?
-  `).run(id);
+  const transaction = db.transaction(() => {
+    db.prepare(`
+      DELETE FROM execution_suites
+      WHERE suite_id = ?
+    `).run(id);
 
-  db.prepare(`
-    DELETE FROM test_suites WHERE id = ?
-  `).run(id);
+    db.prepare(`
+      DELETE FROM suite_test_cases
+      WHERE suite_id = ?
+    `).run(id);
+
+    // Keep the legacy column from blocking deletes while the mapping table is the source of truth.
+    db.prepare(`
+      UPDATE test_cases
+      SET suite_id = NULL
+      WHERE suite_id = ?
+    `).run(id);
+
+    db.prepare(`
+      DELETE FROM test_suites WHERE id = ?
+    `).run(id);
+  });
+
+  transaction();
 
   return { deleted: true };
 };
