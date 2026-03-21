@@ -263,6 +263,28 @@ Body fields:
 
 ## Run The Database
 
+### Quick Start From Repo Root
+
+Use the root entrypoint script to start both the SQLite DB initializer and the API without going into the `backend` folder:
+
+```bash
+./start.sh
+```
+
+This wraps the existing Compose setup in `backend/docker-compose.yml`.
+
+To exercise the API end-to-end with sample data and example CRUD calls:
+
+```bash
+./demo-api.sh
+```
+
+Requirements for the demo script:
+
+- API must already be running on `http://localhost:3000`
+- `curl` must be installed
+- `jq` must be installed
+
 ### Option 1: Docker Compose
 
 From the repository root:

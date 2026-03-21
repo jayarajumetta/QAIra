@@ -2,7 +2,9 @@ version: "3.9"
 
 services:
   db:
-    build: ./db
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: testiny-db
     volumes:
       - ./data:/data
