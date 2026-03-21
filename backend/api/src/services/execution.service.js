@@ -1,42 +1,103 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 
-// Create Execution
-exports.createExecution = ({ project_id, name, created_by }) => {
+const getSuiteIdsForExecution = db.prepare(`
+  SELECT suite_id
+  FROM execution_suites
+  WHERE execution_id = ?
+  ORDER BY suite_id ASC
+`);
 
+const insertExecutionSuite = db.prepare(`
+  INSERT INTO execution_suites (execution_id, suite_id)
+  VALUES (?, ?)
+`);
+
+function attachScope(execution) {
+  if (!execution) {
+    return execution;
+  }
+
+  const suite_ids = getSuiteIdsForExecution.all(execution.id).map((row) => row.suite_id);
+
+  return {
+    ...execution,
+    suite_ids
+  };
+}
+
+exports.createExecution = ({ project_id, app_type_id, suite_ids = [], name, created_by }) => {
   if (!project_id || !created_by) {
     throw new Error("Missing required fields");
   }
 
-  // Validate project
   const project = db.prepare(`
     SELECT id FROM projects WHERE id = ?
   `).get(project_id);
 
   if (!project) throw new Error("Project not found");
 
-  // Validate user
   const user = db.prepare(`
     SELECT id FROM users WHERE id = ?
   `).get(created_by);
 
   if (!user) throw new Error("Invalid user");
 
+  if (app_type_id) {
+    const appType = db.prepare(`
+      SELECT id, project_id FROM app_types WHERE id = ?
+    `).get(app_type_id);
+
+    if (!appType) throw new Error("App type not found");
+    if (appType.project_id !== project_id) {
+      throw new Error("App type must belong to the selected project");
+    }
+  }
+
+  const uniqueSuiteIds = [...new Set(suite_ids)];
+
+  if (uniqueSuiteIds.length && !app_type_id) {
+    throw new Error("app_type_id is required when suite_ids are provided");
+  }
+
+  const validateSuite = db.prepare(`
+    SELECT id, app_type_id
+    FROM test_suites
+    WHERE id = ?
+  `);
+
+  uniqueSuiteIds.forEach((suiteId) => {
+    const suite = validateSuite.get(suiteId);
+
+    if (!suite) {
+      throw new Error(`Suite not found: ${suiteId}`);
+    }
+
+    if (suite.app_type_id !== app_type_id) {
+      throw new Error("All suites must belong to the selected app type");
+    }
+  });
+
   const id = uuid();
 
-  db.prepare(`
-    INSERT INTO executions 
-    (id, project_id, name, trigger, status, created_by)
-    VALUES (?, ?, ?, 'manual', 'queued', ?)
-  `).run(id, project_id, name || "Execution Run", created_by);
+  const transaction = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO executions
+      (id, project_id, app_type_id, name, trigger, status, created_by)
+      VALUES (?, ?, ?, ?, 'manual', 'queued', ?)
+    `).run(id, project_id, app_type_id || null, name || "Execution Run", created_by);
+
+    uniqueSuiteIds.forEach((suiteId) => {
+      insertExecutionSuite.run(id, suiteId);
+    });
+  });
+
+  transaction();
 
   return { id };
 };
 
-
-// Get all executions (with optional filters)
 exports.getExecutions = ({ project_id, status }) => {
-
   let query = `SELECT * FROM executions WHERE 1=1`;
   const params = [];
 
@@ -52,26 +113,20 @@ exports.getExecutions = ({ project_id, status }) => {
 
   query += ` ORDER BY started_at DESC, ended_at DESC, id DESC`;
 
-  return db.prepare(query).all(...params);
+  return db.prepare(query).all(...params).map(attachScope);
 };
 
-
-// Get single execution
 exports.getExecution = (id) => {
-
   const execution = db.prepare(`
     SELECT * FROM executions WHERE id = ?
   `).get(id);
 
   if (!execution) throw new Error("Execution not found");
 
-  return execution;
+  return attachScope(execution);
 };
 
-
-// Start Execution
 exports.startExecution = (id) => {
-
   const execution = exports.getExecution(id);
 
   if (execution.status !== "queued") {
@@ -87,10 +142,7 @@ exports.startExecution = (id) => {
   return { started: true };
 };
 
-
-// Complete Execution
 exports.completeExecution = (id, status) => {
-
   if (!["completed", "failed"].includes(status)) {
     throw new Error("Invalid completion status");
   }
@@ -110,13 +162,9 @@ exports.completeExecution = (id, status) => {
   return { completed: true };
 };
 
-
-// Delete Execution
 exports.deleteExecution = (id) => {
+  exports.getExecution(id);
 
-  const execution = exports.getExecution(id);
-
-  // Check dependent execution_results
   const used = db.prepare(`
     SELECT id FROM execution_results WHERE execution_id = ?
   `).get(id);
@@ -125,8 +173,8 @@ exports.deleteExecution = (id) => {
     throw new Error("Cannot delete execution with results");
   }
 
-  db.prepare(`DELETE FROM executions WHERE id = ?`)
-    .run(id);
+  db.prepare(`DELETE FROM execution_suites WHERE execution_id = ?`).run(id);
+  db.prepare(`DELETE FROM executions WHERE id = ?`).run(id);
 
   return { deleted: true };
 };

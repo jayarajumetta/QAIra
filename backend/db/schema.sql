@@ -112,6 +112,7 @@ CREATE TABLE test_steps (
 CREATE TABLE executions (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
+  app_type_id TEXT,
   name TEXT,
   trigger TEXT CHECK(trigger IN ('manual','ci')),
   status TEXT CHECK(status IN ('queued','running','completed','failed')),
@@ -119,7 +120,16 @@ CREATE TABLE executions (
   started_at DATETIME,
   ended_at DATETIME,
   FOREIGN KEY (project_id) REFERENCES projects(id),
+  FOREIGN KEY (app_type_id) REFERENCES app_types(id),
   FOREIGN KEY (created_by) REFERENCES users(id)
+);
+
+CREATE TABLE execution_suites (
+  execution_id TEXT NOT NULL,
+  suite_id TEXT NOT NULL,
+  PRIMARY KEY (execution_id, suite_id),
+  FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE,
+  FOREIGN KEY (suite_id) REFERENCES test_suites(id)
 );
 
 CREATE TABLE execution_results (

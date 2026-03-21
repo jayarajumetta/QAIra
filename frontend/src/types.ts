@@ -75,6 +75,8 @@ export type TestStep = {
 export type Execution = {
   id: string;
   project_id: string;
+  app_type_id: string | null;
+  suite_ids: string[];
   name: string | null;
   trigger: "manual" | "ci" | null;
   status: "queued" | "running" | "completed" | "failed" | null;

@@ -433,6 +433,23 @@ textarea {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
+.suite-selector-grid,
+.suite-tree,
+.tree-children {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.tree-suite {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.tree-children {
+  padding-left: 1rem;
+  border-left: 1px dashed rgba(85, 63, 32, 0.16);
+}
+
 .mini-card {
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid rgba(85, 63, 32, 0.08);
@@ -572,6 +589,18 @@ textarea {
 
 .step-card.is-expanded {
   background: linear-gradient(180deg, rgba(255, 251, 245, 0.96), rgba(243, 231, 214, 0.96));
+}
+
+.step-card.step-status-passed {
+  border-color: rgba(46, 125, 82, 0.24);
+}
+
+.step-card.step-status-failed {
+  border-color: rgba(154, 58, 47, 0.24);
+}
+
+.step-card.step-status-blocked {
+  border-color: rgba(181, 82, 51, 0.24);
 }
 
 .step-card-toggle {
