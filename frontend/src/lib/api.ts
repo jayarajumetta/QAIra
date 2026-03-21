@@ -117,9 +117,9 @@ export const api = {
   },
   users: {
     list: () => request<User[]>("/users"),
-    create: (input: { email: string; password_hash: string; name?: string }) =>
+    create: (input: { email: string; password_hash: string; name?: string; role_id: string }) =>
       request<{ id: string }>("/users", { method: "POST", body: JSON.stringify(input) }),
-    update: (id: string, input: Partial<{ email: string; password_hash: string; name: string }>) =>
+    update: (id: string, input: Partial<{ email: string; password_hash: string; name: string; role_id: string }>) =>
       request<{ updated: boolean }>(`/users/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/users/${id}`, { method: "DELETE" })
   },
@@ -165,6 +165,15 @@ export const api = {
       request<{ updated: boolean }>(`/requirements/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/requirements/${id}`, { method: "DELETE" })
   },
+  requirementTestCases: {
+    list: (query?: { requirement_id?: string; test_case_id?: string }) =>
+      request<Array<{ requirement_id: string; test_case_id: string }>>(`/requirement-test-cases${toQueryString(query)}`),
+    replace: (requirement_id: string, test_case_ids: string[]) =>
+      request<{ updated: boolean; mapped: number }>(`/requirement-test-cases/replace`, {
+        method: "PUT",
+        body: JSON.stringify({ requirement_id, test_case_ids })
+      })
+  },
   testSuites: {
     list: (query?: { app_type_id?: string; parent_id?: string }) =>
       request<TestSuite[]>(`/test-suites${toQueryString(query)}`),
@@ -180,13 +189,22 @@ export const api = {
     delete: (id: string) => request<{ deleted: boolean }>(`/test-suites/${id}`, { method: "DELETE" })
   },
   testCases: {
-    list: (query?: { suite_id?: string; requirement_id?: string; status?: string }) =>
+    list: (query?: { suite_id?: string; requirement_id?: string; status?: string; app_type_id?: string }) =>
       request<TestCase[]>(`/test-cases${toQueryString(query)}`),
-    create: (input: { suite_id: string; title: string; description?: string; priority?: number; status?: string; requirement_id?: string }) =>
+    create: (input: { suite_id?: string; suite_ids?: string[]; title: string; description?: string; priority?: number; status?: string; requirement_id?: string; requirement_ids?: string[] }) =>
       request<{ id: string }>("/test-cases", { method: "POST", body: JSON.stringify(input) }),
-    update: (id: string, input: Partial<{ suite_id: string; title: string; description: string; priority: number; status: string; requirement_id: string }>) =>
+    update: (id: string, input: Partial<{ suite_id: string; suite_ids: string[]; title: string; description: string; priority: number; status: string; requirement_id: string; requirement_ids: string[] }>) =>
       request<{ updated: boolean }>(`/test-cases/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/test-cases/${id}`, { method: "DELETE" })
+  },
+  suiteTestCases: {
+    list: (query?: { suite_id?: string; test_case_id?: string }) =>
+      request<Array<{ suite_id: string; test_case_id: string; sort_order: number }>>(`/suite-test-cases${toQueryString(query)}`),
+    reorder: (suite_id: string, test_case_ids: string[]) =>
+      request<{ reordered: boolean }>(`/suite-test-cases/reorder`, {
+        method: "PUT",
+        body: JSON.stringify({ suite_id, test_case_ids })
+      })
   },
   testSteps: {
     list: (query?: { test_case_id?: string }) =>
@@ -196,9 +214,9 @@ export const api = {
     update: (id: string, input: Partial<{ test_case_id: string; step_order: number; action: string; expected_result: string }>) =>
       request<{ updated: boolean }>(`/test-steps/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     reorder: (test_case_id: string, step_ids: string[]) =>
-      request<{ reordered: boolean }>(`/test-cases/${test_case_id}/test-steps/reorder`, {
-        method: "POST",
-        body: JSON.stringify({ step_ids })
+      request<{ reordered: boolean }>(`/test-steps/reorder`, {
+        method: "PUT",
+        body: JSON.stringify({ test_case_id, step_ids })
       }),
     delete: (id: string) => request<{ deleted: boolean }>(`/test-steps/${id}`, { method: "DELETE" })
   },

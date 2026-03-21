@@ -12,6 +12,7 @@ import { ExecutionsPage } from "./pages/ExecutionsPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { PeoplePage } from "./pages/PeoplePage";
 import { ProjectsPage } from "./pages/ProjectsPage";
+import { TestCasesPage } from "./pages/TestCasesPage";
 
 const queryClient = new QueryClient();
 
@@ -56,6 +57,7 @@ const router = createBrowserRouter([
       { path: "people", element: <PeoplePage /> },
       { path: "projects", element: <ProjectsPage /> },
       { path: "design", element: <DesignPage /> },
+      { path: "test-cases", element: <TestCasesPage /> },
       { path: "executions", element: <ExecutionsPage /> }
     ]
   }

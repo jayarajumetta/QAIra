@@ -7,9 +7,9 @@ import { Panel } from "../components/Panel";
 import { SubnavTabs } from "../components/SubnavTabs";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 import { useAuth } from "../auth/AuthContext";
-import type { AppType, Requirement } from "../types";
+import type { AppType } from "../types";
 
-type ProjectSection = "members" | "appTypes" | "requirements";
+type ProjectSection = "members" | "appTypes";
 
 export function ProjectsPage() {
   const queryClient = useQueryClient();
@@ -34,17 +34,11 @@ export function ProjectsPage() {
     () => (appTypes.data || []).filter((item) => item.project_id === projectId),
     [appTypes.data, projectId]
   );
-  const scopedRequirements = useMemo(
-    () => (requirements.data || []).filter((item) => item.project_id === projectId),
-    [requirements.data, projectId]
-  );
-
   const invalidate = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["projects"] }),
       queryClient.invalidateQueries({ queryKey: ["project-members"] }),
-      queryClient.invalidateQueries({ queryKey: ["app-types"] }),
-      queryClient.invalidateQueries({ queryKey: ["requirements"] })
+      queryClient.invalidateQueries({ queryKey: ["app-types"] })
     ]);
   };
 
@@ -75,15 +69,6 @@ export function ProjectsPage() {
     onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to add app type")
   });
 
-  const createRequirement = useMutation({
-    mutationFn: api.requirements.create,
-    onSuccess: async () => {
-      setMessage("Requirement added.");
-      await invalidate();
-    },
-    onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to add requirement")
-  });
-
   const handleProjectCreate = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
@@ -99,8 +84,9 @@ export function ProjectsPage() {
     <div className="page-content">
       <PageHeader
         eyebrow="Projects & Scope"
-        title="Browse one project at a time without losing context"
-        description="Turn the project area into a scoped workspace: pick a project, review its summary, then move through memberships, app boundaries, and requirements in smaller views."
+        title="Project & Scope"
+        description="Pick one project, review its summary, and move through memberships and app boundaries without clutter."
+        actions={<button className="primary-button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} type="button">Create Project</button>}
       />
 
       {message ? <p className="inline-message">{message}</p> : null}
@@ -153,8 +139,8 @@ export function ProjectsPage() {
                     <span>App types</span>
                   </div>
                   <div className="mini-card">
-                    <strong>{scopedRequirements.length}</strong>
-                    <span>Requirements</span>
+                    <strong>{(requirements.data || []).filter((item) => item.project_id === projectId).length}</strong>
+                    <span>Requirements in Design</span>
                   </div>
                 </div>
               </div>
@@ -168,8 +154,7 @@ export function ProjectsPage() {
             onChange={setSection}
             items={[
               { value: "members", label: "Members", meta: `${scopedMembers.length}` },
-              { value: "appTypes", label: "App Types", meta: `${scopedAppTypes.length}` },
-              { value: "requirements", label: "Requirements", meta: `${scopedRequirements.length}` }
+              { value: "appTypes", label: "App Types", meta: `${scopedAppTypes.length}` }
             ]}
           />
 
@@ -274,60 +259,6 @@ export function ProjectsPage() {
             </Panel>
           ) : null}
 
-          {section === "requirements" ? (
-            <Panel title="Requirements" subtitle="Show scope records as readable cards instead of another dense table.">
-              <form
-                className="form-grid"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (!projectId) return;
-                  const formData = new FormData(event.currentTarget);
-                  createRequirement.mutate({
-                    project_id: projectId,
-                    title: String(formData.get("title") || ""),
-                    description: String(formData.get("description") || ""),
-                    priority: Number(formData.get("priority") || 3),
-                    status: String(formData.get("status") || "")
-                  });
-                  event.currentTarget.reset();
-                }}
-              >
-                <div className="record-grid">
-                  <FormField label="Title">
-                    <input name="title" required placeholder="User can complete checkout" />
-                  </FormField>
-                  <FormField label="Description">
-                    <textarea name="description" rows={3} />
-                  </FormField>
-                  <FormField label="Priority">
-                    <input name="priority" defaultValue="3" min="1" max="5" type="number" />
-                  </FormField>
-                  <FormField label="Status">
-                    <input name="status" placeholder="open" />
-                  </FormField>
-                </div>
-                <button className="primary-button" disabled={!projectId} type="submit">Add requirement</button>
-              </form>
-
-              <div className="record-grid">
-                {scopedRequirements.map((item: Requirement) => (
-                  <article className="mini-card" key={item.id}>
-                    <strong>{item.title}</strong>
-                    <span>{item.description || "No description"}</span>
-                    <span>Priority {item.priority ?? "n/a"} · {item.status || "unset"}</span>
-                    <button
-                      className="ghost-button danger"
-                      onClick={() => void api.requirements.delete(item.id).then(invalidate).catch((error: Error) => setMessage(error.message))}
-                      type="button"
-                    >
-                      Delete
-                    </button>
-                  </article>
-                ))}
-              </div>
-              {!scopedRequirements.length ? <div className="empty-state compact">No requirements mapped yet.</div> : null}
-            </Panel>
-          ) : null}
         </div>
       </div>
     </div>

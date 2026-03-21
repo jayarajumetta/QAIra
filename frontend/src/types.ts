@@ -2,6 +2,7 @@ export type User = {
   id: string;
   email: string;
   name: string | null;
+  role?: "admin" | "member";
   created_at?: string;
 };
 
@@ -42,6 +43,7 @@ export type Requirement = {
   description: string | null;
   priority: number | null;
   status: string | null;
+  test_case_ids?: string[];
   created_at?: string;
 };
 
@@ -55,7 +57,9 @@ export type TestSuite = {
 
 export type TestCase = {
   id: string;
-  suite_id: string;
+  suite_id: string | null;
+  suite_ids?: string[];
+  requirement_ids?: string[];
   title: string;
   description: string | null;
   priority: number | null;

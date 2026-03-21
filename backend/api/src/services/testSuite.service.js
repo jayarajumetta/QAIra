@@ -1,5 +1,6 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
+const suiteTestCaseService = require("./suiteTestCase.service");
 
 exports.createTestSuite = ({ app_type_id, name, parent_id }) => {
   if (!app_type_id || !name) {
@@ -104,44 +105,7 @@ exports.updateTestSuite = (id, data) => {
 };
 
 exports.assignTestCases = (id, testCaseIds = []) => {
-  const suite = exports.getTestSuite(id);
-
-  if (!Array.isArray(testCaseIds)) {
-    throw new Error("test_case_ids must be an array");
-  }
-
-  const updateStatement = db.prepare(`
-    UPDATE test_cases
-    SET suite_id = ?
-    WHERE id = ?
-  `);
-
-  const findCaseStatement = db.prepare(`
-    SELECT test_cases.id, test_suites.app_type_id
-    FROM test_cases
-    JOIN test_suites ON test_suites.id = test_cases.suite_id
-    WHERE test_cases.id = ?
-  `);
-
-  const transaction = db.transaction((ids) => {
-    ids.forEach((testCaseId) => {
-      const testCase = findCaseStatement.get(testCaseId);
-
-      if (!testCase) {
-        throw new Error(`Test case not found: ${testCaseId}`);
-      }
-
-      if (testCase.app_type_id !== suite.app_type_id) {
-        throw new Error("Test cases must belong to the same app type");
-      }
-
-      updateStatement.run(id, testCaseId);
-    });
-  });
-
-  transaction([...new Set(testCaseIds)]);
-
-  return { updated: true, assigned: [...new Set(testCaseIds)].length };
+  return suiteTestCaseService.replaceMappingsForSuite(id, testCaseIds);
 };
 
 exports.deleteTestSuite = (id) => {
@@ -155,13 +119,10 @@ exports.deleteTestSuite = (id) => {
     throw new Error("Cannot delete test suite with child suites");
   }
 
-  const testCase = db.prepare(`
-    SELECT id FROM test_cases WHERE suite_id = ?
-  `).get(id);
-
-  if (testCase) {
-    throw new Error("Cannot delete test suite with test cases");
-  }
+  db.prepare(`
+    DELETE FROM suite_test_cases
+    WHERE suite_id = ?
+  `).run(id);
 
   db.prepare(`
     DELETE FROM test_suites WHERE id = ?

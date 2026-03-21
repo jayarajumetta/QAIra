@@ -1,5 +1,17 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
+const requirementTestCaseService = require("./requirementTestCase.service");
+
+const hydrateTestCaseIds = (requirement) => {
+  if (!requirement) {
+    return requirement;
+  }
+
+  return {
+    ...requirement,
+    test_case_ids: requirementTestCaseService.getTestCaseIdsForRequirement(requirement.id)
+  };
+};
 
 exports.createRequirement = ({ project_id, title, description, priority, status }) => {
   if (!project_id || !title) {
@@ -50,7 +62,7 @@ exports.getRequirements = ({ project_id, status, priority }) => {
 
   query += ` ORDER BY created_at DESC`;
 
-  return db.prepare(query).all(...params);
+  return db.prepare(query).all(...params).map(hydrateTestCaseIds);
 };
 
 exports.getRequirement = (id) => {
@@ -60,7 +72,7 @@ exports.getRequirement = (id) => {
 
   if (!requirement) throw new Error("Requirement not found");
 
-  return requirement;
+  return hydrateTestCaseIds(requirement);
 };
 
 exports.updateRequirement = (id, data) => {
@@ -92,14 +104,16 @@ exports.updateRequirement = (id, data) => {
 
 exports.deleteRequirement = (id) => {
   exports.getRequirement(id);
+  db.prepare(`
+    DELETE FROM requirement_test_cases
+    WHERE requirement_id = ?
+  `).run(id);
 
-  const used = db.prepare(`
-    SELECT id FROM test_cases WHERE requirement_id = ?
-  `).get(id);
-
-  if (used) {
-    throw new Error("Cannot delete requirement linked to test cases");
-  }
+  db.prepare(`
+    UPDATE test_cases
+    SET requirement_id = NULL
+    WHERE requirement_id = ?
+  `).run(id);
 
   db.prepare(`
     DELETE FROM requirements WHERE id = ?

@@ -32,6 +32,7 @@ export function DesignPage() {
   const [appTypeId, setAppTypeId] = useState("");
   const [selectedSuiteId, setSelectedSuiteId] = useState("");
   const [selectedTestCaseId, setSelectedTestCaseId] = useState("");
+  const [selectedRequirementId, setSelectedRequirementId] = useState("");
   const [selectedTestCaseIds, setSelectedTestCaseIds] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -62,8 +63,9 @@ export function DesignPage() {
     enabled: Boolean(appTypeId)
   });
   const testCasesQuery = useQuery({
-    queryKey: ["design-test-cases"],
-    queryFn: () => api.testCases.list()
+    queryKey: ["design-test-cases", appTypeId],
+    queryFn: () => api.testCases.list({ app_type_id: appTypeId }),
+    enabled: Boolean(appTypeId)
   });
   const stepsQuery = useQuery({
     queryKey: ["design-test-steps", selectedTestCaseId],
@@ -79,9 +81,19 @@ export function DesignPage() {
   const assignSuiteCasesMutation = useMutation({
     mutationFn: ({ id, testCaseIds }: { id: string; testCaseIds: string[] }) => api.testSuites.assignTestCases(id, testCaseIds)
   });
+  const reorderSuiteCasesMutation = useMutation({
+    mutationFn: ({ suiteId, testCaseIds }: { suiteId: string; testCaseIds: string[] }) =>
+      api.suiteTestCases.reorder(suiteId, testCaseIds)
+  });
   const createTestCaseMutation = useMutation({ mutationFn: api.testCases.create });
+  const deleteSuiteMutation = useMutation({ mutationFn: api.testSuites.delete });
+  const createRequirementMutation = useMutation({ mutationFn: api.requirements.create });
+  const replaceRequirementMappingsMutation = useMutation({
+    mutationFn: ({ requirementId, testCaseIds }: { requirementId: string; testCaseIds: string[] }) =>
+      api.requirementTestCases.replace(requirementId, testCaseIds)
+  });
   const updateTestCaseMutation = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: Partial<{ suite_id: string; title: string; description: string; priority: number; status: string; requirement_id: string }> }) =>
+    mutationFn: ({ id, input }: { id: string; input: Partial<{ suite_id: string; suite_ids: string[]; title: string; description: string; priority: number; status: string; requirement_id: string }> }) =>
       api.testCases.update(id, input)
   });
   const deleteTestCaseMutation = useMutation({ mutationFn: api.testCases.delete });
@@ -133,7 +145,7 @@ export function DesignPage() {
 
   const suiteIds = useMemo(() => new Set(suites.map((suite) => suite.id)), [suites]);
   const appTypeCases = useMemo(
-    () => allTestCases.filter((testCase) => suiteIds.has(testCase.suite_id)),
+    () => allTestCases.filter((testCase) => (testCase.suite_ids || []).some((suiteId) => suiteIds.has(suiteId))),
     [allTestCases, suiteIds]
   );
 
@@ -141,7 +153,9 @@ export function DesignPage() {
     const counts: Record<string, number> = {};
 
     appTypeCases.forEach((testCase) => {
-      counts[testCase.suite_id] = (counts[testCase.suite_id] || 0) + 1;
+      (testCase.suite_ids || []).forEach((suiteId) => {
+        counts[suiteId] = (counts[suiteId] || 0) + 1;
+      });
     });
 
     return counts;
@@ -149,7 +163,7 @@ export function DesignPage() {
 
   const filteredCases = useMemo(() => {
     return appTypeCases.filter((testCase) => {
-      if (selectedSuiteId && testCase.suite_id !== selectedSuiteId) {
+      if (selectedSuiteId && !(testCase.suite_ids || []).includes(selectedSuiteId)) {
         return false;
       }
 
@@ -170,10 +184,22 @@ export function DesignPage() {
   const selectedAppType = appTypes.find((appType) => appType.id === appTypeId) || null;
   const selectedSuite = suites.find((suite) => suite.id === selectedSuiteId) || null;
   const selectedTestCase = appTypeCases.find((testCase) => testCase.id === selectedTestCaseId) || null;
+  const selectedRequirement = requirements.find((requirement) => requirement.id === selectedRequirementId) || requirements[0] || null;
   const sortedSteps = useMemo(
     () => [...steps].sort((left, right) => left.step_order - right.step_order),
     [steps]
   );
+  const [selectedRequirementCaseIds, setSelectedRequirementCaseIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (selectedRequirement) {
+      setSelectedRequirementId(selectedRequirement.id);
+      setSelectedRequirementCaseIds(selectedRequirement.test_case_ids || []);
+    } else {
+      setSelectedRequirementId("");
+      setSelectedRequirementCaseIds([]);
+    }
+  }, [selectedRequirement?.id]);
 
   useEffect(() => {
     setSelectedTestCaseIds((current) => current.filter((id) => filteredCases.some((testCase) => testCase.id === id)));
@@ -229,7 +255,7 @@ export function DesignPage() {
     }
 
     setCaseDraft({
-      suite_id: selectedTestCase.suite_id,
+      suite_id: selectedTestCase.suite_ids?.[0] || selectedTestCase.suite_id || "",
       title: selectedTestCase.title,
       description: selectedTestCase.description || "",
       priority: String(selectedTestCase.priority ?? 3),
@@ -263,8 +289,14 @@ export function DesignPage() {
   const refreshSuites = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["design-suites", appTypeId] }),
-      queryClient.invalidateQueries({ queryKey: ["test-suites"] })
+      queryClient.invalidateQueries({ queryKey: ["test-suites"] }),
+      queryClient.invalidateQueries({ queryKey: ["design-test-cases"] }),
+      queryClient.invalidateQueries({ queryKey: ["test-cases"] })
     ]);
+  };
+
+  const refreshRequirements = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["requirements", projectId] });
   };
 
   const handleProjectChange = (value: string) => {
@@ -316,11 +348,6 @@ export function DesignPage() {
           id: suiteId,
           testCaseIds: input.selectedIds
         });
-        updateCasesCache((current) =>
-          current.map((testCase) =>
-            input.selectedIds.includes(testCase.id) ? { ...testCase, suite_id: suiteId } : testCase
-          )
-        );
       }
 
       setSelectedSuiteId(suiteId);
@@ -344,7 +371,7 @@ export function DesignPage() {
     try {
       if (isCreatingCase || !selectedTestCase) {
         const response = await createTestCaseMutation.mutateAsync({
-          suite_id: suiteId,
+          suite_ids: [suiteId],
           title: caseDraft.title,
           description: caseDraft.description || undefined,
           priority: Number(caseDraft.priority || 3),
@@ -355,6 +382,7 @@ export function DesignPage() {
         const optimisticCase: TestCase = {
           id: response.id,
           suite_id: suiteId,
+          suite_ids: [suiteId],
           title: caseDraft.title,
           description: caseDraft.description || null,
           priority: Number(caseDraft.priority || 3),
@@ -371,7 +399,9 @@ export function DesignPage() {
         await updateTestCaseMutation.mutateAsync({
           id: selectedTestCase.id,
           input: {
-            suite_id: suiteId,
+            suite_ids: selectedTestCase.suite_ids?.length
+              ? [suiteId, ...selectedTestCase.suite_ids.filter((id) => id !== suiteId)]
+              : [suiteId],
             title: caseDraft.title,
             description: caseDraft.description,
             priority: Number(caseDraft.priority || 3),
@@ -384,8 +414,11 @@ export function DesignPage() {
           current.map((testCase) =>
             testCase.id === selectedTestCase.id
               ? {
-                  ...testCase,
+                ...testCase,
                   suite_id: suiteId,
+                  suite_ids: testCase.suite_ids?.length
+                    ? [suiteId, ...testCase.suite_ids.filter((id) => id !== suiteId)]
+                    : [suiteId],
                   title: caseDraft.title,
                   description: caseDraft.description || null,
                   priority: Number(caseDraft.priority || 3),
@@ -400,6 +433,22 @@ export function DesignPage() {
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to save test case");
+    }
+  };
+
+  const handleDeleteSuite = async () => {
+    if (!selectedSuite) {
+      return;
+    }
+
+    try {
+      await deleteSuiteMutation.mutateAsync(selectedSuite.id);
+      setSelectedSuiteId("");
+      setSelectedTestCaseId("");
+      setMessage("Suite deleted.");
+      await refreshSuites();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to delete suite");
     }
   };
 
@@ -544,14 +593,46 @@ export function DesignPage() {
     }
   };
 
+  const handleReorderCases = async (fromCaseId: string, toCaseId: string) => {
+    if (!selectedSuiteId || fromCaseId === toCaseId) {
+      return;
+    }
+
+    const reordered = [...filteredCases];
+    const fromIndex = reordered.findIndex((testCase) => testCase.id === fromCaseId);
+    const toIndex = reordered.findIndex((testCase) => testCase.id === toCaseId);
+
+    if (fromIndex === -1 || toIndex === -1) {
+      return;
+    }
+
+    const [movedCase] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, movedCase);
+
+    try {
+      await reorderSuiteCasesMutation.mutateAsync({
+        suiteId: selectedSuiteId,
+        testCaseIds: reordered.map((testCase) => testCase.id)
+      });
+      await queryClient.invalidateQueries({ queryKey: ["design-test-cases"] });
+      setMessage("Test case order updated.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to reorder test cases");
+    }
+  };
+
   const isDesignLoading = projectsQuery.isLoading || appTypesQuery.isLoading || suitesQuery.isLoading || testCasesQuery.isLoading;
 
   return (
     <div className="page-content">
       <PageHeader
         eyebrow="Test Design"
-        title="Design coverage in a focused 3-panel workspace"
+        title="Test Suites"
         description="Choose project and app type once, browse suites on the left, scan test cases in the middle, and edit the selected case with live steps on the right."
+        actions={<button className="primary-button" onClick={() => {
+          setSuiteModalMode("create");
+          setIsSuiteModalOpen(true);
+        }} type="button">+ Create Suite</button>}
       />
 
       {message ? <p className="inline-message">{message}</p> : null}
@@ -567,6 +648,7 @@ export function DesignPage() {
           activeSuiteId={selectedSuiteId}
           counts={suiteCounts}
           onSelectSuite={setSelectedSuiteId}
+          onViewAllCases={() => setSelectedSuiteId("")}
           onCreateSuite={() => {
             setSuiteModalMode("create");
             setIsSuiteModalOpen(true);
@@ -575,6 +657,7 @@ export function DesignPage() {
             setSuiteModalMode("edit");
             setIsSuiteModalOpen(true);
           }}
+          onDeleteSuite={() => void handleDeleteSuite()}
           isLoading={suitesQuery.isLoading && Boolean(appTypeId)}
           selectedAppType={selectedAppType}
           selectedSuite={selectedSuite}
@@ -608,6 +691,7 @@ export function DesignPage() {
             const allVisibleSelected = visibleIds.every((id) => selectedTestCaseIds.includes(id));
             setSelectedTestCaseIds(allVisibleSelected ? [] : visibleIds);
           }}
+          onReorderCases={handleReorderCases}
         />
 
         <TestCaseEditor
@@ -640,6 +724,126 @@ export function DesignPage() {
           onReorderSteps={handleReorderSteps}
         />
       </div>
+
+      <Panel title="Requirements" subtitle="Requirements now live inside Test Design so linking and coverage stay close together.">
+        <form
+          className="form-grid"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!projectId) {
+              return;
+            }
+            const formData = new FormData(event.currentTarget);
+            createRequirementMutation.mutate({
+              project_id: projectId,
+              title: String(formData.get("title") || ""),
+              description: String(formData.get("description") || ""),
+              priority: Number(formData.get("priority") || 3),
+              status: String(formData.get("status") || "")
+            }, {
+              onSuccess: async () => {
+                setMessage("Requirement added.");
+                await refreshRequirements();
+              },
+              onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to add requirement")
+            });
+            event.currentTarget.reset();
+          }}
+        >
+          <div className="record-grid">
+            <FormField label="Title">
+              <input name="title" required placeholder="User can complete checkout" />
+            </FormField>
+            <FormField label="Description">
+              <textarea name="description" rows={3} />
+            </FormField>
+            <FormField label="Priority">
+              <input name="priority" defaultValue="3" min="1" max="5" type="number" />
+            </FormField>
+            <FormField label="Status">
+              <input name="status" placeholder="open" />
+            </FormField>
+          </div>
+          <button className="primary-button" disabled={!projectId} type="submit">Add requirement</button>
+        </form>
+
+        <div className="workspace-grid">
+          <div className="record-list">
+            {requirements.map((item) => (
+              <button
+                key={item.id}
+                className={selectedRequirement?.id === item.id ? "record-card is-active" : "record-card"}
+                onClick={() => {
+                  setSelectedRequirementId(item.id);
+                  setSelectedRequirementCaseIds(item.test_case_ids || []);
+                }}
+                type="button"
+              >
+                <div className="record-card-body">
+                  <strong>{item.title}</strong>
+                  <span>{item.description || "No description"}</span>
+                  <span>Priority {item.priority ?? "n/a"} · {item.status || "unset"}</span>
+                </div>
+                <span className="count-pill">{(item.test_case_ids || []).length}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="detail-stack">
+            {selectedRequirement ? (
+              <div className="detail-summary">
+                <strong>{selectedRequirement.title}</strong>
+                <span>{selectedRequirement.description || "No description"}</span>
+                <span>Linked to {(selectedRequirement.test_case_ids || []).length} test cases</span>
+              </div>
+            ) : (
+              <div className="empty-state compact">Select a requirement to link it to test cases.</div>
+            )}
+
+            {selectedRequirement ? (
+              <div className="modal-case-picker">
+                {appTypeCases.map((testCase) => (
+                  <label className="modal-case-option" key={testCase.id}>
+                    <input
+                      checked={selectedRequirementCaseIds.includes(testCase.id)}
+                      onChange={(event) => {
+                        setSelectedRequirementCaseIds((current) =>
+                          event.target.checked ? [...current, testCase.id] : current.filter((id) => id !== testCase.id)
+                        );
+                      }}
+                      type="checkbox"
+                    />
+                    <span>{testCase.title}</span>
+                  </label>
+                ))}
+                {!appTypeCases.length ? <div className="empty-state compact">No test cases available in this app type yet.</div> : null}
+                <div className="action-row">
+                  <button
+                    className="primary-button"
+                    onClick={() => {
+                      void replaceRequirementMappingsMutation.mutateAsync({
+                        requirementId: selectedRequirement.id,
+                        testCaseIds: selectedRequirementCaseIds
+                      }).then(async () => {
+                        setMessage("Requirement links updated.");
+                        await Promise.all([
+                          refreshRequirements(),
+                          queryClient.invalidateQueries({ queryKey: ["design-test-cases", appTypeId] }),
+                          queryClient.invalidateQueries({ queryKey: ["global-test-cases", appTypeId] })
+                        ]);
+                      }).catch((error: Error) => setMessage(error.message));
+                    }}
+                    type="button"
+                  >
+                    Save links
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+        {!requirements.length ? <div className="empty-state compact">No requirements mapped to this project yet.</div> : null}
+      </Panel>
 
       {isSuiteModalOpen ? (
         <SuiteModal
@@ -707,8 +911,10 @@ function SuiteSidebar({
   activeSuiteId,
   counts,
   onSelectSuite,
+  onViewAllCases,
   onCreateSuite,
   onEditSuite,
+  onDeleteSuite,
   isLoading,
   selectedAppType,
   selectedSuite
@@ -717,8 +923,10 @@ function SuiteSidebar({
   activeSuiteId: string;
   counts: Record<string, number>;
   onSelectSuite: (suiteId: string) => void;
+  onViewAllCases: () => void;
   onCreateSuite: () => void;
   onEditSuite: () => void;
+  onDeleteSuite: () => void;
   isLoading: boolean;
   selectedAppType: AppType | null;
   selectedSuite: TestSuite | null;
@@ -728,17 +936,9 @@ function SuiteSidebar({
       <div className="design-sidebar-actions">
         <button className="primary-button" onClick={onCreateSuite} type="button">Create Suite</button>
         <button className="ghost-button" disabled={!selectedSuite} onClick={onEditSuite} type="button">Edit Suite</button>
+        <button className="ghost-button" onClick={onViewAllCases} type="button">View All Test Cases</button>
+        <button className="ghost-button danger" disabled={!selectedSuite} onClick={onDeleteSuite} type="button">Delete Suite</button>
       </div>
-      <div className="design-sidebar-actions compact">
-        <button
-          className={!activeSuiteId ? "ghost-button design-filter-chip is-active" : "ghost-button design-filter-chip"}
-          onClick={() => onSelectSuite("")}
-          type="button"
-        >
-          All Cases
-        </button>
-      </div>
-
       {isLoading ? <div className="empty-state compact">Loading suites…</div> : null}
       {!isLoading && !suites.length ? <div className="empty-state compact">No suites yet for this app type.</div> : null}
 
@@ -775,7 +975,8 @@ function TestCaseList({
   onSelectCase,
   onCreateCase,
   onToggleSelection,
-  onToggleSelectAll
+  onToggleSelectAll,
+  onReorderCases
 }: {
   cases: TestCase[];
   activeCaseId: string;
@@ -790,8 +991,10 @@ function TestCaseList({
   onCreateCase: () => void;
   onToggleSelection: (testCaseId: string) => void;
   onToggleSelectAll: () => void;
+  onReorderCases: (fromCaseId: string, toCaseId: string) => void;
 }) {
   const allVisibleSelected = Boolean(cases.length) && cases.every((testCase) => selectedCaseIds.includes(testCase.id));
+  const [draggedCaseId, setDraggedCaseId] = useState("");
 
   return (
     <Panel title="Test Cases" subtitle={selectedSuite ? `Scoped to ${selectedSuite.name}` : "Showing all cases for the current app type."}>
@@ -821,11 +1024,22 @@ function TestCaseList({
             key={testCase.id}
             className={activeCaseId === testCase.id ? "record-card is-active" : "record-card"}
             onClick={() => onSelectCase(testCase.id)}
+            draggable={Boolean(selectedSuite)}
+            onDragStart={() => setDraggedCaseId(testCase.id)}
+            onDragOver={(event: DragEvent<HTMLButtonElement>) => event.preventDefault()}
+            onDrop={() => {
+              if (selectedSuite && draggedCaseId) {
+                void onReorderCases(draggedCaseId, testCase.id);
+              }
+              setDraggedCaseId("");
+            }}
+            onDragEnd={() => setDraggedCaseId("")}
             type="button"
           >
             <label className="selection-checkbox" onClick={(event) => event.stopPropagation()}>
               <input checked={selectedCaseIds.includes(testCase.id)} onChange={() => onToggleSelection(testCase.id)} type="checkbox" />
             </label>
+            {selectedSuite ? <span className="drag-handle" aria-hidden="true">::</span> : null}
             <div className="record-card-body">
               <strong>{testCase.title}</strong>
               <span>{testCase.description || "No description"}</span>
@@ -1082,10 +1296,11 @@ function StepEditor({
                   <FormField label="Expected result">
                     <textarea rows={2} value={draft.expected_result} onChange={(event) => onStepDraftChange(step.id, { ...draft, expected_result: event.target.value })} />
                   </FormField>
-                  <div className="action-row">
-                    <button className="primary-button" onClick={() => void onUpdateStep(step.id)} type="button">Save Step</button>
-                    <button className="ghost-button danger" onClick={() => void onDeleteStep(step.id)} type="button">Delete Step</button>
-                  </div>
+                <div className="action-row">
+                  <span className="drag-handle" aria-hidden="true">::</span>
+                  <button className="primary-button" onClick={() => void onUpdateStep(step.id)} type="button">Save Step</button>
+                  <button className="ghost-button danger" onClick={() => void onDeleteStep(step.id)} type="button">Delete Step</button>
+                </div>
                 </div>
               ) : null}
             </article>
@@ -1117,7 +1332,7 @@ function SuiteModal({
 }) {
   const initialSelectedIds = useMemo(() => {
     if (mode === "edit" && suite) {
-      return appTypeCases.filter((testCase) => testCase.suite_id === suite.id).map((testCase) => testCase.id);
+      return appTypeCases.filter((testCase) => (testCase.suite_ids || []).includes(suite.id)).map((testCase) => testCase.id);
     }
     return selectedCaseIds;
   }, [appTypeCases, mode, selectedCaseIds, suite]);

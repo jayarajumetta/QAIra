@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 
 const navItems = [
@@ -6,11 +7,23 @@ const navItems = [
   { to: "/people", label: "People & Access" },
   { to: "/projects", label: "Projects & Scope" },
   { to: "/design", label: "Test Design" },
+  { to: "/test-cases", label: "Test Cases" },
   { to: "/executions", label: "Executions" }
 ];
 
+const THEME_KEY = "qaira.theme";
+
 export function AppShell() {
   const { session, logout } = useAuth();
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    const stored = window.localStorage.getItem(THEME_KEY);
+    return stored === "dark" ? "dark" : "light";
+  });
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
 
   return (
     <div className="app-shell">
@@ -39,7 +52,11 @@ export function AppShell() {
           <div className="user-chip">
             <strong>{session?.user.name || "Workspace User"}</strong>
             <span>{session?.user.email}</span>
+            <span>{session?.user.role === "admin" ? "Admin" : "Member"}</span>
           </div>
+          <button className="ghost-button" onClick={() => setTheme((current) => current === "light" ? "dark" : "light")} type="button">
+            Theme: {theme === "light" ? "Light" : "Dark"}
+          </button>
           <button className="ghost-button" onClick={logout}>
             Sign out
           </button>

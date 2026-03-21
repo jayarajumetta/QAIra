@@ -1,10 +1,12 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StatusBadge } from "../components/StatusBadge";
+import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { api } from "../lib/api";
 import type { AppType, Execution, ExecutionResult, Project, TestCase, TestStep, TestSuite } from "../types";
 
@@ -12,6 +14,7 @@ type StepStatus = "passed" | "failed" | "blocked";
 
 export function ExecutionsPage() {
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
   const { session } = useAuth();
   const [projectId, setProjectId] = useState("");
   const [appTypeId, setAppTypeId] = useState("");
@@ -45,6 +48,10 @@ export function ExecutionsPage() {
     queryFn: () => api.executionResults.list({ execution_id: selectedExecutionId }),
     enabled: Boolean(selectedExecutionId)
   });
+  const allExecutionResultsQuery = useQuery({
+    queryKey: ["execution-results"],
+    queryFn: () => api.executionResults.list()
+  });
 
   const createExecution = useMutation({ mutationFn: api.executions.create });
   const startExecution = useMutation({ mutationFn: api.executions.start });
@@ -62,6 +69,7 @@ export function ExecutionsPage() {
   const appTypes = appTypesQuery.data || [];
   const scopeSuites = scopedSuitesQuery.data || [];
   const executionResults = executionResultsQuery.data || [];
+  const allExecutionResults = allExecutionResultsQuery.data || [];
 
   useEffect(() => {
     if (!projectId && projects[0]) {
@@ -92,6 +100,14 @@ export function ExecutionsPage() {
       setSelectedExecutionId("");
     }
   }, [selectedExecution, selectedExecutionId]);
+
+  useEffect(() => {
+    const requestedExecutionId = searchParams.get("execution");
+
+    if (requestedExecutionId && executions.some((execution) => execution.id === requestedExecutionId)) {
+      setSelectedExecutionId(requestedExecutionId);
+    }
+  }, [executions, searchParams]);
 
   const executionAppTypeId = selectedExecution?.app_type_id || "";
   const executionSuitesQuery = useQuery({
@@ -224,6 +240,24 @@ export function ExecutionsPage() {
     };
   }, [executionCaseOrder, resultByCaseId]);
 
+  const executionSummaryById = useMemo(() => {
+    const summary: Record<string, { passed: number; total: number; percent: number }> = {};
+
+    allExecutionResults.forEach((result) => {
+      summary[result.execution_id] = summary[result.execution_id] || { passed: 0, total: 0, percent: 0 };
+      summary[result.execution_id].total += 1;
+      if (result.status === "passed") {
+        summary[result.execution_id].passed += 1;
+      }
+    });
+
+    Object.values(summary).forEach((item) => {
+      item.percent = item.total ? Math.round((item.passed / item.total) * 100) : 0;
+    });
+
+    return summary;
+  }, [allExecutionResults]);
+
   const refreshExecutionScope = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["executions"] }),
@@ -353,36 +387,28 @@ export function ExecutionsPage() {
     <div className="page-content">
       <PageHeader
         eyebrow="Executions"
-        title="Run suites as a guided execution workspace"
-        description="Pick the project scope, start an execution, expand the suite tree, and move through test cases step by step with live status propagation."
+        title="Test Executions"
+        description="Scope a run by project, app type, and suites, then execute step by step with live progress and pass-rate visibility."
+        actions={<button className="primary-button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} type="button">+ Create Execution</button>}
       />
 
       {message ? <p className="inline-message">{message}</p> : null}
 
+      <WorkspaceScopeBar
+        appTypeId={appTypeId}
+        appTypes={appTypes}
+        onAppTypeChange={(value) => {
+          setAppTypeId(value);
+          setSelectedSuiteIds([]);
+        }}
+        onProjectChange={setProjectId}
+        projectId={projectId}
+        projects={projects}
+      />
+
       <Panel title="Create execution" subtitle="Choose the exact app type and suite scope before opening a run.">
         <form className="form-grid" onSubmit={(event) => void handleCreateExecution(event)}>
           <div className="record-grid">
-            <FormField label="Project">
-              <select value={projectId} onChange={(event) => setProjectId(event.target.value)}>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>{project.name}</option>
-                ))}
-              </select>
-            </FormField>
-            <FormField label="App Type">
-              <select
-                disabled={!projectId}
-                value={appTypeId}
-                onChange={(event) => {
-                  setAppTypeId(event.target.value);
-                  setSelectedSuiteIds([]);
-                }}
-              >
-                {appTypes.map((appType) => (
-                  <option key={appType.id} value={appType.id}>{appType.name}</option>
-                ))}
-              </select>
-            </FormField>
             <FormField label="Execution name">
               <input value={executionName} onChange={(event) => setExecutionName(event.target.value)} placeholder="Regression cycle 12" />
             </FormField>
@@ -426,6 +452,9 @@ export function ExecutionsPage() {
                 <div className="record-card-body">
                   <strong>{execution.name || "Unnamed execution"}</strong>
                   <span>{projects.find((project) => project.id === execution.project_id)?.name || execution.project_id}</span>
+                  <span>
+                    {(executionSummaryById[execution.id]?.passed || 0)}/{(executionSummaryById[execution.id]?.total || 0)} passed · {(executionSummaryById[execution.id]?.percent || 0)}%
+                  </span>
                 </div>
                 <StatusBadge value={execution.status} />
               </button>

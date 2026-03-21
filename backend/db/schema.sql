@@ -69,6 +69,14 @@ CREATE TABLE requirements (
   FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 
+CREATE TABLE requirement_test_cases (
+  requirement_id TEXT NOT NULL,
+  test_case_id TEXT NOT NULL,
+  PRIMARY KEY (requirement_id, test_case_id),
+  FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE CASCADE,
+  FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE CASCADE
+);
+
 -- =========================
 -- TEST DESIGN
 -- =========================
@@ -85,7 +93,7 @@ CREATE TABLE test_suites (
 
 CREATE TABLE test_cases (
   id TEXT PRIMARY KEY,
-  suite_id TEXT NOT NULL,
+  suite_id TEXT,
   title TEXT NOT NULL,
   description TEXT,
   priority INTEGER DEFAULT 3,
@@ -94,6 +102,15 @@ CREATE TABLE test_cases (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (suite_id) REFERENCES test_suites(id),
   FOREIGN KEY (requirement_id) REFERENCES requirements(id)
+);
+
+CREATE TABLE suite_test_cases (
+  suite_id TEXT NOT NULL,
+  test_case_id TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (suite_id, test_case_id),
+  FOREIGN KEY (suite_id) REFERENCES test_suites(id) ON DELETE CASCADE,
+  FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE CASCADE
 );
 
 CREATE TABLE test_steps (

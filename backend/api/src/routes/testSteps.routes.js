@@ -32,12 +32,21 @@ module.exports = async function (fastify) {
     return service.updateTestStep(req.params.id, req.body);
   });
 
-  fastify.post("/test-cases/:id/test-steps/reorder", async (req) => {
+  fastify.put("/test-cases/:id/test-steps/reorder", async (req) => {
     fastify.validate({
       step_ids: { required: true, type: "array", items: "string" }
     }, req.body);
 
     return service.reorderTestSteps(req.params.id, req.body.step_ids);
+  });
+
+  fastify.put("/test-steps/reorder", async (req) => {
+    fastify.validate({
+      test_case_id: { required: true, type: "string" },
+      step_ids: { required: true, type: "array", items: "string" }
+    }, req.body);
+
+    return service.reorderTestSteps(req.body.test_case_id, req.body.step_ids);
   });
 
   fastify.delete("/test-steps/:id", async (req) => {
