@@ -1,0 +1,1220 @@
+openapi: 3.0.3
+info:
+  title: QAIra API
+  version: 1.0.0
+  description: |
+    OpenAPI specification for the current QAIra Fastify + SQLite backend.
+    This spec documents the implemented CRUD resources, request payloads,
+    query filters, and the execution lifecycle actions.
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+tags:
+  - name: Users
+  - name: Roles
+  - name: Projects
+  - name: Project Members
+  - name: App Types
+  - name: Requirements
+  - name: Test Suites
+  - name: Test Cases
+  - name: Test Steps
+  - name: Executions
+  - name: Execution Results
+paths:
+  /users:
+    get:
+      tags: [Users]
+      summary: List users
+      responses:
+        "200":
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+    post:
+      tags: [Users]
+      summary: Create user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "200":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+  /users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      tags: [Users]
+      summary: Get user by ID
+      responses:
+        "200":
+          description: User record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+    put:
+      tags: [Users]
+      summary: Update user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdatedResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+    delete:
+      tags: [Users]
+      summary: Delete user
+      responses:
+        "200":
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+
+  /roles:
+    get:
+      tags: [Roles]
+      summary: List roles
+      responses:
+        "200":
+          description: List of roles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Role"
+    post:
+      tags: [Roles]
+      summary: Create role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRoleRequest"
+      responses:
+        "200":
+          description: Role created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+  /roles/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      tags: [Roles]
+      summary: Get role by ID
+      responses:
+        "200":
+          description: Role record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Role"
+    put:
+      tags: [Roles]
+      summary: Update role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRoleRequest"
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdatedResponse"
+    delete:
+      tags: [Roles]
+      summary: Delete role
+      responses:
+        "200":
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedResponse"
+
+  /projects:
+    get:
+      tags: [Projects]
+      summary: List projects
+      responses:
+        "200":
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+    post:
+      tags: [Projects]
+      summary: Create project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectRequest"
+      responses:
+        "200":
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdResponse"
+  /projects/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      tags: [Projects]
+      summary: Get project by ID
+      responses:
+        "200":
+          description: Project record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+    put:
+      tags: [Projects]
+      summary: Update project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProjectRequest"
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdatedResponse"
+    delete:
+      tags: [Projects]
+      summary: Delete project
+      responses:
+        "200":
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedResponse"
+
+  /project-members:
+    get:
+      tags: [Project Members]
+      summary: List project members
+      parameters:
+        - $ref: "#/components/parameters/ProjectIdQuery"
+        - $ref: "#/components/parameters/UserIdQuery"
+        - $ref: "#/components/parameters/RoleIdQuery"
+      responses:
+        "200":
+          description: List of project memberships
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectMember"
+    post:
+      tags: [Project Members]
+      summary: Create project member
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectMemberRequest"
+      responses:
+        "200":
+          description: Membership created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdResponse"
+  /project-members/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      tags: [Project Members]
+      summary: Get project member by ID
+      responses:
+        "200":
+          description: Project member record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectMember"
+    put:
+      tags: [Project Members]
+      summary: Update project member
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProjectMemberRequest"
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdatedResponse"
+    delete:
+      tags: [Project Members]
+      summary: Delete project member
+      responses:
+        "200":
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedResponse"
+
+  /app-types:
+    get:
+      tags: [App Types]
+      summary: List app types
+      parameters:
+        - $ref: "#/components/parameters/ProjectIdQuery"
+      responses:
+        "200":
+          description: List of app types
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AppType"
+    post:
+      tags: [App Types]
+      summary: Create app type
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAppTypeRequest"
+      responses:
+        "200":
+          description: App type created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdResponse"
+  /app-types/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      tags: [App Types]
+      summary: Get app type by ID
+      responses:
+        "200":
+          description: App type record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppType"
+    put:
+      tags: [App Types]
+      summary: Update app type
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAppTypeRequest"
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdatedResponse"
+    delete:
+      tags: [App Types]
+      summary: Delete app type
+      responses:
+        "200":
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedResponse"
+
+  /requirements:
+    get:
+      tags: [Requirements]
+      summary: List requirements
+      parameters:
+        - $ref: "#/components/parameters/ProjectIdQuery"
+        - $ref: "#/components/parameters/StatusQuery"
+        - $ref: "#/components/parameters/PriorityQuery"
+      responses:
+        "200":
+          description: List of requirements
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Requirement"
+    post:
+      tags: [Requirements]
+      summary: Create requirement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRequirementRequest"
+      responses:
+        "200":
+          description: Requirement created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdResponse"
+  /requirements/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      tags: [Requirements]
+      summary: Get requirement by ID
+      responses:
+        "200":
+          description: Requirement record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Requirement"
+    put:
+      tags: [Requirements]
+      summary: Update requirement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRequirementRequest"
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdatedResponse"
+    delete:
+      tags: [Requirements]
+      summary: Delete requirement
+      responses:
+        "200":
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedResponse"
+
+  /test-suites:
+    get:
+      tags: [Test Suites]
+      summary: List test suites
+      parameters:
+        - $ref: "#/components/parameters/AppTypeIdQuery"
+        - $ref: "#/components/parameters/ParentIdQuery"
+      responses:
+        "200":
+          description: List of test suites
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TestSuite"
+    post:
+      tags: [Test Suites]
+      summary: Create test suite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTestSuiteRequest"
+      responses:
+        "200":
+          description: Test suite created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdResponse"
+  /test-suites/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      tags: [Test Suites]
+      summary: Get test suite by ID
+      responses:
+        "200":
+          description: Test suite record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestSuite"
+    put:
+      tags: [Test Suites]
+      summary: Update test suite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTestSuiteRequest"
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdatedResponse"
+    delete:
+      tags: [Test Suites]
+      summary: Delete test suite
+      responses:
+        "200":
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedResponse"
+
+  /test-cases:
+    get:
+      tags: [Test Cases]
+      summary: List test cases
+      parameters:
+        - $ref: "#/components/parameters/SuiteIdQuery"
+        - $ref: "#/components/parameters/RequirementIdQuery"
+        - $ref: "#/components/parameters/StatusQuery"
+      responses:
+        "200":
+          description: List of test cases
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TestCase"
+    post:
+      tags: [Test Cases]
+      summary: Create test case
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTestCaseRequest"
+      responses:
+        "200":
+          description: Test case created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdResponse"
+  /test-cases/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      tags: [Test Cases]
+      summary: Get test case by ID
+      responses:
+        "200":
+          description: Test case record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestCase"
+    put:
+      tags: [Test Cases]
+      summary: Update test case
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTestCaseRequest"
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdatedResponse"
+    delete:
+      tags: [Test Cases]
+      summary: Delete test case
+      responses:
+        "200":
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedResponse"
+
+  /test-steps:
+    get:
+      tags: [Test Steps]
+      summary: List test steps
+      parameters:
+        - $ref: "#/components/parameters/TestCaseIdQuery"
+      responses:
+        "200":
+          description: List of test steps
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TestStep"
+    post:
+      tags: [Test Steps]
+      summary: Create test step
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTestStepRequest"
+      responses:
+        "200":
+          description: Test step created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdResponse"
+  /test-steps/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      tags: [Test Steps]
+      summary: Get test step by ID
+      responses:
+        "200":
+          description: Test step record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestStep"
+    put:
+      tags: [Test Steps]
+      summary: Update test step
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTestStepRequest"
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdatedResponse"
+    delete:
+      tags: [Test Steps]
+      summary: Delete test step
+      responses:
+        "200":
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedResponse"
+
+  /executions:
+    get:
+      tags: [Executions]
+      summary: List executions
+      parameters:
+        - $ref: "#/components/parameters/ProjectIdQuery"
+        - $ref: "#/components/parameters/ExecutionStatusQuery"
+      responses:
+        "200":
+          description: List of executions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Execution"
+    post:
+      tags: [Executions]
+      summary: Create execution
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateExecutionRequest"
+      responses:
+        "200":
+          description: Execution created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdResponse"
+  /executions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      tags: [Executions]
+      summary: Get execution by ID
+      responses:
+        "200":
+          description: Execution record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Execution"
+    delete:
+      tags: [Executions]
+      summary: Delete execution
+      responses:
+        "200":
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedResponse"
+  /executions/{id}/start:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    post:
+      tags: [Executions]
+      summary: Start execution
+      responses:
+        "200":
+          description: Start result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  started:
+                    type: boolean
+                    example: true
+  /executions/{id}/complete:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    post:
+      tags: [Executions]
+      summary: Complete execution
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteExecutionRequest"
+      responses:
+        "200":
+          description: Completion result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  completed:
+                    type: boolean
+                    example: true
+
+  /execution-results:
+    get:
+      tags: [Execution Results]
+      summary: List execution results
+      parameters:
+        - $ref: "#/components/parameters/ExecutionIdQuery"
+        - $ref: "#/components/parameters/TestCaseIdQuery"
+        - $ref: "#/components/parameters/AppTypeIdQuery"
+      responses:
+        "200":
+          description: List of execution results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ExecutionResult"
+    post:
+      tags: [Execution Results]
+      summary: Create execution result
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateExecutionResultRequest"
+      responses:
+        "200":
+          description: Execution result created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdResponse"
+  /execution-results/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      tags: [Execution Results]
+      summary: Get execution result by ID
+      responses:
+        "200":
+          description: Execution result record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionResult"
+    put:
+      tags: [Execution Results]
+      summary: Update execution result
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateExecutionResultRequest"
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdatedResponse"
+    delete:
+      tags: [Execution Results]
+      summary: Delete execution result
+      responses:
+        "200":
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedResponse"
+components:
+  parameters:
+    IdParam:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    ProjectIdQuery:
+      name: project_id
+      in: query
+      schema:
+        type: string
+    UserIdQuery:
+      name: user_id
+      in: query
+      schema:
+        type: string
+    RoleIdQuery:
+      name: role_id
+      in: query
+      schema:
+        type: string
+    AppTypeIdQuery:
+      name: app_type_id
+      in: query
+      schema:
+        type: string
+    ParentIdQuery:
+      name: parent_id
+      in: query
+      schema:
+        type: string
+        description: Use the literal string `null` to filter root suites.
+    SuiteIdQuery:
+      name: suite_id
+      in: query
+      schema:
+        type: string
+    RequirementIdQuery:
+      name: requirement_id
+      in: query
+      schema:
+        type: string
+    TestCaseIdQuery:
+      name: test_case_id
+      in: query
+      schema:
+        type: string
+    ExecutionIdQuery:
+      name: execution_id
+      in: query
+      schema:
+        type: string
+    StatusQuery:
+      name: status
+      in: query
+      schema:
+        type: string
+    PriorityQuery:
+      name: priority
+      in: query
+      schema:
+        type: integer
+    ExecutionStatusQuery:
+      name: status
+      in: query
+      schema:
+        type: string
+        enum: [queued, running, completed, failed]
+  responses:
+    ErrorResponse:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    IdResponse:
+      type: object
+      properties:
+        id:
+          type: string
+      required: [id]
+    UpdatedResponse:
+      type: object
+      properties:
+        updated:
+          type: boolean
+          example: true
+      required: [updated]
+    DeletedResponse:
+      type: object
+      properties:
+        deleted:
+          type: boolean
+          example: true
+      required: [deleted]
+    ErrorResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+      required: [statusCode, error, message]
+    User:
+      type: object
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        name: { type: string, nullable: true }
+        created_at: { type: string }
+    CreateUserRequest:
+      type: object
+      required: [email, password_hash]
+      properties:
+        email: { type: string, format: email }
+        password_hash: { type: string }
+        name: { type: string }
+    UpdateUserRequest:
+      type: object
+      properties:
+        email: { type: string, format: email }
+        password_hash: { type: string }
+        name: { type: string }
+    Role:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+    CreateRoleRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+    UpdateRoleRequest:
+      type: object
+      properties:
+        name: { type: string }
+    Project:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        created_by: { type: string, nullable: true }
+        created_at: { type: string }
+    CreateProjectRequest:
+      type: object
+      required: [name, created_by]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        created_by: { type: string }
+    UpdateProjectRequest:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+    ProjectMember:
+      type: object
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        user_id: { type: string }
+        role_id: { type: string }
+        created_at: { type: string }
+    CreateProjectMemberRequest:
+      type: object
+      required: [project_id, user_id, role_id]
+      properties:
+        project_id: { type: string }
+        user_id: { type: string }
+        role_id: { type: string }
+    UpdateProjectMemberRequest:
+      type: object
+      properties:
+        project_id: { type: string }
+        user_id: { type: string }
+        role_id: { type: string }
+    AppType:
+      type: object
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        name: { type: string }
+        type:
+          type: string
+          enum: [web, api, android, ios, unified]
+        is_unified: { type: integer }
+        created_at: { type: string }
+    CreateAppTypeRequest:
+      type: object
+      required: [project_id, name, type]
+      properties:
+        project_id: { type: string }
+        name: { type: string }
+        type:
+          type: string
+          enum: [web, api, android, ios, unified]
+        is_unified: { type: boolean }
+    UpdateAppTypeRequest:
+      type: object
+      properties:
+        name: { type: string }
+        is_unified: { type: boolean }
+    Requirement:
+      type: object
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        priority: { type: integer, nullable: true }
+        status: { type: string, nullable: true }
+        created_at: { type: string }
+    CreateRequirementRequest:
+      type: object
+      required: [project_id, title]
+      properties:
+        project_id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        priority: { type: integer }
+        status: { type: string }
+    UpdateRequirementRequest:
+      type: object
+      properties:
+        project_id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        priority: { type: integer }
+        status: { type: string }
+    TestSuite:
+      type: object
+      properties:
+        id: { type: string }
+        app_type_id: { type: string }
+        name: { type: string }
+        parent_id: { type: string, nullable: true }
+        created_at: { type: string }
+    CreateTestSuiteRequest:
+      type: object
+      required: [app_type_id, name]
+      properties:
+        app_type_id: { type: string }
+        name: { type: string }
+        parent_id: { type: string }
+    UpdateTestSuiteRequest:
+      type: object
+      properties:
+        name: { type: string }
+        parent_id: { type: string }
+    TestCase:
+      type: object
+      properties:
+        id: { type: string }
+        suite_id: { type: string }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        priority: { type: integer, nullable: true }
+        status: { type: string, nullable: true }
+        requirement_id: { type: string, nullable: true }
+        created_at: { type: string }
+    CreateTestCaseRequest:
+      type: object
+      required: [suite_id, title]
+      properties:
+        suite_id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        priority: { type: integer }
+        status: { type: string }
+        requirement_id: { type: string }
+    UpdateTestCaseRequest:
+      type: object
+      properties:
+        suite_id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        priority: { type: integer }
+        status: { type: string }
+        requirement_id: { type: string }
+    TestStep:
+      type: object
+      properties:
+        id: { type: string }
+        test_case_id: { type: string }
+        step_order: { type: integer }
+        action: { type: string, nullable: true }
+        expected_result: { type: string, nullable: true }
+    CreateTestStepRequest:
+      type: object
+      required: [test_case_id, step_order]
+      properties:
+        test_case_id: { type: string }
+        step_order: { type: integer }
+        action: { type: string }
+        expected_result: { type: string }
+    UpdateTestStepRequest:
+      type: object
+      properties:
+        test_case_id: { type: string }
+        step_order: { type: integer }
+        action: { type: string }
+        expected_result: { type: string }
+    Execution:
+      type: object
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        name: { type: string, nullable: true }
+        trigger:
+          type: string
+          nullable: true
+          enum: [manual, ci]
+        status:
+          type: string
+          nullable: true
+          enum: [queued, running, completed, failed]
+        created_by: { type: string, nullable: true }
+        started_at: { type: string, nullable: true }
+        ended_at: { type: string, nullable: true }
+    CreateExecutionRequest:
+      type: object
+      required: [project_id, created_by]
+      properties:
+        project_id: { type: string }
+        name: { type: string }
+        created_by: { type: string }
+    CompleteExecutionRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [completed, failed]
+    ExecutionResult:
+      type: object
+      properties:
+        id: { type: string }
+        execution_id: { type: string }
+        test_case_id: { type: string }
+        app_type_id: { type: string }
+        status:
+          type: string
+          enum: [passed, failed, blocked]
+        duration_ms: { type: integer, nullable: true }
+        error: { type: string, nullable: true }
+        logs: { type: string, nullable: true }
+        executed_by: { type: string, nullable: true }
+        created_at: { type: string }
+    CreateExecutionResultRequest:
+      type: object
+      required: [execution_id, test_case_id, app_type_id, status]
+      properties:
+        execution_id: { type: string }
+        test_case_id: { type: string }
+        app_type_id: { type: string }
+        status:
+          type: string
+          enum: [passed, failed, blocked]
+        duration_ms: { type: integer }
+        error: { type: string }
+        logs: { type: string }
+        executed_by: { type: string }
+    UpdateExecutionResultRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [passed, failed, blocked]
+        duration_ms: { type: integer }
+        error: { type: string }
+        logs: { type: string }

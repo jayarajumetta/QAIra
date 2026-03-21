@@ -51,6 +51,8 @@ Implemented CRUD resources:
 
 Main route registration lives in [backend/api/src/routes/index.js](/Users/jayarajumetta/MJ/qaira/backend/api/src/routes/index.js).
 
+Machine-readable API spec: [openapi.yaml](/Users/jayarajumetta/MJ/qaira/openapi.yaml)
+
 ## API Endpoints
 
 ### Users

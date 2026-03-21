@@ -5,6 +5,7 @@ set -eu
 BASE_URL="${BASE_URL:-http://localhost:3000}"
 CURL_CONNECT_TIMEOUT="${CURL_CONNECT_TIMEOUT:-5}"
 CURL_MAX_TIME="${CURL_MAX_TIME:-20}"
+RUN_ID="${RUN_ID:-$(date +%s)}"
 
 if ! command -v curl >/dev/null 2>&1; then
   echo "curl is required but was not found in PATH."
@@ -83,37 +84,38 @@ ensure_success_response() {
 }
 
 echo "Using API base URL: $BASE_URL"
+echo "Using run ID: $RUN_ID"
 
 echo "Creating users..."
 USER1_RESPONSE="$(post_json "/users" '{
-  "email": "admin@example.com",
+  "email": "admin-'$RUN_ID'@example.com",
   "password_hash": "hashed_pw_admin",
-  "name": "Admin User"
+  "name": "Admin User '$RUN_ID'"
 }')"
 ensure_success_response "$USER1_RESPONSE"
 USER1_ID="$(extract_id "$USER1_RESPONSE")"
 
 USER2_RESPONSE="$(post_json "/users" '{
-  "email": "qa@example.com",
+  "email": "qa-'$RUN_ID'@example.com",
   "password_hash": "hashed_pw_qa",
-  "name": "QA User"
+  "name": "QA User '$RUN_ID'"
 }')"
 ensure_success_response "$USER2_RESPONSE"
 USER2_ID="$(extract_id "$USER2_RESPONSE")"
 
 echo "Creating roles..."
-ROLE_ADMIN_RESPONSE="$(post_json "/roles" '{"name":"admin"}')"
+ROLE_ADMIN_RESPONSE="$(post_json "/roles" '{"name":"admin-'$RUN_ID'"}')"
 ensure_success_response "$ROLE_ADMIN_RESPONSE"
 ROLE_ADMIN_ID="$(extract_id "$ROLE_ADMIN_RESPONSE")"
 
-ROLE_MEMBER_RESPONSE="$(post_json "/roles" '{"name":"member"}')"
+ROLE_MEMBER_RESPONSE="$(post_json "/roles" '{"name":"member-'$RUN_ID'"}')"
 ensure_success_response "$ROLE_MEMBER_RESPONSE"
 ROLE_MEMBER_ID="$(extract_id "$ROLE_MEMBER_RESPONSE")"
 
 echo "Creating project..."
 PROJECT_RESPONSE="$(post_json "/projects" "{
-  \"name\": \"E-Commerce System\",
-  \"description\": \"End-to-end QA project\",
+  \"name\": \"E-Commerce System $RUN_ID\",
+  \"description\": \"End-to-end QA project $RUN_ID\",
   \"created_by\": \"$USER1_ID\"
 }")"
 ensure_success_response "$PROJECT_RESPONSE"
@@ -139,7 +141,7 @@ PROJECT_MEMBER2_ID="$(extract_id "$PROJECT_MEMBER2_RESPONSE")"
 echo "Creating app types..."
 WEB_APP_RESPONSE="$(post_json "/app-types" "{
   \"project_id\": \"$PROJECT_ID\",
-  \"name\": \"Web App\",
+  \"name\": \"Web App $RUN_ID\",
   \"type\": \"web\",
   \"is_unified\": false
 }")"
@@ -148,7 +150,7 @@ WEB_APP_ID="$(extract_id "$WEB_APP_RESPONSE")"
 
 API_APP_RESPONSE="$(post_json "/app-types" "{
   \"project_id\": \"$PROJECT_ID\",
-  \"name\": \"API Layer\",
+  \"name\": \"API Layer $RUN_ID\",
   \"type\": \"api\",
   \"is_unified\": false
 }")"
@@ -158,8 +160,8 @@ API_APP_ID="$(extract_id "$API_APP_RESPONSE")"
 echo "Creating requirement..."
 REQUIREMENT_RESPONSE="$(post_json "/requirements" "{
   \"project_id\": \"$PROJECT_ID\",
-  \"title\": \"User Login\",
-  \"description\": \"User should log in successfully\",
+  \"title\": \"User Login $RUN_ID\",
+  \"description\": \"User should log in successfully $RUN_ID\",
   \"priority\": 1,
   \"status\": \"open\"
 }")"
@@ -169,7 +171,7 @@ REQUIREMENT_ID="$(extract_id "$REQUIREMENT_RESPONSE")"
 echo "Creating test suite..."
 SUITE_RESPONSE="$(post_json "/test-suites" "{
   \"app_type_id\": \"$WEB_APP_ID\",
-  \"name\": \"Authentication\"
+  \"name\": \"Authentication $RUN_ID\"
 }")"
 ensure_success_response "$SUITE_RESPONSE"
 SUITE_ID="$(extract_id "$SUITE_RESPONSE")"
@@ -177,8 +179,8 @@ SUITE_ID="$(extract_id "$SUITE_RESPONSE")"
 echo "Creating test case..."
 TEST_CASE_RESPONSE="$(post_json "/test-cases" "{
   \"suite_id\": \"$SUITE_ID\",
-  \"title\": \"Login with valid credentials\",
-  \"description\": \"Verify successful login\",
+  \"title\": \"Login with valid credentials $RUN_ID\",
+  \"description\": \"Verify successful login $RUN_ID\",
   \"priority\": 1,
   \"status\": \"active\",
   \"requirement_id\": \"$REQUIREMENT_ID\"
@@ -208,7 +210,7 @@ TEST_STEP2_ID="$(extract_id "$TEST_STEP2_RESPONSE")"
 echo "Creating execution..."
 EXECUTION_RESPONSE="$(post_json "/executions" "{
   \"project_id\": \"$PROJECT_ID\",
-  \"name\": \"Smoke Run\",
+  \"name\": \"Smoke Run $RUN_ID\",
   \"created_by\": \"$USER1_ID\"
 }")"
 ensure_success_response "$EXECUTION_RESPONSE"
