@@ -8,6 +8,7 @@ export function useWorkspaceData() {
   const projectMembers = useQuery({ queryKey: ["project-members"], queryFn: () => api.projectMembers.list() });
   const appTypes = useQuery({ queryKey: ["app-types"], queryFn: () => api.appTypes.list() });
   const requirements = useQuery({ queryKey: ["requirements"], queryFn: () => api.requirements.list() });
+  const feedback = useQuery({ queryKey: ["feedback"], queryFn: () => api.feedback.list() });
   const testSuites = useQuery({ queryKey: ["test-suites"], queryFn: () => api.testSuites.list() });
   const testCases = useQuery({ queryKey: ["test-cases"], queryFn: () => api.testCases.list() });
   const testSteps = useQuery({ queryKey: ["test-steps"], queryFn: () => api.testSteps.list() });
@@ -21,6 +22,7 @@ export function useWorkspaceData() {
     projectMembers,
     appTypes,
     requirements,
+    feedback,
     testSuites,
     testCases,
     testSteps,

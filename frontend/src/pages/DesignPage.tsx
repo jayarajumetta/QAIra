@@ -87,7 +87,7 @@ export function DesignPage() {
   const createTestCaseMutation = useMutation({ mutationFn: api.testCases.create });
   const deleteSuiteMutation = useMutation({ mutationFn: api.testSuites.delete });
   const updateTestCaseMutation = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: Partial<{ suite_id: string; suite_ids: string[]; title: string; description: string; priority: number; status: string; requirement_id: string }> }) =>
+    mutationFn: ({ id, input }: { id: string; input: Partial<{ app_type_id: string; suite_id: string; suite_ids: string[]; title: string; description: string; priority: number; status: string; requirement_id: string }> }) =>
       api.testCases.update(id, input)
   });
   const deleteTestCaseMutation = useMutation({ mutationFn: api.testCases.delete });
@@ -352,6 +352,7 @@ export function DesignPage() {
     try {
       if (isCreatingCase || !selectedTestCase) {
         const response = await createTestCaseMutation.mutateAsync({
+          app_type_id: appTypeId,
           suite_ids: [suiteId],
           title: caseDraft.title,
           description: caseDraft.description || undefined,
@@ -380,6 +381,7 @@ export function DesignPage() {
         await updateTestCaseMutation.mutateAsync({
           id: selectedTestCase.id,
           input: {
+            app_type_id: appTypeId,
             suite_ids: selectedTestCase.suite_ids?.length
               ? [suiteId, ...selectedTestCase.suite_ids.filter((id) => id !== suiteId)]
               : [suiteId],

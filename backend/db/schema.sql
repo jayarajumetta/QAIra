@@ -69,6 +69,16 @@ CREATE TABLE requirements (
   FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 
+CREATE TABLE feedback (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  status TEXT DEFAULT 'open',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
 CREATE TABLE requirement_test_cases (
   requirement_id TEXT NOT NULL,
   test_case_id TEXT NOT NULL,
@@ -93,6 +103,7 @@ CREATE TABLE test_suites (
 
 CREATE TABLE test_cases (
   id TEXT PRIMARY KEY,
+  app_type_id TEXT,
   suite_id TEXT,
   title TEXT NOT NULL,
   description TEXT,
@@ -100,6 +111,7 @@ CREATE TABLE test_cases (
   status TEXT DEFAULT 'active',
   requirement_id TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (app_type_id) REFERENCES app_types(id),
   FOREIGN KEY (suite_id) REFERENCES test_suites(id),
   FOREIGN KEY (requirement_id) REFERENCES requirements(id)
 );

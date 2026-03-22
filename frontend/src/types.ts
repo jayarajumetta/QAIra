@@ -47,6 +47,17 @@ export type Requirement = {
   created_at?: string;
 };
 
+export type Feedback = {
+  id: string;
+  user_id: string;
+  user_name?: string | null;
+  user_email?: string | null;
+  title: string;
+  message: string;
+  status: string | null;
+  created_at?: string;
+};
+
 export type TestSuite = {
   id: string;
   app_type_id: string;
@@ -57,6 +68,7 @@ export type TestSuite = {
 
 export type TestCase = {
   id: string;
+  app_type_id?: string | null;
   suite_id: string | null;
   suite_ids?: string[];
   requirement_ids?: string[];

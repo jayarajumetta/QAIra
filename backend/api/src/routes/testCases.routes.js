@@ -3,6 +3,7 @@ const service = require("../services/testCase.service");
 module.exports = async function (fastify) {
   fastify.post("/test-cases", async (req) => {
     fastify.validate({
+      app_type_id: { required: false, type: "string" },
       title: { required: true, type: "string", minLength: 2 },
       description: { required: false, type: "string" },
       priority: { required: false, type: "number" },
@@ -27,6 +28,7 @@ module.exports = async function (fastify) {
 
   fastify.put("/test-cases/:id", async (req) => {
     fastify.validate({
+      app_type_id: { required: false, type: "string" },
       title: { required: false, type: "string", minLength: 2 },
       description: { required: false, type: "string" },
       priority: { required: false, type: "number" },

@@ -35,15 +35,20 @@ INSERT INTO requirements (id, project_id, title, description) VALUES
 ('req1', 'p1', 'User Login', 'User should login successfully'),
 ('req2', 'p1', 'Place Order', 'User should place order');
 
+-- Feedback
+INSERT INTO feedback (id, user_id, title, message, status) VALUES
+('fb1', 'u1', 'Bulk import flow', 'Would love a CSV import for requirements and test cases.', 'open'),
+('fb2', 'u2', 'Execution notes', 'A dedicated notes area during execution would help triage faster.', 'reviewed');
+
 -- Test Suites (Web)
 INSERT INTO test_suites (id, app_type_id, name) VALUES
 ('ts1', 'a1', 'Authentication'),
 ('ts2', 'a5', 'Unified Checkout');
 
 -- Test Cases
-INSERT INTO test_cases (id, suite_id, title, description, requirement_id) VALUES
-('tc1', 'ts1', 'Login with valid credentials', 'Verify login works', 'req1'),
-('tc2', 'ts2', 'Place order flow', 'Verify checkout flow', 'req2');
+INSERT INTO test_cases (id, app_type_id, suite_id, title, description, requirement_id) VALUES
+('tc1', 'a1', 'ts1', 'Login with valid credentials', 'Verify login works', 'req1'),
+('tc2', 'a5', 'ts2', 'Place order flow', 'Verify checkout flow', 'req2');
 
 -- Test Steps
 INSERT INTO test_steps (id, test_case_id, step_order, action, expected_result) VALUES

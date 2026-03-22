@@ -205,6 +205,7 @@ export function TestCasesPage() {
     try {
       if (isCreating) {
         const response = await createTestCase.mutateAsync({
+          app_type_id: appTypeId,
           title: caseDraft.title,
           description: caseDraft.description || undefined,
           priority: Number(caseDraft.priority),
@@ -220,6 +221,7 @@ export function TestCasesPage() {
         await updateTestCase.mutateAsync({
           id: selectedTestCase.id,
           input: {
+            app_type_id: appTypeId,
             title: caseDraft.title,
             description: caseDraft.description,
             priority: Number(caseDraft.priority),

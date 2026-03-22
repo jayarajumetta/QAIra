@@ -188,13 +188,15 @@ const ensureSuiteTestCaseMapping = () => {
 
   const testCaseColumns = db.prepare(`PRAGMA table_info(test_cases)`).all();
   const suiteColumn = testCaseColumns.find((column) => column.name === "suite_id");
+  const appTypeColumn = testCaseColumns.find((column) => column.name === "app_type_id");
 
-  if (suiteColumn && suiteColumn.notnull === 1) {
+  if (!appTypeColumn || (suiteColumn && suiteColumn.notnull === 1)) {
     db.pragma("foreign_keys = OFF");
 
     db.prepare(`
       CREATE TABLE IF NOT EXISTS test_cases__new (
         id TEXT PRIMARY KEY,
+        app_type_id TEXT,
         suite_id TEXT,
         title TEXT NOT NULL,
         description TEXT,
@@ -202,14 +204,54 @@ const ensureSuiteTestCaseMapping = () => {
         status TEXT DEFAULT 'active',
         requirement_id TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (app_type_id) REFERENCES app_types(id),
         FOREIGN KEY (suite_id) REFERENCES test_suites(id),
         FOREIGN KEY (requirement_id) REFERENCES requirements(id)
       )
     `).run();
 
+    // Build the SELECT statement based on which columns exist
+    let selectColumns = `
+      test_cases.id,
+      COALESCE(
+        test_cases.app_type_id,
+        (
+          SELECT test_suites.app_type_id
+          FROM test_suites
+          WHERE test_suites.id = test_cases.suite_id
+        )
+      ),
+      test_cases.suite_id,
+      test_cases.title,
+      test_cases.description,
+      test_cases.priority,
+      test_cases.status,
+      test_cases.requirement_id,
+      test_cases.created_at
+    `;
+
+    // If app_type_id doesn't exist, we need to handle it differently
+    if (!appTypeColumn) {
+      selectColumns = `
+        test_cases.id,
+        (
+          SELECT test_suites.app_type_id
+          FROM test_suites
+          WHERE test_suites.id = test_cases.suite_id
+        ),
+        test_cases.suite_id,
+        test_cases.title,
+        test_cases.description,
+        test_cases.priority,
+        test_cases.status,
+        test_cases.requirement_id,
+        test_cases.created_at
+      `;
+    }
+
     db.prepare(`
-      INSERT INTO test_cases__new (id, suite_id, title, description, priority, status, requirement_id, created_at)
-      SELECT id, suite_id, title, description, priority, status, requirement_id, created_at
+      INSERT INTO test_cases__new (id, app_type_id, suite_id, title, description, priority, status, requirement_id, created_at)
+      SELECT ${selectColumns}
       FROM test_cases
     `).run();
 
@@ -240,6 +282,17 @@ const ensureSuiteTestCaseMapping = () => {
     const next = nextSort.get(row.suite_id).next_value;
     insertMapping.run(row.suite_id, row.id, next);
   });
+
+  db.prepare(`
+    UPDATE test_cases
+    SET app_type_id = (
+      SELECT test_suites.app_type_id
+      FROM test_suites
+      WHERE test_suites.id = test_cases.suite_id
+    )
+    WHERE app_type_id IS NULL
+      AND suite_id IS NOT NULL
+  `).run();
 };
 
 const ensureRequirementTestCaseMapping = () => {
@@ -328,10 +381,72 @@ const ensureDefaultRolesAndMemberships = () => {
   });
 };
 
+const ensureFeedbackTable = () => {
+  if (!hasTable("users")) {
+    return;
+  }
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS feedback (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT DEFAULT 'open',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `).run();
+
+  const existingCount = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM feedback
+  `).get().count;
+
+  if (existingCount > 0) {
+    return;
+  }
+
+  const seedUsers = db.prepare(`
+    SELECT id, email, name
+    FROM users
+    ORDER BY created_at ASC
+    LIMIT 2
+  `).all();
+
+  if (!seedUsers.length) {
+    return;
+  }
+
+  const insertFeedback = db.prepare(`
+    INSERT INTO feedback (id, user_id, title, message, status)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
+  insertFeedback.run(
+    crypto.randomUUID(),
+    seedUsers[0].id,
+    "Bulk import flow",
+    "Would love a CSV import for requirements and test cases.",
+    "open"
+  );
+
+  if (seedUsers[1]) {
+    insertFeedback.run(
+      crypto.randomUUID(),
+      seedUsers[1].id,
+      "Execution notes",
+      "A dedicated notes area during execution would help triage faster.",
+      "reviewed"
+    );
+  }
+};
+
 ensureExecutionScope();
 migrateExecutionSnapshots();
 ensureSuiteTestCaseMapping();
 ensureRequirementTestCaseMapping();
+ensureFeedbackTable();
 ensureDefaultRolesAndMemberships();
 
 module.exports = db;

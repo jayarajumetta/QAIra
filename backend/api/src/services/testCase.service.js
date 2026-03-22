@@ -15,13 +15,44 @@ const hydrateSuiteIds = (testCase) => {
   };
 };
 
-exports.createTestCase = ({ suite_id, suite_ids = [], title, description, priority, status, requirement_id, requirement_ids = [] }) => {
+exports.createTestCase = ({ app_type_id, suite_id, suite_ids = [], title, description, priority, status, requirement_id, requirement_ids = [] }) => {
   if (!title) {
     throw new Error("Missing required fields");
   }
 
   const requestedSuiteIds = [...new Set([suite_id, ...suite_ids].filter(Boolean))];
   const requestedRequirementIds = [...new Set([requirement_id, ...requirement_ids].filter(Boolean))];
+  let resolvedAppTypeId = app_type_id || null;
+
+  if (resolvedAppTypeId) {
+    const appType = db.prepare(`
+      SELECT id
+      FROM app_types
+      WHERE id = ?
+    `).get(resolvedAppTypeId);
+
+    if (!appType) {
+      throw new Error("App type not found");
+    }
+  }
+
+  requestedSuiteIds.forEach((requestedSuiteId) => {
+    const suite = db.prepare(`
+      SELECT id, app_type_id
+      FROM test_suites
+      WHERE id = ?
+    `).get(requestedSuiteId);
+
+    if (!suite) {
+      throw new Error("Test suite not found");
+    }
+
+    if (!resolvedAppTypeId) {
+      resolvedAppTypeId = suite.app_type_id;
+    } else if (suite.app_type_id !== resolvedAppTypeId) {
+      throw new Error("All suites must belong to the selected app type");
+    }
+  });
 
   requestedRequirementIds.forEach((requestedRequirementId) => {
     const requirement = db.prepare(`
@@ -34,10 +65,11 @@ exports.createTestCase = ({ suite_id, suite_ids = [], title, description, priori
   const id = uuid();
 
   db.prepare(`
-    INSERT INTO test_cases (id, suite_id, title, description, priority, status, requirement_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO test_cases (id, app_type_id, suite_id, title, description, priority, status, requirement_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
+    resolvedAppTypeId,
     requestedSuiteIds[0] || null,
     title,
     description || null,
@@ -63,7 +95,7 @@ exports.getTestCases = ({ suite_id, requirement_id, status, app_type_id }) => {
   const where = [`1=1`];
   const params = [];
 
-  if (suite_id || app_type_id) {
+  if (suite_id) {
     joins.push(`JOIN suite_test_cases ON suite_test_cases.test_case_id = test_cases.id`);
     joins.push(`JOIN test_suites ON test_suites.id = suite_test_cases.suite_id`);
   }
@@ -78,7 +110,7 @@ exports.getTestCases = ({ suite_id, requirement_id, status, app_type_id }) => {
   }
 
   if (app_type_id) {
-    where.push(`test_suites.app_type_id = ?`);
+    where.push(`test_cases.app_type_id = ?`);
     params.push(app_type_id);
   }
 
@@ -130,6 +162,38 @@ exports.updateTestCase = (id, data) => {
       ? [...new Set([data.requirement_id].filter(Boolean))]
       : existing.requirement_ids;
 
+  let resolvedAppTypeId = data.app_type_id ?? existing.app_type_id ?? null;
+
+  if (resolvedAppTypeId) {
+    const appType = db.prepare(`
+      SELECT id
+      FROM app_types
+      WHERE id = ?
+    `).get(resolvedAppTypeId);
+
+    if (!appType) {
+      throw new Error("App type not found");
+    }
+  }
+
+  requestedSuiteIds.forEach((requestedSuiteId) => {
+    const suite = db.prepare(`
+      SELECT id, app_type_id
+      FROM test_suites
+      WHERE id = ?
+    `).get(requestedSuiteId);
+
+    if (!suite) {
+      throw new Error("Test suite not found");
+    }
+
+    if (!resolvedAppTypeId) {
+      resolvedAppTypeId = suite.app_type_id;
+    } else if (suite.app_type_id !== resolvedAppTypeId) {
+      throw new Error("All suites must belong to the selected app type");
+    }
+  });
+
   requestedRequirementIds.forEach((requestedRequirementId) => {
     const requirement = db.prepare(`
       SELECT id FROM requirements WHERE id = ?
@@ -140,9 +204,10 @@ exports.updateTestCase = (id, data) => {
 
   db.prepare(`
     UPDATE test_cases
-    SET suite_id = ?, title = ?, description = ?, priority = ?, status = ?, requirement_id = ?
+    SET app_type_id = ?, suite_id = ?, title = ?, description = ?, priority = ?, status = ?, requirement_id = ?
     WHERE id = ?
   `).run(
+    resolvedAppTypeId,
     requestedSuiteIds[0] || null,
     data.title ?? existing.title,
     data.description ?? existing.description,

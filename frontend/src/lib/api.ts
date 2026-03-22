@@ -3,6 +3,7 @@ import type {
   AppType,
   Execution,
   ExecutionResult,
+  Feedback,
   Project,
   ProjectMember,
   Requirement,
@@ -165,6 +166,15 @@ export const api = {
       request<{ updated: boolean }>(`/requirements/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/requirements/${id}`, { method: "DELETE" })
   },
+  feedback: {
+    list: (query?: { user_id?: string; status?: string }) =>
+      request<Feedback[]>(`/feedback${toQueryString(query)}`),
+    create: (input: { user_id: string; title: string; message: string; status?: string }) =>
+      request<{ id: string }>("/feedback", { method: "POST", body: JSON.stringify(input) }),
+    update: (id: string, input: Partial<{ user_id: string; title: string; message: string; status: string }>) =>
+      request<{ updated: boolean }>(`/feedback/${id}`, { method: "PUT", body: JSON.stringify(input) }),
+    delete: (id: string) => request<{ deleted: boolean }>(`/feedback/${id}`, { method: "DELETE" })
+  },
   requirementTestCases: {
     list: (query?: { requirement_id?: string; test_case_id?: string }) =>
       request<Array<{ requirement_id: string; test_case_id: string }>>(`/requirement-test-cases${toQueryString(query)}`),
@@ -191,9 +201,9 @@ export const api = {
   testCases: {
     list: (query?: { suite_id?: string; requirement_id?: string; status?: string; app_type_id?: string }) =>
       request<TestCase[]>(`/test-cases${toQueryString(query)}`),
-    create: (input: { suite_id?: string; suite_ids?: string[]; title: string; description?: string; priority?: number; status?: string; requirement_id?: string; requirement_ids?: string[] }) =>
+    create: (input: { app_type_id?: string; suite_id?: string; suite_ids?: string[]; title: string; description?: string; priority?: number; status?: string; requirement_id?: string; requirement_ids?: string[] }) =>
       request<{ id: string }>("/test-cases", { method: "POST", body: JSON.stringify(input) }),
-    update: (id: string, input: Partial<{ suite_id: string; suite_ids: string[]; title: string; description: string; priority: number; status: string; requirement_id: string; requirement_ids: string[] }>) =>
+    update: (id: string, input: Partial<{ app_type_id: string; suite_id: string; suite_ids: string[]; title: string; description: string; priority: number; status: string; requirement_id: string; requirement_ids: string[] }>) =>
       request<{ updated: boolean }>(`/test-cases/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/test-cases/${id}`, { method: "DELETE" })
   },
