@@ -25,4 +25,4 @@ else
 fi
 
 echo "Starting API server..."
-exec node server.js
+exec node api/src/server.js

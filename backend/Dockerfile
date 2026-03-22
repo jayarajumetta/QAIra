@@ -2,13 +2,18 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install sqlite
+# 👉 ADD THIS LINE
 RUN apk add --no-cache sqlite
 
-# Copy files
 COPY . .
 
-# Make init script executable
+WORKDIR /app/api
+RUN npm install
+
+WORKDIR /app
+
 RUN chmod +x init-db.sh
+
+EXPOSE 3000
 
 CMD ["sh", "init-db.sh"]

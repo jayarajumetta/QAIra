@@ -454,3 +454,22 @@ Note:
 - The API enforces relational checks in services before delete operations where dependent records exist.
 - Validation is lightweight and implemented in [backend/api/src/plugins/validator.js](/Users/jayarajumetta/MJ/qaira/backend/api/src/plugins/validator.js).
 - Error responses are handled centrally in [backend/api/src/plugins/errorHandler.js](/Users/jayarajumetta/MJ/qaira/backend/api/src/plugins/errorHandler.js).
+
+
+##  Step 1: Rebuild
+cd backend
+docker build --no-cache --platform linux/amd64 -t jayarajumetta/qaira-backend:latest .
+docker push jayarajumetta/qaira-backend:latest
+## Step 2: Redeploy EC2
+docker compose -f docker-compose.full.yml down
+docker rmi jayarajumetta/qaira-backend:latest
+docker compose -f docker-compose.full.yml up -d
+## 🔍 Step 3: Verify logs
+docker logs testiny-api
+
+👉 Now you should see:
+
+Initializing SQLite DB...
+Database initialized...
+Starting API server...
+Server running on port 3000
