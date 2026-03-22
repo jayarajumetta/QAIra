@@ -18,13 +18,6 @@ const navGroups = [
     ]
   },
   {
-    label: "Administration",
-    items: [
-      { to: "/people", label: "People & Access", icon: UsersIcon },
-      { to: "/projects", label: "Projects & Scope", icon: FolderIcon }
-    ]
-  },
-  {
     label: "Test Design",
     items: [
       { to: "/design", label: "Test Design", icon: FlaskIcon },
@@ -36,6 +29,13 @@ const navGroups = [
     label: "Execution",
     items: [
       { to: "/executions", label: "Executions", icon: PlayIcon }
+    ]
+  },
+  {
+    label: "Administration",
+    items: [
+      { to: "/people", label: "People & Access", icon: UsersIcon },
+      { to: "/projects", label: "Projects & Scope", icon: FolderIcon }
     ]
   }
 ];
@@ -63,6 +63,7 @@ export function AppShell() {
   const [sidebarProjectId, setSidebarProjectId] = useState(() => window.localStorage.getItem(PROJECT_KEY) || "");
 
   const projects = projectsQuery.data || [];
+  const hasNoProjects = projects.length === 0;
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -74,15 +75,20 @@ export function AppShell() {
     window.localStorage.setItem(SIDEBAR_KEY, String(isCollapsed));
   }, [isCollapsed]);
 
+  // Auto-select first project or clear if no projects
   useEffect(() => {
-    if (!sidebarProjectId && projects[0]) {
+    if (!sidebarProjectId && projects.length > 0) {
       setSidebarProjectId(projects[0].id);
+    } else if (hasNoProjects) {
+      setSidebarProjectId("");
     }
-  }, [projects, sidebarProjectId]);
+  }, [projects, sidebarProjectId, hasNoProjects]);
 
   useEffect(() => {
     if (sidebarProjectId) {
       window.localStorage.setItem(PROJECT_KEY, sidebarProjectId);
+    } else {
+      window.localStorage.removeItem(PROJECT_KEY);
     }
   }, [sidebarProjectId]);
 
@@ -130,21 +136,28 @@ export function AppShell() {
               <p className="sidebar-copy">
                 Orchestrate projects, coverage design, execution runs, and results from one place.
               </p>
-              <label className="sidebar-project-picker">
-                <span>Project</span>
-                <select
-                  value={sidebarProjectId}
-                  onChange={(event) => {
-                    setSidebarProjectId(event.target.value);
-                    navigate("/projects");
-                  }}
-                  aria-label="Select a project"
-                >
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>{project.name}</option>
-                  ))}
-                </select>
-              </label>
+              {hasNoProjects ? (
+                <div className="sidebar-notice">
+                  <p>No projects assigned yet.</p>
+                  <p className="text-muted">Ask an admin to add you to a project.</p>
+                </div>
+              ) : (
+                <label className="sidebar-project-picker">
+                  <span>Project</span>
+                  <select
+                    value={sidebarProjectId}
+                    onChange={(event) => {
+                      setSidebarProjectId(event.target.value);
+                      navigate("/projects");
+                    }}
+                    aria-label="Select a project"
+                  >
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>{project.name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </>
           ) : null}
         </div>
@@ -156,6 +169,13 @@ export function AppShell() {
               <div className="nav-group-items">
                 {group.items.map((item) => {
                   const Icon = item.icon;
+                  // Disable project-dependent pages if no projects
+                  const isDisabled = hasNoProjects && (
+                    item.to === "/design" || 
+                    item.to === "/requirements" || 
+                    item.to === "/test-cases" || 
+                    item.to === "/executions"
+                  );
 
                   return (
                     <NavLink
@@ -164,6 +184,12 @@ export function AppShell() {
                       className={({ isActive }) => isActive ? "nav-link is-active" : "nav-link"}
                       title={isCollapsed ? item.label : undefined}
                       aria-label={item.label}
+                      onClick={(e) => {
+                        if (isDisabled) {
+                          e.preventDefault();
+                        }
+                      }}
+                      style={{ opacity: isDisabled ? 0.5 : 1, cursor: isDisabled ? "not-allowed" : "pointer" }}
                     >
                       <span className="nav-link-icon" aria-hidden="true"><Icon /></span>
                       {!isCollapsed ? <span className="nav-link-label">{item.label}</span> : null}

@@ -1,14 +1,20 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 
+const normalizeEmail = (email) => {
+  return email.toLowerCase().trim();
+};
+
 exports.createUser = ({ email, password_hash, name, role_id }) => {
   if (!email || !password_hash || !role_id) {
     throw new Error("Missing required fields");
   }
 
+  const normalizedEmail = normalizeEmail(email);
+
   const existing = db.prepare(`
-    SELECT id FROM users WHERE email = ?
-  `).get(email);
+    SELECT id FROM users WHERE LOWER(email) = ?
+  `).get(normalizedEmail);
 
   if (existing) throw new Error("User already exists");
 
@@ -31,7 +37,7 @@ exports.createUser = ({ email, password_hash, name, role_id }) => {
   `);
 
   const transaction = db.transaction(() => {
-    createUserStatement.run(id, email, password_hash, name || null);
+    createUserStatement.run(id, normalizedEmail, password_hash, name || null);
 
     projects.forEach((project) => {
       createMembership.run(uuid(), project.id, id, role_id);
@@ -87,11 +93,16 @@ exports.updateUser = (id, data) => {
   if (!existing) throw new Error("User not found");
 
   if (data.email && data.email !== existing.email) {
-    const duplicate = db.prepare(`
-      SELECT id FROM users WHERE email = ? AND id != ?
-    `).get(data.email, id);
+    const normalizedNewEmail = normalizeEmail(data.email);
+    const normalizedExistingEmail = normalizeEmail(existing.email);
+    
+    if (normalizedNewEmail !== normalizedExistingEmail) {
+      const duplicate = db.prepare(`
+        SELECT id FROM users WHERE LOWER(email) = ? AND id != ?
+      `).get(normalizedNewEmail, id);
 
-    if (duplicate) throw new Error("User email already exists");
+      if (duplicate) throw new Error("User email already exists");
+    }
   }
 
   if (data.role_id) {
@@ -114,8 +125,9 @@ exports.updateUser = (id, data) => {
   `);
 
   const transaction = db.transaction(() => {
+    const emailToUpdate = data.email ? normalizeEmail(data.email) : existing.email;
     updateUserStatement.run(
-      data.email ?? existing.email,
+      emailToUpdate,
       data.password_hash ?? existing.password_hash,
       data.name ?? existing.name,
       id

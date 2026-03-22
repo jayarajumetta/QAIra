@@ -512,13 +512,26 @@ export function ExecutionsPage() {
             {executions.map((execution) => (
               <button
                 key={execution.id}
-                className={selectedExecution?.id === execution.id ? "record-card is-active" : "record-card"}
+                className={selectedExecution?.id === execution.id ? "record-card execution-card is-active" : "record-card execution-card"}
                 onClick={() => setSelectedExecutionId(execution.id)}
                 type="button"
               >
                 <div className="record-card-body">
-                  <strong>{execution.name || "Unnamed execution"}</strong>
-                  <span>{projects.find((project) => project.id === execution.project_id)?.name || execution.project_id}</span>
+                  <div className="record-card-header">
+                    <div className="record-card-icon execution">▶</div>
+                    <strong>{execution.name || "Unnamed execution"}</strong>
+                    <span className="object-type-badge execution">Execution</span>
+                  </div>
+                  <div className="record-meta">
+                    <div className="record-meta-row">
+                      <strong>Project</strong>
+                      <span>{projects.find((project) => project.id === execution.project_id)?.name || execution.project_id}</span>
+                    </div>
+                    <div className="record-meta-row">
+                      <strong>Status</strong>
+                      <span className="execution-status-indicator" style={{ textTransform: 'capitalize' }}>{execution.status}</span>
+                    </div>
+                  </div>
                   <ProgressMeter
                     detail={`${executionSummaryById[execution.id]?.passed || 0}/${executionSummaryById[execution.id]?.total || 0} passed`}
                     value={executionSummaryById[execution.id]?.percent || 0}
@@ -580,14 +593,32 @@ export function ExecutionsPage() {
                         {suiteCases.map((testCase) => (
                           <button
                             key={testCase.id}
-                            className={selectedTestCaseId === testCase.id ? "record-card is-active" : "record-card"}
+                            className={selectedTestCaseId === testCase.id ? "record-card test-case-card is-active" : "record-card test-case-card"}
                             onClick={() => setSelectedTestCaseId(testCase.id)}
                             type="button"
                           >
                             <div className="record-card-body">
-                              <strong>{testCase.title}</strong>
-                              <span>{testCase.description || "No description"}</span>
-                              {!casesBySuiteId[suite.id]?.some((item) => item.id === testCase.id) ? <span>Deleted reference</span> : null}
+                              <div className="record-card-header">
+                                <div className="record-card-icon test-case">📄</div>
+                                <strong>{testCase.title}</strong>
+                                <span className="object-type-badge test-case">Test Case</span>
+                              </div>
+                              <div className="record-meta">
+                                <div className="record-meta-row">
+                                  <strong>Suite</strong>
+                                  <span>{suite.name}</span>
+                                </div>
+                                <div className="record-meta-row">
+                                  <strong>Description</strong>
+                                  <span>{testCase.description || "No description"}</span>
+                                </div>
+                                {!casesBySuiteId[suite.id]?.some((item) => item.id === testCase.id) ? (
+                                  <div className="record-meta-row">
+                                    <strong>Info</strong>
+                                    <span className="object-context">Deleted reference</span>
+                                  </div>
+                                ) : null}
+                              </div>
                             </div>
                             <StatusBadge value={caseDerivedStatus(testCase)} />
                           </button>

@@ -367,7 +367,7 @@ export function TestCasesPage() {
 
               return (
                 <button
-                  className={selectedTestCaseId === testCase.id ? "record-card is-active" : "record-card"}
+                  className={selectedTestCaseId === testCase.id ? "record-card test-case-card is-active" : "record-card test-case-card"}
                   key={testCase.id}
                   onClick={() => {
                     setSelectedTestCaseId(testCase.id);
@@ -376,9 +376,21 @@ export function TestCasesPage() {
                   type="button"
                 >
                   <div className="record-card-body">
-                    <strong>{testCase.title}</strong>
-                    <span>{testCase.description || "No description"}</span>
-                    <span>{requirement?.title || "No requirement linked"}</span>
+                    <div className="record-card-header">
+                      <div className="record-card-icon test-case">📄</div>
+                      <strong>{testCase.title}</strong>
+                      <span className="object-type-badge test-case">Test Case</span>
+                    </div>
+                    <div className="record-meta">
+                      <div className="record-meta-row">
+                        <strong>Priority</strong>
+                        <span className="test-case-priority">P{testCase.priority || 3}</span>
+                      </div>
+                      <div className="record-meta-row">
+                        <strong>Requirement</strong>
+                        <span>{requirement?.title || "No requirement linked"}</span>
+                      </div>
+                    </div>
                     <div className="history-bars" aria-label="Execution history">
                       {history.length ? history.map((result) => (
                         <span

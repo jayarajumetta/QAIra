@@ -1,17 +1,15 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { FormField } from "../components/FormField";
 
 export function AuthPage() {
   const navigate = useNavigate();
+  const formRef = useRef<HTMLFormElement>(null);
   const { login, signup, forgotPassword, resetPassword } = useAuth();
-  const [mode, setMode] = useState<"login" | "signup" | "forgot" | "success">("login");
+  const [mode, setMode] = useState<"login" | "signup" | "forgot" | "signup-success" | "reset-success">("login");
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [resetEmail, setResetEmail] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const validateEmail = (email: string): boolean => {
@@ -28,13 +26,11 @@ export function AuthPage() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setError("");
-    setSuccess("");
     setFieldErrors({});
     setIsSubmitting(true);
 
     const formData = new FormData(event.currentTarget);
-    const email = String(formData.get("email") || "").trim();
+    const email = String(formData.get("email") || "").trim().toLowerCase();
     const password = String(formData.get("password") || "");
     const name = String(formData.get("name") || "").trim();
     const newPassword = String(formData.get("newPassword") || "");
@@ -81,60 +77,63 @@ export function AuthPage() {
     try {
       if (mode === "login") {
         await login({ email, password });
-        setSuccess("Login successful. Entering workspace...");
-        window.setTimeout(() => {
+        // Success - navigate will happen automatically when session is set
+        setTimeout(() => {
           navigate("/", { replace: true });
-        }, 800);
+        }, 300);
       } else if (mode === "signup") {
         await signup({ email, password, name: name || undefined });
-        setSuccessMessage("Account created successfully! Please log in with your credentials.");
-        setMode("success");
-        setIsSubmitting(false);
-        return;
+        // Show success screen instead of auto-logging in
+        setMode("signup-success");
       } else if (mode === "forgot") {
         // First, request password reset
         await forgotPassword({ email });
-
-        // Then, immediately reset the password
+        // Then, reset the password
         await resetPassword({
           email,
           newPassword
         });
-
-        setSuccessMessage("Password reset successfully! You can now log in with your new password.");
-        setMode("success");
-        setIsSubmitting(false);
-        return;
+        // Show success screen instead of auto-logging in
+        setMode("reset-success");
       }
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Authentication failed. Please try again.");
-    } finally {
+      setError(nextError instanceof Error ? nextError.message : "Operation failed. Please try again.");
       setIsSubmitting(false);
+      // Don't clear error automatically - keep it persistent until user dismisses it
     }
   };
 
   const handleForgotClick = () => {
     setMode("forgot");
     setError("");
-    setSuccess("");
     setFieldErrors({});
+    if (formRef.current) {
+      formRef.current.reset();
+    }
   };
 
   const handleBackClick = () => {
     setMode("login");
     setError("");
-    setSuccess("");
-    setResetEmail("");
-    setSuccessMessage("");
     setFieldErrors({});
+    setIsSubmitting(false);
+    if (formRef.current) {
+      formRef.current.reset();
+    }
   };
 
   const handleLoginClick = () => {
     setMode("login");
     setError("");
-    setSuccess("");
-    setSuccessMessage("");
     setFieldErrors({});
+    setIsSubmitting(false);
+    if (formRef.current) {
+      formRef.current.reset();
+    }
+  };
+
+  const dismissError = () => {
+    setError("");
   };
 
   return (
@@ -150,11 +149,11 @@ export function AuthPage() {
       </section>
 
       <section className="auth-panel">
-        {mode === "forgot" || mode === "success" ? null : (
+        {mode === "forgot" || mode === "signup-success" || mode === "reset-success" ? null : (
           <div className="tab-row">
             <button
               className={mode === "login" ? "tab-button is-active" : "tab-button"}
-              onClick={() => setMode("login")}
+              onClick={() => handleLoginClick()}
               type="button"
               aria-label="Login tab"
             >
@@ -171,7 +170,7 @@ export function AuthPage() {
           </div>
         )}
 
-        <form className="auth-form" onSubmit={handleSubmit} noValidate>
+        <form className="auth-form" onSubmit={handleSubmit} noValidate ref={formRef}>
           {mode === "login" && (
             <>
               <FormField label="Email" error={fieldErrors.email}>
@@ -198,8 +197,19 @@ export function AuthPage() {
                 />
               </FormField>
 
-              {success ? <p className="form-success">{success}</p> : null}
-              {error ? <p className="form-error" role="alert">{error}</p> : null}
+              {error && (
+                <div className="form-error-box" role="alert">
+                  <p>{error}</p>
+                  <button 
+                    className="form-error-dismiss"
+                    onClick={dismissError}
+                    type="button"
+                    aria-label="Dismiss error"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
 
               <button 
                 className="primary-button" 
@@ -256,8 +266,19 @@ export function AuthPage() {
                 />
               </FormField>
 
-              {success ? <p className="form-success">{success}</p> : null}
-              {error ? <p className="form-error" role="alert">{error}</p> : null}
+              {error && (
+                <div className="form-error-box" role="alert">
+                  <p>{error}</p>
+                  <button 
+                    className="form-error-dismiss"
+                    onClick={dismissError}
+                    type="button"
+                    aria-label="Dismiss error"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
 
               <button 
                 className="primary-button" 
@@ -284,7 +305,6 @@ export function AuthPage() {
                   placeholder="you@company.com" 
                   required
                   disabled={isSubmitting}
-                  onChange={(e) => setResetEmail(e.currentTarget.value)}
                   aria-invalid={!!fieldErrors.email}
                   aria-describedby={fieldErrors.email ? "email-error" : undefined}
                 />
@@ -302,8 +322,19 @@ export function AuthPage() {
                 />
               </FormField>
 
-              {success ? <p className="form-success">{success}</p> : null}
-              {error ? <p className="form-error" role="alert">{error}</p> : null}
+              {error && (
+                <div className="form-error-box" role="alert">
+                  <p>{error}</p>
+                  <button 
+                    className="form-error-dismiss"
+                    onClick={dismissError}
+                    type="button"
+                    aria-label="Dismiss error"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
 
               <button 
                 className="primary-button" 
@@ -326,23 +357,38 @@ export function AuthPage() {
             </>
           )}
 
-          {mode === "success" && (
-            <>
-              <div className="success-screen">
-                <div className="success-icon">✓</div>
-                <h2>{successMessage.includes("Account created") ? "Account Created" : "Password Reset"}</h2>
-                <p className="form-success" style={{ fontSize: "1rem", marginBottom: "2rem" }}>
-                  {successMessage}
-                </p>
-                <button
-                  className="primary-button"
-                  onClick={handleLoginClick}
-                  type="button"
-                >
-                  Back to Login
-                </button>
-              </div>
-            </>
+          {mode === "signup-success" && (
+            <div className="success-screen">
+              <div className="success-icon">✓</div>
+              <h2>Account Created</h2>
+              <p className="success-message">
+                Your account has been created successfully! Please log in with your credentials.
+              </p>
+              <button
+                className="primary-button"
+                onClick={handleLoginClick}
+                type="button"
+              >
+                Back to Login
+              </button>
+            </div>
+          )}
+
+          {mode === "reset-success" && (
+            <div className="success-screen">
+              <div className="success-icon">✓</div>
+              <h2>Password Reset</h2>
+              <p className="success-message">
+                Your password has been reset successfully! Please log in with your new password.
+              </p>
+              <button
+                className="primary-button"
+                onClick={handleLoginClick}
+                type="button"
+              >
+                Back to Login
+              </button>
+            </div>
           )}
         </form>
       </section>

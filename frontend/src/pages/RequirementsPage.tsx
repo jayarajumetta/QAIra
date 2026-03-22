@@ -228,7 +228,10 @@ export function RequirementsPage() {
                 type="button"
               >
                 <div className="record-card-body">
-                  <strong>{item.title}</strong>
+                  <div className="record-card-header">
+                    <div className="record-card-icon requirement">📋</div>
+                    <strong>{item.title}</strong>
+                  </div>
                   <span>{item.description || "No description"}</span>
                   <span>Priority {item.priority ?? "n/a"} · {item.status || "unset"}</span>
                 </div>

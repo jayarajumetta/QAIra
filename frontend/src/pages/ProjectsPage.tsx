@@ -80,6 +80,24 @@ export function ProjectsPage() {
     event.currentTarget.reset();
   };
 
+  const handleRemoveMember = async (member: any) => {
+    // Warn user if removing themselves
+    if (member.user_id === session?.user.id) {
+      const confirmed = window.confirm(
+        "You are removing yourself from this project. You will no longer be able to access it. Continue?"
+      );
+      if (!confirmed) return;
+    }
+
+    try {
+      await api.projectMembers.delete(member.id);
+      setMessage(`Member removed. ${member.user_id === session?.user.id ? "You have been removed from this project." : ""}`);
+      await invalidate();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to remove member");
+    }
+  };
+
   return (
     <div className="page-content">
       <PageHeader
@@ -189,13 +207,16 @@ export function ProjectsPage() {
                 {scopedMembers.map((member) => {
                   const user = users.data?.find((item) => item.id === member.user_id);
                   const role = roles.data?.find((item) => item.id === member.role_id);
+                  const isCurrentUser = member.user_id === session?.user.id;
+
                   return (
                     <article className="mini-card" key={member.id}>
                       <strong>{user?.name || user?.email || member.user_id}</strong>
                       <span>{role?.name || member.role_id}</span>
+                      {isCurrentUser && <span className="text-muted" style={{ fontSize: "0.75rem" }}>You</span>}
                       <button
                         className="ghost-button danger"
-                        onClick={() => void api.projectMembers.delete(member.id).then(invalidate).catch((error: Error) => setMessage(error.message))}
+                        onClick={() => handleRemoveMember(member)}
                         type="button"
                       >
                         Remove

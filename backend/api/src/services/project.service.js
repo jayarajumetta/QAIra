@@ -17,13 +17,38 @@ exports.createProject = ({ name, description, created_by }) => {
   return { id };
 };
 
-exports.getProjects = () => {
-  return db.prepare("SELECT * FROM projects").all();
+// Get projects filtered by user membership
+exports.getProjects = (userId = null) => {
+  if (!userId) {
+    return db.prepare("SELECT * FROM projects").all();
+  }
+  
+  // Only return projects where user is a member
+  return db.prepare(`
+    SELECT DISTINCT p.* 
+    FROM projects p
+    INNER JOIN project_members pm ON pm.project_id = p.id
+    WHERE pm.user_id = ?
+    ORDER BY p.created_at DESC
+  `).all(userId);
 };
 
-exports.getProject = (id) => {
+exports.getProject = (id, userId = null) => {
   const project = db.prepare("SELECT * FROM projects WHERE id = ?").get(id);
   if (!project) throw new Error("Project not found");
+  
+  // If userId provided, verify user is a member
+  if (userId) {
+    const membership = db.prepare(`
+      SELECT id FROM project_members 
+      WHERE project_id = ? AND user_id = ?
+    `).get(id, userId);
+    
+    if (!membership) {
+      throw new Error("Access denied: You are not a member of this project");
+    }
+  }
+  
   return project;
 };
 

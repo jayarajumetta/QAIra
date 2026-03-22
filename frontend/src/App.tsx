@@ -1,7 +1,8 @@
 import {
   Navigate,
   RouterProvider,
-  createBrowserRouter
+  createBrowserRouter,
+  useLocation
 } from "react-router-dom";
 import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -20,6 +21,18 @@ import { TestCasesPage } from "./pages/TestCasesPage";
 const queryClient = new QueryClient();
 const THEME_KEY = "app_theme";
 
+const PAGE_TITLES: Record<string, string> = {
+  "/": "Overview · QAIra",
+  "/people": "People · QAIra",
+  "/projects": "Projects · QAIra",
+  "/design": "Test Design · QAIra",
+  "/requirements": "Requirements · QAIra",
+  "/feedback": "Feedback · QAIra",
+  "/test-cases": "Test Cases · QAIra",
+  "/executions": "Executions · QAIra",
+  "/auth": "Sign In · QAIra"
+};
+
 function ThemeBootstrap() {
   useEffect(() => {
     const stored = window.localStorage.getItem(THEME_KEY);
@@ -35,6 +48,17 @@ function ThemeBootstrap() {
   return null;
 }
 
+function PageTitleUpdater() {
+  const location = useLocation();
+
+  useEffect(() => {
+    const title = PAGE_TITLES[location.pathname] || "QAIra";
+    document.title = title;
+  }, [location.pathname]);
+
+  return null;
+}
+
 function ProtectedLayout() {
   const { session, isLoading } = useAuth();
 
@@ -46,7 +70,12 @@ function ProtectedLayout() {
     return <Navigate to="/auth" replace />;
   }
 
-  return <AppShell />;
+  return (
+    <>
+      <PageTitleUpdater />
+      <AppShell />
+    </>
+  );
 }
 
 function AuthRoute() {
@@ -60,7 +89,12 @@ function AuthRoute() {
     return <Navigate to="/" replace />;
   }
 
-  return <AuthPage />;
+  return (
+    <>
+      <PageTitleUpdater />
+      <AuthPage />
+    </>
+  );
 }
 
 const router = createBrowserRouter([

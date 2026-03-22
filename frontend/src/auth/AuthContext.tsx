@@ -70,9 +70,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async signup(input) {
       try {
         setError(null);
-        const next = await api.auth.signup(input);
-        sessionStorage.write(next);
-        setSession(next);
+        // Signup should NOT automatically set session
+        // Just make the request, don't store session
+        await api.auth.signup(input);
+        // Don't set session - let user see success screen and login manually
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : "Signup failed";
         setError(errorMessage);
@@ -92,9 +93,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async resetPassword(input) {
       try {
         setError(null);
-        const next = await api.auth.resetPassword(input);
-        sessionStorage.write(next);
-        setSession(next);
+        // Reset password should NOT automatically set session
+        // Just make the request, don't store session
+        await api.auth.resetPassword(input);
+        // Don't set session - let user see success screen and login manually
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : "Password reset failed";
         setError(errorMessage);

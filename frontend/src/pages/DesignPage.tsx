@@ -816,13 +816,28 @@ function SuiteSidebar({
         {suites.map((suite) => (
           <button
             key={suite.id}
-            className={activeSuiteId === suite.id ? "record-card is-active" : "record-card"}
+            className={activeSuiteId === suite.id ? "record-card test-suite-card is-active" : "record-card test-suite-card"}
             onClick={() => onSelectSuite(suite.id)}
             type="button"
           >
+            <div className="record-card-header">
+                <div className="record-card-icon test-suite">📁</div>
+                <strong>{suite.name}</strong>
+                <span className="object-type-badge test-suite">Suite</span>
+              </div>
             <div className="record-card-body">
-              <strong>{suite.name}</strong>
-              <span>{suite.parent_id ? "Nested suite" : "Root suite"}</span>
+              <div className="record-meta">
+                <div className="record-meta-row">
+                  <strong>Type</strong>
+                  <span className="suite-hierarchy-badge" style={{ textTransform: 'capitalize' }}>
+                    {suite.parent_id ? "Nested suite" : "Root suite"}
+                  </span>
+                </div>
+                <div className="record-meta-row">
+                  <strong>Cases</strong>
+                  <span className="step-count-badge">{counts[suite.id] || 0}</span>
+                </div>
+              </div>
             </div>
             <span className="count-pill">{counts[suite.id] || 0}</span>
           </button>
@@ -892,7 +907,7 @@ function TestCaseList({
         {cases.map((testCase) => (
           <button
             key={testCase.id}
-            className={activeCaseId === testCase.id ? "record-card is-active" : "record-card"}
+            className={activeCaseId === testCase.id ? "record-card test-case-card is-active" : "record-card test-case-card"}
             onClick={() => onSelectCase(testCase.id)}
             draggable={Boolean(selectedSuite)}
             onDragStart={() => setDraggedCaseId(testCase.id)}
@@ -911,8 +926,21 @@ function TestCaseList({
             </label>
             {selectedSuite ? <span className="drag-handle" aria-hidden="true">::</span> : null}
             <div className="record-card-body">
-              <strong>{testCase.title}</strong>
-              <span>{testCase.description || "No description"}</span>
+              <div className="record-card-header">
+                <div className="record-card-icon test-case">📄</div>
+                <strong>{testCase.title}</strong>
+                <span className="object-type-badge test-case">Test Case</span>
+              </div>
+              <div className="record-meta">
+                <div className="record-meta-row">
+                  <strong>Priority</strong>
+                  <span className="test-case-priority">P{testCase.priority || 3}</span>
+                </div>
+                <div className="record-meta-row">
+                  <strong>Status</strong>
+                  <span>{testCase.description || "No description"}</span>
+                </div>
+              </div>
             </div>
             <StatusBadge value={testCase.status || DEFAULT_CASE_STATUS} />
           </button>

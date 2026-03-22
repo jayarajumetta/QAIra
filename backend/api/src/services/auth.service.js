@@ -62,7 +62,19 @@ const ensureMemberRole = () => {
 const assignDefaultProjectMemberships = (userId, roleId) => {
   // Use provided roleId or default to member role if not specified
   const finalRoleId = roleId || ensureMemberRole();
-  const projects = db.prepare(`SELECT id FROM projects`).all();
+  
+  // Get only the first project (sample project) instead of all projects
+  const firstProject = db.prepare(`
+    SELECT id FROM projects 
+    ORDER BY created_at ASC 
+    LIMIT 1
+  `).get();
+  
+  if (!firstProject) {
+    // If no projects exist, skip membership assignment
+    return;
+  }
+  
   const existing = db.prepare(`
     SELECT id
     FROM project_members
@@ -73,11 +85,14 @@ const assignDefaultProjectMemberships = (userId, roleId) => {
     VALUES (?, ?, ?, ?)
   `);
 
-  projects.forEach((project) => {
-    if (!existing.get(project.id, userId)) {
-      insertMembership.run(crypto.randomUUID(), project.id, userId, finalRoleId);
-    }
-  });
+  // Only add to first project
+  if (!existing.get(firstProject.id, userId)) {
+    insertMembership.run(crypto.randomUUID(), firstProject.id, userId, finalRoleId);
+  }
+};
+
+const normalizeEmail = (email) => {
+  return email.toLowerCase().trim();
 };
 
 exports.signup = ({ email, password, name, role }) => {
@@ -85,9 +100,11 @@ exports.signup = ({ email, password, name, role }) => {
     throw createError("Missing required fields", 400);
   }
 
+  const normalizedEmail = normalizeEmail(email);
+
   const existing = db.prepare(`
-    SELECT id FROM users WHERE email = ?
-  `).get(email);
+    SELECT id FROM users WHERE LOWER(email) = ?
+  `).get(normalizedEmail);
 
   if (existing) {
     throw createError("User already exists", 409);
@@ -99,7 +116,7 @@ exports.signup = ({ email, password, name, role }) => {
   db.prepare(`
     INSERT INTO users (id, email, password_hash, name)
     VALUES (?, ?, ?, ?)
-  `).run(id, email, passwordHash, name || null);
+  `).run(id, normalizedEmail, passwordHash, name || null);
 
   assignDefaultProjectMemberships(id, role);
 
@@ -116,11 +133,13 @@ exports.login = ({ email, password }) => {
     throw createError("Missing required fields", 400);
   }
 
+  const normalizedEmail = normalizeEmail(email);
+
   const user = db.prepare(`
     SELECT id, email, name, password_hash, created_at
     FROM users
-    WHERE email = ?
-  `).get(email);
+    WHERE LOWER(email) = ?
+  `).get(normalizedEmail);
 
   if (!user) {
     throw createError("Invalid credentials", 401);
@@ -167,9 +186,11 @@ exports.forgotPassword = ({ email }) => {
     throw createError("Email is required", 400);
   }
 
+  const normalizedEmail = normalizeEmail(email);
+
   const user = db.prepare(`
-    SELECT id FROM users WHERE email = ?
-  `).get(email);
+    SELECT id FROM users WHERE LOWER(email) = ?
+  `).get(normalizedEmail);
 
   if (!user) {
     // Don't reveal if user exists for security
@@ -197,9 +218,11 @@ exports.resetPassword = ({ email, newPassword }) => {
     throw createError("Password must be at least 6 characters", 400);
   }
 
+  const normalizedEmail = normalizeEmail(email);
+
   const user = db.prepare(`
-    SELECT id FROM users WHERE email = ?
-  `).get(email);
+    SELECT id FROM users WHERE LOWER(email) = ?
+  `).get(normalizedEmail);
 
   if (!user) {
     throw createError("User not found", 404);
