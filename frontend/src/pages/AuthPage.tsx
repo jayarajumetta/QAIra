@@ -5,11 +5,13 @@ import { FormField } from "../components/FormField";
 
 export function AuthPage() {
   const navigate = useNavigate();
-  const { login, signup } = useAuth();
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const { login, signup, forgotPassword, resetPassword } = useAuth();
+  const [mode, setMode] = useState<"login" | "signup" | "forgot" | "success">("login");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -26,19 +28,58 @@ export function AuthPage() {
       if (mode === "login") {
         await login({ email, password });
         setSuccess("Login successful. Entering workspace...");
-      } else {
+        window.setTimeout(() => {
+          navigate("/", { replace: true });
+        }, 800);
+      } else if (mode === "signup") {
         await signup({ email, password, name });
-        setSuccess("Signup successful. Your account was created and your session is active.");
+        setSuccessMessage("Account created successfully! Please log in with your credentials.");
+        setMode("success");
+        setIsSubmitting(false);
+        return;
+      } else if (mode === "forgot") {
+        const newPassword = String(formData.get("newPassword") || "");
+        
+        // First, request password reset
+        await forgotPassword({ email });
+        
+        // Then, immediately reset the password
+        await resetPassword({
+          email,
+          newPassword
+        });
+        
+        setSuccessMessage("Password reset successfully! You can now log in with your new password.");
+        setMode("success");
+        setIsSubmitting(false);
+        return;
       }
-
-      window.setTimeout(() => {
-        navigate("/", { replace: true });
-      }, 800);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Authentication failed");
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleForgotClick = () => {
+    setMode("forgot");
+    setError("");
+    setSuccess("");
+  };
+
+  const handleBackClick = () => {
+    setMode("login");
+    setError("");
+    setSuccess("");
+    setResetEmail("");
+    setSuccessMessage("");
+  };
+
+  const handleLoginClick = () => {
+    setMode("login");
+    setError("");
+    setSuccess("");
+    setSuccessMessage("");
   };
 
   return (
@@ -54,44 +95,139 @@ export function AuthPage() {
       </section>
 
       <section className="auth-panel">
-        <div className="tab-row">
-          <button
-            className={mode === "login" ? "tab-button is-active" : "tab-button"}
-            onClick={() => setMode("login")}
-            type="button"
-          >
-            Login
-          </button>
-          <button
-            className={mode === "signup" ? "tab-button is-active" : "tab-button"}
-            onClick={() => setMode("signup")}
-            type="button"
-          >
-            Sign up
-          </button>
-        </div>
+        {mode === "forgot" || mode === "success" ? null : (
+          <div className="tab-row">
+            <button
+              className={mode === "login" ? "tab-button is-active" : "tab-button"}
+              onClick={() => setMode("login")}
+              type="button"
+            >
+              Login
+            </button>
+            <button
+              className={mode === "signup" ? "tab-button is-active" : "tab-button"}
+              onClick={() => setMode("signup")}
+              type="button"
+            >
+              Sign up
+            </button>
+          </div>
+        )}
 
         <form className="auth-form" onSubmit={handleSubmit}>
-          {mode === "signup" ? (
-            <FormField label="Full name">
-              <input name="name" placeholder="QA Lead" />
-            </FormField>
-          ) : null}
+          {mode === "login" && (
+            <>
+              <FormField label="Email">
+                <input name="email" type="email" placeholder="you@company.com" required />
+              </FormField>
 
-          <FormField label="Email">
-            <input name="email" type="email" placeholder="you@company.com" required />
-          </FormField>
+              <FormField label="Password">
+                <input name="password" type="password" placeholder="At least 6 characters" required />
+              </FormField>
 
-          <FormField label="Password">
-            <input name="password" type="password" placeholder="At least 6 characters" required />
-          </FormField>
+              {success ? <p className="form-success">{success}</p> : null}
+              {error ? <p className="form-error">{error}</p> : null}
 
-          {success ? <p className="form-success">{success}</p> : null}
-          {error ? <p className="form-error">{error}</p> : null}
+              <button className="primary-button" disabled={isSubmitting} type="submit">
+                {isSubmitting ? "Working…" : "Enter workspace"}
+              </button>
 
-          <button className="primary-button" disabled={isSubmitting} type="submit">
-            {isSubmitting ? "Working…" : mode === "login" ? "Enter workspace" : "Create account"}
-          </button>
+              <button
+                className="link-button"
+                onClick={handleForgotClick}
+                type="button"
+                style={{ marginTop: "1rem", textAlign: "center" }}
+              >
+                Forgot password?
+              </button>
+            </>
+          )}
+
+          {mode === "signup" && (
+            <>
+              <FormField label="Full name">
+                <input name="name" placeholder="QA Lead" />
+              </FormField>
+
+              <FormField label="Email">
+                <input name="email" type="email" placeholder="you@company.com" required />
+              </FormField>
+
+              <FormField label="Password">
+                <input name="password" type="password" placeholder="At least 6 characters" required />
+              </FormField>
+
+              {success ? <p className="form-success">{success}</p> : null}
+              {error ? <p className="form-error">{error}</p> : null}
+
+              <button className="primary-button" disabled={isSubmitting} type="submit">
+                {isSubmitting ? "Working…" : "Create account"}
+              </button>
+            </>
+          )}
+
+          {mode === "forgot" && (
+            <>
+              <div className="forgot-password-header">
+                <h3>Reset your password</h3>
+                <p>Enter your email and new password to reset your account.</p>
+              </div>
+
+              <FormField label="Email">
+                <input 
+                  name="email" 
+                  type="email" 
+                  placeholder="you@company.com" 
+                  required 
+                  onChange={(e) => setResetEmail(e.currentTarget.value)}
+                />
+              </FormField>
+
+              <FormField label="New Password">
+                <input
+                  name="newPassword"
+                  type="password"
+                  placeholder="At least 6 characters"
+                  required
+                />
+              </FormField>
+
+              {success ? <p className="form-success">{success}</p> : null}
+              {error ? <p className="form-error">{error}</p> : null}
+
+              <button className="primary-button" disabled={isSubmitting} type="submit">
+                {isSubmitting ? "Resetting…" : "Reset password"}
+              </button>
+
+              <button
+                className="link-button"
+                onClick={handleBackClick}
+                type="button"
+                style={{ marginTop: "1rem", textAlign: "center" }}
+              >
+                Back to login
+              </button>
+            </>
+          )}
+
+          {mode === "success" && (
+            <>
+              <div className="success-screen">
+                <div className="success-icon">✓</div>
+                <h2>{successMessage.includes("Account created") ? "Account Created" : "Password Reset"}</h2>
+                <p className="form-success" style={{ fontSize: "1rem", marginBottom: "2rem" }}>
+                  {successMessage}
+                </p>
+                <button
+                  className="primary-button"
+                  onClick={handleLoginClick}
+                  type="button"
+                >
+                  Back to Login
+                </button>
+              </div>
+            </>
+          )}
         </form>
       </section>
     </div>

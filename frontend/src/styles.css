@@ -317,8 +317,65 @@ textarea {
   margin: 0;
 }
 
+.forgot-password-header,
+.reset-password-header {
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.forgot-password-header h3,
+.reset-password-header h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.25rem;
+  color: var(--text);
+}
+
+.forgot-password-header p,
+.reset-password-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
 .success-message {
   color: var(--success);
+}
+
+.success-screen {
+  display: grid;
+  place-items: center;
+  gap: 1.5rem;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.success-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #2e7d52, #5bc58a);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 3rem;
+  font-weight: 700;
+  box-shadow: 0 8px 24px rgba(46, 125, 82, 0.3);
+}
+
+.success-screen h2 {
+  margin: 0;
+  font-size: 1.75rem;
+  color: var(--text);
+}
+
+.success-screen .form-success {
+  font-size: 1rem !important;
+  line-height: 1.6;
+  max-width: 60ch;
+  margin-bottom: 2rem;
 }
 
 .app-shell {

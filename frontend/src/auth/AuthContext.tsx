@@ -8,6 +8,8 @@ type AuthContextValue = {
   isLoading: boolean;
   login: (input: { email: string; password: string }) => Promise<void>;
   signup: (input: { email: string; password: string; name?: string }) => Promise<void>;
+  forgotPassword: (input: { email: string }) => Promise<{ success: boolean }>;
+  resetPassword: (input: { email: string; newPassword: string }) => Promise<void>;
   logout: () => void;
   refreshSession: () => Promise<void>;
 };
@@ -53,6 +55,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     async signup(input) {
       const next = await api.auth.signup(input);
+      sessionStorage.write(next);
+      setSession(next);
+    },
+    async forgotPassword(input) {
+      return api.auth.forgotPassword(input);
+    },
+    async resetPassword(input) {
+      const next = await api.auth.resetPassword(input);
       sessionStorage.write(next);
       setSession(next);
     },

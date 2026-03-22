@@ -18,7 +18,7 @@ const getSessionRole = (id) => {
     LIMIT 1
   `).get(id);
 
-  return row?.name === "admin" ? "admin" : "member";
+  return row?.name || "member";
 };
 
 const selectUserForSession = (id) => {
@@ -59,8 +59,9 @@ const ensureMemberRole = () => {
   return id;
 };
 
-const assignDefaultProjectMemberships = (userId) => {
-  const memberRoleId = ensureMemberRole();
+const assignDefaultProjectMemberships = (userId, roleId) => {
+  // Use provided roleId or default to member role if not specified
+  const finalRoleId = roleId || ensureMemberRole();
   const projects = db.prepare(`SELECT id FROM projects`).all();
   const existing = db.prepare(`
     SELECT id
@@ -74,12 +75,12 @@ const assignDefaultProjectMemberships = (userId) => {
 
   projects.forEach((project) => {
     if (!existing.get(project.id, userId)) {
-      insertMembership.run(crypto.randomUUID(), project.id, userId, memberRoleId);
+      insertMembership.run(crypto.randomUUID(), project.id, userId, finalRoleId);
     }
   });
 };
 
-exports.signup = ({ email, password, name }) => {
+exports.signup = ({ email, password, name, role }) => {
   if (!email || !password) {
     throw createError("Missing required fields", 400);
   }
@@ -100,7 +101,7 @@ exports.signup = ({ email, password, name }) => {
     VALUES (?, ?, ?, ?)
   `).run(id, email, passwordHash, name || null);
 
-  assignDefaultProjectMemberships(id);
+  assignDefaultProjectMemberships(id, role);
 
   const user = selectUserForSession(id);
 
@@ -153,3 +154,81 @@ exports.getSession = (token) => {
     user
   };
 };
+
+exports.forgotPassword = ({ email }) => {
+  if (!email) {
+    throw createError("Email is required", 400);
+  }
+
+  const user = db.prepare(`
+    SELECT id FROM users WHERE email = ?
+  `).get(email);
+
+  if (!user) {
+    // Don't reveal if user exists for security
+    return { success: true };
+  }
+
+  // Mark that a password reset was requested
+  db.prepare(`
+    INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      expires_at = excluded.expires_at,
+      created_at = CURRENT_TIMESTAMP
+  `).run(crypto.randomUUID(), user.id, "pending", new Date(Date.now() + 60 * 60 * 1000).toISOString());
+
+  return { success: true };
+};
+
+exports.resetPassword = ({ email, newPassword }) => {
+  if (!email || !newPassword) {
+    throw createError("Email and new password are required", 400);
+  }
+
+  if (newPassword.length < 6) {
+    throw createError("Password must be at least 6 characters", 400);
+  }
+
+  const user = db.prepare(`
+    SELECT id FROM users WHERE email = ?
+  `).get(email);
+
+  if (!user) {
+    throw createError("User not found", 404);
+  }
+
+  // Check if a reset was recently requested
+  const resetRecord = db.prepare(`
+    SELECT expires_at FROM password_reset_tokens WHERE user_id = ?
+  `).get(user.id);
+
+  if (!resetRecord) {
+    throw createError("No password reset request found. Please request a password reset first.", 400);
+  }
+
+  const expiresAt = new Date(resetRecord.expires_at);
+  if (expiresAt < new Date()) {
+    throw createError("Password reset request has expired. Please request a new one.", 401);
+  }
+
+  // Update password and remove reset token
+  const newPasswordHash = hashPassword(newPassword);
+
+  db.prepare(`
+    UPDATE users SET password_hash = ? WHERE id = ?
+  `).run(newPasswordHash, user.id);
+
+  db.prepare(`
+    DELETE FROM password_reset_tokens WHERE user_id = ?
+  `).run(user.id);
+
+  const sessionUser = selectUserForSession(user.id);
+
+  return {
+    token: createToken(sessionUser),
+    user: sessionUser
+  };
+};
+
+exports.assignDefaultProjectMemberships = assignDefaultProjectMemberships;

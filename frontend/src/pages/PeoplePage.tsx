@@ -178,7 +178,7 @@ export function PeoplePage() {
                     <strong>{user.name || "Unnamed user"}</strong>
                     <span>{user.email}</span>
                   </div>
-                  <small>{user.role === "admin" ? "Admin" : "Member"}</small>
+                  <small>{user.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : "Member"}</small>
                 </button>
               ))}
             </div>
@@ -272,10 +272,11 @@ export function PeoplePage() {
                     <input name="email" type="email" required />
                   </FormField>
                   <FormField label="Role">
-                    <select defaultValue={defaultMemberRoleId} name="role_id">
+                    <select name="role_id" required>
+                      <option value="">Select a role</option>
                       {roleItems.map((role) => (
                         <option key={role.id} value={role.id}>
-                          {role.name === "admin" ? "Admin" : role.name === "member" ? "Member" : role.name}
+                          {role.name.charAt(0).toUpperCase() + role.name.slice(1)}
                         </option>
                       ))}
                     </select>

@@ -114,6 +114,16 @@ export const api = {
         method: "POST",
         body: JSON.stringify(input)
       }),
+    forgotPassword: (input: { email: string }) =>
+      request<{ success: boolean; resetToken?: string }>("/auth/forgot-password", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
+    resetPassword: (input: { email: string; newPassword: string }) =>
+      request<SessionPayload>("/auth/reset-password", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
     session: () => request<SessionPayload>("/auth/session")
   },
   users: {

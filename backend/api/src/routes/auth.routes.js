@@ -15,7 +15,8 @@ module.exports = async function (fastify) {
     fastify.validate({
       email: { required: true, type: "string", minLength: 3 },
       password: { required: true, type: "string", minLength: 6 },
-      name: { required: false, type: "string" }
+      name: { required: false, type: "string" },
+      role: { required: false, type: "string" }
     }, req.body);
 
     return service.signup(req.body);
@@ -28,6 +29,23 @@ module.exports = async function (fastify) {
     }, req.body);
 
     return service.login(req.body);
+  });
+
+  fastify.post("/auth/forgot-password", async (req) => {
+    fastify.validate({
+      email: { required: true, type: "string", minLength: 3 }
+    }, req.body);
+
+    return service.forgotPassword(req.body);
+  });
+
+  fastify.post("/auth/reset-password", async (req) => {
+    fastify.validate({
+      email: { required: true, type: "string", minLength: 3 },
+      newPassword: { required: true, type: "string", minLength: 6 }
+    }, req.body);
+
+    return service.resetPassword(req.body);
   });
 
   fastify.get("/auth/session", async (req) => {
