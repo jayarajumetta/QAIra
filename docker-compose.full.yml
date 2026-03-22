@@ -2,7 +2,6 @@ services:
   db:
     build:
       context: ./backend
-      dockerfile: Dockerfile
     container_name: testiny-db
     volumes:
       - ./backend/data:/data
@@ -11,9 +10,7 @@ services:
       DB_PATH: /data/testiny.db
 
   api:
-    build:
-      context: ./backend/api
-      dockerfile: Dockerfile
+    image: jayarajumetta/qaira-backend:latest
     container_name: testiny-api
     ports:
       - "3000:3000"
@@ -27,13 +24,11 @@ services:
       - db
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: jayarajumetta/qaira-frontend:latest
     container_name: qaira-frontend
     ports:
       - "8080:80"
     environment:
-      QAIRA_API_BASE_URL: ${QAIRA_API_BASE_URL:-http://localhost:3000}
+      QAIRA_API_BASE_URL: http://13.239.23.67:3000
     depends_on:
       - api
