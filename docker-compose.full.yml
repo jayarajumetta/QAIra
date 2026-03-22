@@ -1,14 +1,4 @@
 services:
-  db:
-    build:
-      context: ./backend
-    container_name: testiny-db
-    volumes:
-      - ./backend/data:/data
-      - ./backend/db:/app/db
-    environment:
-      DB_PATH: /data/testiny.db
-
   api:
     image: jayarajumetta/qaira-backend:latest
     container_name: testiny-api
@@ -20,8 +10,7 @@ services:
       DB_PATH: /data/testiny.db
       SESSION_SECRET: ${SESSION_SECRET:-qaira-dev-secret}
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
-    depends_on:
-      - db
+    restart: always
 
   frontend:
     image: jayarajumetta/qaira-frontend:latest
@@ -32,3 +21,4 @@ services:
       QAIRA_API_BASE_URL: http://13.239.23.67:3000
     depends_on:
       - api
+    restart: always
