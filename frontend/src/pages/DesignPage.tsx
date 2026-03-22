@@ -720,7 +720,7 @@ export function DesignPage() {
           mode={suiteModalMode}
           suite={selectedSuite}
           suites={suites}
-          appTypeCases={appTypeCases}
+          appTypeCases={allTestCases}
           selectedCaseIds={selectedTestCaseIds}
           onClose={() => setIsSuiteModalOpen(false)}
           onSubmit={handleSuiteSave}
