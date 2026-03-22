@@ -1,7 +1,13 @@
-const fastify = require("fastify")({ logger: true });
+const fastify = require("fastify")({ 
+  logger: true,
+  requestIdLogLabel: "reqId",
+  disableRequestLogging: false,
+  requestTimeout: 30000
+});
+
 const cors = require("@fastify/cors");
 const db = require("./db");
-const { verifyToken } = require("./utils/token");
+const { verifyToken, generateRequestId } = require("./utils/token");
 
 const createError = (message, statusCode) => {
   const error = new Error(message);
@@ -112,11 +118,34 @@ fastify.decorate("requireAdmin", async (req) => {
   }
 });
 
-fastify.register(cors, {
-  origin: process.env.CORS_ORIGIN || true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+// Add request ID to all requests
+fastify.addHook("onRequest", async (req, reply) => {
+  req.id = req.id || generateRequestId();
+  reply.header("X-Request-ID", req.id);
+  // Add security headers
+  reply.header("X-Content-Type-Options", "nosniff");
+  reply.header("X-Frame-Options", "DENY");
+  reply.header("X-XSS-Protection", "1; mode=block");
+  reply.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
 });
+
+// Improved CORS configuration
+const allowedOrigins = process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(",") : ["http://localhost:5173"];
+
+fastify.register(cors, {
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== "production") {
+      cb(null, true);
+    } else {
+      cb(new Error("CORS not allowed"));
+    }
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
+  maxAge: 86400
+});
+
 fastify.register(require("./plugins/errorHandler"));
 fastify.register(require("./routes"));
 

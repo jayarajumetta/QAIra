@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 const db = require("../db");
-const { hashPassword, createToken, verifyToken } = require("../utils/token");
+const { hashPassword, verifyPassword, createToken, verifyToken } = require("../utils/token");
 
 const createError = (message, statusCode) => {
   const error = new Error(message);
@@ -122,7 +122,14 @@ exports.login = ({ email, password }) => {
     WHERE email = ?
   `).get(email);
 
-  if (!user || user.password_hash !== hashPassword(password)) {
+  if (!user) {
+    throw createError("Invalid credentials", 401);
+  }
+
+  // Use timing-safe comparison for password verification
+  const isPasswordValid = verifyPassword(password, user.password_hash);
+  
+  if (!isPasswordValid) {
     throw createError("Invalid credentials", 401);
   }
 

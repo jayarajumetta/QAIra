@@ -85,10 +85,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
-      headers
+      headers,
+      signal: AbortSignal.timeout(30000) // 30 second timeout
     });
-  } catch {
-    throw new Error(`Unable to reach API at ${API_BASE_URL}`);
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Request timeout: ${path} took too long to respond`);
+    }
+    throw new Error(`Unable to reach API at ${API_BASE_URL}. Check your connection and try again.`);
+  }
+
+  // Handle authentication errors
+  if (response.status === 401) {
+    sessionStorage.clear();
+    window.location.href = "/auth";
   }
 
   const isJson = response.headers.get("content-type")?.includes("application/json");
@@ -96,7 +106,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const error = (payload || {}) as ApiError;
-    throw new Error(error.message || "Request failed");
+    const message = error.message || `Request failed with status ${response.status}`;
+    throw new Error(message);
   }
 
   return payload as T;

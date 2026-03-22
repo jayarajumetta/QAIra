@@ -43,10 +43,12 @@ const navGroups = [
 export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { session, logout } = useAuth();
+  const { session, logout, error, clearError } = useAuth();
   const projectsQuery = useQuery({
     queryKey: ["projects"],
-    queryFn: api.projects.list
+    queryFn: api.projects.list,
+    retry: 1,
+    staleTime: 60 * 1000
   });
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     const stored = window.localStorage.getItem(THEME_KEY);
@@ -90,10 +92,23 @@ export function AppShell() {
 
   return (
     <div className="app-shell">
-      <aside className={isCollapsed ? "sidebar is-collapsed" : "sidebar"}>
+      {error && (
+        <div className="global-alert" role="alert">
+          <p>{error}</p>
+          <button 
+            className="ghost-button" 
+            onClick={clearError}
+            aria-label="Dismiss error"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+      
+      <aside className={isCollapsed ? "sidebar is-collapsed" : "sidebar"} role="navigation">
         <div className="sidebar-top">
           <div className="sidebar-brand-row">
-            <div className="brand-mark">QAIra</div>
+            <div className="brand-mark" aria-label="QAIra Home">QAIra</div>
             {!isCollapsed ? (
               <div className="brand-copy">
                 <strong>QAIra</strong>
@@ -123,6 +138,7 @@ export function AppShell() {
                     setSidebarProjectId(event.target.value);
                     navigate("/projects");
                   }}
+                  aria-label="Select a project"
                 >
                   {projects.map((project) => (
                     <option key={project.id} value={project.id}>{project.name}</option>
@@ -133,7 +149,7 @@ export function AppShell() {
           ) : null}
         </div>
 
-        <nav className="nav-list">
+        <nav className="nav-list" aria-label="Main navigation">
           {navGroups.map((group) => (
             <div className="nav-group" key={group.label}>
               {!isCollapsed ? <p className="nav-group-label">{group.label}</p> : null}
@@ -147,8 +163,9 @@ export function AppShell() {
                       to={item.to}
                       className={({ isActive }) => isActive ? "nav-link is-active" : "nav-link"}
                       title={isCollapsed ? item.label : undefined}
+                      aria-label={item.label}
                     >
-                      <span className="nav-link-icon"><Icon /></span>
+                      <span className="nav-link-icon" aria-hidden="true"><Icon /></span>
                       {!isCollapsed ? <span className="nav-link-label">{item.label}</span> : null}
                     </NavLink>
                   );
@@ -185,7 +202,7 @@ export function AppShell() {
             </button>
           )}
 
-          <div className="user-chip">
+          <div className="user-chip" role="status">
             <strong>{session?.user.name || "Workspace User"}</strong>
             {!isCollapsed ? (
               <>
@@ -195,7 +212,12 @@ export function AppShell() {
             ) : null}
           </div>
 
-          <button className="ghost-button sidebar-signout" onClick={logout} type="button">
+          <button 
+            className="ghost-button sidebar-signout" 
+            onClick={logout} 
+            type="button"
+            aria-label="Sign out"
+          >
             <LogoutIcon />
             {!isCollapsed ? <span>Sign out</span> : null}
           </button>
