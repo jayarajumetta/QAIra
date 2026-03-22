@@ -24,4 +24,5 @@ else
   echo "Existing database detected at $DB_PATH, skipping schema and seed."
 fi
 
-tail -f /dev/null
+echo "Starting API server..."
+exec node server.js
