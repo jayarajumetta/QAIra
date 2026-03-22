@@ -3,6 +3,7 @@ import {
   RouterProvider,
   createBrowserRouter
 } from "react-router-dom";
+import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { AppShell } from "./components/AppShell";
@@ -16,6 +17,22 @@ import { RequirementsPage } from "./pages/RequirementsPage";
 import { TestCasesPage } from "./pages/TestCasesPage";
 
 const queryClient = new QueryClient();
+const THEME_KEY = "app_theme";
+
+function ThemeBootstrap() {
+  useEffect(() => {
+    const stored = window.localStorage.getItem(THEME_KEY);
+    const theme = stored === "dark" || stored === "light"
+      ? stored
+      : window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+
+    document.documentElement.dataset.theme = theme;
+  }, []);
+
+  return null;
+}
 
 function ProtectedLayout() {
   const { session, isLoading } = useAuth();
@@ -68,6 +85,7 @@ const router = createBrowserRouter([
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <ThemeBootstrap />
       <AuthProvider>
         <RouterProvider router={router} />
       </AuthProvider>

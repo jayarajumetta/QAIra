@@ -12,6 +12,13 @@ import { api } from "../lib/api";
 import type { AppType, Execution, ExecutionResult, Project, TestCase, TestStep, TestSuite } from "../types";
 
 type StepStatus = "passed" | "failed" | "blocked";
+type ExecutionSuiteNode = {
+  id: string;
+  name: string;
+  app_type_id: string | null;
+  parent_id: string | null;
+  isHistorical?: boolean;
+};
 
 export function ExecutionsPage() {
   const queryClient = useQueryClient();
@@ -117,11 +124,27 @@ export function ExecutionsPage() {
     enabled: Boolean(executionAppTypeId)
   });
 
-  const executionSuites = useMemo(() => {
+  const executionSuites = useMemo<ExecutionSuiteNode[]>(() => {
     const allSuites = executionSuitesQuery.data || [];
-    const suiteIds = new Set(selectedExecution?.suite_ids || []);
-    return allSuites.filter((suite) => suiteIds.has(suite.id));
-  }, [executionSuitesQuery.data, selectedExecution?.suite_ids]);
+    const liveById = new Map(allSuites.map((suite) => [suite.id, suite]));
+
+    return (selectedExecution?.suite_ids || []).map((suiteId) => {
+      const liveSuite = liveById.get(suiteId);
+
+      if (liveSuite) {
+        return liveSuite;
+      }
+
+      const snapshot = selectedExecution?.suite_snapshots?.find((item) => item.id === suiteId);
+      return {
+        id: suiteId,
+        name: snapshot?.name || "Deleted Suite",
+        app_type_id: selectedExecution?.app_type_id || null,
+        parent_id: null,
+        isHistorical: true
+      };
+    });
+  }, [executionSuitesQuery.data, selectedExecution?.app_type_id, selectedExecution?.suite_ids, selectedExecution?.suite_snapshots]);
 
   useEffect(() => {
     setExpandedSuiteIds((current) => current.filter((id) => executionSuites.some((suite) => suite.id === id)));
@@ -143,13 +166,48 @@ export function ExecutionsPage() {
     return map;
   }, [caseQueries, executionSuites]);
 
+  const historicalCasesBySuiteId = useMemo(() => {
+    const map: Record<string, TestCase[]> = {};
+
+    executionResults.forEach((result) => {
+      const suiteId = result.suite_id || "historical-unsorted";
+      map[suiteId] = map[suiteId] || [];
+
+      if (!map[suiteId].some((item) => item.id === result.test_case_id)) {
+        map[suiteId].push({
+          id: result.test_case_id,
+          suite_id: suiteId,
+          suite_ids: suiteId === "historical-unsorted" ? [] : [suiteId],
+          title: result.test_case_title || "Deleted Test Case",
+          description: "Historical execution result",
+          priority: null,
+          status: null,
+          requirement_id: null,
+          requirement_ids: []
+        });
+      }
+    });
+
+    return map;
+  }, [executionResults]);
+
+  const displayCasesBySuiteId = useMemo(() => {
+    const map: Record<string, TestCase[]> = {};
+
+    executionSuites.forEach((suite) => {
+      map[suite.id] = casesBySuiteId[suite.id]?.length ? casesBySuiteId[suite.id] : (historicalCasesBySuiteId[suite.id] || []);
+    });
+
+    return map;
+  }, [casesBySuiteId, executionSuites, historicalCasesBySuiteId]);
+
   const executionCaseOrder = useMemo(() => {
     const ordered: TestCase[] = [];
     executionSuites.forEach((suite) => {
-      (casesBySuiteId[suite.id] || []).forEach((testCase) => ordered.push(testCase));
+      (displayCasesBySuiteId[suite.id] || []).forEach((testCase) => ordered.push(testCase));
     });
     return ordered;
-  }, [casesBySuiteId, executionSuites]);
+  }, [displayCasesBySuiteId, executionSuites]);
 
   useEffect(() => {
     if (selectedTestCaseId && executionCaseOrder.some((testCase) => testCase.id === selectedTestCaseId)) {
@@ -157,11 +215,11 @@ export function ExecutionsPage() {
     }
 
     const firstAvailable = executionSuites
-      .map((suite) => casesBySuiteId[suite.id]?.[0])
+      .map((suite) => displayCasesBySuiteId[suite.id]?.[0])
       .find(Boolean);
 
     setSelectedTestCaseId(firstAvailable?.id || "");
-  }, [casesBySuiteId, executionCaseOrder, executionSuites, selectedTestCaseId]);
+  }, [displayCasesBySuiteId, executionCaseOrder, executionSuites, selectedTestCaseId]);
 
   const stepsQuery = useQuery({
     queryKey: ["execution-test-steps", selectedTestCaseId],
@@ -212,19 +270,20 @@ export function ExecutionsPage() {
   const suiteMetrics = useMemo(() => {
     return executionSuites.map((suite) => {
       const suiteCases = casesBySuiteId[suite.id] || [];
-      const completed = suiteCases.filter((testCase) => ["passed", "failed"].includes(caseDerivedStatus(testCase))).length;
-      const failed = suiteCases.some((testCase) => caseDerivedStatus(testCase) === "failed");
-      const blocked = suiteCases.some((testCase) => caseDerivedStatus(testCase) === "blocked");
-      const percent = suiteCases.length ? Math.round((completed / suiteCases.length) * 100) : 0;
+      const scopedCases = displayCasesBySuiteId[suite.id] || [];
+      const completed = scopedCases.filter((testCase) => ["passed", "failed"].includes(caseDerivedStatus(testCase))).length;
+      const failed = scopedCases.some((testCase) => caseDerivedStatus(testCase) === "failed");
+      const blocked = scopedCases.some((testCase) => caseDerivedStatus(testCase) === "blocked");
+      const percent = scopedCases.length ? Math.round((completed / scopedCases.length) * 100) : 0;
 
       return {
         suiteId: suite.id,
-        count: suiteCases.length,
+        count: scopedCases.length,
         percent,
         status: failed ? "failed" : blocked ? "running" : percent === 100 ? "completed" : "queued"
       };
     });
-  }, [casesBySuiteId, executionSuites, resultByCaseId]);
+  }, [displayCasesBySuiteId, executionSuites, resultByCaseId]);
 
   const executionProgress = useMemo(() => {
     const totalCases = executionCaseOrder.length;
@@ -370,7 +429,7 @@ export function ExecutionsPage() {
         const nextCase = executionCaseOrder[currentCaseIndex + 1];
 
         if (nextCase) {
-          const nextSuite = executionSuites.find((suite) => suite.id === nextCase.suite_id);
+        const nextSuite = executionSuites.find((suite) => (nextCase.suite_ids || []).includes(suite.id) || nextCase.suite_id === suite.id);
           if (nextSuite && !expandedSuiteIds.includes(nextSuite.id)) {
             setExpandedSuiteIds((current) => [...current, nextSuite.id]);
           }
@@ -442,6 +501,13 @@ export function ExecutionsPage() {
 
       <div className="design-layout">
         <Panel title="Execution list" subtitle="Pick an execution to inspect tree progress and run steps.">
+          {executionsQuery.isLoading ? (
+            <div className="record-list">
+              <div className="skeleton-block" />
+              <div className="skeleton-block" />
+              <div className="skeleton-block" />
+            </div>
+          ) : null}
           <div className="record-list">
             {executions.map((execution) => (
               <button
@@ -485,7 +551,7 @@ export function ExecutionsPage() {
               {!executionSuites.length ? <div className="empty-state compact">No suites selected for this execution.</div> : null}
 
               {executionSuites.map((suite) => {
-                const suiteCases = casesBySuiteId[suite.id] || [];
+                const suiteCases = displayCasesBySuiteId[suite.id] || [];
                 const suiteMetric = suiteMetrics.find((item) => item.suiteId === suite.id);
                 const isExpanded = expandedSuiteIds.includes(suite.id);
 
@@ -503,6 +569,7 @@ export function ExecutionsPage() {
                       <div className="record-card-body">
                         <strong>{suite.name}</strong>
                         <ProgressMeter detail={`${suiteMetric?.count || 0} cases`} label="Suite completion" value={suiteMetric?.percent || 0} />
+                        {suite.isHistorical ? <span>Historical snapshot</span> : null}
                       </div>
                       <StatusBadge value={suiteMetric?.status || "queued"} />
                     </button>
@@ -520,6 +587,7 @@ export function ExecutionsPage() {
                             <div className="record-card-body">
                               <strong>{testCase.title}</strong>
                               <span>{testCase.description || "No description"}</span>
+                              {!casesBySuiteId[suite.id]?.some((item) => item.id === testCase.id) ? <span>Deleted reference</span> : null}
                             </div>
                             <StatusBadge value={caseDerivedStatus(testCase)} />
                           </button>
@@ -565,7 +633,7 @@ export function ExecutionsPage() {
 
               {!selectedExecution.suite_ids.length ? <div className="empty-state compact">No suites selected for this execution.</div> : null}
               {selectedExecution.suite_ids.length && !selectedTestCaseId ? <div className="empty-state compact">No test case selected.</div> : null}
-              {selectedTestCaseId && !selectedSteps.length ? <div className="empty-state compact">No steps available for this test case.</div> : null}
+              {selectedTestCaseId && !selectedSteps.length ? <div className="empty-state compact">No live steps available. Historical results are still preserved for this test case.</div> : null}
 
               <div className="step-list">
                 {selectedSteps.map((step) => {

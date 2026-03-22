@@ -172,11 +172,6 @@ exports.deleteTestCase = (id) => {
   `).run(id);
 
   db.prepare(`
-    DELETE FROM execution_results
-    WHERE test_case_id = ?
-  `).run(id);
-
-  db.prepare(`
     DELETE FROM requirement_test_cases
     WHERE test_case_id = ?
   `).run(id);

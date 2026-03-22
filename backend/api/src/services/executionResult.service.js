@@ -3,6 +3,15 @@ const { v4: uuid } = require("uuid");
 
 const VALID_STATUS = ["passed", "failed", "blocked"];
 
+const getPrimarySuiteForTestCase = db.prepare(`
+  SELECT test_suites.id, test_suites.name
+  FROM suite_test_cases
+  JOIN test_suites ON test_suites.id = suite_test_cases.suite_id
+  WHERE suite_test_cases.test_case_id = ?
+  ORDER BY suite_test_cases.sort_order ASC
+  LIMIT 1
+`);
+
 // Create Result
 exports.createExecutionResult = (data) => {
 
@@ -30,7 +39,9 @@ exports.createExecutionResult = (data) => {
 
   // Validate test case
   const testCase = db.prepare(`
-    SELECT id FROM test_cases WHERE id = ?
+    SELECT id, title, suite_id
+    FROM test_cases
+    WHERE id = ?
   `).get(test_case_id);
 
   if (!testCase) throw new Error("Test case not found");
@@ -51,16 +62,20 @@ exports.createExecutionResult = (data) => {
     if (!user) throw new Error("Invalid user");
   }
 
+  const suiteSnapshot = getPrimarySuiteForTestCase.get(test_case_id);
   const id = uuid();
 
   db.prepare(`
     INSERT INTO execution_results
-    (id, execution_id, test_case_id, app_type_id, status, duration_ms, error, logs, executed_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, execution_id, test_case_id, test_case_title, suite_id, suite_name, app_type_id, status, duration_ms, error, logs, executed_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     execution_id,
     test_case_id,
+    testCase.title,
+    suiteSnapshot?.id || testCase.suite_id || null,
+    suiteSnapshot?.name || null,
     app_type_id,
     status,
     duration_ms || null,

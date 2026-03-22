@@ -32,11 +32,142 @@ const ensureExecutionScope = () => {
     CREATE TABLE IF NOT EXISTS execution_suites (
       execution_id TEXT NOT NULL,
       suite_id TEXT NOT NULL,
+      suite_name TEXT,
       PRIMARY KEY (execution_id, suite_id),
-      FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE,
-      FOREIGN KEY (suite_id) REFERENCES test_suites(id)
+      FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
     )
   `).run();
+};
+
+const migrateExecutionSnapshots = () => {
+  if (!hasTable("execution_suites") || !hasTable("execution_results")) {
+    return;
+  }
+
+  const executionSuiteColumns = db.prepare(`PRAGMA table_info(execution_suites)`).all();
+  const executionSuiteForeignKeys = db.prepare(`PRAGMA foreign_key_list(execution_suites)`).all();
+  const suiteNeedsMigration = !executionSuiteColumns.some((column) => column.name === "suite_name")
+    || executionSuiteForeignKeys.some((key) => key.table === "test_suites");
+
+  if (suiteNeedsMigration) {
+    db.pragma("foreign_keys = OFF");
+
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS execution_suites__new (
+        execution_id TEXT NOT NULL,
+        suite_id TEXT NOT NULL,
+        suite_name TEXT,
+        PRIMARY KEY (execution_id, suite_id),
+        FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
+      )
+    `).run();
+
+    db.prepare(`
+      INSERT INTO execution_suites__new (execution_id, suite_id, suite_name)
+      SELECT execution_suites.execution_id, execution_suites.suite_id, test_suites.name
+      FROM execution_suites
+      LEFT JOIN test_suites ON test_suites.id = execution_suites.suite_id
+    `).run();
+
+    db.prepare(`DROP TABLE execution_suites`).run();
+    db.prepare(`ALTER TABLE execution_suites__new RENAME TO execution_suites`).run();
+
+    db.pragma("foreign_keys = ON");
+  }
+
+  const executionResultColumns = db.prepare(`PRAGMA table_info(execution_results)`).all();
+  const executionResultForeignKeys = db.prepare(`PRAGMA foreign_key_list(execution_results)`).all();
+  const hasSnapshotTestCaseTitle = executionResultColumns.some((column) => column.name === "test_case_title");
+  const hasSnapshotSuiteId = executionResultColumns.some((column) => column.name === "suite_id");
+  const hasSnapshotSuiteName = executionResultColumns.some((column) => column.name === "suite_name");
+  const resultNeedsMigration = !executionResultColumns.some((column) => column.name === "test_case_title")
+    || !executionResultColumns.some((column) => column.name === "suite_id")
+    || !executionResultColumns.some((column) => column.name === "suite_name")
+    || executionResultForeignKeys.some((key) => key.table === "test_cases");
+
+  if (resultNeedsMigration) {
+    db.pragma("foreign_keys = OFF");
+
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS execution_results__new (
+        id TEXT PRIMARY KEY,
+        execution_id TEXT NOT NULL,
+        test_case_id TEXT NOT NULL,
+        test_case_title TEXT,
+        suite_id TEXT,
+        suite_name TEXT,
+        app_type_id TEXT NOT NULL,
+        status TEXT CHECK(status IN ('passed','failed','blocked')),
+        duration_ms INTEGER,
+        error TEXT,
+        logs TEXT,
+        executed_by TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (execution_id) REFERENCES executions(id),
+        FOREIGN KEY (app_type_id) REFERENCES app_types(id),
+        FOREIGN KEY (executed_by) REFERENCES users(id)
+      )
+    `).run();
+
+    const testCaseTitleExpression = hasSnapshotTestCaseTitle ? "execution_results.test_case_title" : "test_cases.title";
+    const suiteIdExpression = hasSnapshotSuiteId
+      ? "execution_results.suite_id"
+      : `(
+          SELECT suite_test_cases.suite_id
+          FROM suite_test_cases
+          WHERE suite_test_cases.test_case_id = execution_results.test_case_id
+          ORDER BY suite_test_cases.sort_order ASC
+          LIMIT 1
+        )`;
+    const suiteNameExpression = hasSnapshotSuiteName
+      ? "execution_results.suite_name"
+      : `(
+          SELECT test_suites.name
+          FROM suite_test_cases
+          JOIN test_suites ON test_suites.id = suite_test_cases.suite_id
+          WHERE suite_test_cases.test_case_id = execution_results.test_case_id
+          ORDER BY suite_test_cases.sort_order ASC
+          LIMIT 1
+        )`;
+
+    db.prepare(`
+      INSERT INTO execution_results__new (
+        id, execution_id, test_case_id, test_case_title, suite_id, suite_name, app_type_id,
+        status, duration_ms, error, logs, executed_by, created_at
+      )
+      SELECT
+        execution_results.id,
+        execution_results.execution_id,
+        execution_results.test_case_id,
+        ${testCaseTitleExpression},
+        COALESCE(
+          ${suiteIdExpression},
+          test_cases.suite_id
+        ),
+        COALESCE(
+          ${suiteNameExpression},
+          (
+            SELECT test_suites.name
+            FROM test_suites
+            WHERE test_suites.id = test_cases.suite_id
+          )
+        ),
+        execution_results.app_type_id,
+        execution_results.status,
+        execution_results.duration_ms,
+        execution_results.error,
+        execution_results.logs,
+        execution_results.executed_by,
+        execution_results.created_at
+      FROM execution_results
+      LEFT JOIN test_cases ON test_cases.id = execution_results.test_case_id
+    `).run();
+
+    db.prepare(`DROP TABLE execution_results`).run();
+    db.prepare(`ALTER TABLE execution_results__new RENAME TO execution_results`).run();
+
+    db.pragma("foreign_keys = ON");
+  }
 };
 
 const ensureSuiteTestCaseMapping = () => {
@@ -198,6 +329,7 @@ const ensureDefaultRolesAndMemberships = () => {
 };
 
 ensureExecutionScope();
+migrateExecutionSnapshots();
 ensureSuiteTestCaseMapping();
 ensureRequirementTestCaseMapping();
 ensureDefaultRolesAndMemberships();

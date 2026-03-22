@@ -348,7 +348,13 @@ export function TestCasesPage() {
             />
           </div>
 
-          {testCasesQuery.isLoading || executionResultsQuery.isLoading ? <div className="empty-state compact">Loading test cases…</div> : null}
+          {testCasesQuery.isLoading || executionResultsQuery.isLoading ? (
+            <div className="record-list">
+              <div className="skeleton-block" />
+              <div className="skeleton-block" />
+              <div className="skeleton-block" />
+            </div>
+          ) : null}
           {!testCasesQuery.isLoading && !filteredCases.length ? <div className="empty-state compact">No test cases found for this app type.</div> : null}
 
           <div className="record-list">

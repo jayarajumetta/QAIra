@@ -2,15 +2,15 @@ const db = require("../db");
 const { v4: uuid } = require("uuid");
 
 const getSuiteIdsForExecution = db.prepare(`
-  SELECT suite_id
+  SELECT suite_id, suite_name
   FROM execution_suites
   WHERE execution_id = ?
   ORDER BY suite_id ASC
 `);
 
 const insertExecutionSuite = db.prepare(`
-  INSERT INTO execution_suites (execution_id, suite_id)
-  VALUES (?, ?)
+  INSERT INTO execution_suites (execution_id, suite_id, suite_name)
+  VALUES (?, ?, ?)
 `);
 
 function attachScope(execution) {
@@ -18,11 +18,13 @@ function attachScope(execution) {
     return execution;
   }
 
-  const suite_ids = getSuiteIdsForExecution.all(execution.id).map((row) => row.suite_id);
+  const suiteRows = getSuiteIdsForExecution.all(execution.id);
+  const suite_ids = suiteRows.map((row) => row.suite_id);
 
   return {
     ...execution,
-    suite_ids
+    suite_ids,
+    suite_snapshots: suiteRows.map((row) => ({ id: row.suite_id, name: row.suite_name || "Deleted Suite" }))
   };
 }
 
@@ -61,7 +63,7 @@ exports.createExecution = ({ project_id, app_type_id, suite_ids = [], name, crea
   }
 
   const validateSuite = db.prepare(`
-    SELECT id, app_type_id
+    SELECT id, app_type_id, name
     FROM test_suites
     WHERE id = ?
   `);
@@ -88,7 +90,8 @@ exports.createExecution = ({ project_id, app_type_id, suite_ids = [], name, crea
     `).run(id, project_id, app_type_id || null, name || "Execution Run", created_by);
 
     uniqueSuiteIds.forEach((suiteId) => {
-      insertExecutionSuite.run(id, suiteId);
+      const suite = validateSuite.get(suiteId);
+      insertExecutionSuite.run(id, suiteId, suite?.name || null);
     });
   });
 

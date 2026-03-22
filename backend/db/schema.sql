@@ -144,15 +144,18 @@ CREATE TABLE executions (
 CREATE TABLE execution_suites (
   execution_id TEXT NOT NULL,
   suite_id TEXT NOT NULL,
+  suite_name TEXT,
   PRIMARY KEY (execution_id, suite_id),
-  FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE,
-  FOREIGN KEY (suite_id) REFERENCES test_suites(id)
+  FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
 );
 
 CREATE TABLE execution_results (
   id TEXT PRIMARY KEY,
   execution_id TEXT NOT NULL,
   test_case_id TEXT NOT NULL,
+  test_case_title TEXT,
+  suite_id TEXT,
+  suite_name TEXT,
   app_type_id TEXT NOT NULL,
   status TEXT CHECK(status IN ('passed','failed','blocked')),
   duration_ms INTEGER,
@@ -161,7 +164,6 @@ CREATE TABLE execution_results (
   executed_by TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (execution_id) REFERENCES executions(id),
-  FOREIGN KEY (test_case_id) REFERENCES test_cases(id),
   FOREIGN KEY (app_type_id) REFERENCES app_types(id),
   FOREIGN KEY (executed_by) REFERENCES users(id)
 );

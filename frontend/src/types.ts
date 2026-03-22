@@ -81,6 +81,7 @@ export type Execution = {
   project_id: string;
   app_type_id: string | null;
   suite_ids: string[];
+  suite_snapshots?: Array<{ id: string; name: string }>;
   name: string | null;
   trigger: "manual" | "ci" | null;
   status: "queued" | "running" | "completed" | "failed" | null;
@@ -93,6 +94,9 @@ export type ExecutionResult = {
   id: string;
   execution_id: string;
   test_case_id: string;
+  test_case_title?: string | null;
+  suite_id?: string | null;
+  suite_name?: string | null;
   app_type_id: string;
   status: "passed" | "failed" | "blocked";
   duration_ms: number | null;

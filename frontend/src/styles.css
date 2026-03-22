@@ -1,16 +1,25 @@
 :root {
   color-scheme: light;
-  --bg: #f5efe5;
-  --bg-accent: #efe1c5;
-  --panel: rgba(255, 252, 246, 0.9);
-  --panel-strong: #fffdf8;
-  --line: rgba(85, 63, 32, 0.12);
-  --text: #1f1a14;
-  --muted: #685a47;
-  --primary: #b55233;
-  --primary-strong: #913d22;
+  --background: #f5efe5;
+  --surface: rgba(255, 252, 246, 0.9);
+  --surface-strong: #fffdf8;
+  --border: rgba(85, 63, 32, 0.12);
+  --text-primary: #1f1a14;
+  --text-secondary: #685a47;
+  --accent: #b55233;
+  --accent-strong: #913d22;
   --success: #2e7d52;
-  --danger: #9a3a2f;
+  --error: #9a3a2f;
+  --bg: var(--background);
+  --bg-accent: #efe1c5;
+  --panel: var(--surface);
+  --panel-strong: var(--surface-strong);
+  --line: var(--border);
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --primary: var(--accent);
+  --primary-strong: #913d22;
+  --danger: var(--error);
   --shadow: 0 22px 50px rgba(64, 40, 11, 0.12);
   font-family: "Sora", "Segoe UI", sans-serif;
   line-height: 1.5;
@@ -24,17 +33,26 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #17120d;
-  --bg-accent: #2a2118;
-  --panel: rgba(34, 28, 22, 0.88);
-  --panel-strong: #221c16;
-  --line: rgba(239, 225, 197, 0.12);
-  --text: #f8f0e5;
-  --muted: #c0b29b;
-  --primary: #dc825f;
-  --primary-strong: #f0b08f;
+  --background: #17120d;
+  --surface: rgba(34, 28, 22, 0.88);
+  --surface-strong: #221c16;
+  --border: rgba(239, 225, 197, 0.12);
+  --text-primary: #f8f0e5;
+  --text-secondary: #c0b29b;
+  --accent: #dc825f;
+  --accent-strong: #f0b08f;
   --success: #5bc58a;
-  --danger: #ff8777;
+  --error: #ff8777;
+  --bg: var(--background);
+  --bg-accent: #2a2118;
+  --panel: var(--surface);
+  --panel-strong: var(--surface-strong);
+  --line: var(--border);
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --primary: var(--accent);
+  --primary-strong: #f0b08f;
+  --danger: var(--error);
   --shadow: 0 24px 60px rgba(0, 0, 0, 0.34);
   background:
     radial-gradient(circle at top left, rgba(220, 130, 95, 0.22), transparent 24%),
@@ -97,6 +115,29 @@ body {
 
 button, input, select, textarea {
   font: inherit;
+}
+
+body,
+button,
+input,
+select,
+textarea,
+.sidebar,
+.panel,
+.stat-card,
+.record-card,
+.mini-card,
+.page-header,
+.nav-link,
+.user-chip,
+.theme-switch,
+.progress-meter-fill {
+  transition:
+    background-color 180ms ease,
+    color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
 }
 
 button {
@@ -203,19 +244,21 @@ textarea {
 }
 
 .brand-mark {
-  width: 56px;
+  min-width: 72px;
   height: 56px;
   border-radius: 18px;
   background: linear-gradient(135deg, #d46840, #8f341d);
   color: white;
-  display: grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-weight: 700;
+  padding: 0 0.9rem;
   margin-bottom: 1rem;
 }
 
 .brand-mark.large {
-  width: 72px;
+  min-width: 104px;
   height: 72px;
   font-size: 1.25rem;
 }
@@ -317,12 +360,31 @@ textarea {
 
 .nav-list {
   display: grid;
-  gap: 0.5rem;
+  gap: 1rem;
   margin: 0;
   flex: 1;
   align-content: start;
   overflow: auto;
   padding-right: 0.2rem;
+}
+
+.nav-group {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.nav-group-label {
+  margin: 0;
+  padding: 0 0.85rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.nav-group-items {
+  display: grid;
+  gap: 0.45rem;
 }
 
 .nav-link {
@@ -335,6 +397,10 @@ textarea {
   transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
 }
 
+.nav-link:hover {
+  transform: translateY(-1px);
+}
+
 .nav-link.is-active {
   background: linear-gradient(180deg, rgba(255, 251, 246, 0.98), rgba(245, 231, 210, 0.96));
   color: var(--primary-strong);
@@ -343,9 +409,27 @@ textarea {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
+.nav-link-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.nav-link-label {
+  white-space: nowrap;
+}
+
 .sidebar-footer {
   display: grid;
   gap: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
 }
 
 .user-chip {
@@ -358,6 +442,104 @@ textarea {
 
 .user-chip span {
   color: var(--muted);
+}
+
+.sidebar-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.brand-copy {
+  display: grid;
+  gap: 0.05rem;
+}
+
+.brand-copy strong {
+  font-size: 1.05rem;
+}
+
+.brand-copy span {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.sidebar-collapse-button {
+  margin-left: auto;
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+}
+
+.sidebar-project-picker {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.sidebar-project-picker span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.theme-toggle {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.theme-toggle strong {
+  display: block;
+}
+
+.theme-toggle span {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.theme-switch {
+  width: 3.4rem;
+  height: 2rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.2rem;
+  background: rgba(181, 82, 51, 0.12);
+  position: relative;
+}
+
+.theme-switch span {
+  display: block;
+  width: 1.45rem;
+  height: 1.45rem;
+  border-radius: 999px;
+  background: white;
+  box-shadow: 0 6px 18px rgba(20, 14, 9, 0.15);
+  transform: translateX(0);
+  transition: transform 180ms ease;
+}
+
+.theme-switch.is-dark span {
+  transform: translateX(1.35rem);
+}
+
+.theme-switch.compact {
+  width: 100%;
+}
+
+.sidebar-signout {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  justify-content: center;
+}
+
+.sidebar.is-collapsed {
+  padding-inline: 0.9rem;
+}
+
+.sidebar.is-collapsed .nav-link {
+  justify-content: center;
+  padding-inline: 0.7rem;
 }
 
 .workspace-main {
@@ -620,6 +802,15 @@ textarea {
   flex-wrap: wrap;
   gap: 0.4rem 0.65rem;
   align-items: baseline;
+}
+
+.skeleton-block {
+  min-height: 78px;
+  border-radius: 18px;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.18));
+  background-size: 200% 100%;
+  animation: shimmer 1.2s linear infinite;
 }
 
 .progress-meter-copy strong {
@@ -981,6 +1172,15 @@ textarea {
 .status-badge.blocked {
   background: rgba(154, 58, 47, 0.14);
   color: var(--danger);
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
 }
 
 @media (max-width: 1200px) {

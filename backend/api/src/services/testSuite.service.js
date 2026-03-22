@@ -121,11 +121,6 @@ exports.deleteTestSuite = (id) => {
 
   const transaction = db.transaction(() => {
     db.prepare(`
-      DELETE FROM execution_suites
-      WHERE suite_id = ?
-    `).run(id);
-
-    db.prepare(`
       DELETE FROM suite_test_cases
       WHERE suite_id = ?
     `).run(id);
