@@ -5,7 +5,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./backend/data:/data
+      - qaira-data:/data
     environment:
       DB_PATH: /data/testiny.db
       SESSION_SECRET: ${SESSION_SECRET:-qaira-dev-secret}
@@ -22,3 +22,5 @@ services:
     depends_on:
       - api
     restart: always
+volumes:
+  qaira-data:
