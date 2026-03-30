@@ -3,6 +3,74 @@ const { v4: uuid } = require("uuid");
 const requirementTestCaseService = require("./requirementTestCase.service");
 const suiteTestCaseService = require("./suiteTestCase.service");
 
+const DEFAULT_PRIORITY = 3;
+const DEFAULT_STATUS = "active";
+
+const selectAppType = db.prepare(`
+  SELECT id, project_id
+  FROM app_types
+  WHERE id = ?
+`);
+
+const selectSuite = db.prepare(`
+  SELECT id, app_type_id
+  FROM test_suites
+  WHERE id = ?
+`);
+
+const selectRequirement = db.prepare(`
+  SELECT id, project_id
+  FROM requirements
+  WHERE id = ?
+`);
+
+const insertTestCaseRecord = db.prepare(`
+  INSERT INTO test_cases (id, app_type_id, suite_id, title, description, priority, status, requirement_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+const updateTestCaseRecord = db.prepare(`
+  UPDATE test_cases
+  SET app_type_id = ?, suite_id = ?, title = ?, description = ?, priority = ?, status = ?, requirement_id = ?
+  WHERE id = ?
+`);
+
+const insertSuiteMapping = db.prepare(`
+  INSERT INTO suite_test_cases (suite_id, test_case_id, sort_order)
+  VALUES (?, ?, ?)
+`);
+
+const deleteSuiteMappings = db.prepare(`
+  DELETE FROM suite_test_cases
+  WHERE test_case_id = ?
+`);
+
+const insertRequirementMapping = db.prepare(`
+  INSERT INTO requirement_test_cases (requirement_id, test_case_id)
+  VALUES (?, ?)
+  ON CONFLICT DO NOTHING
+`);
+
+const deleteRequirementMappings = db.prepare(`
+  DELETE FROM requirement_test_cases
+  WHERE test_case_id = ?
+`);
+
+const insertStep = db.prepare(`
+  INSERT INTO test_steps (id, test_case_id, step_order, action, expected_result)
+  VALUES (?, ?, ?, ?, ?)
+`);
+
+const deleteStepsForTestCase = db.prepare(`
+  DELETE FROM test_steps
+  WHERE test_case_id = ?
+`);
+
+const deleteTestCaseRecord = db.prepare(`
+  DELETE FROM test_cases
+  WHERE id = ?
+`);
+
 const hydrateSuiteIds = async (testCase) => {
   if (!testCase) {
     return testCase;
@@ -15,33 +83,110 @@ const hydrateSuiteIds = async (testCase) => {
   };
 };
 
-exports.createTestCase = async ({ app_type_id, suite_id, suite_ids = [], title, description, priority, status, requirement_id, requirement_ids = [] }) => {
-  if (!title) {
-    throw new Error("Missing required fields");
+const normalizeText = (value) => {
+  if (typeof value !== "string") {
+    return null;
   }
 
-  const requestedSuiteIds = [...new Set([suite_id, ...suite_ids].filter(Boolean))];
-  const requestedRequirementIds = [...new Set([requirement_id, ...requirement_ids].filter(Boolean))];
-  let resolvedAppTypeId = app_type_id || null;
+  const normalized = value.trim();
+  return normalized ? normalized : null;
+};
 
-  if (resolvedAppTypeId) {
-    const appType = await db.prepare(`
-      SELECT id
-      FROM app_types
-      WHERE id = ?
-    `).get(resolvedAppTypeId);
+const normalizeTextList = (values = []) => {
+  return [...new Set(values.map((value) => normalizeText(value)).filter(Boolean))];
+};
 
-    if (!appType) {
-      throw new Error("App type not found");
+const normalizePriority = (value) => {
+  if (value === undefined || value === null || value === "") {
+    return DEFAULT_PRIORITY;
+  }
+
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : DEFAULT_PRIORITY;
+};
+
+const normalizeSteps = (steps = []) => {
+  if (!Array.isArray(steps)) {
+    return [];
+  }
+
+  return steps
+    .map((step, index) => ({
+      step_order: Number.isFinite(Number(step?.step_order)) ? Number(step.step_order) : index + 1,
+      action: normalizeText(step?.action),
+      expected_result: normalizeText(step?.expected_result || step?.expectedResult)
+    }))
+    .filter((step) => step.action || step.expected_result)
+    .sort((left, right) => left.step_order - right.step_order)
+    .map((step, index) => ({
+      ...step,
+      step_order: index + 1
+    }));
+};
+
+const splitImportValue = (value) => {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return [];
+  }
+
+  return normalized
+    .split(/\r?\n|\|/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
+
+const buildStepsFromImportRow = (row) => {
+  const actions = splitImportValue(row.action);
+  const expectedResults = splitImportValue(row.expected_result || row.expectedResult);
+
+  if (!actions.length && !expectedResults.length) {
+    return [];
+  }
+
+  const size = Math.max(actions.length, expectedResults.length, 1);
+
+  return Array.from({ length: size }, (_, index) => ({
+    step_order: index + 1,
+    action: actions[index] || actions[0] || "",
+    expected_result: expectedResults[index] || expectedResults[0] || ""
+  }));
+};
+
+const ensureAppTypeExists = async (appTypeId) => {
+  if (!appTypeId) {
+    return null;
+  }
+
+  const appType = await selectAppType.get(appTypeId);
+
+  if (!appType) {
+    throw new Error("App type not found");
+  }
+
+  return appType;
+};
+
+const ensureRequirementsExist = async (requirementIds = [], appTypeProjectId = null) => {
+  for (const requirementId of requirementIds) {
+    const requirement = await selectRequirement.get(requirementId);
+
+    if (!requirement) {
+      throw new Error("Requirement not found");
+    }
+
+    if (appTypeProjectId && requirement.project_id !== appTypeProjectId) {
+      throw new Error("Requirements must belong to the same project as the selected app type");
     }
   }
+};
 
-  for (const requestedSuiteId of requestedSuiteIds) {
-    const suite = await db.prepare(`
-      SELECT id, app_type_id
-      FROM test_suites
-      WHERE id = ?
-    `).get(requestedSuiteId);
+const ensureSuitesMatchAppType = async (suiteIds = [], appTypeId = null) => {
+  let resolvedAppTypeId = appTypeId;
+
+  for (const suiteId of suiteIds) {
+    const suite = await selectSuite.get(suiteId);
 
     if (!suite) {
       throw new Error("Test suite not found");
@@ -49,44 +194,153 @@ exports.createTestCase = async ({ app_type_id, suite_id, suite_ids = [], title, 
 
     if (!resolvedAppTypeId) {
       resolvedAppTypeId = suite.app_type_id;
-    } else if (suite.app_type_id !== resolvedAppTypeId) {
+      continue;
+    }
+
+    if (suite.app_type_id !== resolvedAppTypeId) {
       throw new Error("All suites must belong to the selected app type");
     }
   }
 
-  for (const requestedRequirementId of requestedRequirementIds) {
-    const requirement = await db.prepare(`
-      SELECT id FROM requirements WHERE id = ?
-    `).get(requestedRequirementId);
+  return resolvedAppTypeId;
+};
 
-    if (!requirement) throw new Error("Requirement not found");
+const syncSuiteMappings = async (testCaseId, suiteIds = []) => {
+  await deleteSuiteMappings.run(testCaseId);
+
+  for (const [index, suiteId] of suiteIds.entries()) {
+    await insertSuiteMapping.run(suiteId, testCaseId, index + 1);
+  }
+};
+
+const syncRequirementMappings = async (testCaseId, requirementIds = []) => {
+  await deleteRequirementMappings.run(testCaseId);
+
+  for (const requirementId of requirementIds) {
+    await insertRequirementMapping.run(requirementId, testCaseId);
+  }
+};
+
+const createPersistablePayload = async ({
+  app_type_id,
+  suite_id,
+  suite_ids = [],
+  title,
+  description,
+  priority,
+  status,
+  requirement_id,
+  requirement_ids = [],
+  steps = []
+}) => {
+  const resolvedTitle = normalizeText(title);
+
+  if (!resolvedTitle) {
+    throw new Error("Test case title is required");
   }
 
+  let resolvedAppTypeId = normalizeText(app_type_id);
+  const resolvedSuiteIds = normalizeTextList([suite_id, ...suite_ids]);
+  const resolvedRequirementIds = normalizeTextList([requirement_id, ...requirement_ids]);
+
+  const appType = await ensureAppTypeExists(resolvedAppTypeId);
+  resolvedAppTypeId = await ensureSuitesMatchAppType(resolvedSuiteIds, resolvedAppTypeId);
+  const resolvedAppType = resolvedAppTypeId !== appType?.id ? await ensureAppTypeExists(resolvedAppTypeId) : appType;
+  await ensureRequirementsExist(resolvedRequirementIds, resolvedAppType?.project_id || null);
+
+  return {
+    app_type_id: resolvedAppTypeId,
+    suite_ids: resolvedSuiteIds,
+    requirement_ids: resolvedRequirementIds,
+    title: resolvedTitle,
+    description: normalizeText(description),
+    priority: normalizePriority(priority),
+    status: normalizeText(status) || DEFAULT_STATUS,
+    steps: normalizeSteps(steps)
+  };
+};
+
+const createOne = db.transaction(async (payload) => {
   const id = uuid();
 
-  await db.prepare(`
-    INSERT INTO test_cases (id, app_type_id, suite_id, title, description, priority, status, requirement_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  await insertTestCaseRecord.run(
     id,
-    resolvedAppTypeId,
-    requestedSuiteIds[0] || null,
-    title,
-    description || null,
-    priority ?? 3,
-    status || "active",
-    requestedRequirementIds[0] || null
+    payload.app_type_id,
+    payload.suite_ids[0] || null,
+    payload.title,
+    payload.description,
+    payload.priority,
+    payload.status,
+    payload.requirement_ids[0] || null
   );
 
-  if (requestedSuiteIds.length) {
-    await suiteTestCaseService.syncMappingsForTestCase(id, requestedSuiteIds);
-  }
+  await syncSuiteMappings(id, payload.suite_ids);
+  await syncRequirementMappings(id, payload.requirement_ids);
 
-  if (requestedRequirementIds.length) {
-    await requirementTestCaseService.syncMappingsForTestCase(id, requestedRequirementIds);
+  for (const step of payload.steps) {
+    await insertStep.run(uuid(), id, step.step_order, step.action, step.expected_result);
   }
 
   return { id };
+});
+
+exports.createTestCase = async (input) => {
+  return createOne(await createPersistablePayload(input));
+};
+
+exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [] }) => {
+  const resolvedAppTypeId = normalizeText(app_type_id);
+  const defaultRequirementId = normalizeText(requirement_id);
+
+  if (!resolvedAppTypeId) {
+    throw new Error("app_type_id is required");
+  }
+
+  if (!Array.isArray(rows) || !rows.length) {
+    throw new Error("At least one CSV row is required");
+  }
+
+  await ensureAppTypeExists(resolvedAppTypeId);
+
+  if (defaultRequirementId) {
+    await ensureRequirementsExist([defaultRequirementId]);
+  }
+
+  const created = [];
+  const errors = [];
+
+  for (const [index, row] of rows.entries()) {
+    try {
+      const response = await exports.createTestCase({
+        app_type_id: resolvedAppTypeId,
+        title: row?.title,
+        description: row?.description,
+        priority: row?.priority,
+        status: row?.status || "draft",
+        requirement_ids: normalizeTextList([defaultRequirementId, row?.requirement_id, row?.requirementId]),
+        steps: buildStepsFromImportRow(row || {})
+      });
+
+      created.push({
+        row: index + 1,
+        id: response.id,
+        title: normalizeText(row?.title) || "Untitled test case"
+      });
+    } catch (error) {
+      errors.push({
+        row: index + 1,
+        title: normalizeText(row?.title),
+        message: error.message || "Unable to import test case"
+      });
+    }
+  }
+
+  return {
+    imported: created.length,
+    failed: errors.length,
+    created,
+    errors
+  };
 };
 
 exports.getTestCases = async ({ suite_id, requirement_id, status, app_type_id }) => {
@@ -144,7 +398,9 @@ exports.getTestCase = async (id) => {
     WHERE id = ?
   `).get(id);
 
-  if (!testCase) throw new Error("Test case not found");
+  if (!testCase) {
+    throw new Error("Test case not found");
+  }
 
   return hydrateSuiteIds(testCase);
 };
@@ -153,78 +409,55 @@ exports.updateTestCase = async (id, data) => {
   const existing = await exports.getTestCase(id);
 
   const requestedSuiteIds = data.suite_ids !== undefined
-    ? [...new Set(data.suite_ids.filter(Boolean))]
-    : data.suite_id
-      ? [...new Set([data.suite_id, ...existing.suite_ids])]
-      : existing.suite_ids;
+    ? normalizeTextList(data.suite_ids)
+    : data.suite_id !== undefined
+      ? normalizeTextList([data.suite_id, ...(existing.suite_ids || []).filter((suiteId) => suiteId !== data.suite_id)])
+      : existing.suite_ids || [];
   const requestedRequirementIds = data.requirement_ids !== undefined
-    ? [...new Set(data.requirement_ids.filter(Boolean))]
+    ? normalizeTextList(data.requirement_ids)
     : data.requirement_id !== undefined
-      ? [...new Set([data.requirement_id].filter(Boolean))]
-      : existing.requirement_ids;
+      ? normalizeTextList([data.requirement_id])
+      : existing.requirement_ids || [];
 
-  let resolvedAppTypeId = data.app_type_id ?? existing.app_type_id ?? null;
+  let resolvedAppTypeId = normalizeText(data.app_type_id) || existing.app_type_id || null;
 
-  if (resolvedAppTypeId) {
-    const appType = await db.prepare(`
-      SELECT id
-      FROM app_types
-      WHERE id = ?
-    `).get(resolvedAppTypeId);
+  const resolvedAppType = await ensureAppTypeExists(resolvedAppTypeId);
+  resolvedAppTypeId = await ensureSuitesMatchAppType(requestedSuiteIds, resolvedAppTypeId);
+  const finalAppType = resolvedAppTypeId !== resolvedAppType?.id ? await ensureAppTypeExists(resolvedAppTypeId) : resolvedAppType;
+  await ensureRequirementsExist(requestedRequirementIds, finalAppType?.project_id || null);
 
-    if (!appType) {
-      throw new Error("App type not found");
+  const payload = {
+    app_type_id: resolvedAppTypeId,
+    suite_ids: requestedSuiteIds,
+    requirement_ids: requestedRequirementIds,
+    title: normalizeText(data.title) || existing.title,
+    description: data.description !== undefined ? normalizeText(data.description) : existing.description,
+    priority: data.priority !== undefined ? normalizePriority(data.priority) : existing.priority ?? DEFAULT_PRIORITY,
+    status: data.status !== undefined ? normalizeText(data.status) || DEFAULT_STATUS : existing.status || DEFAULT_STATUS
+  };
+
+  const executeUpdate = db.transaction(async () => {
+    await updateTestCaseRecord.run(
+      payload.app_type_id,
+      payload.suite_ids[0] || null,
+      payload.title,
+      payload.description,
+      payload.priority,
+      payload.status,
+      payload.requirement_ids[0] || null,
+      id
+    );
+
+    if (data.suite_ids !== undefined || data.suite_id !== undefined) {
+      await syncSuiteMappings(id, payload.suite_ids);
     }
-  }
 
-  for (const requestedSuiteId of requestedSuiteIds) {
-    const suite = await db.prepare(`
-      SELECT id, app_type_id
-      FROM test_suites
-      WHERE id = ?
-    `).get(requestedSuiteId);
-
-    if (!suite) {
-      throw new Error("Test suite not found");
+    if (data.requirement_ids !== undefined || data.requirement_id !== undefined) {
+      await syncRequirementMappings(id, payload.requirement_ids);
     }
+  });
 
-    if (!resolvedAppTypeId) {
-      resolvedAppTypeId = suite.app_type_id;
-    } else if (suite.app_type_id !== resolvedAppTypeId) {
-      throw new Error("All suites must belong to the selected app type");
-    }
-  }
-
-  for (const requestedRequirementId of requestedRequirementIds) {
-    const requirement = await db.prepare(`
-      SELECT id FROM requirements WHERE id = ?
-    `).get(requestedRequirementId);
-
-    if (!requirement) throw new Error("Requirement not found");
-  }
-
-  await db.prepare(`
-    UPDATE test_cases
-    SET app_type_id = ?, suite_id = ?, title = ?, description = ?, priority = ?, status = ?, requirement_id = ?
-    WHERE id = ?
-  `).run(
-    resolvedAppTypeId,
-    requestedSuiteIds[0] || null,
-    data.title ?? existing.title,
-    data.description ?? existing.description,
-    data.priority ?? existing.priority,
-    data.status ?? existing.status,
-    requestedRequirementIds[0] || null,
-    id
-  );
-
-  if (data.suite_ids !== undefined || data.suite_id !== undefined) {
-    await suiteTestCaseService.syncMappingsForTestCase(id, requestedSuiteIds);
-  }
-
-  if (data.requirement_ids !== undefined || data.requirement_id !== undefined) {
-    await requirementTestCaseService.syncMappingsForTestCase(id, requestedRequirementIds);
-  }
+  await executeUpdate();
 
   return { updated: true };
 };
@@ -232,24 +465,14 @@ exports.updateTestCase = async (id, data) => {
 exports.deleteTestCase = async (id) => {
   await exports.getTestCase(id);
 
-  await db.prepare(`
-    DELETE FROM test_steps
-    WHERE test_case_id = ?
-  `).run(id);
+  const executeDelete = db.transaction(async () => {
+    await deleteStepsForTestCase.run(id);
+    await deleteRequirementMappings.run(id);
+    await deleteSuiteMappings.run(id);
+    await deleteTestCaseRecord.run(id);
+  });
 
-  await db.prepare(`
-    DELETE FROM requirement_test_cases
-    WHERE test_case_id = ?
-  `).run(id);
-
-  await db.prepare(`
-    DELETE FROM suite_test_cases
-    WHERE test_case_id = ?
-  `).run(id);
-
-  await db.prepare(`
-    DELETE FROM test_cases WHERE id = ?
-  `).run(id);
+  await executeDelete();
 
   return { deleted: true };
 };

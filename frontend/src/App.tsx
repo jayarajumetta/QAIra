@@ -17,6 +17,7 @@ import { ProjectsPage } from "./pages/ProjectsPage";
 import { RequirementsPage } from "./pages/RequirementsPage";
 import { FeedbackPage } from "./pages/FeedbackPage";
 import { TestCasesPage } from "./pages/TestCasesPage";
+import { IntegrationsPage } from "./pages/IntegrationsPage";
 
 const queryClient = new QueryClient();
 const THEME_KEY = "app_theme";
@@ -25,6 +26,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/": "Overview · QAIra",
   "/people": "People · QAIra",
   "/projects": "Projects · QAIra",
+  "/integrations": "Integrations · QAIra",
   "/design": "Test Design · QAIra",
   "/requirements": "Requirements · QAIra",
   "/feedback": "Feedback · QAIra",
@@ -109,6 +111,7 @@ const router = createBrowserRouter([
       { index: true, element: <OverviewPage /> },
       { path: "people", element: <PeoplePage /> },
       { path: "projects", element: <ProjectsPage /> },
+      { path: "integrations", element: <IntegrationsPage /> },
       { path: "design", element: <DesignPage /> },
       { path: "requirements", element: <RequirementsPage /> },
       { path: "feedback", element: <FeedbackPage /> },

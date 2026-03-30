@@ -15,7 +15,8 @@ module.exports = async function (fastify) {
       requirement_id: { required: false, type: "string" },
       requirement_ids: { required: false, type: "array", items: "string" },
       suite_id: { required: false, type: "string" },
-      suite_ids: { required: false, type: "array", items: "string" }
+      suite_ids: { required: false, type: "array", items: "string" },
+      steps: { required: false, type: "array" }
     }, req.body);
 
     // Verify access if app_type_id provided
@@ -25,6 +26,25 @@ module.exports = async function (fastify) {
     }
 
     return service.createTestCase(req.body);
+  });
+
+  fastify.post("/test-cases/import", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      app_type_id: { required: true, type: "string" },
+      requirement_id: { required: false, type: "string" },
+      rows: { required: true, type: "array" }
+    }, req.body);
+
+    if (!req.body.rows.every((row) => row && typeof row === "object" && !Array.isArray(row))) {
+      throw new Error("rows must contain CSV objects");
+    }
+
+    const appType = await appTypeService.getAppType(req.body.app_type_id);
+    await projectService.getProject(appType.project_id, req.user.id);
+
+    return service.bulkImportTestCases(req.body);
   });
 
   fastify.get("/test-cases", async (req) => {
@@ -63,7 +83,8 @@ module.exports = async function (fastify) {
       requirement_id: { required: false, type: "string" },
       requirement_ids: { required: false, type: "array", items: "string" },
       suite_id: { required: false, type: "string" },
-      suite_ids: { required: false, type: "array", items: "string" }
+      suite_ids: { required: false, type: "array", items: "string" },
+      steps: { required: false, type: "array" }
     }, req.body);
 
     const testCase = await service.getTestCase(req.params.id);

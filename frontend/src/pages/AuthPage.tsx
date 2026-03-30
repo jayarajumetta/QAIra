@@ -1,7 +1,31 @@
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { FormField } from "../components/FormField";
+
+const heroSlides = [
+  {
+    eyebrow: "Central Test Library",
+    title: "Design once, reuse everywhere.",
+    description: "Reusable test cases stay linked to requirements and suites while execution history remains preserved as a snapshot.",
+    accent: "240+ reusable cases",
+    points: ["Reusable cases across suites", "History-safe execution snapshots", "Coverage mapped to requirements"]
+  },
+  {
+    eyebrow: "AI Design Studio",
+    title: "Turn requirements into draft test design.",
+    description: "Active LLM integrations can propose structured test cases, ready for review, pruning, and acceptance into the library.",
+    accent: "Req to case draft flow",
+    points: ["Integration-aware AI design", "Preview before accepting", "Linked back to each requirement"]
+  },
+  {
+    eyebrow: "Execution Control",
+    title: "Scope runs with mature execution views.",
+    description: "Select suites, monitor pass and fail trends, and keep operator focus on the next step instead of scattered details.",
+    accent: "Live progress dashboards",
+    points: ["Suite-based multi-select runs", "Master-detail execution flow", "Blockers surfaced early"]
+  }
+];
 
 export function AuthPage() {
   const navigate = useNavigate();
@@ -11,6 +35,15 @@ export function AuthPage() {
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [activeSlide, setActiveSlide] = useState(0);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setActiveSlide((current) => (current + 1) % heroSlides.length);
+    }, 4500);
+
+    return () => window.clearInterval(timer);
+  }, []);
 
   const validateEmail = (email: string): boolean => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -146,6 +179,40 @@ export function AuthPage() {
           QAIra brings project setup, test design, execution runs, and result tracking into one
           fast workspace built around your current API model.
         </p>
+
+        <div className="auth-hero-visual">
+          <div className="auth-orbit-graphic" aria-hidden="true">
+            <span className="orbit-ring orbit-ring-one" />
+            <span className="orbit-ring orbit-ring-two" />
+            <span className="orbit-core" />
+            <span className="orbit-node orbit-node-one" />
+            <span className="orbit-node orbit-node-two" />
+            <span className="orbit-node orbit-node-three" />
+          </div>
+
+          <article className="auth-carousel-card">
+            <p className="eyebrow">{heroSlides[activeSlide].eyebrow}</p>
+            <h2>{heroSlides[activeSlide].title}</h2>
+            <p>{heroSlides[activeSlide].description}</p>
+            <div className="auth-carousel-accent">{heroSlides[activeSlide].accent}</div>
+            <div className="auth-feature-list">
+              {heroSlides[activeSlide].points.map((point) => (
+                <span className="auth-feature-pill" key={point}>{point}</span>
+              ))}
+            </div>
+            <div className="auth-carousel-dots" role="tablist" aria-label="Core platform features">
+              {heroSlides.map((slide, index) => (
+                <button
+                  key={slide.title}
+                  aria-label={`Show ${slide.eyebrow}`}
+                  className={index === activeSlide ? "auth-carousel-dot is-active" : "auth-carousel-dot"}
+                  onClick={() => setActiveSlide(index)}
+                  type="button"
+                />
+              ))}
+            </div>
+          </article>
+        </div>
       </section>
 
       <section className="auth-panel">

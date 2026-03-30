@@ -89,6 +89,20 @@ CREATE TABLE feedback (
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
+CREATE TABLE integrations (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL CHECK(type IN ('llm','jira')),
+  name TEXT NOT NULL,
+  base_url TEXT,
+  api_key TEXT,
+  model TEXT,
+  project_key TEXT,
+  username TEXT,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
 -- =========================
 -- TEST DESIGN
 -- =========================

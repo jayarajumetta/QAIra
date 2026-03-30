@@ -7,6 +7,7 @@ const fastify = require("fastify")({
 
 const cors = require("@fastify/cors");
 const db = require("./db");
+const { ensureRuntimeSchema } = require("./db/bootstrap");
 const { verifyToken, generateRequestId } = require("./utils/token");
 
 const createError = (message, statusCode) => {
@@ -130,7 +131,9 @@ fastify.addHook("onRequest", async (req, reply) => {
 });
 
 // Improved CORS configuration
-const allowedOrigins = process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(",") : ["http://localhost:5173"];
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",")
+  : ["http://localhost:5173", "http://localhost:8080"];
 
 fastify.register(cors, {
   origin: (origin, cb) => {
@@ -148,5 +151,8 @@ fastify.register(cors, {
 
 fastify.register(require("./plugins/errorHandler"));
 fastify.register(require("./routes"));
+fastify.addHook("onReady", async () => {
+  await ensureRuntimeSchema();
+});
 
 module.exports = fastify;

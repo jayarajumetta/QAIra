@@ -4,6 +4,7 @@ import type {
   Execution,
   ExecutionResult,
   Feedback,
+  Integration,
   Project,
   ProjectMember,
   Requirement,
@@ -183,6 +184,21 @@ export const api = {
       request<Requirement[]>(`/requirements${toQueryString(query)}`),
     create: (input: { project_id: string; title: string; description?: string; priority?: number; status?: string }) =>
       request<{ id: string }>("/requirements", { method: "POST", body: JSON.stringify(input) }),
+    previewDesignedTestCases: (id: string, input: { app_type_id: string; integration_id?: string; max_cases?: number }) =>
+      request<{ generated: number; cases: Array<{ client_id: string; title: string; description: string | null; priority: number; steps: Array<{ step_order: number; action: string | null; expected_result: string | null }>; step_count: number }>; integration: { id: string; name: string; type: string; model?: string | null } }>(`/requirements/${id}/design-test-cases-preview`, {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
+    acceptDesignedTestCases: (id: string, input: { app_type_id: string; status?: string; cases: Array<{ title: string; description?: string | null; priority?: number; steps?: Array<{ step_order?: number; action?: string | null; expected_result?: string | null }> }> }) =>
+      request<{ accepted: number; created: Array<{ id: string; title: string; step_count: number }> }>(`/requirements/${id}/design-test-cases-accept`, {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
+    generateTestCases: (id: string, input: { app_type_id: string; integration_id?: string; max_cases?: number; status?: string }) =>
+      request<{ generated: number; created: Array<{ id: string; title: string; step_count: number }>; integration: { id: string; name: string; type: string; model?: string | null } }>(`/requirements/${id}/generate-test-cases`, {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
     update: (id: string, input: Partial<{ project_id: string; title: string; description: string; priority: number; status: string }>) =>
       request<{ updated: boolean }>(`/requirements/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/requirements/${id}`, { method: "DELETE" })
@@ -195,6 +211,15 @@ export const api = {
     update: (id: string, input: Partial<{ user_id: string; title: string; message: string; status: string }>) =>
       request<{ updated: boolean }>(`/feedback/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/feedback/${id}`, { method: "DELETE" })
+  },
+  integrations: {
+    list: (query?: { type?: Integration["type"]; is_active?: boolean }) =>
+      request<Integration[]>(`/integrations${toQueryString(query)}`),
+    create: (input: { type: Integration["type"]; name: string; base_url?: string; api_key?: string; model?: string; project_key?: string; username?: string; is_active?: boolean }) =>
+      request<{ id: string }>("/integrations", { method: "POST", body: JSON.stringify(input) }),
+    update: (id: string, input: Partial<{ type: Integration["type"]; name: string; base_url: string; api_key: string; model: string; project_key: string; username: string; is_active: boolean }>) =>
+      request<{ updated: boolean }>(`/integrations/${id}`, { method: "PUT", body: JSON.stringify(input) }),
+    delete: (id: string) => request<{ deleted: boolean }>(`/integrations/${id}`, { method: "DELETE" })
   },
   requirementTestCases: {
     list: (query?: { requirement_id?: string; test_case_id?: string }) =>
@@ -224,6 +249,11 @@ export const api = {
       request<TestCase[]>(`/test-cases${toQueryString(query)}`),
     create: (input: { app_type_id?: string; suite_id?: string; suite_ids?: string[]; title: string; description?: string; priority?: number; status?: string; requirement_id?: string; requirement_ids?: string[] }) =>
       request<{ id: string }>("/test-cases", { method: "POST", body: JSON.stringify(input) }),
+    bulkImport: (input: { app_type_id: string; requirement_id?: string; rows: Array<Record<string, string | number | null | undefined>> }) =>
+      request<{ imported: number; failed: number; created: Array<{ row: number; id: string; title: string }>; errors: Array<{ row: number; title?: string | null; message: string }> }>("/test-cases/import", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
     update: (id: string, input: Partial<{ app_type_id: string; suite_id: string; suite_ids: string[]; title: string; description: string; priority: number; status: string; requirement_id: string; requirement_ids: string[] }>) =>
       request<{ updated: boolean }>(`/test-cases/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/test-cases/${id}`, { method: "DELETE" })
@@ -272,7 +302,7 @@ export const api = {
   }
 };
 
-function toQueryString(query?: Record<string, string | number | undefined>) {
+function toQueryString(query?: Record<string, string | number | boolean | undefined>) {
   if (!query) {
     return "";
   }

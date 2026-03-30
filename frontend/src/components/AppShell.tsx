@@ -34,6 +34,7 @@ const navGroups = [
   {
     label: "Administration",
     items: [
+      { to: "/integrations", label: "Integrations", icon: PlugIcon },
       { to: "/people", label: "People & Access", icon: UsersIcon },
       { to: "/projects", label: "Projects & Scope", icon: FolderIcon }
     ]
@@ -114,22 +115,37 @@ export function AppShell() {
       <aside className={isCollapsed ? "sidebar is-collapsed" : "sidebar"} role="navigation">
         <div className="sidebar-top">
           <div className="sidebar-brand-row">
-            <div className="brand-mark" aria-label="QAIra Home">QAIra</div>
+            <div className="sidebar-brand-lockup">
+              <div className="brand-mark" aria-label="QAIra Home">QAIra</div>
+              {!isCollapsed ? (
+                <div className="brand-copy">
+                  <strong>QAIra</strong>
+                  <span>Workspace</span>
+                </div>
+              ) : null}
+            </div>
             {!isCollapsed ? (
-              <div className="brand-copy">
-                <strong>QAIra</strong>
-                <span>Workspace</span>
-              </div>
+              <button
+                aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                className="sidebar-collapse-button ghost-button"
+                onClick={() => setIsCollapsed((current) => !current)}
+                type="button"
+              >
+                <MenuIcon />
+              </button>
             ) : null}
+          </div>
+
+          {isCollapsed ? (
             <button
-              aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-              className="sidebar-collapse-button ghost-button"
+              aria-label="Expand sidebar"
+              className="sidebar-collapse-button sidebar-collapse-button-compact ghost-button"
               onClick={() => setIsCollapsed((current) => !current)}
               type="button"
             >
-              {isCollapsed ? ">" : "<"}
+              <MenuIcon />
             </button>
-          </div>
+          ) : null}
 
           {!isCollapsed ? (
             <>
@@ -220,11 +236,11 @@ export function AppShell() {
           ) : (
             <button
               aria-label="Toggle theme"
-              className={theme === "dark" ? "theme-switch compact is-dark" : "theme-switch compact"}
+              className={theme === "dark" ? "sidebar-icon-button is-dark" : "sidebar-icon-button"}
               onClick={() => setTheme((current) => current === "light" ? "dark" : "light")}
               type="button"
             >
-              <span />
+              {theme === "dark" ? <MoonIcon /> : <SunIcon />}
             </button>
           )}
 
@@ -273,6 +289,10 @@ function FolderIcon() {
   return <IconFrame><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v9A2.5 2.5 0 0 1 18.5 21h-13A2.5 2.5 0 0 1 3 18.5z" /><path d="M9 12v5" /><path d="M13 14v3" /></IconFrame>;
 }
 
+function PlugIcon() {
+  return <IconFrame><path d="M8 7v5" /><path d="M16 7v5" /><path d="M7 12h10" /><path d="M12 12v5a3 3 0 0 1-3 3H8" /><path d="M16 20h-1" /></IconFrame>;
+}
+
 function FlaskIcon() {
   return <IconFrame><path d="M10 3v5l-5.5 9a2 2 0 0 0 1.73 3h11.54A2 2 0 0 0 19.5 17L14 8V3" /><path d="M8 3h8" /><path d="M8.5 14h7" /></IconFrame>;
 }
@@ -295,4 +315,16 @@ function LogoutIcon() {
 
 function ChatIcon() {
   return <IconFrame><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /><path d="M8 9h8" /><path d="M8 13h5" /></IconFrame>;
+}
+
+function MenuIcon() {
+  return <IconFrame><path d="M4 7h16" /><path d="M4 12h16" /><path d="M4 17h16" /></IconFrame>;
+}
+
+function SunIcon() {
+  return <IconFrame><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2.5" /><path d="M12 19v2.5" /><path d="m4.93 4.93 1.77 1.77" /><path d="m17.3 17.3 1.77 1.77" /><path d="M2.5 12H5" /><path d="M19 12h2.5" /><path d="m4.93 19.07 1.77-1.77" /><path d="m17.3 6.7 1.77-1.77" /></IconFrame>;
+}
+
+function MoonIcon() {
+  return <IconFrame><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4 6.8 6.8 0 0 0 20 14.5z" /></IconFrame>;
 }

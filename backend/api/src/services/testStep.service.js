@@ -118,11 +118,33 @@ exports.reorderTestSteps = async (testCaseId, stepIds = []) => {
 };
 
 exports.deleteTestStep = async (id) => {
-  await exports.getTestStep(id);
-
-  await db.prepare(`
+  const step = await exports.getTestStep(id);
+  const deleteStatement = db.prepare(`
     DELETE FROM test_steps WHERE id = ?
-  `).run(id);
+  `);
+  const listRemainingSteps = db.prepare(`
+    SELECT id
+    FROM test_steps
+    WHERE test_case_id = ?
+    ORDER BY step_order ASC, id ASC
+  `);
+  const updateOrder = db.prepare(`
+    UPDATE test_steps
+    SET step_order = ?
+    WHERE id = ?
+  `);
+
+  const transaction = db.transaction(async () => {
+    await deleteStatement.run(id);
+
+    const remainingSteps = await listRemainingSteps.all(step.test_case_id);
+
+    for (const [index, remainingStep] of remainingSteps.entries()) {
+      await updateOrder.run(index + 1, remainingStep.id);
+    }
+  });
+
+  await transaction();
 
   return { deleted: true };
 };

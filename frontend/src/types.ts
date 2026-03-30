@@ -58,6 +58,20 @@ export type Feedback = {
   created_at?: string;
 };
 
+export type Integration = {
+  id: string;
+  type: "llm" | "jira";
+  name: string;
+  base_url: string | null;
+  api_key: string | null;
+  model: string | null;
+  project_key: string | null;
+  username: string | null;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type TestSuite = {
   id: string;
   app_type_id: string;

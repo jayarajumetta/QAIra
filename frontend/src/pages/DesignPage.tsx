@@ -41,6 +41,7 @@ export function DesignPage() {
   const [expandedStepId, setExpandedStepId] = useState("");
   const [isAddingStep, setIsAddingStep] = useState(false);
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"success" | "error">("success");
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -65,6 +66,11 @@ export function DesignPage() {
     queryKey: ["design-test-cases", appTypeId],
     queryFn: () => api.testCases.list({ app_type_id: appTypeId }),
     enabled: Boolean(appTypeId)
+  });
+  const suiteMappingsQuery = useQuery({
+    queryKey: ["suite-test-case-mappings", selectedSuiteId],
+    queryFn: () => api.suiteTestCases.list({ suite_id: selectedSuiteId }),
+    enabled: Boolean(selectedSuiteId)
   });
   const stepsQuery = useQuery({
     queryKey: ["design-test-steps", selectedTestCaseId],
@@ -107,7 +113,18 @@ export function DesignPage() {
   const requirements = requirementsQuery.data || [];
   const suites = suitesQuery.data || [];
   const allTestCases = testCasesQuery.data || [];
+  const suiteMappings = suiteMappingsQuery.data || [];
   const steps = stepsQuery.data || [];
+
+  const showSuccess = (text: string) => {
+    setMessageTone("success");
+    setMessage(text);
+  };
+
+  const showError = (error: unknown, fallback: string) => {
+    setMessageTone("error");
+    setMessage(error instanceof Error ? error.message : fallback);
+  };
 
   const [caseDraft, setCaseDraft] = useState<CaseDraft>({
     suite_id: "",
@@ -156,7 +173,24 @@ export function DesignPage() {
   }, [appTypeCases]);
 
   const filteredCases = useMemo(() => {
-    return appTypeCases.filter((testCase) => {
+    const suiteOrder = new Map(suiteMappings.map((mapping) => [mapping.test_case_id, mapping.sort_order]));
+    const sourceCases = selectedSuiteId
+      ? appTypeCases
+          .filter((testCase) => (testCase.suite_ids || []).includes(selectedSuiteId))
+          .slice()
+          .sort((left, right) => {
+            const leftOrder = suiteOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+            const rightOrder = suiteOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+
+            if (leftOrder !== rightOrder) {
+              return leftOrder - rightOrder;
+            }
+
+            return left.title.localeCompare(right.title);
+          })
+      : appTypeCases;
+
+    return sourceCases.filter((testCase) => {
       if (selectedSuiteId && !(testCase.suite_ids || []).includes(selectedSuiteId)) {
         return false;
       }
@@ -172,7 +206,29 @@ export function DesignPage() {
       const haystack = `${testCase.title} ${testCase.description || ""}`.toLowerCase();
       return haystack.includes(searchTerm.trim().toLowerCase());
     });
-  }, [appTypeCases, searchTerm, selectedSuiteId, statusFilter]);
+  }, [appTypeCases, searchTerm, selectedSuiteId, statusFilter, suiteMappings]);
+
+  const orderedSuiteCases = useMemo(() => {
+    if (!selectedSuiteId) {
+      return [];
+    }
+
+    const suiteOrder = new Map(suiteMappings.map((mapping) => [mapping.test_case_id, mapping.sort_order]));
+
+    return appTypeCases
+      .filter((testCase) => (testCase.suite_ids || []).includes(selectedSuiteId))
+      .slice()
+      .sort((left, right) => {
+        const leftOrder = suiteOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+        const rightOrder = suiteOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+
+        if (leftOrder !== rightOrder) {
+          return leftOrder - rightOrder;
+        }
+
+        return left.title.localeCompare(right.title);
+      });
+  }, [appTypeCases, selectedSuiteId, suiteMappings]);
 
   const selectedProject = projects.find((project) => project.id === projectId) || null;
   const selectedAppType = appTypes.find((appType) => appType.id === appTypeId) || null;
@@ -274,6 +330,7 @@ export function DesignPage() {
       queryClient.invalidateQueries({ queryKey: ["requirements", projectId] }),
       queryClient.invalidateQueries({ queryKey: ["test-suites"] }),
       queryClient.invalidateQueries({ queryKey: ["design-test-cases"] }),
+      queryClient.invalidateQueries({ queryKey: ["suite-test-case-mappings"] }),
       queryClient.invalidateQueries({ queryKey: ["test-cases"] }),
       queryClient.invalidateQueries({ queryKey: ["global-test-cases", appTypeId] }),
       queryClient.invalidateQueries({ queryKey: ["global-test-case-results", appTypeId] })
@@ -334,10 +391,10 @@ export function DesignPage() {
       setSelectedSuiteId(suiteId);
       setSelectedTestCaseIds([]);
       setIsSuiteModalOpen(false);
-      setMessage(suiteModalMode === "create" ? "Suite created." : "Suite updated.");
+      showSuccess(suiteModalMode === "create" ? "Suite created." : "Suite updated.");
       await refreshSuites();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to save suite");
+      showError(error, "Unable to save suite");
     }
   };
 
@@ -345,6 +402,7 @@ export function DesignPage() {
     const suiteId = caseDraft.suite_id || selectedSuiteId || suites[0]?.id || "";
 
     if (!suiteId) {
+      setMessageTone("error");
       setMessage("Create a suite first before saving test cases.");
       return;
     }
@@ -376,7 +434,7 @@ export function DesignPage() {
         setSelectedSuiteId(suiteId);
         setSelectedTestCaseId(response.id);
         setIsCreatingCase(false);
-        setMessage("Test case created.");
+        showSuccess("Test case created.");
       } else {
         await updateTestCaseMutation.mutateAsync({
           id: selectedTestCase.id,
@@ -412,10 +470,10 @@ export function DesignPage() {
           )
         );
 
-        setMessage("Test case updated.");
+        showSuccess("Test case updated.");
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to save test case");
+      showError(error, "Unable to save test case");
     }
   };
 
@@ -429,10 +487,10 @@ export function DesignPage() {
       setSelectedSuiteId("");
       setSelectedTestCaseId("");
       setSelectedTestCaseIds([]);
-      setMessage("Suite deleted.");
+      showSuccess("Suite deleted.");
       await refreshSuites();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to delete suite");
+      showError(error, "Unable to delete suite");
     }
   };
 
@@ -448,27 +506,29 @@ export function DesignPage() {
       setSelectedTestCaseId("");
       setSelectedTestCaseIds((current) => current.filter((id) => id !== selectedTestCase.id));
       setIsCreatingCase(false);
-      setMessage("Test case deleted.");
+      showSuccess("Test case deleted.");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["requirements", projectId] }),
         queryClient.invalidateQueries({ queryKey: ["global-test-cases", appTypeId] }),
         queryClient.invalidateQueries({ queryKey: ["global-test-case-results", appTypeId] })
       ]);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to delete test case");
+      showError(error, "Unable to delete test case");
     }
   };
 
   const handleCreateStep = async () => {
     if (!selectedTestCase) {
+      setMessageTone("error");
       setMessage("Select a test case before adding steps.");
       return;
     }
 
     try {
+      const nextStepOrder = (sortedSteps[sortedSteps.length - 1]?.step_order || 0) + 1;
       const response = await createStepMutation.mutateAsync({
         test_case_id: selectedTestCase.id,
-        step_order: sortedSteps.length + 1,
+        step_order: nextStepOrder,
         action: newStepDraft.action,
         expected_result: newStepDraft.expected_result
       });
@@ -476,7 +536,7 @@ export function DesignPage() {
       const optimisticStep: TestStep = {
         id: response.id,
         test_case_id: selectedTestCase.id,
-        step_order: sortedSteps.length + 1,
+        step_order: nextStepOrder,
         action: newStepDraft.action || null,
         expected_result: newStepDraft.expected_result || null
       };
@@ -485,9 +545,9 @@ export function DesignPage() {
       setNewStepDraft({ action: "", expected_result: "" });
       setIsAddingStep(false);
       setExpandedStepId(response.id);
-      setMessage("Step added.");
+      showSuccess("Step added.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to add step");
+      showError(error, "Unable to add step");
     }
   };
 
@@ -523,9 +583,9 @@ export function DesignPage() {
         )
       );
 
-      setMessage("Step updated.");
+      showSuccess("Step updated.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to update step");
+      showError(error, "Unable to update step");
     }
   };
 
@@ -542,9 +602,9 @@ export function DesignPage() {
           .map((step, index) => ({ ...step, step_order: index + 1 }))
       );
       setExpandedStepId((current) => (current === stepId ? "" : current));
-      setMessage("Step deleted.");
+      showSuccess("Step deleted.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to delete step");
+      showError(error, "Unable to delete step");
     }
   };
 
@@ -577,9 +637,9 @@ export function DesignPage() {
 
       updateStepsCache(selectedTestCase.id, () => normalized);
       setExpandedStepId(fromStepId);
-      setMessage("Step order updated.");
+      showSuccess("Step order updated.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to reorder steps");
+      showError(error, "Unable to reorder steps");
     }
   };
 
@@ -588,7 +648,7 @@ export function DesignPage() {
       return;
     }
 
-    const reordered = [...filteredCases];
+    const reordered = [...orderedSuiteCases];
     const fromIndex = reordered.findIndex((testCase) => testCase.id === fromCaseId);
     const toIndex = reordered.findIndex((testCase) => testCase.id === toCaseId);
 
@@ -604,14 +664,22 @@ export function DesignPage() {
         suiteId: selectedSuiteId,
         testCaseIds: reordered.map((testCase) => testCase.id)
       });
-      await queryClient.invalidateQueries({ queryKey: ["design-test-cases"] });
-      setMessage("Test case order updated.");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["design-test-cases"] }),
+        queryClient.invalidateQueries({ queryKey: ["suite-test-case-mappings", selectedSuiteId] })
+      ]);
+      showSuccess("Test case order updated.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to reorder test cases");
+      showError(error, "Unable to reorder test cases");
     }
   };
 
-  const isDesignLoading = projectsQuery.isLoading || appTypesQuery.isLoading || suitesQuery.isLoading || testCasesQuery.isLoading;
+  const isDesignLoading =
+    projectsQuery.isLoading ||
+    appTypesQuery.isLoading ||
+    suitesQuery.isLoading ||
+    testCasesQuery.isLoading ||
+    (Boolean(selectedSuiteId) && suiteMappingsQuery.isLoading);
 
   return (
     <div className="page-content">
@@ -625,7 +693,7 @@ export function DesignPage() {
         }} type="button">+ Create Suite</button>}
       />
 
-      {message ? <p className="inline-message">{message}</p> : null}
+      {message ? <p className={messageTone === "error" ? "inline-message error-message" : "inline-message success-message"}>{message}</p> : null}
 
       <div className="design-context-bar">
         <ProjectSelector projects={projects} value={projectId} onChange={handleProjectChange} />
@@ -816,28 +884,20 @@ function SuiteSidebar({
         {suites.map((suite) => (
           <button
             key={suite.id}
-            className={activeSuiteId === suite.id ? "record-card test-suite-card is-active" : "record-card test-suite-card"}
+            className={activeSuiteId === suite.id ? "record-card tile-card test-suite-card is-active" : "record-card tile-card test-suite-card"}
             onClick={() => onSelectSuite(suite.id)}
             type="button"
           >
-            <div className="record-card-header">
-                <div className="record-card-icon test-suite">📁</div>
-                <strong>{suite.name}</strong>
+            <div className="tile-card-main">
+              <div className="tile-card-header">
+                <div className="record-card-icon test-suite">TS</div>
+                <div className="tile-card-title-group">
+                  <strong>{suite.name}</strong>
+                  <span className="tile-card-kicker">{suite.parent_id ? "Nested suite" : "Root suite"}</span>
+                </div>
                 <span className="object-type-badge test-suite">Suite</span>
               </div>
-            <div className="record-card-body">
-              <div className="record-meta">
-                <div className="record-meta-row">
-                  <strong>Type</strong>
-                  <span className="suite-hierarchy-badge" style={{ textTransform: 'capitalize' }}>
-                    {suite.parent_id ? "Nested suite" : "Root suite"}
-                  </span>
-                </div>
-                <div className="record-meta-row">
-                  <strong>Cases</strong>
-                  <span className="step-count-badge">{counts[suite.id] || 0}</span>
-                </div>
-              </div>
+              <p className="tile-card-description">{selectedAppType ? `${selectedAppType.name} workspace suite` : "No app type selected"}</p>
             </div>
             <span className="count-pill">{counts[suite.id] || 0}</span>
           </button>
@@ -907,7 +967,7 @@ function TestCaseList({
         {cases.map((testCase) => (
           <button
             key={testCase.id}
-            className={activeCaseId === testCase.id ? "record-card test-case-card is-active" : "record-card test-case-card"}
+            className={activeCaseId === testCase.id ? "record-card tile-card test-case-card is-active" : "record-card tile-card test-case-card"}
             onClick={() => onSelectCase(testCase.id)}
             draggable={Boolean(selectedSuite)}
             onDragStart={() => setDraggedCaseId(testCase.id)}
@@ -925,21 +985,19 @@ function TestCaseList({
               <input checked={selectedCaseIds.includes(testCase.id)} onChange={() => onToggleSelection(testCase.id)} type="checkbox" />
             </label>
             {selectedSuite ? <span className="drag-handle" aria-hidden="true">::</span> : null}
-            <div className="record-card-body">
-              <div className="record-card-header">
-                <div className="record-card-icon test-case">📄</div>
-                <strong>{testCase.title}</strong>
-                <span className="object-type-badge test-case">Test Case</span>
+            <div className="tile-card-main">
+              <div className="tile-card-header">
+                <div className="record-card-icon test-case">TC</div>
+                <div className="tile-card-title-group">
+                  <strong>{testCase.title}</strong>
+                  <span className="tile-card-kicker">{selectedSuite ? `Ordered in ${selectedSuite.name}` : "Reusable across suites"}</span>
+                </div>
+                <span className="object-type-badge test-case">Case</span>
               </div>
-              <div className="record-meta">
-                <div className="record-meta-row">
-                  <strong>Priority</strong>
-                  <span className="test-case-priority">P{testCase.priority || 3}</span>
-                </div>
-                <div className="record-meta-row">
-                  <strong>Status</strong>
-                  <span>{testCase.description || "No description"}</span>
-                </div>
+              <p className="tile-card-description">{testCase.description || "No description yet for this test case."}</p>
+              <div className="tile-card-metrics">
+                <span className="tile-metric">Priority P{testCase.priority || 3}</span>
+                <span className="tile-metric">{testCase.requirement_id ? "Requirement linked" : "No requirement yet"}</span>
               </div>
             </div>
             <StatusBadge value={testCase.status || DEFAULT_CASE_STATUS} />
