@@ -102,15 +102,15 @@ export function ProjectsPage() {
     <div className="page-content">
       <PageHeader
         eyebrow="Projects & Scope"
-        title="Project & Scope"
-        description="Pick one project, review its summary, and move through memberships and app boundaries without clutter."
-        actions={<button className="primary-button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} type="button">Create Project</button>}
+        title="Projects"
+        description="A project catalog for scope, membership, and application boundaries, with the selected project staying in focus while you work."
+        actions={<button className="primary-button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} type="button">Add new project</button>}
       />
 
       {message ? <p className="inline-message">{message}</p> : null}
 
       <div className="workspace-grid">
-        <Panel title="Projects" subtitle="Treat this as the project rail for the rest of the page.">
+        <Panel title="Project catalog" subtitle="Create a project, then switch context through the catalog cards below.">
           <form className="form-grid" onSubmit={handleProjectCreate}>
             <FormField label="Project name">
               <input name="name" required placeholder="Checkout modernization" />
@@ -121,18 +121,17 @@ export function ProjectsPage() {
             <button className="primary-button" type="submit">Create project</button>
           </form>
 
-          <div className="record-list">
+          <div className="catalog-grid compact">
             {projectItems.map((project) => (
               <button
                 key={project.id}
-                className={selectedProject?.id === project.id ? "record-card is-active" : "record-card"}
+                className={selectedProject?.id === project.id ? "catalog-card is-active" : "catalog-card"}
                 onClick={() => setSelectedProjectId(project.id)}
                 type="button"
               >
-                <div>
-                  <strong>{project.name}</strong>
-                  <span>{project.description || "No description yet"}</span>
-                </div>
+                <strong>{project.name}</strong>
+                <p>{project.description || "No description yet"}</p>
+                <span className="status-pill tone-info">Project</span>
               </button>
             ))}
           </div>

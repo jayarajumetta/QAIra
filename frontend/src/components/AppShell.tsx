@@ -9,37 +9,54 @@ const THEME_KEY = "app_theme";
 const SIDEBAR_KEY = "sidebar_collapsed";
 const PROJECT_KEY = "sidebar_project_id";
 
-const navGroups = [
+const navigation = [
   {
-    label: "Workspace",
+    label: "Main",
     items: [
-      { to: "/", label: "Overview", icon: DashboardIcon },
-      { to: "/feedback", label: "Feedback", icon: ChatIcon }
+      { id: "overview", to: "/", label: "Dashboard", icon: DashboardIcon },
+      { id: "projects", to: "/projects", label: "Projects", icon: FolderIcon, countKey: "projects" }
     ]
   },
   {
-    label: "Test Design",
+    label: "Test Management",
     items: [
-      { to: "/design", label: "Test Design", icon: FlaskIcon },
-      { to: "/requirements", label: "Requirements", icon: DocumentIcon },
-      { to: "/test-cases", label: "Test Cases", icon: PencilIcon }
-    ]
-  },
-  {
-    label: "Execution",
-    items: [
-      { to: "/executions", label: "Executions", icon: PlayIcon }
+      {
+        id: "authoring",
+        label: "Test Authoring",
+        icon: FlaskIcon,
+        children: [
+          { id: "requirements", to: "/requirements", label: "Requirements" },
+          { id: "test-cases", to: "/test-cases", label: "Test Cases" },
+          { id: "design", to: "/design", label: "Test Suites" }
+        ]
+      },
+      {
+        id: "runs",
+        label: "Test Runs",
+        icon: PlayIcon,
+        children: [
+          { id: "executions", to: "/executions", label: "Executions" },
+          { id: "feedback", to: "/feedback", label: "Reporting & Feedback" }
+        ]
+      }
     ]
   },
   {
     label: "Administration",
     items: [
-      { to: "/integrations", label: "Integrations", icon: PlugIcon },
-      { to: "/people", label: "People & Access", icon: UsersIcon },
-      { to: "/projects", label: "Projects & Scope", icon: FolderIcon }
+      { id: "people", to: "/people", label: "Users", icon: UsersIcon },
+      { id: "integrations", to: "/integrations", label: "Integrations", icon: PlugIcon }
+    ]
+  },
+  {
+    label: "Settings",
+    items: [
+      { id: "support", to: "/support", label: "Support", icon: SupportIcon },
+      { id: "notifications", to: "/notifications", label: "Notifications", icon: BellIcon },
+      { id: "settings", to: "/settings", label: "Settings", icon: CogIcon }
     ]
   }
-];
+] as const;
 
 export function AppShell() {
   const navigate = useNavigate();
@@ -62,9 +79,16 @@ export function AppShell() {
   });
   const [isCollapsed, setIsCollapsed] = useState(() => window.localStorage.getItem(SIDEBAR_KEY) === "true");
   const [sidebarProjectId, setSidebarProjectId] = useState(() => window.localStorage.getItem(PROJECT_KEY) || "");
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
+    authoring: true,
+    runs: true
+  });
 
   const projects = projectsQuery.data || [];
   const hasNoProjects = projects.length === 0;
+  const navCounts = {
+    projects: projects.length
+  };
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -93,8 +117,33 @@ export function AppShell() {
     }
   }, [sidebarProjectId]);
 
+  useEffect(() => {
+    navigation.forEach((group) => {
+      group.items.forEach((item) => {
+        if ("children" in item && item.children.some((child) => child.to === location.pathname)) {
+          setExpandedGroups((current) => ({ ...current, [item.id]: true }));
+        }
+      });
+    });
+  }, [location.pathname]);
+
   const currentSection = useMemo(() => {
-    return navGroups.flatMap((group) => group.items).find((item) => item.to === location.pathname)?.label || "Workspace";
+    for (const group of navigation) {
+      for (const item of group.items) {
+        if ("to" in item && item.to === location.pathname) {
+          return item.label;
+        }
+
+        if ("children" in item) {
+          const match = item.children.find((child) => child.to === location.pathname);
+          if (match) {
+            return match.label;
+          }
+        }
+      }
+    }
+
+    return "Workspace";
   }, [location.pathname]);
 
   return (
@@ -150,7 +199,7 @@ export function AppShell() {
           {!isCollapsed ? (
             <>
               <p className="sidebar-copy">
-                Orchestrate projects, coverage design, execution runs, and results from one place.
+                A unified QA workspace for authoring, executions, governance, and release readiness.
               </p>
               {hasNoProjects ? (
                 <div className="sidebar-notice">
@@ -159,7 +208,7 @@ export function AppShell() {
                 </div>
               ) : (
                 <label className="sidebar-project-picker">
-                  <span>Project</span>
+                  <span>Current Project</span>
                   <select
                     value={sidebarProjectId}
                     onChange={(event) => {
@@ -179,19 +228,68 @@ export function AppShell() {
         </div>
 
         <nav className="nav-list" aria-label="Main navigation">
-          {navGroups.map((group) => (
+          {navigation.map((group) => (
             <div className="nav-group" key={group.label}>
               {!isCollapsed ? <p className="nav-group-label">{group.label}</p> : null}
               <div className="nav-group-items">
                 {group.items.map((item) => {
                   const Icon = item.icon;
-                  // Disable project-dependent pages if no projects
-                  const isDisabled = hasNoProjects && (
-                    item.to === "/design" || 
-                    item.to === "/requirements" || 
-                    item.to === "/test-cases" || 
-                    item.to === "/executions"
-                  );
+
+                  if ("children" in item) {
+                    const isOpen = expandedGroups[item.id] ?? true;
+                    const hasActiveChild = item.children.some((child) => child.to === location.pathname);
+                    const isDisabled = hasNoProjects;
+
+                    return (
+                      <div className="nav-branch" key={item.id}>
+                        <button
+                          aria-expanded={isOpen}
+                          className={hasActiveChild ? "nav-link nav-branch-toggle is-active" : "nav-link nav-branch-toggle"}
+                          onClick={() => {
+                            if (isCollapsed) {
+                              setIsCollapsed(false);
+                              return;
+                            }
+
+                            setExpandedGroups((current) => ({ ...current, [item.id]: !isOpen }));
+                          }}
+                          style={{ opacity: isDisabled ? 0.5 : 1 }}
+                          type="button"
+                        >
+                          <span className="nav-link-icon" aria-hidden="true"><Icon /></span>
+                          {!isCollapsed ? <span className="nav-link-label">{item.label}</span> : null}
+                          {!isCollapsed ? <span className={isOpen ? "nav-link-caret is-open" : "nav-link-caret"}><ChevronIcon /></span> : null}
+                        </button>
+
+                        {!isCollapsed && isOpen ? (
+                          <div className="nav-subgroup">
+                            {item.children.map((child) => {
+                              const childDisabled = hasNoProjects;
+
+                              return (
+                                <NavLink
+                                  key={child.to}
+                                  to={child.to}
+                                  className={({ isActive }) => isActive ? "nav-sublink is-active" : "nav-sublink"}
+                                  onClick={(event) => {
+                                    if (childDisabled) {
+                                      event.preventDefault();
+                                    }
+                                  }}
+                                  style={{ opacity: childDisabled ? 0.5 : 1, cursor: childDisabled ? "not-allowed" : "pointer" }}
+                                >
+                                  <span>{child.label}</span>
+                                </NavLink>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  }
+
+                  const isDisabled = false;
+                  const badgeCount = "countKey" in item ? navCounts[item.countKey as keyof typeof navCounts] : undefined;
 
                   return (
                     <NavLink
@@ -209,6 +307,7 @@ export function AppShell() {
                     >
                       <span className="nav-link-icon" aria-hidden="true"><Icon /></span>
                       {!isCollapsed ? <span className="nav-link-label">{item.label}</span> : null}
+                      {!isCollapsed && typeof badgeCount === "number" ? <span className="nav-link-badge">{badgeCount}</span> : null}
                     </NavLink>
                   );
                 })}
@@ -289,6 +388,10 @@ function FolderIcon() {
   return <IconFrame><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v9A2.5 2.5 0 0 1 18.5 21h-13A2.5 2.5 0 0 1 3 18.5z" /><path d="M9 12v5" /><path d="M13 14v3" /></IconFrame>;
 }
 
+function ChevronIcon() {
+  return <IconFrame><path d="m8 10 4 4 4-4" /></IconFrame>;
+}
+
 function PlugIcon() {
   return <IconFrame><path d="M8 7v5" /><path d="M16 7v5" /><path d="M7 12h10" /><path d="M12 12v5a3 3 0 0 1-3 3H8" /><path d="M16 20h-1" /></IconFrame>;
 }
@@ -315,6 +418,18 @@ function LogoutIcon() {
 
 function ChatIcon() {
   return <IconFrame><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /><path d="M8 9h8" /><path d="M8 13h5" /></IconFrame>;
+}
+
+function BellIcon() {
+  return <IconFrame><path d="M15 17H5l1.4-1.4A2 2 0 0 0 7 14.2V11a5 5 0 0 1 10 0v3.2a2 2 0 0 0 .6 1.4L19 17h-4" /><path d="M10 20a2 2 0 0 0 4 0" /></IconFrame>;
+}
+
+function CogIcon() {
+  return <IconFrame><circle cx="12" cy="12" r="3.2" /><path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a2 2 0 0 1-2.8 2.8l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a2 2 0 0 1-4 0v-.2a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a2 2 0 0 1 0-4h.2a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V4a2 2 0 0 1 4 0v.2a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a2 2 0 0 1 2.8 2.8l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .9.6h.2a2 2 0 0 1 0 4h-.2a1 1 0 0 0-.9.6" /></IconFrame>;
+}
+
+function SupportIcon() {
+  return <IconFrame><path d="M9.1 9a3 3 0 1 1 5.8 1c-.5 1.2-1.6 1.7-2.4 2.3-.6.5-1 1-1 1.7" /><circle cx="12" cy="18" r="1" /><path d="M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z" /></IconFrame>;
 }
 
 function MenuIcon() {

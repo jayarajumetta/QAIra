@@ -145,11 +145,11 @@ export function PeoplePage() {
     <div className="page-content">
       <PageHeader
         eyebrow="People & Access"
-        title="People & Access"
+        title="User Management"
         description={isAdmin
-          ? "Manage users and roles from a calmer split view, with role-aware editing and clear admin-only actions."
-          : "People & Access is read-only for members. You can browse users and roles, but only admins can change them."}
-        actions={isAdmin ? <button className="primary-button" onClick={() => setView("users")} type="button">Add User</button> : null}
+          ? "Manage users and roles from a clearer control surface with table-first visibility and admin-only edit actions."
+          : "User management is read-only for members. You can browse users and roles, but only admins can change them."}
+        actions={isAdmin ? <button className="primary-button" onClick={() => setView("users")} type="button">Add new user</button> : null}
       />
 
       {message ? <p className="inline-message">{message}</p> : null}
@@ -165,22 +165,32 @@ export function PeoplePage() {
 
       {view === "users" ? (
         <div className="workspace-grid">
-          <Panel title="User directory" subtitle="Pick a record to inspect or update it without juggling modal prompts.">
-            <div className="record-list">
-              {userItems.map((user) => (
-                <button
-                  key={user.id}
-                  className={selectedUser?.id === user.id ? "record-card is-active" : "record-card"}
-                  onClick={() => setSelectedUserId(user.id)}
-                  type="button"
-                >
-                  <div>
-                    <strong>{user.name || "Unnamed user"}</strong>
-                    <span>{user.email}</span>
-                  </div>
-                  <small>{user.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : "Member"}</small>
-                </button>
-              ))}
+          <Panel title="User directory" subtitle="Review users in a stable table, then inspect the selected record on the right.">
+            <div className="table-wrap">
+              <table className="data-table workspace-table selectable-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>User type</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {userItems.map((user) => (
+                    <tr
+                      className={selectedUser?.id === user.id ? "is-selected" : undefined}
+                      key={user.id}
+                      onClick={() => setSelectedUserId(user.id)}
+                    >
+                      <td><strong>{user.name || "Unnamed user"}</strong></td>
+                      <td>{user.email}</td>
+                      <td>{user.role === "admin" ? "Org Admin" : "Member"}</td>
+                      <td><span className={`status-pill ${user.role === "admin" ? "tone-info" : "tone-success"}`}>{user.role === "admin" ? "admin" : "active"}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
             {!userItems.length ? <div className="empty-state compact">No users found yet.</div> : null}
           </Panel>
@@ -293,18 +303,16 @@ export function PeoplePage() {
       ) : (
         <div className="workspace-grid">
           <Panel title="Role library" subtitle="Keep role naming compact and reusable across projects.">
-            <div className="record-list">
+            <div className="catalog-grid compact">
               {roleItems.map((role) => (
                 <button
                   key={role.id}
-                  className={selectedRole?.id === role.id ? "record-card is-active" : "record-card"}
+                  className={selectedRole?.id === role.id ? "catalog-card is-active" : "catalog-card"}
                   onClick={() => setSelectedRoleId(role.id)}
                   type="button"
                 >
-                  <div>
-                    <strong>{role.name}</strong>
-                    <span>Project membership label</span>
-                  </div>
+                  <strong>{role.name}</strong>
+                  <p>Project membership label used across assignments and access views.</p>
                 </button>
               ))}
             </div>

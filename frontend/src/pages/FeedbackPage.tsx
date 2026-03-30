@@ -121,9 +121,9 @@ export function FeedbackPage() {
   return (
     <div className="page-content">
       <PageHeader
-        eyebrow="Feedback"
-        title="Feedback"
-        description="Capture product feedback independently from projects and keep a shared stream of suggestions from everyone in the workspace."
+        eyebrow="Reporting & Feedback"
+        title="Reporting & Feedback"
+        description="Capture requests, issues, and shared feedback in a cleaner reporting stream that sits alongside the rest of the QA workspace."
         actions={
           <button
             className="primary-button"

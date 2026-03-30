@@ -18,6 +18,9 @@ import { RequirementsPage } from "./pages/RequirementsPage";
 import { FeedbackPage } from "./pages/FeedbackPage";
 import { TestCasesPage } from "./pages/TestCasesPage";
 import { IntegrationsPage } from "./pages/IntegrationsPage";
+import { SupportPage } from "./pages/SupportPage";
+import { NotificationsPage } from "./pages/NotificationsPage";
+import { SettingsPage } from "./pages/SettingsPage";
 
 const queryClient = new QueryClient();
 const THEME_KEY = "app_theme";
@@ -30,6 +33,9 @@ const PAGE_TITLES: Record<string, string> = {
   "/design": "Test Design · QAIra",
   "/requirements": "Requirements · QAIra",
   "/feedback": "Feedback · QAIra",
+  "/support": "Support · QAIra",
+  "/notifications": "Notifications · QAIra",
+  "/settings": "Settings · QAIra",
   "/test-cases": "Test Cases · QAIra",
   "/executions": "Executions · QAIra",
   "/auth": "Sign In · QAIra"
@@ -115,6 +121,9 @@ const router = createBrowserRouter([
       { path: "design", element: <DesignPage /> },
       { path: "requirements", element: <RequirementsPage /> },
       { path: "feedback", element: <FeedbackPage /> },
+      { path: "support", element: <SupportPage /> },
+      { path: "notifications", element: <NotificationsPage /> },
+      { path: "settings", element: <SettingsPage /> },
       { path: "test-cases", element: <TestCasesPage /> },
       { path: "executions", element: <ExecutionsPage /> }
     ]

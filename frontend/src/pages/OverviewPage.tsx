@@ -5,10 +5,12 @@ import { Panel } from "../components/Panel";
 import { ProgressMeter } from "../components/ProgressMeter";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
+import { useAuth } from "../auth/AuthContext";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 
 export function OverviewPage() {
   const navigate = useNavigate();
+  const { session } = useAuth();
   const {
     users,
     projects,
@@ -113,33 +115,128 @@ export function OverviewPage() {
     });
   }, [appTypesList, executionResultsList, projectsList, suitesList, testCasesList]);
 
+  const activitySeries = useMemo(() => {
+    const formatter = new Intl.DateTimeFormat("en", { month: "short" });
+    const now = new Date();
+    const months = Array.from({ length: 6 }, (_, index) => {
+      const date = new Date(now.getFullYear(), now.getMonth() - (5 - index), 1);
+      return {
+        key: `${date.getFullYear()}-${date.getMonth()}`,
+        label: formatter.format(date),
+        total: 0
+      };
+    });
+
+    executionResultsList.forEach((result) => {
+      const createdAt = result.created_at ? new Date(result.created_at) : null;
+
+      if (!createdAt || Number.isNaN(createdAt.getTime())) {
+        return;
+      }
+
+      const key = `${createdAt.getFullYear()}-${createdAt.getMonth()}`;
+      const month = months.find((item) => item.key === key);
+
+      if (month) {
+        month.total += 1;
+      }
+    });
+
+    const peak = Math.max(...months.map((item) => item.total), 1);
+
+    return months.map((item) => ({
+      ...item,
+      height: Math.max(12, Math.round((item.total / peak) * 100))
+    }));
+  }, [executionResultsList]);
+
+  const recentRuns = useMemo(() => {
+    return executionsList.slice(0, 6).map((execution) => {
+      const summary = executionSummaryById[execution.id] || { passed: 0, failed: 0, total: 0, percent: 0 };
+
+      return {
+        ...execution,
+        summary,
+        projectName: projectsList.find((project) => project.id === execution.project_id)?.name || execution.project_id
+      };
+    });
+  }, [executionSummaryById, executionsList, projectsList]);
+
   return (
     <div className="page-content">
       <PageHeader
         eyebrow="Overview"
-        title="Delivery Overview"
-        description="Track coverage health, execution quality, and app-level readiness from one mature control surface without losing sight of requirements or reusable library depth."
-        actions={<button className="primary-button" onClick={() => navigate("/executions")} type="button">Open Execution Hub</button>}
+        title={`Welcome back, ${session?.user.name || "teammate"}`}
+        description="Track readiness, coverage, and recent run quality from one sharper workspace dashboard inspired by an operations control center."
+        actions={
+          <div className="page-actions">
+            <button className="ghost-button" onClick={() => navigate("/feedback")} type="button">Open Reporting</button>
+            <button className="primary-button" onClick={() => navigate("/executions")} type="button">Open Execution Hub</button>
+          </div>
+        }
       />
 
       <div className="stats-grid">
-        <StatCard label="Workspace Members" value={usersList.length} hint="People available for design, review, and execution" />
-        <StatCard label="Projects" value={projectsList.length} hint="Delivery streams currently active in the workspace" />
-        <StatCard label="Requirement Coverage" value={`${requirementCoverage}%`} hint="Requirements with at least one linked test case" />
-        <StatCard label="Execution Pass Rate" value={`${passRate}%`} hint="Pass percentage across all recorded execution results" />
-        <StatCard label="Running Executions" value={executionHealth.activeExecutions} hint="Runs currently in motion" />
-        <StatCard label="Failed Executions" value={executionHealth.failedExecutions} hint="Runs that ended in a failed state" />
+        <StatCard label="Workspace Members" value={usersList.length} hint="Available for authoring, review, and execution" />
+        <StatCard label="Projects" value={projectsList.length} hint="Active delivery streams in the workspace" />
+        <StatCard label="Requirement Coverage" value={`${requirementCoverage}%`} hint="Requirements already mapped to reusable cases" />
+        <StatCard label="Execution Pass Rate" value={`${passRate}%`} hint="Pass ratio across all captured execution results" />
+      </div>
+
+      <div className="two-column-grid dashboard-grid">
+        <Panel title="Latest run statistics" subtitle="A compact readiness snapshot across coverage, activity, and release signal.">
+          <div className="dashboard-donut-shell">
+            <div className="donut-visual">
+              <div className="donut-ring">
+                <div className="donut-center">
+                  <span>Total</span>
+                  <strong>{passRate}%</strong>
+                </div>
+              </div>
+            </div>
+            <div className="dashboard-legend">
+              <div className="legend-row">
+                <span className="legend-swatch pass" />
+                <strong>Pass</strong>
+                <span>{passRate}%</span>
+              </div>
+              <div className="legend-row">
+                <span className="legend-swatch warn" />
+                <strong>Coverage</strong>
+                <span>{requirementCoverage}%</span>
+              </div>
+              <div className="legend-row">
+                <span className="legend-swatch info" />
+                <strong>Running</strong>
+                <span>{executionHealth.activeExecutions}</span>
+              </div>
+            </div>
+          </div>
+        </Panel>
+
+        <Panel title="Activity" subtitle="Recent result volume across the latest months.">
+          <div className="activity-chart">
+            {activitySeries.map((item) => (
+              <div className="activity-bar-group" key={item.key}>
+                <div className="activity-bar-track">
+                  <div className="activity-bar-fill" style={{ height: `${item.height}%` }} />
+                </div>
+                <span>{item.label}</span>
+              </div>
+            ))}
+          </div>
+        </Panel>
       </div>
 
       <div className="two-column-grid">
-        <Panel title="Application health" subtitle="Each app type shows coverage volume and recent execution quality.">
+        <Panel title="Application health" subtitle="Each app type shows coverage depth and execution quality together.">
           <div className="stack-list">
             {appHealth.map((item) => (
               <div className="stack-item" key={item.id}>
                 <div>
                   <strong>{item.name}</strong>
                   <span>{item.project}</span>
-                  <ProgressMeter detail={`${item.cases} cases · ${item.suites} suites`} value={item.percent} />
+                  <ProgressMeter detail={`${item.cases} cases · ${item.suites} suites`} tone="info" value={item.percent} />
                 </div>
                 <span className="count-pill">{item.percent}%</span>
               </div>
@@ -173,6 +270,42 @@ export function OverviewPage() {
           </div>
         </Panel>
       </div>
+
+      <Panel title="Recent test runs" subtitle="Fast access to recent execution quality, ownership context, and drill-down actions.">
+        <div className="table-wrap">
+          <table className="data-table workspace-table">
+            <thead>
+              <tr>
+                <th>Execution</th>
+                <th>Project</th>
+                <th>Results</th>
+                <th>Pass rate</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentRuns.map((execution) => (
+                <tr key={execution.id}>
+                  <td>
+                    <strong>{execution.name || "Unnamed execution"}</strong>
+                  </td>
+                  <td>{execution.projectName}</td>
+                  <td>{execution.summary.total}</td>
+                  <td>{execution.summary.percent}%</td>
+                  <td><StatusBadge value={execution.status} /></td>
+                  <td>
+                    <button className="ghost-button" onClick={() => navigate(`/executions?execution=${execution.id}`)} type="button">
+                      View
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!recentRuns.length ? <div className="empty-state compact">No executions recorded yet.</div> : null}
+      </Panel>
 
       <div className="two-column-grid">
         <Panel title="Coverage gaps" subtitle="Requirements still waiting for linked reusable cases.">
