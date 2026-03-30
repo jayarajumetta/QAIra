@@ -8,8 +8,8 @@ const createError = (message, statusCode) => {
   return error;
 };
 
-const getSessionRole = (id) => {
-  const row = db.prepare(`
+const getSessionRole = async (id) => {
+  const row = await db.prepare(`
     SELECT roles.name
     FROM project_members
     JOIN roles ON roles.id = project_members.role_id
@@ -21,8 +21,8 @@ const getSessionRole = (id) => {
   return row?.name || "member";
 };
 
-const selectUserForSession = (id) => {
-  const user = db.prepare(`
+const selectUserForSession = async (id) => {
+  const user = await db.prepare(`
     SELECT id, email, name, created_at
     FROM users
     WHERE id = ?
@@ -34,12 +34,12 @@ const selectUserForSession = (id) => {
 
   return {
     ...user,
-    role: getSessionRole(id)
+    role: await getSessionRole(id)
   };
 };
 
-const ensureMemberRole = () => {
-  const existing = db.prepare(`
+const ensureMemberRole = async () => {
+  const existing = await db.prepare(`
     SELECT id
     FROM roles
     WHERE name = 'member'
@@ -51,7 +51,7 @@ const ensureMemberRole = () => {
 
   const id = crypto.randomUUID();
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO roles (id, name)
     VALUES (?, 'member')
   `).run(id);
@@ -59,12 +59,12 @@ const ensureMemberRole = () => {
   return id;
 };
 
-const assignDefaultProjectMemberships = (userId, roleId) => {
+const assignDefaultProjectMemberships = async (userId, roleId) => {
   // Use provided roleId or default to member role if not specified
-  const finalRoleId = roleId || ensureMemberRole();
+  const finalRoleId = roleId || await ensureMemberRole();
   
   // Get only the first project (sample project) instead of all projects
-  const firstProject = db.prepare(`
+  const firstProject = await db.prepare(`
     SELECT id FROM projects 
     ORDER BY created_at ASC 
     LIMIT 1
@@ -86,8 +86,8 @@ const assignDefaultProjectMemberships = (userId, roleId) => {
   `);
 
   // Only add to first project
-  if (!existing.get(firstProject.id, userId)) {
-    insertMembership.run(crypto.randomUUID(), firstProject.id, userId, finalRoleId);
+  if (!await existing.get(firstProject.id, userId)) {
+    await insertMembership.run(crypto.randomUUID(), firstProject.id, userId, finalRoleId);
   }
 };
 
@@ -95,14 +95,14 @@ const normalizeEmail = (email) => {
   return email.toLowerCase().trim();
 };
 
-exports.signup = ({ email, password, name, role }) => {
+exports.signup = async ({ email, password, name, role }) => {
   if (!email || !password) {
     throw createError("Missing required fields", 400);
   }
 
   const normalizedEmail = normalizeEmail(email);
 
-  const existing = db.prepare(`
+  const existing = await db.prepare(`
     SELECT id FROM users WHERE LOWER(email) = ?
   `).get(normalizedEmail);
 
@@ -113,14 +113,14 @@ exports.signup = ({ email, password, name, role }) => {
   const id = crypto.randomUUID();
   const passwordHash = hashPassword(password);
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO users (id, email, password_hash, name)
     VALUES (?, ?, ?, ?)
   `).run(id, normalizedEmail, passwordHash, name || null);
 
-  assignDefaultProjectMemberships(id, role);
+  await assignDefaultProjectMemberships(id, role);
 
-  const user = selectUserForSession(id);
+  const user = await selectUserForSession(id);
 
   return {
     token: createToken(user),
@@ -128,14 +128,14 @@ exports.signup = ({ email, password, name, role }) => {
   };
 };
 
-exports.login = ({ email, password }) => {
+exports.login = async ({ email, password }) => {
   if (!email || !password) {
     throw createError("Missing required fields", 400);
   }
 
   const normalizedEmail = normalizeEmail(email);
 
-  const user = db.prepare(`
+  const user = await db.prepare(`
     SELECT id, email, name, password_hash, created_at
     FROM users
     WHERE LOWER(email) = ?
@@ -152,7 +152,7 @@ exports.login = ({ email, password }) => {
     throw createError("Invalid credentials", 401);
   }
 
-  const sessionUser = selectUserForSession(user.id);
+  const sessionUser = await selectUserForSession(user.id);
 
   return {
     token: createToken(sessionUser),
@@ -160,7 +160,7 @@ exports.login = ({ email, password }) => {
   };
 };
 
-exports.getSession = (token) => {
+exports.getSession = async (token) => {
   let payload;
 
   try {
@@ -169,7 +169,7 @@ exports.getSession = (token) => {
     throw createError(error.message || "Invalid token", 401);
   }
 
-  const user = selectUserForSession(payload.sub);
+  const user = await selectUserForSession(payload.sub);
 
   if (!user) {
     throw createError("User not found", 404);
@@ -181,14 +181,14 @@ exports.getSession = (token) => {
   };
 };
 
-exports.forgotPassword = ({ email }) => {
+exports.forgotPassword = async ({ email }) => {
   if (!email) {
     throw createError("Email is required", 400);
   }
 
   const normalizedEmail = normalizeEmail(email);
 
-  const user = db.prepare(`
+  const user = await db.prepare(`
     SELECT id FROM users WHERE LOWER(email) = ?
   `).get(normalizedEmail);
 
@@ -198,7 +198,7 @@ exports.forgotPassword = ({ email }) => {
   }
 
   // Mark that a password reset was requested
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
@@ -209,7 +209,7 @@ exports.forgotPassword = ({ email }) => {
   return { success: true };
 };
 
-exports.resetPassword = ({ email, newPassword }) => {
+exports.resetPassword = async ({ email, newPassword }) => {
   if (!email || !newPassword) {
     throw createError("Email and new password are required", 400);
   }
@@ -220,7 +220,7 @@ exports.resetPassword = ({ email, newPassword }) => {
 
   const normalizedEmail = normalizeEmail(email);
 
-  const user = db.prepare(`
+  const user = await db.prepare(`
     SELECT id FROM users WHERE LOWER(email) = ?
   `).get(normalizedEmail);
 
@@ -229,7 +229,7 @@ exports.resetPassword = ({ email, newPassword }) => {
   }
 
   // Check if a reset was recently requested
-  const resetRecord = db.prepare(`
+  const resetRecord = await db.prepare(`
     SELECT expires_at FROM password_reset_tokens WHERE user_id = ?
   `).get(user.id);
 
@@ -245,15 +245,15 @@ exports.resetPassword = ({ email, newPassword }) => {
   // Update password and remove reset token
   const newPasswordHash = hashPassword(newPassword);
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE users SET password_hash = ? WHERE id = ?
   `).run(newPasswordHash, user.id);
 
-  db.prepare(`
+  await db.prepare(`
     DELETE FROM password_reset_tokens WHERE user_id = ?
   `).run(user.id);
 
-  const sessionUser = selectUserForSession(user.id);
+  const sessionUser = await selectUserForSession(user.id);
 
   return {
     token: createToken(sessionUser),

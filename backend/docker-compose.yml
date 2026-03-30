@@ -1,27 +1,35 @@
-version: "3.9"
-
 services:
-  db:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: testiny-db
+  postgres:
+    image: postgres:16-alpine
+    container_name: qaira-postgres
+    ports:
+      - "5432:5432"
     volumes:
-      - ./data:/data
-      - ./db:/app/db
+      - qaira-postgres-data:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./db/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
     environment:
-      - DB_PATH=/data/testiny.db
+      POSTGRES_DB: ${POSTGRES_DB:-qaira}
+      POSTGRES_USER: ${POSTGRES_USER:-qaira}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-qaira}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-qaira} -d ${POSTGRES_DB:-qaira}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   api:
     build: ./api
-    container_name: testiny-api
+    container_name: qaira-api
     ports:
       - "3000:3000"
-    volumes:
-      - ./data:/data
     environment:
-      - DB_PATH=/data/testiny.db
-      - SESSION_SECRET=${SESSION_SECRET:-qaira-dev-secret}
-      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://qaira:qaira@postgres:5432/qaira}
+      SESSION_SECRET: ${SESSION_SECRET:-qaira-dev-secret}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
     depends_on:
-      - db
+      postgres:
+        condition: service_healthy
+
+volumes:
+  qaira-postgres-data:

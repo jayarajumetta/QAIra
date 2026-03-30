@@ -25,14 +25,14 @@ module.exports = async function (fastify) {
   fastify.put("/projects/:id", async (req) => {
     await fastify.authenticate(req);
     // Verify access
-    service.getProject(req.params.id, req.user.id);
+    await service.getProject(req.params.id, req.user.id);
     return service.updateProject(req.params.id, req.body);
   });
 
   fastify.delete("/projects/:id", async (req) => {
     await fastify.authenticate(req);
     // Verify access
-    service.getProject(req.params.id, req.user.id);
+    await service.getProject(req.params.id, req.user.id);
     return service.deleteProject(req.params.id);
   });
 

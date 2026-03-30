@@ -13,12 +13,12 @@ const insertExecutionSuite = db.prepare(`
   VALUES (?, ?, ?)
 `);
 
-function attachScope(execution) {
+async function attachScope(execution) {
   if (!execution) {
     return execution;
   }
 
-  const suiteRows = getSuiteIdsForExecution.all(execution.id);
+  const suiteRows = await getSuiteIdsForExecution.all(execution.id);
   const suite_ids = suiteRows.map((row) => row.suite_id);
 
   return {
@@ -28,25 +28,25 @@ function attachScope(execution) {
   };
 }
 
-exports.createExecution = ({ project_id, app_type_id, suite_ids = [], name, created_by }) => {
+exports.createExecution = async ({ project_id, app_type_id, suite_ids = [], name, created_by }) => {
   if (!project_id || !created_by) {
     throw new Error("Missing required fields");
   }
 
-  const project = db.prepare(`
+  const project = await db.prepare(`
     SELECT id FROM projects WHERE id = ?
   `).get(project_id);
 
   if (!project) throw new Error("Project not found");
 
-  const user = db.prepare(`
+  const user = await db.prepare(`
     SELECT id FROM users WHERE id = ?
   `).get(created_by);
 
   if (!user) throw new Error("Invalid user");
 
   if (app_type_id) {
-    const appType = db.prepare(`
+    const appType = await db.prepare(`
       SELECT id, project_id FROM app_types WHERE id = ?
     `).get(app_type_id);
 
@@ -68,8 +68,8 @@ exports.createExecution = ({ project_id, app_type_id, suite_ids = [], name, crea
     WHERE id = ?
   `);
 
-  uniqueSuiteIds.forEach((suiteId) => {
-    const suite = validateSuite.get(suiteId);
+  for (const suiteId of uniqueSuiteIds) {
+    const suite = await validateSuite.get(suiteId);
 
     if (!suite) {
       throw new Error(`Suite not found: ${suiteId}`);
@@ -78,29 +78,29 @@ exports.createExecution = ({ project_id, app_type_id, suite_ids = [], name, crea
     if (suite.app_type_id !== app_type_id) {
       throw new Error("All suites must belong to the selected app type");
     }
-  });
+  }
 
   const id = uuid();
 
-  const transaction = db.transaction(() => {
-    db.prepare(`
+  const transaction = db.transaction(async () => {
+    await db.prepare(`
       INSERT INTO executions
       (id, project_id, app_type_id, name, trigger, status, created_by)
       VALUES (?, ?, ?, ?, 'manual', 'queued', ?)
     `).run(id, project_id, app_type_id || null, name || "Execution Run", created_by);
 
-    uniqueSuiteIds.forEach((suiteId) => {
-      const suite = validateSuite.get(suiteId);
-      insertExecutionSuite.run(id, suiteId, suite?.name || null);
-    });
+    for (const suiteId of uniqueSuiteIds) {
+      const suite = await validateSuite.get(suiteId);
+      await insertExecutionSuite.run(id, suiteId, suite?.name || null);
+    }
   });
 
-  transaction();
+  await transaction();
 
   return { id };
 };
 
-exports.getExecutions = ({ project_id, status }) => {
+exports.getExecutions = async ({ project_id, status }) => {
   let query = `SELECT * FROM executions WHERE 1=1`;
   const params = [];
 
@@ -116,11 +116,12 @@ exports.getExecutions = ({ project_id, status }) => {
 
   query += ` ORDER BY started_at DESC, ended_at DESC, id DESC`;
 
-  return db.prepare(query).all(...params).map(attachScope);
+  const rows = await db.prepare(query).all(...params);
+  return Promise.all(rows.map(attachScope));
 };
 
-exports.getExecution = (id) => {
-  const execution = db.prepare(`
+exports.getExecution = async (id) => {
+  const execution = await db.prepare(`
     SELECT * FROM executions WHERE id = ?
   `).get(id);
 
@@ -129,14 +130,14 @@ exports.getExecution = (id) => {
   return attachScope(execution);
 };
 
-exports.startExecution = (id) => {
-  const execution = exports.getExecution(id);
+exports.startExecution = async (id) => {
+  const execution = await exports.getExecution(id);
 
   if (execution.status !== "queued") {
     throw new Error("Only queued executions can be started");
   }
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE executions
     SET status = 'running', started_at = CURRENT_TIMESTAMP
     WHERE id = ?
@@ -145,18 +146,18 @@ exports.startExecution = (id) => {
   return { started: true };
 };
 
-exports.completeExecution = (id, status) => {
+exports.completeExecution = async (id, status) => {
   if (!["completed", "failed"].includes(status)) {
     throw new Error("Invalid completion status");
   }
 
-  const execution = exports.getExecution(id);
+  const execution = await exports.getExecution(id);
 
   if (execution.status !== "running") {
     throw new Error("Only running executions can be completed");
   }
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE executions
     SET status = ?, ended_at = CURRENT_TIMESTAMP
     WHERE id = ?
@@ -165,10 +166,10 @@ exports.completeExecution = (id, status) => {
   return { completed: true };
 };
 
-exports.deleteExecution = (id) => {
-  exports.getExecution(id);
+exports.deleteExecution = async (id) => {
+  await exports.getExecution(id);
 
-  const used = db.prepare(`
+  const used = await db.prepare(`
     SELECT id FROM execution_results WHERE execution_id = ?
   `).get(id);
 
@@ -176,8 +177,8 @@ exports.deleteExecution = (id) => {
     throw new Error("Cannot delete execution with results");
   }
 
-  db.prepare(`DELETE FROM execution_suites WHERE execution_id = ?`).run(id);
-  db.prepare(`DELETE FROM executions WHERE id = ?`).run(id);
+  await db.prepare(`DELETE FROM execution_suites WHERE execution_id = ?`).run(id);
+  await db.prepare(`DELETE FROM executions WHERE id = ?`).run(id);
 
   return { deleted: true };
 };

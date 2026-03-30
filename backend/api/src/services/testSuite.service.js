@@ -2,19 +2,19 @@ const db = require("../db");
 const { v4: uuid } = require("uuid");
 const suiteTestCaseService = require("./suiteTestCase.service");
 
-exports.createTestSuite = ({ app_type_id, name, parent_id }) => {
+exports.createTestSuite = async ({ app_type_id, name, parent_id }) => {
   if (!app_type_id || !name) {
     throw new Error("Missing required fields");
   }
 
-  const appType = db.prepare(`
+  const appType = await db.prepare(`
     SELECT id FROM app_types WHERE id = ?
   `).get(app_type_id);
 
   if (!appType) throw new Error("App type not found");
 
   if (parent_id) {
-    const parentSuite = db.prepare(`
+    const parentSuite = await db.prepare(`
       SELECT id, app_type_id FROM test_suites WHERE id = ?
     `).get(parent_id);
 
@@ -26,7 +26,7 @@ exports.createTestSuite = ({ app_type_id, name, parent_id }) => {
 
   const id = uuid();
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO test_suites (id, app_type_id, name, parent_id)
     VALUES (?, ?, ?, ?)
   `).run(id, app_type_id, name, parent_id || null);
@@ -34,7 +34,7 @@ exports.createTestSuite = ({ app_type_id, name, parent_id }) => {
   return { id };
 };
 
-exports.getTestSuites = ({ app_type_id, parent_id }) => {
+exports.getTestSuites = async ({ app_type_id, parent_id }) => {
   let query = `SELECT * FROM test_suites WHERE 1=1`;
   const params = [];
 
@@ -57,8 +57,8 @@ exports.getTestSuites = ({ app_type_id, parent_id }) => {
   return db.prepare(query).all(...params);
 };
 
-exports.getTestSuite = (id) => {
-  const suite = db.prepare(`
+exports.getTestSuite = async (id) => {
+  const suite = await db.prepare(`
     SELECT * FROM test_suites WHERE id = ?
   `).get(id);
 
@@ -67,8 +67,8 @@ exports.getTestSuite = (id) => {
   return suite;
 };
 
-exports.updateTestSuite = (id, data) => {
-  const existing = exports.getTestSuite(id);
+exports.updateTestSuite = async (id, data) => {
+  const existing = await exports.getTestSuite(id);
 
   let parentId = data.parent_id;
 
@@ -81,7 +81,7 @@ exports.updateTestSuite = (id, data) => {
   }
 
   if (parentId) {
-    const parentSuite = db.prepare(`
+    const parentSuite = await db.prepare(`
       SELECT id, app_type_id FROM test_suites WHERE id = ?
     `).get(parentId);
 
@@ -91,7 +91,7 @@ exports.updateTestSuite = (id, data) => {
     }
   }
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE test_suites
     SET name = ?, parent_id = ?
     WHERE id = ?
@@ -104,14 +104,14 @@ exports.updateTestSuite = (id, data) => {
   return { updated: true };
 };
 
-exports.assignTestCases = (id, testCaseIds = []) => {
+exports.assignTestCases = async (id, testCaseIds = []) => {
   return suiteTestCaseService.replaceMappingsForSuite(id, testCaseIds);
 };
 
-exports.deleteTestSuite = (id) => {
-  exports.getTestSuite(id);
+exports.deleteTestSuite = async (id) => {
+  await exports.getTestSuite(id);
 
-  const childSuite = db.prepare(`
+  const childSuite = await db.prepare(`
     SELECT id FROM test_suites WHERE parent_id = ?
   `).get(id);
 
@@ -119,25 +119,25 @@ exports.deleteTestSuite = (id) => {
     throw new Error("Cannot delete test suite with child suites");
   }
 
-  const transaction = db.transaction(() => {
-    db.prepare(`
+  const transaction = db.transaction(async () => {
+    await db.prepare(`
       DELETE FROM suite_test_cases
       WHERE suite_id = ?
     `).run(id);
 
     // Keep the legacy column from blocking deletes while the mapping table is the source of truth.
-    db.prepare(`
+    await db.prepare(`
       UPDATE test_cases
       SET suite_id = NULL
       WHERE suite_id = ?
     `).run(id);
 
-    db.prepare(`
+    await db.prepare(`
       DELETE FROM test_suites WHERE id = ?
     `).run(id);
   });
 
-  transaction();
+  await transaction();
 
   return { deleted: true };
 };

@@ -3,19 +3,19 @@ const { v4: uuid } = require("uuid");
 const requirementTestCaseService = require("./requirementTestCase.service");
 const suiteTestCaseService = require("./suiteTestCase.service");
 
-const hydrateSuiteIds = (testCase) => {
+const hydrateSuiteIds = async (testCase) => {
   if (!testCase) {
     return testCase;
   }
 
   return {
     ...testCase,
-    suite_ids: suiteTestCaseService.getSuiteIdsForTestCase(testCase.id),
-    requirement_ids: requirementTestCaseService.getRequirementIdsForTestCase(testCase.id)
+    suite_ids: await suiteTestCaseService.getSuiteIdsForTestCase(testCase.id),
+    requirement_ids: await requirementTestCaseService.getRequirementIdsForTestCase(testCase.id)
   };
 };
 
-exports.createTestCase = ({ app_type_id, suite_id, suite_ids = [], title, description, priority, status, requirement_id, requirement_ids = [] }) => {
+exports.createTestCase = async ({ app_type_id, suite_id, suite_ids = [], title, description, priority, status, requirement_id, requirement_ids = [] }) => {
   if (!title) {
     throw new Error("Missing required fields");
   }
@@ -25,7 +25,7 @@ exports.createTestCase = ({ app_type_id, suite_id, suite_ids = [], title, descri
   let resolvedAppTypeId = app_type_id || null;
 
   if (resolvedAppTypeId) {
-    const appType = db.prepare(`
+    const appType = await db.prepare(`
       SELECT id
       FROM app_types
       WHERE id = ?
@@ -36,8 +36,8 @@ exports.createTestCase = ({ app_type_id, suite_id, suite_ids = [], title, descri
     }
   }
 
-  requestedSuiteIds.forEach((requestedSuiteId) => {
-    const suite = db.prepare(`
+  for (const requestedSuiteId of requestedSuiteIds) {
+    const suite = await db.prepare(`
       SELECT id, app_type_id
       FROM test_suites
       WHERE id = ?
@@ -52,19 +52,19 @@ exports.createTestCase = ({ app_type_id, suite_id, suite_ids = [], title, descri
     } else if (suite.app_type_id !== resolvedAppTypeId) {
       throw new Error("All suites must belong to the selected app type");
     }
-  });
+  }
 
-  requestedRequirementIds.forEach((requestedRequirementId) => {
-    const requirement = db.prepare(`
+  for (const requestedRequirementId of requestedRequirementIds) {
+    const requirement = await db.prepare(`
       SELECT id FROM requirements WHERE id = ?
     `).get(requestedRequirementId);
 
     if (!requirement) throw new Error("Requirement not found");
-  });
+  }
 
   const id = uuid();
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO test_cases (id, app_type_id, suite_id, title, description, priority, status, requirement_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
@@ -79,17 +79,17 @@ exports.createTestCase = ({ app_type_id, suite_id, suite_ids = [], title, descri
   );
 
   if (requestedSuiteIds.length) {
-    suiteTestCaseService.syncMappingsForTestCase(id, requestedSuiteIds);
+    await suiteTestCaseService.syncMappingsForTestCase(id, requestedSuiteIds);
   }
 
   if (requestedRequirementIds.length) {
-    requirementTestCaseService.syncMappingsForTestCase(id, requestedRequirementIds);
+    await requirementTestCaseService.syncMappingsForTestCase(id, requestedRequirementIds);
   }
 
   return { id };
 };
 
-exports.getTestCases = ({ suite_id, requirement_id, status, app_type_id }) => {
+exports.getTestCases = async ({ suite_id, requirement_id, status, app_type_id }) => {
   let query = `SELECT DISTINCT test_cases.* FROM test_cases`;
   const joins = [];
   const where = [`1=1`];
@@ -133,11 +133,12 @@ exports.getTestCases = ({ suite_id, requirement_id, status, app_type_id }) => {
     ? ` ORDER BY suite_test_cases.sort_order ASC, test_cases.created_at DESC`
     : ` ORDER BY test_cases.created_at DESC`;
 
-  return db.prepare(query).all(...params).map(hydrateSuiteIds);
+  const rows = await db.prepare(query).all(...params);
+  return Promise.all(rows.map(hydrateSuiteIds));
 };
 
-exports.getTestCase = (id) => {
-  const testCase = db.prepare(`
+exports.getTestCase = async (id) => {
+  const testCase = await db.prepare(`
     SELECT *
     FROM test_cases
     WHERE id = ?
@@ -148,8 +149,8 @@ exports.getTestCase = (id) => {
   return hydrateSuiteIds(testCase);
 };
 
-exports.updateTestCase = (id, data) => {
-  const existing = exports.getTestCase(id);
+exports.updateTestCase = async (id, data) => {
+  const existing = await exports.getTestCase(id);
 
   const requestedSuiteIds = data.suite_ids !== undefined
     ? [...new Set(data.suite_ids.filter(Boolean))]
@@ -165,7 +166,7 @@ exports.updateTestCase = (id, data) => {
   let resolvedAppTypeId = data.app_type_id ?? existing.app_type_id ?? null;
 
   if (resolvedAppTypeId) {
-    const appType = db.prepare(`
+    const appType = await db.prepare(`
       SELECT id
       FROM app_types
       WHERE id = ?
@@ -176,8 +177,8 @@ exports.updateTestCase = (id, data) => {
     }
   }
 
-  requestedSuiteIds.forEach((requestedSuiteId) => {
-    const suite = db.prepare(`
+  for (const requestedSuiteId of requestedSuiteIds) {
+    const suite = await db.prepare(`
       SELECT id, app_type_id
       FROM test_suites
       WHERE id = ?
@@ -192,17 +193,17 @@ exports.updateTestCase = (id, data) => {
     } else if (suite.app_type_id !== resolvedAppTypeId) {
       throw new Error("All suites must belong to the selected app type");
     }
-  });
+  }
 
-  requestedRequirementIds.forEach((requestedRequirementId) => {
-    const requirement = db.prepare(`
+  for (const requestedRequirementId of requestedRequirementIds) {
+    const requirement = await db.prepare(`
       SELECT id FROM requirements WHERE id = ?
     `).get(requestedRequirementId);
 
     if (!requirement) throw new Error("Requirement not found");
-  });
+  }
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE test_cases
     SET app_type_id = ?, suite_id = ?, title = ?, description = ?, priority = ?, status = ?, requirement_id = ?
     WHERE id = ?
@@ -218,35 +219,35 @@ exports.updateTestCase = (id, data) => {
   );
 
   if (data.suite_ids !== undefined || data.suite_id !== undefined) {
-    suiteTestCaseService.syncMappingsForTestCase(id, requestedSuiteIds);
+    await suiteTestCaseService.syncMappingsForTestCase(id, requestedSuiteIds);
   }
 
   if (data.requirement_ids !== undefined || data.requirement_id !== undefined) {
-    requirementTestCaseService.syncMappingsForTestCase(id, requestedRequirementIds);
+    await requirementTestCaseService.syncMappingsForTestCase(id, requestedRequirementIds);
   }
 
   return { updated: true };
 };
 
-exports.deleteTestCase = (id) => {
-  exports.getTestCase(id);
+exports.deleteTestCase = async (id) => {
+  await exports.getTestCase(id);
 
-  db.prepare(`
+  await db.prepare(`
     DELETE FROM test_steps
     WHERE test_case_id = ?
   `).run(id);
 
-  db.prepare(`
+  await db.prepare(`
     DELETE FROM requirement_test_cases
     WHERE test_case_id = ?
   `).run(id);
 
-  db.prepare(`
+  await db.prepare(`
     DELETE FROM suite_test_cases
     WHERE test_case_id = ?
   `).run(id);
 
-  db.prepare(`
+  await db.prepare(`
     DELETE FROM test_cases WHERE id = ?
   `).run(id);
 

@@ -12,15 +12,15 @@ CREATE TABLE users (
   email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   name TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE password_reset_tokens (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   token_hash TEXT NOT NULL,
-  expires_at DATETIME NOT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   UNIQUE(user_id)
 );
@@ -34,7 +34,7 @@ CREATE TABLE projects (
   name TEXT NOT NULL,
   description TEXT,
   created_by TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (created_by) REFERENCES users(id)
 );
 
@@ -43,7 +43,7 @@ CREATE TABLE project_members (
   project_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
   role_id TEXT NOT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (project_id) REFERENCES projects(id),
   FOREIGN KEY (user_id) REFERENCES users(id),
   FOREIGN KEY (role_id) REFERENCES roles(id),
@@ -59,8 +59,8 @@ CREATE TABLE app_types (
   project_id TEXT NOT NULL,
   name TEXT NOT NULL,
   type TEXT CHECK(type IN ('web','api','android','ios','unified')),
-  is_unified BOOLEAN DEFAULT 0,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  is_unified BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 
@@ -75,7 +75,7 @@ CREATE TABLE requirements (
   description TEXT,
   priority INTEGER DEFAULT 3,
   status TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 
@@ -85,16 +85,8 @@ CREATE TABLE feedback (
   title TEXT NOT NULL,
   message TEXT NOT NULL,
   status TEXT DEFAULT 'open',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id)
-);
-
-CREATE TABLE requirement_test_cases (
-  requirement_id TEXT NOT NULL,
-  test_case_id TEXT NOT NULL,
-  PRIMARY KEY (requirement_id, test_case_id),
-  FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE CASCADE,
-  FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE CASCADE
 );
 
 -- =========================
@@ -106,7 +98,7 @@ CREATE TABLE test_suites (
   app_type_id TEXT NOT NULL,
   name TEXT NOT NULL,
   parent_id TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (app_type_id) REFERENCES app_types(id),
   FOREIGN KEY (parent_id) REFERENCES test_suites(id)
 );
@@ -120,10 +112,18 @@ CREATE TABLE test_cases (
   priority INTEGER DEFAULT 3,
   status TEXT DEFAULT 'active',
   requirement_id TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (app_type_id) REFERENCES app_types(id),
   FOREIGN KEY (suite_id) REFERENCES test_suites(id),
   FOREIGN KEY (requirement_id) REFERENCES requirements(id)
+);
+
+CREATE TABLE requirement_test_cases (
+  requirement_id TEXT NOT NULL,
+  test_case_id TEXT NOT NULL,
+  PRIMARY KEY (requirement_id, test_case_id),
+  FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE CASCADE,
+  FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE CASCADE
 );
 
 CREATE TABLE suite_test_cases (
@@ -156,8 +156,8 @@ CREATE TABLE executions (
   trigger TEXT CHECK(trigger IN ('manual','ci')),
   status TEXT CHECK(status IN ('queued','running','completed','failed')),
   created_by TEXT,
-  started_at DATETIME,
-  ended_at DATETIME,
+  started_at TIMESTAMPTZ,
+  ended_at TIMESTAMPTZ,
   FOREIGN KEY (project_id) REFERENCES projects(id),
   FOREIGN KEY (app_type_id) REFERENCES app_types(id),
   FOREIGN KEY (created_by) REFERENCES users(id)
@@ -184,7 +184,7 @@ CREATE TABLE execution_results (
   error TEXT,
   logs TEXT,
   executed_by TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (execution_id) REFERENCES executions(id),
   FOREIGN KEY (app_type_id) REFERENCES app_types(id),
   FOREIGN KEY (executed_by) REFERENCES users(id)

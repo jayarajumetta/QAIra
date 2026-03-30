@@ -1,12 +1,12 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 
-exports.createFeedback = ({ user_id, title, message, status }) => {
+exports.createFeedback = async ({ user_id, title, message, status }) => {
   if (!user_id || !title || !message) {
     throw new Error("Missing required fields");
   }
 
-  const user = db.prepare(`
+  const user = await db.prepare(`
     SELECT id
     FROM users
     WHERE id = ?
@@ -18,7 +18,7 @@ exports.createFeedback = ({ user_id, title, message, status }) => {
 
   const id = uuid();
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO feedback (id, user_id, title, message, status)
     VALUES (?, ?, ?, ?, ?)
   `).run(id, user_id, title, message, status || "open");
@@ -26,7 +26,7 @@ exports.createFeedback = ({ user_id, title, message, status }) => {
   return { id };
 };
 
-exports.getFeedback = ({ user_id, status } = {}) => {
+exports.getFeedback = async ({ user_id, status } = {}) => {
   let query = `
     SELECT feedback.*, users.name AS user_name, users.email AS user_email
     FROM feedback
@@ -50,8 +50,8 @@ exports.getFeedback = ({ user_id, status } = {}) => {
   return db.prepare(query).all(...params);
 };
 
-exports.getFeedbackItem = (id) => {
-  const item = db.prepare(`
+exports.getFeedbackItem = async (id) => {
+  const item = await db.prepare(`
     SELECT feedback.*, users.name AS user_name, users.email AS user_email
     FROM feedback
     JOIN users ON users.id = feedback.user_id
@@ -65,11 +65,11 @@ exports.getFeedbackItem = (id) => {
   return item;
 };
 
-exports.updateFeedback = (id, data) => {
-  const existing = exports.getFeedbackItem(id);
+exports.updateFeedback = async (id, data) => {
+  const existing = await exports.getFeedbackItem(id);
 
   if (data.user_id && data.user_id !== existing.user_id) {
-    const user = db.prepare(`
+    const user = await db.prepare(`
       SELECT id
       FROM users
       WHERE id = ?
@@ -80,7 +80,7 @@ exports.updateFeedback = (id, data) => {
     }
   }
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE feedback
     SET user_id = ?, title = ?, message = ?, status = ?
     WHERE id = ?
@@ -95,10 +95,10 @@ exports.updateFeedback = (id, data) => {
   return { updated: true };
 };
 
-exports.deleteFeedback = (id) => {
-  exports.getFeedbackItem(id);
+exports.deleteFeedback = async (id) => {
+  await exports.getFeedbackItem(id);
 
-  db.prepare(`
+  await db.prepare(`
     DELETE FROM feedback
     WHERE id = ?
   `).run(id);

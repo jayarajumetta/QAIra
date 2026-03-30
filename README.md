@@ -1,475 +1,194 @@
 # QAIra
 
-QAIra is a Fastify + SQLite backend for QA project management. The API follows a simple pattern:
+QAIra is a QA management workspace with a Fastify backend, a React frontend, and PostgreSQL for persistence.
 
-- route modules define HTTP endpoints and input validation
-- service modules contain CRUD logic and relational checks
-- SQLite is the source of truth for the domain model
-- `frontend/` provides a React + TypeScript workspace UI bound to the API
+This repo is now PostgreSQL-first. SQLite is no longer part of the runtime, which avoids the read-only database file issues that were happening with mounted `.db` files.
 
-## Repository Layout
+## Stack
 
-- `backend/api`: Fastify API server
-- `backend/db`: SQLite schema and seed SQL
-- `backend/data`: SQLite database file
-- `backend/docker-compose.yml`: local container orchestration for DB init + API
-- `frontend`: Vite + React application for signup, login, session restoration, and resource management
+- Backend: Fastify on Node.js
+- Frontend: React + Vite
+- Database: PostgreSQL 16
+- Containers: Docker Compose
 
-## Database Model
+## Repo layout
 
-Current application tables in SQLite:
+- `backend/api`: Fastify API
+- `backend/db/schema.sql`: PostgreSQL schema loaded on first database boot
+- `backend/db/seed.sql`: sample data loaded on first database boot
+- `backend/docker-compose.yml`: backend + PostgreSQL only
+- `docker-compose.full.yml`: full stack with PostgreSQL, API, and frontend
+- `frontend`: React app
+- `openapi.yaml`: API contract
 
-- `users`
-- `roles`
-- `projects`
-- `project_members`
-- `app_types`
-- `requirements`
-- `test_suites`
-- `test_cases`
-- `test_steps`
-- `executions`
-- `execution_results`
+## Quick start: full stack
 
-Schema source: [backend/db/schema.sql](/Users/jayarajumetta/MJ/qaira/backend/db/schema.sql)
+1. Pull the PostgreSQL image:
 
-Seed data source: [backend/db/seed.sql](/Users/jayarajumetta/MJ/qaira/backend/db/seed.sql)
+```bash
+docker pull postgres:16-alpine
+```
 
-## API Coverage
+2. Start everything from the repo root:
 
-Implemented CRUD resources:
+```bash
+docker compose -f docker-compose.full.yml pull
+docker compose -f docker-compose.full.yml up -d
+```
 
-- `auth`
-- `users`
-- `roles`
-- `projects`
-- `project-members`
-- `app-types`
-- `requirements`
-- `test-suites`
-- `test-cases`
-- `test-steps`
-- `executions`
-- `execution-results`
+3. Open the apps:
 
-Main route registration lives in [backend/api/src/routes/index.js](/Users/jayarajumetta/MJ/qaira/backend/api/src/routes/index.js).
+- Frontend: `http://localhost:8080`
+- API: `http://localhost:3000`
+- PostgreSQL: `localhost:5432`
 
-Machine-readable API spec: [openapi.yaml](/Users/jayarajumetta/MJ/qaira/openapi.yaml)
+On the first boot, the Postgres container creates the `qaira` database and automatically runs:
 
-Frontend entrypoint: [frontend/src/App.tsx](/Users/jayarajumetta/MJ/qaira/frontend/src/App.tsx)
-Frontend container build: [frontend/Dockerfile](/Users/jayarajumetta/MJ/qaira/frontend/Dockerfile)
+- `backend/db/schema.sql`
+- `backend/db/seed.sql`
 
-## API Endpoints
+## Release script
 
-### Auth
+Use the root release script to build amd64 backend/frontend images, push both to Docker Hub, and refresh the running stack:
 
-- `POST /auth/signup`
-- `POST /auth/login`
-- `GET /auth/session`
+```bash
+./release.sh
+```
 
-Body fields:
+Useful variants:
 
-- `email` required for signup and login
-- `password` required for signup and login
-- `name` optional for signup
+```bash
+IMAGE_TAG=v1.0.0 ./release.sh
+DOCKER_NAMESPACE=your-dockerhub-user ./release.sh
+./release.sh --no-deploy
+```
 
-### Users
+## Quick start: backend only
 
-- `POST /users`
-- `GET /users`
-- `GET /users/:id`
-- `PUT /users/:id`
-- `DELETE /users/:id`
+Run the backend and PostgreSQL without the frontend:
 
-Body fields:
+```bash
+cd backend
+docker pull postgres:16-alpine
+docker compose up --build
+```
 
-- `email` required
-- `password_hash` required
-- `name` optional
-
-### Roles
-
-- `POST /roles`
-- `GET /roles`
-- `GET /roles/:id`
-- `PUT /roles/:id`
-- `DELETE /roles/:id`
-
-Body fields:
-
-- `name` required
-
-### Projects
-
-- `POST /projects`
-- `GET /projects`
-- `GET /projects/:id`
-- `PUT /projects/:id`
-- `DELETE /projects/:id`
-
-Body fields:
-
-- `name` required
-- `description` optional
-- `created_by` required on create
-
-### Project Members
-
-- `POST /project-members`
-- `GET /project-members`
-- `GET /project-members/:id`
-- `PUT /project-members/:id`
-- `DELETE /project-members/:id`
-
-Query filters:
-
-- `project_id`
-- `user_id`
-- `role_id`
-
-Body fields:
-
-- `project_id` required on create
-- `user_id` required on create
-- `role_id` required on create
-
-### App Types
-
-- `POST /app-types`
-- `GET /app-types`
-- `GET /app-types/:id`
-- `PUT /app-types/:id`
-- `DELETE /app-types/:id`
-
-Query filters:
-
-- `project_id`
-
-Body fields:
-
-- `project_id` required on create
-- `name` required on create
-- `type` required on create: `web`, `api`, `android`, `ios`, `unified`
-- `is_unified` optional
-
-### Requirements
-
-- `POST /requirements`
-- `GET /requirements`
-- `GET /requirements/:id`
-- `PUT /requirements/:id`
-- `DELETE /requirements/:id`
-
-Query filters:
-
-- `project_id`
-- `status`
-- `priority`
-
-Body fields:
-
-- `project_id` required on create
-- `title` required on create
-- `description` optional
-- `priority` optional
-- `status` optional
-
-### Test Suites
-
-- `POST /test-suites`
-- `GET /test-suites`
-- `GET /test-suites/:id`
-- `PUT /test-suites/:id`
-- `DELETE /test-suites/:id`
-
-Query filters:
-
-- `app_type_id`
-- `parent_id`
-
-Body fields:
-
-- `app_type_id` required on create
-- `name` required on create
-- `parent_id` optional
-
-### Test Cases
-
-- `POST /test-cases`
-- `GET /test-cases`
-- `GET /test-cases/:id`
-- `PUT /test-cases/:id`
-- `DELETE /test-cases/:id`
-
-Query filters:
-
-- `suite_id`
-- `requirement_id`
-- `status`
-
-Body fields:
-
-- `suite_id` required on create
-- `title` required on create
-- `description` optional
-- `priority` optional
-- `status` optional
-- `requirement_id` optional
-
-### Test Steps
-
-- `POST /test-steps`
-- `GET /test-steps`
-- `GET /test-steps/:id`
-- `PUT /test-steps/:id`
-- `DELETE /test-steps/:id`
-
-Query filters:
-
-- `test_case_id`
-
-Body fields:
-
-- `test_case_id` required on create
-- `step_order` required on create
-- `action` optional
-- `expected_result` optional
-
-### Executions
-
-- `POST /executions`
-- `GET /executions`
-- `GET /executions/:id`
-- `POST /executions/:id/start`
-- `POST /executions/:id/complete`
-- `DELETE /executions/:id`
-
-Query filters:
-
-- `project_id`
-- `status`
-
-Body fields:
-
-- `project_id` required on create
-- `name` optional
-- `created_by` required on create
-- `status` required for complete: `completed`, `failed`
-
-### Execution Results
-
-- `POST /execution-results`
-- `GET /execution-results`
-- `GET /execution-results/:id`
-- `PUT /execution-results/:id`
-- `DELETE /execution-results/:id`
-
-Query filters:
-
-- `execution_id`
-- `test_case_id`
-- `app_type_id`
-
-Body fields:
-
-- `execution_id` required on create
-- `test_case_id` required on create
-- `app_type_id` required on create
-- `status` required on create: `passed`, `failed`, `blocked`
-- `duration_ms` optional
-- `error` optional
-- `logs` optional
-- `executed_by` optional
-
-## Run The Database
-
-### Quick Start From Backend Folder
-
-Use the backend-local entrypoint script:
+You can also use:
 
 ```bash
 cd backend
 ./start.sh
 ```
 
-This wraps the existing Compose setup in [backend/docker-compose.yml](/Users/jayarajumetta/MJ/qaira/backend/docker-compose.yml).
+The API will be available at `http://localhost:3000`.
 
-To exercise the API end-to-end with sample data and example CRUD calls:
+## Manual PostgreSQL setup
 
-```bash
-./demo-api.sh
-```
+If you want to run Postgres yourself instead of using Compose, these are the explicit steps.
 
-Requirements for the demo script:
-
-- API must already be running on `http://localhost:3000`
-- `curl` must be installed
-- `jq` must be installed
-
-### Option 1: Docker Compose
-
-From the repository root:
+1. Pull the image:
 
 ```bash
-cd backend
-docker compose up --build
+docker pull postgres:16-alpine
 ```
 
-What this does:
-
-- starts the DB init container from [backend/Dockerfile](/Users/jayarajumetta/MJ/qaira/backend/Dockerfile)
-- creates `/data/testiny.db`
-- loads schema from `backend/db/schema.sql`
-- loads seed data from `backend/db/seed.sql`
-- starts the API on `http://localhost:3000`
-
-### Option 2: Local SQLite
-
-Create or recreate the database manually:
+2. Start PostgreSQL:
 
 ```bash
-sqlite3 backend/data/testiny.db < backend/db/schema.sql
-sqlite3 backend/data/testiny.db < backend/db/seed.sql
+docker run --name qaira-postgres \
+  -e POSTGRES_DB=qaira \
+  -e POSTGRES_USER=qaira \
+  -e POSTGRES_PASSWORD=qaira \
+  -p 5432:5432 \
+  -d postgres:16-alpine
 ```
 
-Inspect the database:
+3. Load the schema:
 
 ```bash
-sqlite3 backend/data/testiny.db
+PGPASSWORD=qaira psql -h localhost -U qaira -d qaira -f backend/db/schema.sql
 ```
 
-Example SQLite commands:
+4. Load the sample data:
 
-```sql
-.tables
-SELECT * FROM projects;
-SELECT * FROM app_types;
-SELECT * FROM test_cases;
+```bash
+PGPASSWORD=qaira psql -h localhost -U qaira -d qaira -f backend/db/seed.sql
 ```
 
-## Run The API
-
-Install dependencies and start the server:
+5. Run the API locally:
 
 ```bash
 cd backend/api
 npm install
-DB_PATH=../data/testiny.db npm start
+DATABASE_URL=postgresql://qaira:qaira@localhost:5432/qaira npm start
 ```
 
-If you run the API from the repo root instead, use an absolute DB path or point `DB_PATH` to `backend/data/testiny.db`.
-
-API entrypoints:
-
-- [backend/api/src/server.js](/Users/jayarajumetta/MJ/qaira/backend/api/src/server.js)
-- [backend/api/src/app.js](/Users/jayarajumetta/MJ/qaira/backend/api/src/app.js)
-
-Session notes:
-
-- auth endpoints now issue a signed bearer token
-- `GET /auth/session` expects `Authorization: Bearer <token>`
-- set `SESSION_SECRET` in the API environment for anything beyond local development
-
-## Run The Frontend
-
-Install dependencies and start the web app:
+6. Run the frontend locally in another terminal:
 
 ```bash
 cd frontend
 npm install
-cp .env.example .env
-npm run dev
+VITE_API_BASE_URL=http://localhost:3000 npm run dev
 ```
 
-Frontend defaults:
+## Sample login
 
-- app URL: `http://localhost:5173`
-- API base URL: `http://localhost:3000`
-- override the API target with `VITE_API_BASE_URL`
+The seed file creates these users:
 
-What the frontend includes:
+- `admin@testiny.ai` / `admin123`
+- `member@testiny.ai` / `member123`
 
-- signup, login, logout, and session restoration
-- overview dashboard
-- people and roles management
-- project, membership, app-type, and requirement management
-- test suite, case, and step management
-- execution and execution-result management
+## Environment variables
 
-## Run The Frontend In Docker
+### Backend
 
-Frontend-only container:
+- `DATABASE_URL`
+  Example: `postgresql://qaira:qaira@postgres:5432/qaira`
+- `SESSION_SECRET`
+- `CORS_ORIGIN`
 
-```bash
-cd frontend
-./start.sh
-```
+### PostgreSQL container
 
-Frontend default URL:
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
 
-- `http://localhost:8080`
+### Frontend
 
-Override the backend target at runtime:
+- `QAIRA_API_BASE_URL` for the container build/runtime config
+- `VITE_API_BASE_URL` for local Vite development
+- `QAIRA_BACKEND_IMAGE` to override the backend Docker Hub image
+- `QAIRA_FRONTEND_IMAGE` to override the frontend Docker Hub image
 
-```bash
-cd frontend
-QAIRA_API_BASE_URL=http://192.168.1.25:3000 ./start.sh
-```
+## Database behavior
 
-This runtime variable is injected when the container starts, so the same frontend image can point to different backend machines.
+- The official `postgres:16-alpine` image creates the database defined by `POSTGRES_DB`.
+- The mounted SQL files in `backend/db` are executed only when the Postgres data directory is empty.
+- Sample data is inserted from `backend/db/seed.sql`, so the backend and frontend have working starter content immediately.
 
-## Run Full Stack With One Compose File
+## Reset the database
+
+If you want a fresh database and fresh seed data:
 
 From the repo root:
 
 ```bash
-docker compose -f docker-compose.full.yml up --build
+docker compose -f docker-compose.full.yml down -v
+docker compose -f docker-compose.full.yml pull
+docker compose -f docker-compose.full.yml up -d
 ```
 
-This starts:
-
-- SQLite DB initializer
-- Fastify API on `http://localhost:3000`
-- Frontend on `http://localhost:8080`
-
-If frontend and backend run on different machines:
-
-1. Start backend on the API host and ensure port `3000` is reachable.
-2. Start frontend on the UI host with `QAIRA_API_BASE_URL` set to the backend machine URL.
-
-Example:
+From the backend folder:
 
 ```bash
-cd frontend
-QAIRA_API_BASE_URL=http://10.0.0.15:3000 docker compose up --build
+docker compose down -v
+docker compose up --build
 ```
 
-Note:
+## Notes
 
-- if the backend is remote, ensure port `3000` is reachable and set `CORS_ORIGIN` on the API if you want to restrict which frontend origins may call it
-- set `SESSION_SECRET` for the API in non-local environments
-
-## Notes On Behavior
-
-- The API enforces relational checks in services before delete operations where dependent records exist.
-- Validation is lightweight and implemented in [backend/api/src/plugins/validator.js](/Users/jayarajumetta/MJ/qaira/backend/api/src/plugins/validator.js).
-- Error responses are handled centrally in [backend/api/src/plugins/errorHandler.js](/Users/jayarajumetta/MJ/qaira/backend/api/src/plugins/errorHandler.js).
-
-
-##  Step 1: Rebuild
-cd backend
-docker build --no-cache --platform linux/amd64 -t jayarajumetta/qaira-backend:latest .
-docker push jayarajumetta/qaira-backend:latest
-## Step 2: Redeploy EC2
-docker compose -f docker-compose.full.yml down
-docker rmi jayarajumetta/qaira-backend:latest
-docker compose -f docker-compose.full.yml up -d
-## 🔍 Step 3: Verify logs
-docker logs testiny-api
-
-👉 Now you should see:
-
-Initializing SQLite DB...
-Database initialized...
-Starting API server...
-Server running on port 3000
+- `docker-compose.full.yml` now uses Docker Hub images by default:
+- Backend: `jayarajumetta/qaira-backend:latest`
+- Frontend: `jayarajumetta/qaira-frontend:latest`
+- The frontend is configured to talk to `http://localhost:3000` by default in local Docker workflows.
+- The schema in `backend/db/schema.sql` is ordered for PostgreSQL foreign key creation, and `seed.sql` uses PostgreSQL boolean values.

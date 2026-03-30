@@ -1,12 +1,12 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 
-exports.createTestStep = ({ test_case_id, step_order, action, expected_result }) => {
+exports.createTestStep = async ({ test_case_id, step_order, action, expected_result }) => {
   if (!test_case_id || step_order === undefined) {
     throw new Error("Missing required fields");
   }
 
-  const testCase = db.prepare(`
+  const testCase = await db.prepare(`
     SELECT id FROM test_cases WHERE id = ?
   `).get(test_case_id);
 
@@ -14,7 +14,7 @@ exports.createTestStep = ({ test_case_id, step_order, action, expected_result })
 
   const id = uuid();
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO test_steps (id, test_case_id, step_order, action, expected_result)
     VALUES (?, ?, ?, ?, ?)
   `).run(id, test_case_id, step_order, action || null, expected_result || null);
@@ -22,7 +22,7 @@ exports.createTestStep = ({ test_case_id, step_order, action, expected_result })
   return { id };
 };
 
-exports.getTestSteps = ({ test_case_id }) => {
+exports.getTestSteps = async ({ test_case_id }) => {
   let query = `SELECT * FROM test_steps WHERE 1=1`;
   const params = [];
 
@@ -36,8 +36,8 @@ exports.getTestSteps = ({ test_case_id }) => {
   return db.prepare(query).all(...params);
 };
 
-exports.getTestStep = (id) => {
-  const step = db.prepare(`
+exports.getTestStep = async (id) => {
+  const step = await db.prepare(`
     SELECT * FROM test_steps WHERE id = ?
   `).get(id);
 
@@ -46,18 +46,18 @@ exports.getTestStep = (id) => {
   return step;
 };
 
-exports.updateTestStep = (id, data) => {
-  const existing = exports.getTestStep(id);
+exports.updateTestStep = async (id, data) => {
+  const existing = await exports.getTestStep(id);
 
   if (data.test_case_id) {
-    const testCase = db.prepare(`
+    const testCase = await db.prepare(`
       SELECT id FROM test_cases WHERE id = ?
     `).get(data.test_case_id);
 
     if (!testCase) throw new Error("Test case not found");
   }
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE test_steps
     SET test_case_id = ?, step_order = ?, action = ?, expected_result = ?
     WHERE id = ?
@@ -72,8 +72,8 @@ exports.updateTestStep = (id, data) => {
   return { updated: true };
 };
 
-exports.reorderTestSteps = (testCaseId, stepIds = []) => {
-  const testCase = db.prepare(`
+exports.reorderTestSteps = async (testCaseId, stepIds = []) => {
+  const testCase = await db.prepare(`
     SELECT id FROM test_cases WHERE id = ?
   `).get(testCaseId);
 
@@ -82,7 +82,7 @@ exports.reorderTestSteps = (testCaseId, stepIds = []) => {
     throw new Error("step_ids must be a non-empty array");
   }
 
-  const existingSteps = db.prepare(`
+  const existingSteps = await db.prepare(`
     SELECT id
     FROM test_steps
     WHERE test_case_id = ?
@@ -106,21 +106,21 @@ exports.reorderTestSteps = (testCaseId, stepIds = []) => {
     WHERE id = ?
   `);
 
-  const transaction = db.transaction((ids) => {
-    ids.forEach((stepId, index) => {
-      updateStatement.run(index + 1, stepId);
-    });
+  const transaction = db.transaction(async (ids) => {
+    for (const [index, stepId] of ids.entries()) {
+      await updateStatement.run(index + 1, stepId);
+    }
   });
 
-  transaction(stepIds);
+  await transaction(stepIds);
 
   return { reordered: true };
 };
 
-exports.deleteTestStep = (id) => {
-  exports.getTestStep(id);
+exports.deleteTestStep = async (id) => {
+  await exports.getTestStep(id);
 
-  db.prepare(`
+  await db.prepare(`
     DELETE FROM test_steps WHERE id = ?
   `).run(id);
 

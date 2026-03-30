@@ -25,19 +25,20 @@ const deleteForTestCase = db.prepare(`
 `);
 
 const insertMapping = db.prepare(`
-  INSERT OR IGNORE INTO requirement_test_cases (requirement_id, test_case_id)
+  INSERT INTO requirement_test_cases (requirement_id, test_case_id)
   VALUES (?, ?)
+  ON CONFLICT DO NOTHING
 `);
 
-exports.getTestCaseIdsForRequirement = (requirementId) => {
-  return listForRequirement.all(requirementId).map((row) => row.test_case_id);
+exports.getTestCaseIdsForRequirement = async (requirementId) => {
+  return (await listForRequirement.all(requirementId)).map((row) => row.test_case_id);
 };
 
-exports.getRequirementIdsForTestCase = (testCaseId) => {
-  return listForTestCase.all(testCaseId).map((row) => row.requirement_id);
+exports.getRequirementIdsForTestCase = async (testCaseId) => {
+  return (await listForTestCase.all(testCaseId)).map((row) => row.requirement_id);
 };
 
-exports.listMappings = ({ requirement_id, test_case_id }) => {
+exports.listMappings = async ({ requirement_id, test_case_id }) => {
   let query = `
     SELECT requirement_id, test_case_id
     FROM requirement_test_cases
@@ -60,8 +61,8 @@ exports.listMappings = ({ requirement_id, test_case_id }) => {
   return db.prepare(query).all(...params);
 };
 
-exports.replaceMappingsForRequirement = (requirementId, testCaseIds = []) => {
-  const requirement = db.prepare(`
+exports.replaceMappingsForRequirement = async (requirementId, testCaseIds = []) => {
+  const requirement = await db.prepare(`
     SELECT id
     FROM requirements
     WHERE id = ?
@@ -83,34 +84,34 @@ exports.replaceMappingsForRequirement = (requirementId, testCaseIds = []) => {
     WHERE id = ?
   `);
 
-  uniqueIds.forEach((testCaseId) => {
-    const testCase = selectTestCase.get(testCaseId);
+  for (const testCaseId of uniqueIds) {
+    const testCase = await selectTestCase.get(testCaseId);
 
     if (!testCase) {
       throw new Error(`Test case not found: ${testCaseId}`);
     }
-  });
+  }
 
-  const transaction = db.transaction(() => {
-    deleteForRequirement.run(requirementId);
-    db.prepare(`
+  const transaction = db.transaction(async () => {
+    await deleteForRequirement.run(requirementId);
+    await db.prepare(`
       UPDATE test_cases
       SET requirement_id = NULL
       WHERE requirement_id = ?
     `).run(requirementId);
 
-    uniqueIds.forEach((testCaseId) => {
-      insertMapping.run(requirementId, testCaseId);
-      syncLegacyRequirement.run(requirementId, testCaseId);
-    });
+    for (const testCaseId of uniqueIds) {
+      await insertMapping.run(requirementId, testCaseId);
+      await syncLegacyRequirement.run(requirementId, testCaseId);
+    }
   });
 
-  transaction();
+  await transaction();
 
   return { updated: true, mapped: uniqueIds.length };
 };
 
-exports.syncMappingsForTestCase = (testCaseId, requirementIds = []) => {
+exports.syncMappingsForTestCase = async (testCaseId, requirementIds = []) => {
   const uniqueIds = [...new Set(requirementIds.filter(Boolean))];
   const selectRequirement = db.prepare(`
     SELECT id
@@ -118,13 +119,13 @@ exports.syncMappingsForTestCase = (testCaseId, requirementIds = []) => {
     WHERE id = ?
   `);
 
-  uniqueIds.forEach((requirementId) => {
-    const requirement = selectRequirement.get(requirementId);
+  for (const requirementId of uniqueIds) {
+    const requirement = await selectRequirement.get(requirementId);
 
     if (!requirement) {
       throw new Error(`Requirement not found: ${requirementId}`);
     }
-  });
+  }
 
   const updateLegacyRequirement = db.prepare(`
     UPDATE test_cases
@@ -132,11 +133,15 @@ exports.syncMappingsForTestCase = (testCaseId, requirementIds = []) => {
     WHERE id = ?
   `);
 
-  const transaction = db.transaction(() => {
-    deleteForTestCase.run(testCaseId);
-    uniqueIds.forEach((requirementId) => insertMapping.run(requirementId, testCaseId));
-    updateLegacyRequirement.run(uniqueIds[0] || null, testCaseId);
+  const transaction = db.transaction(async () => {
+    await deleteForTestCase.run(testCaseId);
+
+    for (const requirementId of uniqueIds) {
+      await insertMapping.run(requirementId, testCaseId);
+    }
+
+    await updateLegacyRequirement.run(uniqueIds[0] || null, testCaseId);
   });
 
-  transaction();
+  await transaction();
 };

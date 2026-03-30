@@ -33,11 +33,11 @@ const getSuiteIdsForCase = db.prepare(`
   ORDER BY sort_order ASC, suite_id ASC
 `);
 
-exports.getSuiteIdsForTestCase = (testCaseId) => {
-  return getSuiteIdsForCase.all(testCaseId).map((row) => row.suite_id);
+exports.getSuiteIdsForTestCase = async (testCaseId) => {
+  return (await getSuiteIdsForCase.all(testCaseId)).map((row) => row.suite_id);
 };
 
-exports.listMappings = ({ suite_id, test_case_id }) => {
+exports.listMappings = async ({ suite_id, test_case_id }) => {
   let query = `
     SELECT suite_test_cases.suite_id, suite_test_cases.test_case_id, suite_test_cases.sort_order
     FROM suite_test_cases
@@ -60,8 +60,8 @@ exports.listMappings = ({ suite_id, test_case_id }) => {
   return db.prepare(query).all(...params);
 };
 
-exports.replaceMappingsForSuite = (suiteId, testCaseIds = []) => {
-  const suite = getSuite.get(suiteId);
+exports.replaceMappingsForSuite = async (suiteId, testCaseIds = []) => {
+  const suite = await getSuite.get(suiteId);
 
   if (!suite) {
     throw new Error("Test suite not found");
@@ -69,19 +69,19 @@ exports.replaceMappingsForSuite = (suiteId, testCaseIds = []) => {
 
   const uniqueIds = [...new Set(testCaseIds)];
 
-  uniqueIds.forEach((testCaseId) => {
-    const testCase = getTestCase.get(testCaseId);
+  for (const testCaseId of uniqueIds) {
+    const testCase = await getTestCase.get(testCaseId);
 
     if (!testCase) {
       throw new Error(`Test case not found: ${testCaseId}`);
     }
 
-    const appTypes = getTestCaseAppTypes.all(testCaseId).map((row) => row.app_type_id);
+    const appTypes = (await getTestCaseAppTypes.all(testCaseId)).map((row) => row.app_type_id);
 
     if (appTypes.length && appTypes.some((appTypeId) => appTypeId !== suite.app_type_id)) {
       throw new Error("Test case suites must belong to the same app type");
     }
-  });
+  }
 
   const removeSuiteMappings = db.prepare(`
     DELETE FROM suite_test_cases
@@ -99,31 +99,32 @@ exports.replaceMappingsForSuite = (suiteId, testCaseIds = []) => {
     WHERE id = ?
   `);
 
-  const transaction = db.transaction(() => {
-    removeSuiteMappings.run(suiteId);
+  const transaction = db.transaction(async () => {
+    await removeSuiteMappings.run(suiteId);
 
-    uniqueIds.forEach((testCaseId, index) => {
-      addSuiteMapping.run(suiteId, testCaseId, index + 1);
-      updateLegacySuite.run(suiteId, testCaseId);
-    });
+    for (const [index, testCaseId] of uniqueIds.entries()) {
+      await addSuiteMapping.run(suiteId, testCaseId, index + 1);
+      await updateLegacySuite.run(suiteId, testCaseId);
+    }
   });
 
-  transaction();
+  await transaction();
 
   return { updated: true, assigned: uniqueIds.length };
 };
 
-exports.syncMappingsForTestCase = (testCaseId, suiteIds = []) => {
+exports.syncMappingsForTestCase = async (testCaseId, suiteIds = []) => {
   const uniqueSuiteIds = [...new Set(suiteIds)];
 
-  uniqueSuiteIds.forEach((suiteId) => {
-    const suite = getSuite.get(suiteId);
+  for (const suiteId of uniqueSuiteIds) {
+    const suite = await getSuite.get(suiteId);
     if (!suite) {
       throw new Error(`Test suite not found: ${suiteId}`);
     }
-  });
+  }
 
-  const appTypes = uniqueSuiteIds.map((suiteId) => getSuite.get(suiteId)?.app_type_id).filter(Boolean);
+  const suites = await Promise.all(uniqueSuiteIds.map((suiteId) => getSuite.get(suiteId)));
+  const appTypes = suites.map((suite) => suite?.app_type_id).filter(Boolean);
   const firstAppTypeId = appTypes[0];
 
   if (appTypes.some((appTypeId) => appTypeId !== firstAppTypeId)) {
@@ -146,21 +147,21 @@ exports.syncMappingsForTestCase = (testCaseId, suiteIds = []) => {
     WHERE id = ?
   `);
 
-  const transaction = db.transaction(() => {
-    removeMappings.run(testCaseId);
+  const transaction = db.transaction(async () => {
+    await removeMappings.run(testCaseId);
 
-    uniqueSuiteIds.forEach((suiteId, index) => {
-      addMapping.run(suiteId, testCaseId, index + 1);
-    });
+    for (const [index, suiteId] of uniqueSuiteIds.entries()) {
+      await addMapping.run(suiteId, testCaseId, index + 1);
+    }
 
-    updateLegacySuite.run(uniqueSuiteIds[0] || null, testCaseId);
+    await updateLegacySuite.run(uniqueSuiteIds[0] || null, testCaseId);
   });
 
-  transaction();
+  await transaction();
 };
 
-exports.reorderMappingsForSuite = (suiteId, testCaseIds = []) => {
-  const existingIds = getMappingsForSuite.all(suiteId).map((row) => row.test_case_id);
+exports.reorderMappingsForSuite = async (suiteId, testCaseIds = []) => {
+  const existingIds = (await getMappingsForSuite.all(suiteId)).map((row) => row.test_case_id);
   const uniqueIds = [...new Set(testCaseIds)];
 
   if (existingIds.length !== uniqueIds.length) {
@@ -180,13 +181,13 @@ exports.reorderMappingsForSuite = (suiteId, testCaseIds = []) => {
     WHERE suite_id = ? AND test_case_id = ?
   `);
 
-  const transaction = db.transaction(() => {
-    uniqueIds.forEach((testCaseId, index) => {
-      updateOrder.run(index + 1, suiteId, testCaseId);
-    });
+  const transaction = db.transaction(async () => {
+    for (const [index, testCaseId] of uniqueIds.entries()) {
+      await updateOrder.run(index + 1, suiteId, testCaseId);
+    }
   });
 
-  transaction();
+  await transaction();
 
   return { reordered: true };
 };

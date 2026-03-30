@@ -15,7 +15,7 @@ module.exports = async function (fastify) {
     }, req.body);
 
     // Verify user is member of project
-    projectService.getProject(req.body.project_id, req.user.id);
+    await projectService.getProject(req.body.project_id, req.user.id);
 
     return service.createAppType(req.body);
   });
@@ -28,7 +28,7 @@ module.exports = async function (fastify) {
     
     // If filtering by project, verify access
     if (project_id) {
-      projectService.getProject(project_id, req.user.id);
+      await projectService.getProject(project_id, req.user.id);
     }
     
     return service.getAppTypes(project_id);
@@ -38,9 +38,9 @@ module.exports = async function (fastify) {
   // GET ONE
   fastify.get("/app-types/:id", async (req) => {
     await fastify.authenticate(req);
-    const appType = service.getAppType(req.params.id);
+    const appType = await service.getAppType(req.params.id);
     // Verify user is member of the app type's project
-    projectService.getProject(appType.project_id, req.user.id);
+    await projectService.getProject(appType.project_id, req.user.id);
     return appType;
   });
 
@@ -54,9 +54,9 @@ module.exports = async function (fastify) {
       is_unified: { required: false }
     }, req.body);
 
-    const appType = service.getAppType(req.params.id);
+    const appType = await service.getAppType(req.params.id);
     // Verify user is member of the app type's project
-    projectService.getProject(appType.project_id, req.user.id);
+    await projectService.getProject(appType.project_id, req.user.id);
     
     return service.updateAppType(req.params.id, req.body);
   });
@@ -65,9 +65,9 @@ module.exports = async function (fastify) {
   // DELETE
   fastify.delete("/app-types/:id", async (req) => {
     await fastify.authenticate(req);
-    const appType = service.getAppType(req.params.id);
+    const appType = await service.getAppType(req.params.id);
     // Verify user is member of the app type's project
-    projectService.getProject(appType.project_id, req.user.id);
+    await projectService.getProject(appType.project_id, req.user.id);
     return service.deleteAppType(req.params.id);
   });
 

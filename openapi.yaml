@@ -3,7 +3,7 @@ info:
   title: QAIra API
   version: 1.0.0
   description: |
-    OpenAPI specification for the current QAIra Fastify + SQLite backend.
+    OpenAPI specification for the current QAIra Fastify + PostgreSQL backend.
     This spec documents the implemented CRUD resources, request payloads,
     query filters, and the execution lifecycle actions.
 servers:

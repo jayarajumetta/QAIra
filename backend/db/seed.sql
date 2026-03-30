@@ -7,12 +7,12 @@ INSERT INTO roles (id, name) VALUES
 ('r1', 'admin'),
 ('r2', 'member');
 
--- Users (passwords hashed with SHA256)
+-- Users (passwords hashed with PBKDF2-SHA256)
 -- admin@testiny.ai - password: admin123
 -- member@testiny.ai - password: member123
 INSERT INTO users (id, email, password_hash, name) VALUES
-('u1', 'admin@testiny.ai', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'Admin User'),
-('u2', 'member@testiny.ai', '5600376e863d2f57a053518f324ad3840b0bc2348b573af281a7b7cbe7a228c6', 'Member User');
+('u1', 'admin@testiny.ai', '7752a0a257bd37b43d32b6e22132d60c6b065798e1ad9fb2c0ee68e65cac741c0e2e7dd599e3754f1de07e5b8c9038a8766f292a37fb0cf685b2020dd9339b02', 'Admin User'),
+('u2', 'member@testiny.ai', '4297827f5aa1cb1aba10577e664dcf1f5744f67c70f410f63f30da5c7493cf2c9f4bde7a197bd216d3da83e40c153d73c6cdb4ddb54b584575c3a8d4cb4d17f9', 'Member User');
 
 -- =========================
 -- PROJECT: SAP PM Mobile Automation
@@ -31,11 +31,11 @@ INSERT INTO project_members (id, project_id, user_id, role_id) VALUES
 -- =========================
 
 INSERT INTO app_types (id, project_id, name, type, is_unified) VALUES
-('a1', 'p1', 'Web Portal', 'web', 0),
-('a2', 'p1', 'REST API', 'api', 0),
-('a3', 'p1', 'Android App', 'android', 0),
-('a4', 'p1', 'iOS App', 'ios', 0),
-('a5', 'p1', 'Unified Mobile', 'unified', 1);
+('a1', 'p1', 'Web Portal', 'web', FALSE),
+('a2', 'p1', 'REST API', 'api', FALSE),
+('a3', 'p1', 'Android App', 'android', FALSE),
+('a4', 'p1', 'iOS App', 'ios', FALSE),
+('a5', 'p1', 'Unified Mobile', 'unified', TRUE);
 
 -- =========================
 -- REQUIREMENTS (8 core features)
@@ -467,31 +467,31 @@ INSERT INTO suite_test_cases (suite_id, test_case_id, sort_order) VALUES
 
 -- WEB PORTAL EXECUTIONS
 INSERT INTO executions (id, project_id, app_type_id, name, trigger, status, created_by, started_at, ended_at) VALUES
-('exec_web_1', 'p1', 'a1', 'Web Portal - Smoke Test', 'manual', 'completed', 'u1', datetime('now', '-2 days'), datetime('now', '-2 days', '+2 hours')),
-('exec_web_2', 'p1', 'a1', 'Web Portal - Regression Test', 'manual', 'completed', 'u2', datetime('now', '-1 day'), datetime('now', '-1 day', '+3 hours')),
-('exec_web_3', 'p1', 'a1', 'Web Portal - Critical Path', 'ci', 'running', 'u1', datetime('now'), NULL);
+('exec_web_1', 'p1', 'a1', 'Web Portal - Smoke Test', 'manual', 'completed', 'u1', CURRENT_TIMESTAMP - INTERVAL '2 days', CURRENT_TIMESTAMP - INTERVAL '2 days' + INTERVAL '2 hours'),
+('exec_web_2', 'p1', 'a1', 'Web Portal - Regression Test', 'manual', 'completed', 'u2', CURRENT_TIMESTAMP - INTERVAL '1 day', CURRENT_TIMESTAMP - INTERVAL '1 day' + INTERVAL '3 hours'),
+('exec_web_3', 'p1', 'a1', 'Web Portal - Critical Path', 'ci', 'running', 'u1', CURRENT_TIMESTAMP, NULL);
 
 -- ANDROID APP EXECUTIONS
 INSERT INTO executions (id, project_id, app_type_id, name, trigger, status, created_by, started_at, ended_at) VALUES
-('exec_android_1', 'p1', 'a3', 'Android - Smoke Test', 'manual', 'completed', 'u1', datetime('now', '-3 days'), datetime('now', '-3 days', '+1.5 hours')),
-('exec_android_2', 'p1', 'a3', 'Android - Full Test Suite', 'manual', 'completed', 'u2', datetime('now', '-1 day'), datetime('now', '-1 day', '+4 hours')),
-('exec_android_3', 'p1', 'a3', 'Android - Offline Sync', 'manual', 'running', 'u1', datetime('now', '-4 hours'), NULL);
+('exec_android_1', 'p1', 'a3', 'Android - Smoke Test', 'manual', 'completed', 'u1', CURRENT_TIMESTAMP - INTERVAL '3 days', CURRENT_TIMESTAMP - INTERVAL '3 days' + INTERVAL '90 minutes'),
+('exec_android_2', 'p1', 'a3', 'Android - Full Test Suite', 'manual', 'completed', 'u2', CURRENT_TIMESTAMP - INTERVAL '1 day', CURRENT_TIMESTAMP - INTERVAL '1 day' + INTERVAL '4 hours'),
+('exec_android_3', 'p1', 'a3', 'Android - Offline Sync', 'manual', 'running', 'u1', CURRENT_TIMESTAMP - INTERVAL '4 hours', NULL);
 
 -- iOS APP EXECUTIONS
 INSERT INTO executions (id, project_id, app_type_id, name, trigger, status, created_by, started_at, ended_at) VALUES
-('exec_ios_1', 'p1', 'a4', 'iOS - Smoke Test', 'manual', 'completed', 'u1', datetime('now', '-2 days'), datetime('now', '-2 days', '+2 hours')),
-('exec_ios_2', 'p1', 'a4', 'iOS - Regression', 'manual', 'completed', 'u2', datetime('now', '-12 hours'), datetime('now', '-12 hours', '+3 hours')),
-('exec_ios_3', 'p1', 'a4', 'iOS - Notifications', 'ci', 'failed', 'u1', datetime('now', '-6 hours'), datetime('now', '-6 hours', '+1 hour'));
+('exec_ios_1', 'p1', 'a4', 'iOS - Smoke Test', 'manual', 'completed', 'u1', CURRENT_TIMESTAMP - INTERVAL '2 days', CURRENT_TIMESTAMP - INTERVAL '2 days' + INTERVAL '2 hours'),
+('exec_ios_2', 'p1', 'a4', 'iOS - Regression', 'manual', 'completed', 'u2', CURRENT_TIMESTAMP - INTERVAL '12 hours', CURRENT_TIMESTAMP - INTERVAL '12 hours' + INTERVAL '3 hours'),
+('exec_ios_3', 'p1', 'a4', 'iOS - Notifications', 'ci', 'failed', 'u1', CURRENT_TIMESTAMP - INTERVAL '6 hours', CURRENT_TIMESTAMP - INTERVAL '6 hours' + INTERVAL '1 hour');
 
 -- API EXECUTIONS
 INSERT INTO executions (id, project_id, app_type_id, name, trigger, status, created_by, started_at, ended_at) VALUES
-('exec_api_1', 'p1', 'a2', 'API - Contract Testing', 'ci', 'completed', 'u1', datetime('now', '-4 hours'), datetime('now', '-4 hours', '+1 hour')),
-('exec_api_2', 'p1', 'a2', 'API - Load Testing', 'manual', 'running', 'u2', datetime('now', '-2 hours'), NULL);
+('exec_api_1', 'p1', 'a2', 'API - Contract Testing', 'ci', 'completed', 'u1', CURRENT_TIMESTAMP - INTERVAL '4 hours', CURRENT_TIMESTAMP - INTERVAL '4 hours' + INTERVAL '1 hour'),
+('exec_api_2', 'p1', 'a2', 'API - Load Testing', 'manual', 'running', 'u2', CURRENT_TIMESTAMP - INTERVAL '2 hours', NULL);
 
 -- UNIFIED PLATFORM EXECUTIONS
 INSERT INTO executions (id, project_id, app_type_id, name, trigger, status, created_by, started_at, ended_at) VALUES
-('exec_unified_1', 'p1', 'a5', 'Unified - Cross Platform', 'manual', 'completed', 'u1', datetime('now', '-3 days'), datetime('now', '-3 days', '+5 hours')),
-('exec_unified_2', 'p1', 'a5', 'Unified - End-to-End', 'manual', 'completed', 'u2', datetime('now', '-1 day'), datetime('now', '-1 day', '+4 hours'));
+('exec_unified_1', 'p1', 'a5', 'Unified - Cross Platform', 'manual', 'completed', 'u1', CURRENT_TIMESTAMP - INTERVAL '3 days', CURRENT_TIMESTAMP - INTERVAL '3 days' + INTERVAL '5 hours'),
+('exec_unified_2', 'p1', 'a5', 'Unified - End-to-End', 'manual', 'completed', 'u2', CURRENT_TIMESTAMP - INTERVAL '1 day', CURRENT_TIMESTAMP - INTERVAL '1 day' + INTERVAL '4 hours');
 
 -- =========================
 -- EXECUTION SUITES (Link suites to executions)

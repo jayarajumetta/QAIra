@@ -4,20 +4,20 @@ const { v4: uuid } = require("uuid");
 const VALID_TYPES = ["web", "api", "android", "ios", "unified"];
 
 // Create
-exports.createAppType = ({ project_id, name, type, is_unified }) => {
+exports.createAppType = async ({ project_id, name, type, is_unified }) => {
 
   if (!VALID_TYPES.includes(type)) {
     throw new Error("Invalid app type");
   }
 
   // Validate project
-  const project = db.prepare("SELECT id FROM projects WHERE id = ?")
+  const project = await db.prepare("SELECT id FROM projects WHERE id = ?")
     .get(project_id);
 
   if (!project) throw new Error("Project not found");
 
   // Prevent duplicate type per project
-  const exists = db.prepare(`
+  const exists = await db.prepare(`
     SELECT id FROM app_types 
     WHERE project_id = ? AND type = ?
   `).get(project_id, type);
@@ -28,17 +28,17 @@ exports.createAppType = ({ project_id, name, type, is_unified }) => {
 
   const id = uuid();
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO app_types (id, project_id, name, type, is_unified)
     VALUES (?, ?, ?, ?, ?)
-  `).run(id, project_id, name, type, is_unified ? 1 : 0);
+  `).run(id, project_id, name, type, Boolean(is_unified));
 
   return { id };
 };
 
 
 // Get all (optionally by project)
-exports.getAppTypes = (project_id) => {
+exports.getAppTypes = async (project_id) => {
   if (project_id) {
     return db.prepare(`
       SELECT * FROM app_types WHERE project_id = ?
@@ -50,8 +50,8 @@ exports.getAppTypes = (project_id) => {
 
 
 // Get one
-exports.getAppType = (id) => {
-  const appType = db.prepare(`
+exports.getAppType = async (id) => {
+  const appType = await db.prepare(`
     SELECT * FROM app_types WHERE id = ?
   `).get(id);
 
@@ -62,27 +62,27 @@ exports.getAppType = (id) => {
 
 
 // Update
-exports.updateAppType = (id, data) => {
-  const existing = exports.getAppType(id);
+exports.updateAppType = async (id, data) => {
+  const existing = await exports.getAppType(id);
 
   const name = data.name ?? existing.name;
   const is_unified = data.is_unified ?? existing.is_unified;
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE app_types 
     SET name = ?, is_unified = ?
     WHERE id = ?
-  `).run(name, is_unified ? 1 : 0, id);
+  `).run(name, Boolean(is_unified), id);
 
   return { updated: true };
 };
 
 
 // Delete (with safety)
-exports.deleteAppType = (id) => {
-  const existing = exports.getAppType(id);
+exports.deleteAppType = async (id) => {
+  const existing = await exports.getAppType(id);
 
-  const testSuite = db.prepare(`
+  const testSuite = await db.prepare(`
     SELECT id FROM test_suites WHERE app_type_id = ?
   `).get(id);
 
@@ -90,7 +90,7 @@ exports.deleteAppType = (id) => {
     throw new Error("Cannot delete app type with existing test suites");
   }
 
-  const result = db.prepare(`
+  const result = await db.prepare(`
     SELECT id FROM execution_results WHERE app_type_id = ?
   `).get(id);
 
@@ -98,7 +98,7 @@ exports.deleteAppType = (id) => {
     throw new Error("Cannot delete app type with execution results");
   }
 
-  db.prepare(`DELETE FROM app_types WHERE id = ?`).run(id);
+  await db.prepare(`DELETE FROM app_types WHERE id = ?`).run(id);
 
   return { deleted: true };
 };

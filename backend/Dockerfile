@@ -2,18 +2,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# 👉 ADD THIS LINE
-RUN apk add --no-cache sqlite
+COPY api/package*.json ./
+RUN npm ci --no-audit --no-fund
 
-COPY . .
-
-WORKDIR /app/api
-RUN npm install
-
-WORKDIR /app
-
-RUN chmod +x init-db.sh
+COPY api/src ./src
 
 EXPOSE 3000
 
-CMD ["sh", "init-db.sh"]
+CMD ["node", "src/server.js"]

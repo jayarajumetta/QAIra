@@ -1,15 +1,15 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 
-exports.createProject = ({ name, description, created_by }) => {
+exports.createProject = async ({ name, description, created_by }) => {
   if (!name || !created_by) throw new Error("Missing fields");
 
   const id = uuid();
 
-  const user = db.prepare("SELECT id FROM users WHERE id = ?").get(created_by);
+  const user = await db.prepare("SELECT id FROM users WHERE id = ?").get(created_by);
   if (!user) throw new Error("Invalid user");
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO projects (id, name, description, created_by)
     VALUES (?, ?, ?, ?)
   `).run(id, name, description, created_by);
@@ -18,7 +18,7 @@ exports.createProject = ({ name, description, created_by }) => {
 };
 
 // Get projects filtered by user membership
-exports.getProjects = (userId = null) => {
+exports.getProjects = async (userId = null) => {
   if (!userId) {
     return db.prepare("SELECT * FROM projects").all();
   }
@@ -33,13 +33,13 @@ exports.getProjects = (userId = null) => {
   `).all(userId);
 };
 
-exports.getProject = (id, userId = null) => {
-  const project = db.prepare("SELECT * FROM projects WHERE id = ?").get(id);
+exports.getProject = async (id, userId = null) => {
+  const project = await db.prepare("SELECT * FROM projects WHERE id = ?").get(id);
   if (!project) throw new Error("Project not found");
   
   // If userId provided, verify user is a member
   if (userId) {
-    const membership = db.prepare(`
+    const membership = await db.prepare(`
       SELECT id FROM project_members 
       WHERE project_id = ? AND user_id = ?
     `).get(id, userId);
@@ -52,10 +52,10 @@ exports.getProject = (id, userId = null) => {
   return project;
 };
 
-exports.updateProject = (id, data) => {
-  const existing = exports.getProject(id);
+exports.updateProject = async (id, data) => {
+  const existing = await exports.getProject(id);
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE projects SET name = ?, description = ?
     WHERE id = ?
   `).run(data.name || existing.name, data.description || existing.description, id);
@@ -63,8 +63,8 @@ exports.updateProject = (id, data) => {
   return { updated: true };
 };
 
-exports.deleteProject = (id) => {
-  exports.getProject(id);
+exports.deleteProject = async (id) => {
+  await exports.getProject(id);
 
   const dependencies = [
     { table: "project_members", field: "project_id", message: "Cannot delete project with members" },
@@ -74,7 +74,7 @@ exports.deleteProject = (id) => {
   ];
 
   for (const dependency of dependencies) {
-    const used = db.prepare(`
+    const used = await db.prepare(`
       SELECT id FROM ${dependency.table} WHERE ${dependency.field} = ?
     `).get(id);
 
@@ -83,6 +83,6 @@ exports.deleteProject = (id) => {
     }
   }
 
-  db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+  await db.prepare("DELETE FROM projects WHERE id = ?").run(id);
   return { deleted: true };
 };

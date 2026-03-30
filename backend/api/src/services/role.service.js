@@ -1,12 +1,12 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 
-exports.createRole = ({ name }) => {
+exports.createRole = async ({ name }) => {
   if (!name) {
     throw new Error("Missing required fields");
   }
 
-  const existing = db.prepare(`
+  const existing = await db.prepare(`
     SELECT id FROM roles WHERE name = ?
   `).get(name);
 
@@ -14,7 +14,7 @@ exports.createRole = ({ name }) => {
 
   const id = uuid();
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO roles (id, name)
     VALUES (?, ?)
   `).run(id, name);
@@ -22,15 +22,15 @@ exports.createRole = ({ name }) => {
   return { id };
 };
 
-exports.getRoles = () => {
+exports.getRoles = async () => {
   return db.prepare(`
     SELECT * FROM roles
     ORDER BY name ASC
   `).all();
 };
 
-exports.getRole = (id) => {
-  const role = db.prepare(`
+exports.getRole = async (id) => {
+  const role = await db.prepare(`
     SELECT * FROM roles WHERE id = ?
   `).get(id);
 
@@ -39,18 +39,18 @@ exports.getRole = (id) => {
   return role;
 };
 
-exports.updateRole = (id, data) => {
-  const existing = exports.getRole(id);
+exports.updateRole = async (id, data) => {
+  const existing = await exports.getRole(id);
 
   if (data.name && data.name !== existing.name) {
-    const duplicate = db.prepare(`
+    const duplicate = await db.prepare(`
       SELECT id FROM roles WHERE name = ? AND id != ?
     `).get(data.name, id);
 
     if (duplicate) throw new Error("Role already exists");
   }
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE roles
     SET name = ?
     WHERE id = ?
@@ -59,10 +59,10 @@ exports.updateRole = (id, data) => {
   return { updated: true };
 };
 
-exports.deleteRole = (id) => {
-  exports.getRole(id);
+exports.deleteRole = async (id) => {
+  await exports.getRole(id);
 
-  const used = db.prepare(`
+  const used = await db.prepare(`
     SELECT id FROM project_members WHERE role_id = ?
   `).get(id);
 
@@ -70,7 +70,7 @@ exports.deleteRole = (id) => {
     throw new Error("Cannot delete role assigned to project members");
   }
 
-  db.prepare(`
+  await db.prepare(`
     DELETE FROM roles WHERE id = ?
   `).run(id);
 

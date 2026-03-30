@@ -13,7 +13,7 @@ const getPrimarySuiteForTestCase = db.prepare(`
 `);
 
 // Create Result
-exports.createExecutionResult = (data) => {
+exports.createExecutionResult = async (data) => {
 
   const {
     execution_id,
@@ -31,14 +31,14 @@ exports.createExecutionResult = (data) => {
   }
 
   // Validate execution
-  const execution = db.prepare(`
+  const execution = await db.prepare(`
     SELECT id FROM executions WHERE id = ?
   `).get(execution_id);
 
   if (!execution) throw new Error("Execution not found");
 
   // Validate test case
-  const testCase = db.prepare(`
+  const testCase = await db.prepare(`
     SELECT id, title, suite_id
     FROM test_cases
     WHERE id = ?
@@ -47,7 +47,7 @@ exports.createExecutionResult = (data) => {
   if (!testCase) throw new Error("Test case not found");
 
   // Validate app type
-  const appType = db.prepare(`
+  const appType = await db.prepare(`
     SELECT id FROM app_types WHERE id = ?
   `).get(app_type_id);
 
@@ -55,17 +55,17 @@ exports.createExecutionResult = (data) => {
 
   // Optional: Validate user
   if (executed_by) {
-    const user = db.prepare(`
+    const user = await db.prepare(`
       SELECT id FROM users WHERE id = ?
     `).get(executed_by);
 
     if (!user) throw new Error("Invalid user");
   }
 
-  const suiteSnapshot = getPrimarySuiteForTestCase.get(test_case_id);
+  const suiteSnapshot = await getPrimarySuiteForTestCase.get(test_case_id);
   const id = uuid();
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO execution_results
     (id, execution_id, test_case_id, test_case_title, suite_id, suite_name, app_type_id, status, duration_ms, error, logs, executed_by)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -89,7 +89,7 @@ exports.createExecutionResult = (data) => {
 
 
 // Get Results (with filters)
-exports.getExecutionResults = ({ execution_id, test_case_id, app_type_id }) => {
+exports.getExecutionResults = async ({ execution_id, test_case_id, app_type_id }) => {
 
   let query = `SELECT * FROM execution_results WHERE 1=1`;
   const params = [];
@@ -116,9 +116,9 @@ exports.getExecutionResults = ({ execution_id, test_case_id, app_type_id }) => {
 
 
 // Get Single Result
-exports.getExecutionResult = (id) => {
+exports.getExecutionResult = async (id) => {
 
-  const result = db.prepare(`
+  const result = await db.prepare(`
     SELECT * FROM execution_results WHERE id = ?
   `).get(id);
 
@@ -129,9 +129,9 @@ exports.getExecutionResult = (id) => {
 
 
 // Update Result (only limited fields)
-exports.updateExecutionResult = (id, data) => {
+exports.updateExecutionResult = async (id, data) => {
 
-  const existing = exports.getExecutionResult(id);
+  const existing = await exports.getExecutionResult(id);
 
   const status = data.status || existing.status;
 
@@ -139,7 +139,7 @@ exports.updateExecutionResult = (id, data) => {
     throw new Error("Invalid status");
   }
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE execution_results
     SET status = ?, duration_ms = ?, error = ?, logs = ?
     WHERE id = ?
@@ -156,11 +156,11 @@ exports.updateExecutionResult = (id, data) => {
 
 
 // Delete Result
-exports.deleteExecutionResult = (id) => {
+exports.deleteExecutionResult = async (id) => {
 
-  const existing = exports.getExecutionResult(id);
+  await exports.getExecutionResult(id);
 
-  db.prepare(`
+  await db.prepare(`
     DELETE FROM execution_results WHERE id = ?
   `).run(id);
 

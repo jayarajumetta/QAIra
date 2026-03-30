@@ -13,8 +13,8 @@ module.exports = async function (fastify) {
     }, req.body);
 
     // Verify user has access to the app type's project
-    const appType = appTypeService.getAppType(req.body.app_type_id);
-    projectService.getProject(appType.project_id, req.user.id);
+    const appType = await appTypeService.getAppType(req.body.app_type_id);
+    await projectService.getProject(appType.project_id, req.user.id);
 
     return service.createTestSuite(req.body);
   });
@@ -25,8 +25,8 @@ module.exports = async function (fastify) {
     
     // If filtering by app_type, verify access to its project
     if (app_type_id) {
-      const appType = appTypeService.getAppType(app_type_id);
-      projectService.getProject(appType.project_id, req.user.id);
+      const appType = await appTypeService.getAppType(app_type_id);
+      await projectService.getProject(appType.project_id, req.user.id);
     }
     
     return service.getTestSuites({ app_type_id, parent_id });
@@ -34,9 +34,9 @@ module.exports = async function (fastify) {
 
   fastify.get("/test-suites/:id", async (req) => {
     await fastify.authenticate(req);
-    const testSuite = service.getTestSuite(req.params.id);
-    const appType = appTypeService.getAppType(testSuite.app_type_id);
-    projectService.getProject(appType.project_id, req.user.id);
+    const testSuite = await service.getTestSuite(req.params.id);
+    const appType = await appTypeService.getAppType(testSuite.app_type_id);
+    await projectService.getProject(appType.project_id, req.user.id);
     return testSuite;
   });
 
@@ -48,9 +48,9 @@ module.exports = async function (fastify) {
       parent_id: { required: false, type: "string" }
     }, req.body);
 
-    const testSuite = service.getTestSuite(req.params.id);
-    const appType = appTypeService.getAppType(testSuite.app_type_id);
-    projectService.getProject(appType.project_id, req.user.id);
+    const testSuite = await service.getTestSuite(req.params.id);
+    const appType = await appTypeService.getAppType(testSuite.app_type_id);
+    await projectService.getProject(appType.project_id, req.user.id);
 
     return service.updateTestSuite(req.params.id, req.body);
   });
@@ -62,18 +62,18 @@ module.exports = async function (fastify) {
       test_case_ids: { required: true, type: "array", items: "string" }
     }, req.body);
 
-    const testSuite = service.getTestSuite(req.params.id);
-    const appType = appTypeService.getAppType(testSuite.app_type_id);
-    projectService.getProject(appType.project_id, req.user.id);
+    const testSuite = await service.getTestSuite(req.params.id);
+    const appType = await appTypeService.getAppType(testSuite.app_type_id);
+    await projectService.getProject(appType.project_id, req.user.id);
 
     return service.assignTestCases(req.params.id, req.body.test_case_ids);
   });
 
   fastify.delete("/test-suites/:id", async (req) => {
     await fastify.authenticate(req);
-    const testSuite = service.getTestSuite(req.params.id);
-    const appType = appTypeService.getAppType(testSuite.app_type_id);
-    projectService.getProject(appType.project_id, req.user.id);
+    const testSuite = await service.getTestSuite(req.params.id);
+    const appType = await appTypeService.getAppType(testSuite.app_type_id);
+    await projectService.getProject(appType.project_id, req.user.id);
     return service.deleteTestSuite(req.params.id);
   });
 };

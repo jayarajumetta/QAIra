@@ -15,8 +15,8 @@ const createError = (message, statusCode) => {
   return error;
 };
 
-const getCurrentUser = (id) => {
-  const user = db.prepare(`
+const getCurrentUser = async (id) => {
+  const user = await db.prepare(`
     SELECT id, email, name, created_at
     FROM users
     WHERE id = ?
@@ -26,7 +26,7 @@ const getCurrentUser = (id) => {
     return null;
   }
 
-  const roleRow = db.prepare(`
+  const roleRow = await db.prepare(`
     SELECT roles.name
     FROM project_members
     JOIN roles ON roles.id = project_members.role_id
@@ -101,7 +101,7 @@ fastify.decorate("authenticate", async (req) => {
     throw createError(error.message || "Invalid token", 401);
   }
 
-  const user = getCurrentUser(payload.sub);
+  const user = await getCurrentUser(payload.sub);
 
   if (!user) {
     throw createError("User not found", 404);

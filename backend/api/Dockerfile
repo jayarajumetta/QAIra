@@ -2,16 +2,10 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-COPY . .
-
-WORKDIR /app/api
-
+COPY package*.json ./
 RUN npm install
-
-WORKDIR /app
-
-RUN chmod +x init-db.sh
+COPY src ./src
 
 EXPOSE 3000
 
-CMD ["sh", "init-db.sh"]
+CMD ["node", "src/server.js"]

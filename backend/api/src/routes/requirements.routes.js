@@ -14,7 +14,7 @@ module.exports = async function (fastify) {
     }, req.body);
 
     // Verify user is member of project
-    projectService.getProject(req.body.project_id, req.user.id);
+    await projectService.getProject(req.body.project_id, req.user.id);
 
     return service.createRequirement(req.body);
   });
@@ -25,7 +25,7 @@ module.exports = async function (fastify) {
     
     // If filtering by project, verify access
     if (project_id) {
-      projectService.getProject(project_id, req.user.id);
+      await projectService.getProject(project_id, req.user.id);
     }
     
     return service.getRequirements({
@@ -37,9 +37,9 @@ module.exports = async function (fastify) {
 
   fastify.get("/requirements/:id", async (req) => {
     await fastify.authenticate(req);
-    const requirement = service.getRequirement(req.params.id);
+    const requirement = await service.getRequirement(req.params.id);
     // Verify user is member of the requirement's project
-    projectService.getProject(requirement.project_id, req.user.id);
+    await projectService.getProject(requirement.project_id, req.user.id);
     return requirement;
   });
 
@@ -54,18 +54,18 @@ module.exports = async function (fastify) {
       status: { required: false, type: "string" }
     }, req.body);
 
-    const requirement = service.getRequirement(req.params.id);
+    const requirement = await service.getRequirement(req.params.id);
     // Verify user is member of the requirement's project
-    projectService.getProject(requirement.project_id, req.user.id);
+    await projectService.getProject(requirement.project_id, req.user.id);
 
     return service.updateRequirement(req.params.id, req.body);
   });
 
   fastify.delete("/requirements/:id", async (req) => {
     await fastify.authenticate(req);
-    const requirement = service.getRequirement(req.params.id);
+    const requirement = await service.getRequirement(req.params.id);
     // Verify user is member of the requirement's project
-    projectService.getProject(requirement.project_id, req.user.id);
+    await projectService.getProject(requirement.project_id, req.user.id);
     return service.deleteRequirement(req.params.id);
   });
 };

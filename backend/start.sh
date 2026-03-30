@@ -18,7 +18,7 @@ else
   exit 1
 fi
 
-echo "Starting SQLite DB initializer and API service..."
+echo "Starting PostgreSQL and API service..."
 echo "Working directory: $SCRIPT_DIR"
 
 cd "$SCRIPT_DIR"

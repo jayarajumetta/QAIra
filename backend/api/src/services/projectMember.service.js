@@ -1,27 +1,27 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 
-exports.createProjectMember = ({ project_id, user_id, role_id }) => {
+exports.createProjectMember = async ({ project_id, user_id, role_id }) => {
   if (!project_id || !user_id || !role_id) {
     throw new Error("Missing required fields");
   }
 
-  const project = db.prepare(`
+  const project = await db.prepare(`
     SELECT id FROM projects WHERE id = ?
   `).get(project_id);
   if (!project) throw new Error("Project not found");
 
-  const user = db.prepare(`
+  const user = await db.prepare(`
     SELECT id FROM users WHERE id = ?
   `).get(user_id);
   if (!user) throw new Error("User not found");
 
-  const role = db.prepare(`
+  const role = await db.prepare(`
     SELECT id FROM roles WHERE id = ?
   `).get(role_id);
   if (!role) throw new Error("Role not found");
 
-  const existing = db.prepare(`
+  const existing = await db.prepare(`
     SELECT id FROM project_members WHERE project_id = ? AND user_id = ?
   `).get(project_id, user_id);
 
@@ -31,7 +31,7 @@ exports.createProjectMember = ({ project_id, user_id, role_id }) => {
 
   const id = uuid();
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO project_members (id, project_id, user_id, role_id)
     VALUES (?, ?, ?, ?)
   `).run(id, project_id, user_id, role_id);
@@ -39,7 +39,7 @@ exports.createProjectMember = ({ project_id, user_id, role_id }) => {
   return { id };
 };
 
-exports.getProjectMembers = ({ project_id, user_id, role_id }) => {
+exports.getProjectMembers = async ({ project_id, user_id, role_id }) => {
   let query = `SELECT * FROM project_members WHERE 1=1`;
   const params = [];
 
@@ -63,8 +63,8 @@ exports.getProjectMembers = ({ project_id, user_id, role_id }) => {
   return db.prepare(query).all(...params);
 };
 
-exports.getProjectMember = (id) => {
-  const member = db.prepare(`
+exports.getProjectMember = async (id) => {
+  const member = await db.prepare(`
     SELECT * FROM project_members WHERE id = ?
   `).get(id);
 
@@ -73,25 +73,25 @@ exports.getProjectMember = (id) => {
   return member;
 };
 
-exports.updateProjectMember = (id, data) => {
-  const existing = exports.getProjectMember(id);
+exports.updateProjectMember = async (id, data) => {
+  const existing = await exports.getProjectMember(id);
 
   if (data.project_id) {
-    const project = db.prepare(`
+    const project = await db.prepare(`
       SELECT id FROM projects WHERE id = ?
     `).get(data.project_id);
     if (!project) throw new Error("Project not found");
   }
 
   if (data.user_id) {
-    const user = db.prepare(`
+    const user = await db.prepare(`
       SELECT id FROM users WHERE id = ?
     `).get(data.user_id);
     if (!user) throw new Error("User not found");
   }
 
   if (data.role_id) {
-    const role = db.prepare(`
+    const role = await db.prepare(`
       SELECT id FROM roles WHERE id = ?
     `).get(data.role_id);
     if (!role) throw new Error("Role not found");
@@ -99,7 +99,7 @@ exports.updateProjectMember = (id, data) => {
 
   const nextProjectId = data.project_id ?? existing.project_id;
   const nextUserId = data.user_id ?? existing.user_id;
-  const duplicate = db.prepare(`
+  const duplicate = await db.prepare(`
     SELECT id FROM project_members
     WHERE project_id = ? AND user_id = ? AND id != ?
   `).get(nextProjectId, nextUserId, id);
@@ -108,7 +108,7 @@ exports.updateProjectMember = (id, data) => {
     throw new Error("Project member already exists");
   }
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE project_members
     SET project_id = ?, user_id = ?, role_id = ?
     WHERE id = ?
@@ -122,10 +122,10 @@ exports.updateProjectMember = (id, data) => {
   return { updated: true };
 };
 
-exports.deleteProjectMember = (id) => {
-  exports.getProjectMember(id);
+exports.deleteProjectMember = async (id) => {
+  await exports.getProjectMember(id);
 
-  db.prepare(`
+  await db.prepare(`
     DELETE FROM project_members WHERE id = ?
   `).run(id);
 

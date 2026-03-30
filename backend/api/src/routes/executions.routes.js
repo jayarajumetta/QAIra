@@ -16,7 +16,7 @@ module.exports = async function (fastify) {
     }, req.body);
 
     // Verify user is member of project
-    projectService.getProject(req.body.project_id, req.user.id);
+    await projectService.getProject(req.body.project_id, req.user.id);
 
     return service.createExecution(req.body);
   });
@@ -30,7 +30,7 @@ module.exports = async function (fastify) {
 
     // If filtering by project, verify access
     if (project_id) {
-      projectService.getProject(project_id, req.user.id);
+      await projectService.getProject(project_id, req.user.id);
     }
 
     return service.getExecutions({ project_id, status });
@@ -40,9 +40,9 @@ module.exports = async function (fastify) {
   // GET ONE EXECUTION
   fastify.get("/executions/:id", async (req) => {
     await fastify.authenticate(req);
-    const execution = service.getExecution(req.params.id);
+    const execution = await service.getExecution(req.params.id);
     // Verify user is member of the execution's project
-    projectService.getProject(execution.project_id, req.user.id);
+    await projectService.getProject(execution.project_id, req.user.id);
     return execution;
   });
 
@@ -50,9 +50,9 @@ module.exports = async function (fastify) {
   // START EXECUTION
   fastify.post("/executions/:id/start", async (req) => {
     await fastify.authenticate(req);
-    const execution = service.getExecution(req.params.id);
+    const execution = await service.getExecution(req.params.id);
     // Verify user is member of the execution's project
-    projectService.getProject(execution.project_id, req.user.id);
+    await projectService.getProject(execution.project_id, req.user.id);
     return service.startExecution(req.params.id);
   });
 
@@ -65,9 +65,9 @@ module.exports = async function (fastify) {
       status: { required: true, enum: ["completed", "failed"] }
     }, req.body);
 
-    const execution = service.getExecution(req.params.id);
+    const execution = await service.getExecution(req.params.id);
     // Verify user is member of the execution's project
-    projectService.getProject(execution.project_id, req.user.id);
+    await projectService.getProject(execution.project_id, req.user.id);
 
     return service.completeExecution(req.params.id, req.body.status);
   });
@@ -76,9 +76,9 @@ module.exports = async function (fastify) {
   // DELETE EXECUTION
   fastify.delete("/executions/:id", async (req) => {
     await fastify.authenticate(req);
-    const execution = service.getExecution(req.params.id);
+    const execution = await service.getExecution(req.params.id);
     // Verify user is member of the execution's project
-    projectService.getProject(execution.project_id, req.user.id);
+    await projectService.getProject(execution.project_id, req.user.id);
     return service.deleteExecution(req.params.id);
   });
 

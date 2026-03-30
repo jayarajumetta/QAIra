@@ -5,20 +5,20 @@ const normalizeEmail = (email) => {
   return email.toLowerCase().trim();
 };
 
-exports.createUser = ({ email, password_hash, name, role_id }) => {
+exports.createUser = async ({ email, password_hash, name, role_id }) => {
   if (!email || !password_hash || !role_id) {
     throw new Error("Missing required fields");
   }
 
   const normalizedEmail = normalizeEmail(email);
 
-  const existing = db.prepare(`
+  const existing = await db.prepare(`
     SELECT id FROM users WHERE LOWER(email) = ?
   `).get(normalizedEmail);
 
   if (existing) throw new Error("User already exists");
 
-  const role = db.prepare(`
+  const role = await db.prepare(`
     SELECT id FROM roles WHERE id = ?
   `).get(role_id);
 
@@ -30,26 +30,26 @@ exports.createUser = ({ email, password_hash, name, role_id }) => {
     INSERT INTO users (id, email, password_hash, name)
     VALUES (?, ?, ?, ?)
   `);
-  const projects = db.prepare(`SELECT id FROM projects`).all();
+  const projects = await db.prepare(`SELECT id FROM projects`).all();
   const createMembership = db.prepare(`
     INSERT INTO project_members (id, project_id, user_id, role_id)
     VALUES (?, ?, ?, ?)
   `);
 
-  const transaction = db.transaction(() => {
-    createUserStatement.run(id, normalizedEmail, password_hash, name || null);
+  const transaction = db.transaction(async () => {
+    await createUserStatement.run(id, normalizedEmail, password_hash, name || null);
 
-    projects.forEach((project) => {
-      createMembership.run(uuid(), project.id, id, role_id);
-    });
+    for (const project of projects) {
+      await createMembership.run(uuid(), project.id, id, role_id);
+    }
   });
 
-  transaction();
+  await transaction();
 
   return { id };
 };
 
-exports.getUsers = () => {
+exports.getUsers = async () => {
   return db.prepare(`
     SELECT users.id, users.email, users.name, users.created_at,
       (
@@ -65,8 +65,8 @@ exports.getUsers = () => {
   `).all();
 };
 
-exports.getUser = (id) => {
-  const user = db.prepare(`
+exports.getUser = async (id) => {
+  const user = await db.prepare(`
     SELECT users.id, users.email, users.name, users.created_at,
       (
         SELECT roles.name
@@ -85,8 +85,8 @@ exports.getUser = (id) => {
   return user;
 };
 
-exports.updateUser = (id, data) => {
-  const existing = db.prepare(`
+exports.updateUser = async (id, data) => {
+  const existing = await db.prepare(`
     SELECT * FROM users WHERE id = ?
   `).get(id);
 
@@ -97,7 +97,7 @@ exports.updateUser = (id, data) => {
     const normalizedExistingEmail = normalizeEmail(existing.email);
     
     if (normalizedNewEmail !== normalizedExistingEmail) {
-      const duplicate = db.prepare(`
+      const duplicate = await db.prepare(`
         SELECT id FROM users WHERE LOWER(email) = ? AND id != ?
       `).get(normalizedNewEmail, id);
 
@@ -106,7 +106,7 @@ exports.updateUser = (id, data) => {
   }
 
   if (data.role_id) {
-    const role = db.prepare(`
+    const role = await db.prepare(`
       SELECT id FROM roles WHERE id = ?
     `).get(data.role_id);
 
@@ -124,9 +124,9 @@ exports.updateUser = (id, data) => {
     WHERE user_id = ?
   `);
 
-  const transaction = db.transaction(() => {
+  const transaction = db.transaction(async () => {
     const emailToUpdate = data.email ? normalizeEmail(data.email) : existing.email;
-    updateUserStatement.run(
+    await updateUserStatement.run(
       emailToUpdate,
       data.password_hash ?? existing.password_hash,
       data.name ?? existing.name,
@@ -134,17 +134,17 @@ exports.updateUser = (id, data) => {
     );
 
     if (data.role_id) {
-      updateMembershipRoles.run(data.role_id, id);
+      await updateMembershipRoles.run(data.role_id, id);
     }
   });
 
-  transaction();
+  await transaction();
 
   return { updated: true };
 };
 
-exports.deleteUser = (id) => {
-  const user = db.prepare(`
+exports.deleteUser = async (id) => {
+  const user = await db.prepare(`
     SELECT id FROM users WHERE id = ?
   `).get(id);
 
@@ -157,7 +157,7 @@ exports.deleteUser = (id) => {
   ];
 
   for (const dependency of dependencies) {
-    const used = db.prepare(`
+    const used = await db.prepare(`
       SELECT id FROM ${dependency.table} WHERE ${dependency.field} = ?
     `).get(id);
 
@@ -166,12 +166,12 @@ exports.deleteUser = (id) => {
     }
   }
 
-  db.prepare(`
+  await db.prepare(`
     DELETE FROM project_members
     WHERE user_id = ?
   `).run(id);
 
-  db.prepare(`
+  await db.prepare(`
     DELETE FROM users WHERE id = ?
   `).run(id);
 

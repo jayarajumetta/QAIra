@@ -2,23 +2,23 @@ const db = require("../db");
 const { v4: uuid } = require("uuid");
 const requirementTestCaseService = require("./requirementTestCase.service");
 
-const hydrateTestCaseIds = (requirement) => {
+const hydrateTestCaseIds = async (requirement) => {
   if (!requirement) {
     return requirement;
   }
 
   return {
     ...requirement,
-    test_case_ids: requirementTestCaseService.getTestCaseIdsForRequirement(requirement.id)
+    test_case_ids: await requirementTestCaseService.getTestCaseIdsForRequirement(requirement.id)
   };
 };
 
-exports.createRequirement = ({ project_id, title, description, priority, status }) => {
+exports.createRequirement = async ({ project_id, title, description, priority, status }) => {
   if (!project_id || !title) {
     throw new Error("Missing required fields");
   }
 
-  const project = db.prepare(`
+  const project = await db.prepare(`
     SELECT id FROM projects WHERE id = ?
   `).get(project_id);
 
@@ -26,7 +26,7 @@ exports.createRequirement = ({ project_id, title, description, priority, status 
 
   const id = uuid();
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO requirements (id, project_id, title, description, priority, status)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(
@@ -41,7 +41,7 @@ exports.createRequirement = ({ project_id, title, description, priority, status 
   return { id };
 };
 
-exports.getRequirements = ({ project_id, status, priority }) => {
+exports.getRequirements = async ({ project_id, status, priority }) => {
   let query = `SELECT * FROM requirements WHERE 1=1`;
   const params = [];
 
@@ -62,11 +62,12 @@ exports.getRequirements = ({ project_id, status, priority }) => {
 
   query += ` ORDER BY created_at DESC`;
 
-  return db.prepare(query).all(...params).map(hydrateTestCaseIds);
+  const rows = await db.prepare(query).all(...params);
+  return Promise.all(rows.map(hydrateTestCaseIds));
 };
 
-exports.getRequirement = (id) => {
-  const requirement = db.prepare(`
+exports.getRequirement = async (id) => {
+  const requirement = await db.prepare(`
     SELECT * FROM requirements WHERE id = ?
   `).get(id);
 
@@ -75,18 +76,18 @@ exports.getRequirement = (id) => {
   return hydrateTestCaseIds(requirement);
 };
 
-exports.updateRequirement = (id, data) => {
-  const existing = exports.getRequirement(id);
+exports.updateRequirement = async (id, data) => {
+  const existing = await exports.getRequirement(id);
 
   if (data.project_id) {
-    const project = db.prepare(`
+    const project = await db.prepare(`
       SELECT id FROM projects WHERE id = ?
     `).get(data.project_id);
 
     if (!project) throw new Error("Project not found");
   }
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE requirements
     SET project_id = ?, title = ?, description = ?, priority = ?, status = ?
     WHERE id = ?
@@ -102,20 +103,20 @@ exports.updateRequirement = (id, data) => {
   return { updated: true };
 };
 
-exports.deleteRequirement = (id) => {
-  exports.getRequirement(id);
-  db.prepare(`
+exports.deleteRequirement = async (id) => {
+  await exports.getRequirement(id);
+  await db.prepare(`
     DELETE FROM requirement_test_cases
     WHERE requirement_id = ?
   `).run(id);
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE test_cases
     SET requirement_id = NULL
     WHERE requirement_id = ?
   `).run(id);
 
-  db.prepare(`
+  await db.prepare(`
     DELETE FROM requirements WHERE id = ?
   `).run(id);
 
