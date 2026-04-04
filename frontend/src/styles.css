@@ -4266,6 +4266,279 @@ textarea:disabled {
   background: var(--panel-strong);
 }
 
+.project-card-icon {
+  background: linear-gradient(135deg, rgba(33, 104, 243, 0.18), rgba(31, 183, 160, 0.24));
+}
+
+.project-catalog-card .object-type-badge {
+  justify-self: start;
+}
+
+.project-member-note {
+  font-size: 0.75rem;
+}
+
+.project-create-modal {
+  width: min(56rem, 100%);
+  max-height: min(88vh, 54rem);
+}
+
+.project-create-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--line);
+}
+
+.project-create-title {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.project-create-title h3,
+.project-create-title p,
+.project-create-section h4,
+.project-create-section p {
+  margin: 0;
+}
+
+.project-create-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.project-create-modal-body {
+  display: grid;
+  gap: var(--space-md);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.25rem;
+  padding-bottom: var(--space-sm);
+  scrollbar-gutter: stable;
+}
+
+.project-create-section {
+  display: grid;
+  gap: var(--space-md);
+}
+
+.project-create-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.project-app-type-list {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.project-app-type-row {
+  padding: 1rem;
+  border-radius: 1.25rem;
+  border: 1px solid rgba(18, 40, 75, 0.08);
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.project-app-type-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(9rem, 0.9fr) auto auto;
+  gap: var(--space-sm);
+  align-items: end;
+}
+
+.project-app-type-checkbox {
+  min-height: 3rem;
+  align-self: center;
+}
+
+.project-member-picker {
+  min-height: 0;
+  max-height: min(36vh, 18rem);
+  overflow: auto;
+  padding-right: 0.75rem;
+}
+
+.project-member-option {
+  align-items: flex-start;
+}
+
+.project-member-option.is-auto-included {
+  opacity: 0.92;
+}
+
+.project-member-option strong {
+  display: block;
+  color: var(--text-primary);
+}
+
+.project-member-option span {
+  color: var(--text-secondary);
+}
+
+.project-member-option-meta {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+}
+
+.project-create-modal-actions {
+  margin-top: auto;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  justify-content: flex-end;
+  padding-top: var(--space-md);
+  padding-bottom: 0.1rem;
+  border-top: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+
+.requirement-workspace {
+  display: grid;
+  grid-template-columns: minmax(18rem, 3.2fr) minmax(0, 5.8fr);
+  gap: var(--space-md);
+  align-items: start;
+}
+
+.requirement-sidebar,
+.requirement-detail-column {
+  min-width: 0;
+}
+
+.requirement-sidebar .panel {
+  position: sticky;
+  top: 1rem;
+}
+
+.requirement-card-list {
+  min-height: 0;
+  max-height: min(68vh, 52rem);
+  overflow-y: auto;
+  padding-right: 0.5rem;
+  scrollbar-gutter: stable;
+}
+
+.requirement-card-icon {
+  background: linear-gradient(135deg, rgba(31, 100, 229, 0.2), rgba(82, 188, 148, 0.24));
+}
+
+.requirement-catalog-card .object-type-badge {
+  justify-self: start;
+}
+
+.requirement-link-section {
+  display: grid;
+  gap: var(--space-md);
+}
+
+.requirement-link-picker {
+  min-height: 0;
+  max-height: min(40vh, 24rem);
+  overflow-y: auto;
+  padding-right: 0.75rem;
+  scrollbar-gutter: stable;
+}
+
+.requirement-link-option {
+  align-items: flex-start;
+  padding: 0.95rem 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(18, 40, 75, 0.08);
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.requirement-link-option input {
+  margin-top: 0.2rem;
+}
+
+.requirement-link-option strong {
+  display: block;
+  color: var(--text-primary);
+}
+
+.requirement-link-option span {
+  display: block;
+}
+
+.requirement-link-option-meta {
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.requirement-create-modal {
+  width: min(56rem, 100%);
+  max-height: min(88vh, 54rem);
+}
+
+.requirement-create-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--line);
+}
+
+.requirement-create-title {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.requirement-create-title h3,
+.requirement-create-title p {
+  margin: 0;
+}
+
+.requirement-create-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.requirement-create-modal-body {
+  display: grid;
+  gap: var(--space-md);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.25rem;
+  padding-bottom: var(--space-sm);
+  scrollbar-gutter: stable;
+}
+
+.requirement-create-modal .modal-case-picker {
+  min-height: 0;
+  max-height: min(34vh, 20rem);
+  overflow-y: auto;
+}
+
+.requirement-create-modal-actions {
+  margin-top: auto;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  justify-content: flex-end;
+  padding-top: var(--space-md);
+  padding-bottom: 0.1rem;
+  border-top: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+
 .execution-workspace {
   display: grid;
   grid-template-columns: minmax(18rem, 3fr) minmax(24rem, 6fr) minmax(18rem, 3fr);
@@ -4321,11 +4594,16 @@ textarea:disabled {
     grid-template-columns: 1fr;
   }
 
+  .requirement-workspace {
+    grid-template-columns: 1fr;
+  }
+
   .test-case-workspace {
     grid-template-columns: 1fr;
   }
 
-  .sticky-column .panel {
+  .sticky-column .panel,
+  .requirement-sidebar .panel {
     position: static;
   }
 }
@@ -4374,6 +4652,21 @@ textarea:disabled {
   }
 
   .import-modal-actions {
+    flex-wrap: wrap;
+  }
+
+  .project-create-header,
+  .project-create-section-head,
+  .requirement-create-header {
+    flex-direction: column;
+  }
+
+  .project-app-type-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .project-create-modal-actions,
+  .requirement-create-modal-actions {
     flex-wrap: wrap;
   }
 }

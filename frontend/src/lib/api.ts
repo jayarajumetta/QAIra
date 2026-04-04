@@ -156,8 +156,8 @@ export const api = {
   },
   projects: {
     list: () => request<Project[]>("/projects"),
-    create: (input: { name: string; description?: string; created_by: string }) =>
-      request<{ id: string }>("/projects", { method: "POST", body: JSON.stringify(input) }),
+    create: (input: { name: string; description?: string; created_by?: string; member_ids?: string[]; app_types?: Array<{ name: string; type: AppType["type"]; is_unified?: boolean }> }) =>
+      request<{ id: string; members_added: number; app_types_created: number }>("/projects", { method: "POST", body: JSON.stringify(input) }),
     update: (id: string, input: Partial<{ name: string; description: string }>) =>
       request<{ updated: boolean }>(`/projects/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/projects/${id}`, { method: "DELETE" })

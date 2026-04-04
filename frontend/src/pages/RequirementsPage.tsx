@@ -1,10 +1,11 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Dispatch, FormEvent, SetStateAction, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { api } from "../lib/api";
 import type { Integration, Requirement, TestCase } from "../types";
@@ -44,10 +45,12 @@ export function RequirementsPage() {
   const [appTypeId, setAppTypeId] = useState("");
   const [selectedRequirementId, setSelectedRequirementId] = useState("");
   const [selectedTestCaseIds, setSelectedTestCaseIds] = useState<string[]>([]);
-  const [isCreating, setIsCreating] = useState(false);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const [draft, setDraft] = useState<RequirementDraft>(EMPTY_REQUIREMENT);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [createDraft, setCreateDraft] = useState<RequirementDraft>(EMPTY_REQUIREMENT);
+  const [createSelectedTestCaseIds, setCreateSelectedTestCaseIds] = useState<string[]>([]);
   const [isAiStudioOpen, setIsAiStudioOpen] = useState(false);
   const [aiRequirementId, setAiRequirementId] = useState("");
   const [integrationId, setIntegrationId] = useState("");
@@ -144,6 +147,19 @@ export function RequirementsPage() {
     }
   }, [integrationId, integrations]);
 
+  useEffect(() => {
+    if (!requirements.length) {
+      if (selectedRequirementId) {
+        setSelectedRequirementId("");
+      }
+      return;
+    }
+
+    if (!selectedRequirementId || !requirements.some((item) => item.id === selectedRequirementId)) {
+      setSelectedRequirementId(requirements[0].id);
+    }
+  }, [requirements, selectedRequirementId]);
+
   const selectedRequirement = useMemo(
     () => requirements.find((item) => item.id === selectedRequirementId) || requirements[0] || null,
     [requirements, selectedRequirementId]
@@ -154,6 +170,8 @@ export function RequirementsPage() {
     [aiRequirementId, requirements, selectedRequirement]
   );
 
+  const currentAppTypeName = appTypes.find((item) => item.id === appTypeId)?.name || "No app type selected";
+
   const associatedCases = useMemo(() => {
     if (!aiRequirement) {
       return [];
@@ -163,27 +181,30 @@ export function RequirementsPage() {
     return testCases.filter((testCase) => linkedIds.has(testCase.id));
   }, [aiRequirement, testCases]);
 
+  const selectedVisibleCases = useMemo(() => {
+    if (!selectedRequirement) {
+      return [];
+    }
+
+    const linkedIds = new Set(selectedRequirement.test_case_ids || []);
+    return testCases.filter((testCase) => linkedIds.has(testCase.id));
+  }, [selectedRequirement, testCases]);
+
   useEffect(() => {
-    if (isCreating) {
+    if (!selectedRequirement) {
+      setDraft(EMPTY_REQUIREMENT);
+      setSelectedTestCaseIds([]);
       return;
     }
 
-    if (selectedRequirement) {
-      setSelectedRequirementId(selectedRequirement.id);
-      setDraft({
-        title: selectedRequirement.title,
-        description: selectedRequirement.description || "",
-        priority: selectedRequirement.priority ?? 3,
-        status: selectedRequirement.status || "open"
-      });
-      setSelectedTestCaseIds(selectedRequirement.test_case_ids || []);
-      return;
-    }
-
-    setSelectedRequirementId("");
-    setDraft(EMPTY_REQUIREMENT);
-    setSelectedTestCaseIds([]);
-  }, [isCreating, selectedRequirement]);
+    setDraft({
+      title: selectedRequirement.title,
+      description: selectedRequirement.description || "",
+      priority: selectedRequirement.priority ?? 3,
+      status: selectedRequirement.status || "open"
+    });
+    setSelectedTestCaseIds(selectedRequirement.test_case_ids || []);
+  }, [selectedRequirement]);
 
   useEffect(() => {
     if (!aiRequirementId && selectedRequirement) {
@@ -192,62 +213,118 @@ export function RequirementsPage() {
   }, [aiRequirementId, selectedRequirement]);
 
   useEffect(() => {
-    setSelectedTestCaseIds([]);
-    setPreviewCases([]);
-    setPreviewMessage("");
-  }, [appTypeId]);
+    if (!isCreateModalOpen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !createRequirement.isPending && !replaceMappings.isPending) {
+        setIsCreateModalOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [createRequirement.isPending, isCreateModalOpen, replaceMappings.isPending]);
+
+  useEffect(() => {
+    if (!isCreateModalOpen) {
+      return;
+    }
+
+    setCreateSelectedTestCaseIds((current) => current.filter((id) => testCases.some((testCase) => testCase.id === id)));
+  }, [isCreateModalOpen, testCases]);
 
   const refresh = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["requirements", projectId] }),
-      queryClient.invalidateQueries({ queryKey: ["design-test-cases", appTypeId] }),
-      queryClient.invalidateQueries({ queryKey: ["global-test-cases", appTypeId] }),
       queryClient.invalidateQueries({ queryKey: ["requirements-test-cases", appTypeId] }),
       queryClient.invalidateQueries({ queryKey: ["test-cases"] })
     ]);
   };
 
-  const handleSave = async (event: FormEvent<HTMLFormElement>) => {
+  const openCreateRequirementModal = () => {
+    setCreateDraft(EMPTY_REQUIREMENT);
+    setCreateSelectedTestCaseIds([]);
+    setIsCreateModalOpen(true);
+  };
+
+  const closeCreateRequirementModal = () => {
+    if (createRequirement.isPending || replaceMappings.isPending) {
+      return;
+    }
+
+    setIsCreateModalOpen(false);
+  };
+
+  const toggleSelectedTestCase = (
+    setter: Dispatch<SetStateAction<string[]>>,
+    testCaseId: string,
+    checked: boolean
+  ) => {
+    setter((current) => (checked ? [...new Set([...current, testCaseId])] : current.filter((id) => id !== testCaseId)));
+  };
+
+  const handleCreateRequirement = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    if (!projectId) {
+      showError(null, "Select a project before creating a requirement.");
+      return;
+    }
+
     try {
-      let requirementId = selectedRequirement?.id || "";
+      const response = await createRequirement.mutateAsync({
+        project_id: projectId,
+        title: createDraft.title,
+        description: createDraft.description || undefined,
+        priority: createDraft.priority,
+        status: createDraft.status
+      });
 
-      if (isCreating || !selectedRequirement) {
-        const response = await createRequirement.mutateAsync({
-          project_id: projectId,
-          title: draft.title,
-          description: draft.description || undefined,
-          priority: draft.priority,
-          status: draft.status
-        });
-        requirementId = response.id;
-        setIsCreating(false);
-      } else {
-        await updateRequirement.mutateAsync({
-          id: selectedRequirement.id,
-          input: {
-            title: draft.title,
-            description: draft.description,
-            priority: draft.priority,
-            status: draft.status
-          }
-        });
+      if (createSelectedTestCaseIds.length) {
+        await replaceMappings.mutateAsync({ requirementId: response.id, testCaseIds: createSelectedTestCaseIds });
       }
 
-      if (requirementId) {
-        await replaceMappings.mutateAsync({ requirementId, testCaseIds: selectedTestCaseIds });
-        setSelectedRequirementId(requirementId);
-      }
-
-      showSuccess(isCreating ? "Requirement created." : "Requirement updated.");
+      setSelectedRequirementId(response.id);
+      setAiRequirementId(response.id);
+      setIsCreateModalOpen(false);
+      setCreateDraft(EMPTY_REQUIREMENT);
+      setCreateSelectedTestCaseIds([]);
+      showSuccess("Requirement created.");
       await refresh();
     } catch (error) {
-      showError(error, "Unable to save requirement");
+      showError(error, "Unable to create requirement");
     }
   };
 
-  const handleDelete = async () => {
+  const handleSaveRequirement = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!selectedRequirement) {
+      return;
+    }
+
+    try {
+      await updateRequirement.mutateAsync({
+        id: selectedRequirement.id,
+        input: {
+          title: draft.title,
+          description: draft.description,
+          priority: draft.priority,
+          status: draft.status
+        }
+      });
+
+      await replaceMappings.mutateAsync({ requirementId: selectedRequirement.id, testCaseIds: selectedTestCaseIds });
+      showSuccess("Requirement updated.");
+      await refresh();
+    } catch (error) {
+      showError(error, "Unable to update requirement");
+    }
+  };
+
+  const handleDeleteRequirement = async () => {
     if (!selectedRequirement || !window.confirm(`Delete requirement "${selectedRequirement.title}"? Linked test cases will remain in the library.`)) {
       return;
     }
@@ -373,23 +450,14 @@ export function RequirementsPage() {
             >
               AI Design Studio
             </button>
-            <button
-              className="primary-button"
-              onClick={() => {
-                setIsCreating(true);
-                setSelectedRequirementId("");
-                setDraft(EMPTY_REQUIREMENT);
-                setSelectedTestCaseIds([]);
-              }}
-              type="button"
-            >
-              + Create Requirement
+            <button className="primary-button" disabled={!projectId} onClick={openCreateRequirementModal} type="button">
+              Create Requirement
             </button>
           </div>
         }
       />
 
-      {message ? <p className={messageTone === "error" ? "inline-message error-message" : "inline-message success-message"}>{message}</p> : null}
+      <ToastMessage message={message} onDismiss={() => setMessage("")} tone={messageTone} />
 
       <WorkspaceScopeBar
         appTypeId={appTypeId}
@@ -419,95 +487,243 @@ export function RequirementsPage() {
         </div>
       </div>
 
-      <div className="workspace-grid">
-        <Panel title="Requirement list" subtitle="Select a requirement to refine details, manage links, or open the AI design studio.">
-          <div className="record-list">
-            {requirements.map((item) => (
-              <button
-                key={item.id}
-                className={selectedRequirementId === item.id ? "record-card is-active" : "record-card"}
-                onClick={() => {
-                  setSelectedRequirementId(item.id);
-                  setIsCreating(false);
-                }}
-                type="button"
-              >
-                <div className="record-card-body">
-                  <div className="record-card-header">
-                    <div className="record-card-icon requirement">RQ</div>
-                    <strong>{item.title}</strong>
+      <div className="requirement-workspace">
+        <div className="requirement-sidebar">
+          <Panel title="Requirement catalog" subtitle="Select a requirement card to review its details, adjust coverage links, or send it into the AI design studio.">
+            <div className="record-list requirement-card-list">
+              {requirements.map((item) => (
+                <button
+                  key={item.id}
+                  className={selectedRequirement?.id === item.id ? "record-card tile-card requirement-catalog-card is-active" : "record-card tile-card requirement-catalog-card"}
+                  onClick={() => setSelectedRequirementId(item.id)}
+                  type="button"
+                >
+                  <div className="tile-card-main">
+                    <div className="tile-card-header">
+                      <div className="record-card-icon requirement-card-icon">RQ</div>
+                      <div className="tile-card-title-group">
+                        <strong>{item.title}</strong>
+                        <span className="tile-card-kicker">{item.status || "open"} · Priority P{item.priority ?? 3}</span>
+                      </div>
+                      <span className="object-type-badge">REQUIREMENT</span>
+                    </div>
+                    <p className="tile-card-description">{item.description || "No description yet."}</p>
+                    <div className="tile-card-metrics">
+                      <span className="tile-metric">{(item.test_case_ids || []).length} linked cases</span>
+                      <span className="tile-metric">{currentAppTypeName}</span>
+                    </div>
                   </div>
-                  <span>{item.description || "No description"}</span>
-                  <span>Priority {item.priority ?? "n/a"} · {item.status || "unset"}</span>
-                </div>
-                <span className="count-pill">{(item.test_case_ids || []).length}</span>
-              </button>
-            ))}
-          </div>
-          {!requirements.length ? <div className="empty-state compact">No requirements yet for this project.</div> : null}
-        </Panel>
-
-        <Panel title={isCreating ? "New requirement" : selectedRequirement ? "Requirement editor" : "Requirement editor"} subtitle="Keep the requirement sharp, then connect the reusable library cases that cover it.">
-          {(isCreating || selectedRequirement) ? (
-            <div className="detail-stack">
-              <form className="form-grid" onSubmit={(event) => void handleSave(event)}>
-                <div className="record-grid">
-                  <FormField label="Title">
-                    <input required value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} />
-                  </FormField>
-                  <FormField label="Status">
-                    <input value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value }))} />
-                  </FormField>
-                  <FormField label="Priority">
-                    <input min="1" max="5" type="number" value={draft.priority} onChange={(event) => setDraft((current) => ({ ...current, priority: Number(event.target.value) || 3 }))} />
-                  </FormField>
-                </div>
-                <FormField label="Description">
-                  <textarea rows={4} value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} />
-                </FormField>
-
-                <div className="action-row">
-                  <button className="primary-button" type="submit">{isCreating ? "Create requirement" : "Save requirement"}</button>
-                  {!isCreating && selectedRequirement ? (
-                    <button className="ghost-button danger" onClick={() => void handleDelete()} type="button">Delete requirement</button>
-                  ) : null}
-                </div>
-              </form>
-
-              <div className="panel-head">
-                <div>
-                  <h3>Linked test cases</h3>
-                  <p>{appTypeId ? "Choose the reusable library cases that cover this requirement in the selected app type." : "Select an app type first."}</p>
-                </div>
-              </div>
-
-              <div className="modal-case-picker">
-                {testCases.map((testCase: TestCase) => (
-                  <label className="modal-case-option" key={testCase.id}>
-                    <input
-                      checked={selectedTestCaseIds.includes(testCase.id)}
-                      onChange={(event) => {
-                        setSelectedTestCaseIds((current) =>
-                          event.target.checked ? [...current, testCase.id] : current.filter((id) => id !== testCase.id)
-                        );
-                      }}
-                      type="checkbox"
-                    />
-                    <span>{testCase.title}</span>
-                  </label>
-                ))}
-                {!testCases.length ? <div className="empty-state compact">No test cases available for this app type.</div> : null}
-              </div>
+                </button>
+              ))}
             </div>
-          ) : (
-            <div className="empty-state compact">Select a requirement from the left or create a new one.</div>
-          )}
-        </Panel>
+            {!requirements.length ? <div className="empty-state compact">No requirements yet for this project.</div> : null}
+          </Panel>
+        </div>
+
+        <div className="requirement-detail-column">
+          <Panel title={selectedRequirement ? selectedRequirement.title : "Requirement details"} subtitle={selectedRequirement ? "Edit the requirement, manage reusable coverage links, and keep the selected item in focus." : "Select a requirement to review its details."}>
+            {selectedRequirement ? (
+              <div className="detail-stack">
+                <div className="detail-summary">
+                  <strong>{selectedRequirement.title}</strong>
+                  <span>{selectedRequirement.description || "No description yet for this requirement."}</span>
+                  <span>{currentAppTypeName} · {(selectedRequirement.test_case_ids || []).length} linked case{(selectedRequirement.test_case_ids || []).length === 1 ? "" : "s"} across the workspace</span>
+                </div>
+
+                <div className="metric-strip">
+                  <div className="mini-card">
+                    <strong>P{draft.priority || 3}</strong>
+                    <span>Priority</span>
+                  </div>
+                  <div className="mini-card">
+                    <strong>{draft.status || "open"}</strong>
+                    <span>Status</span>
+                  </div>
+                  <div className="mini-card">
+                    <strong>{selectedTestCaseIds.length}</strong>
+                    <span>Total linked cases</span>
+                  </div>
+                  <div className="mini-card">
+                    <strong>{selectedVisibleCases.length}</strong>
+                    <span>Visible in current app type</span>
+                  </div>
+                </div>
+
+                <form className="form-grid" onSubmit={(event) => void handleSaveRequirement(event)}>
+                  <div className="record-grid">
+                    <FormField label="Title" required>
+                      <input required value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} />
+                    </FormField>
+                    <FormField label="Status">
+                      <input value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value }))} />
+                    </FormField>
+                    <FormField label="Priority">
+                      <input min="1" max="5" type="number" value={draft.priority} onChange={(event) => setDraft((current) => ({ ...current, priority: Number(event.target.value) || 3 }))} />
+                    </FormField>
+                  </div>
+                  <FormField label="Description">
+                    <textarea rows={4} value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} />
+                  </FormField>
+
+                  <div className="action-row">
+                    <button className="primary-button" disabled={updateRequirement.isPending || replaceMappings.isPending} type="submit">
+                      {updateRequirement.isPending || replaceMappings.isPending ? "Saving…" : "Save requirement"}
+                    </button>
+                    <button className="ghost-button danger" disabled={deleteRequirement.isPending} onClick={() => void handleDeleteRequirement()} type="button">
+                      Delete requirement
+                    </button>
+                  </div>
+                </form>
+
+                <section className="requirement-link-section">
+                  <div className="panel-head">
+                    <div>
+                      <h3>Link or unlink existing test cases</h3>
+                      <p>Choose the reusable cases from the selected app type that cover this requirement. Hidden links from other app types stay intact unless you change them elsewhere.</p>
+                    </div>
+                  </div>
+
+                  <div className="detail-summary">
+                    <strong>{selectedTestCaseIds.length} linked case{selectedTestCaseIds.length === 1 ? "" : "s"}</strong>
+                    <span>{appTypeId ? `Currently browsing reusable cases for ${currentAppTypeName}.` : "Select an app type first to manage linked coverage."}</span>
+                  </div>
+
+                  <div className="stack-list">
+                    {selectedVisibleCases.map((testCase) => (
+                      <div className="stack-item" key={testCase.id}>
+                        <div>
+                          <strong>{testCase.title}</strong>
+                          <span>{testCase.description || "No description available."}</span>
+                        </div>
+                        <span className="count-pill">Linked</span>
+                      </div>
+                    ))}
+                    {!selectedVisibleCases.length ? <div className="empty-state compact">No linked test cases are visible in the current app type yet.</div> : null}
+                  </div>
+
+                  <RequirementTestCasePicker
+                    emptyText={appTypeId ? "No reusable test cases are available for this app type." : "Select an app type first to link reusable test cases."}
+                    selectedIds={selectedTestCaseIds}
+                    testCases={testCases}
+                    onToggle={(testCaseId, checked) => toggleSelectedTestCase(setSelectedTestCaseIds, testCaseId, checked)}
+                  />
+                </section>
+              </div>
+            ) : (
+              <div className="empty-state compact">Select a requirement from the catalog to view and edit its details.</div>
+            )}
+          </Panel>
+        </div>
       </div>
 
+      {isCreateModalOpen ? (
+        <div className="modal-backdrop" onClick={closeCreateRequirementModal}>
+          <div
+            aria-labelledby="create-requirement-title"
+            aria-modal="true"
+            className="modal-card requirement-create-modal"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="requirement-create-header">
+              <div className="requirement-create-title">
+                <p className="eyebrow">Requirements</p>
+                <h3 id="create-requirement-title">Create requirement</h3>
+                <p>Create the requirement in a focused modal, then link any reusable test cases that already exist for the selected app type.</p>
+              </div>
+              <button className="ghost-button" disabled={createRequirement.isPending || replaceMappings.isPending} onClick={closeCreateRequirementModal} type="button">
+                Close
+              </button>
+            </div>
+
+            <form className="requirement-create-modal-form" onSubmit={(event) => void handleCreateRequirement(event)}>
+              <div className="requirement-create-modal-body">
+                <div className="form-grid">
+                  <FormField label="Title" inputId="create-requirement-title-input" required>
+                    <input
+                      autoFocus
+                      id="create-requirement-title-input"
+                      required
+                      value={createDraft.title}
+                      onChange={(event) => setCreateDraft((current) => ({ ...current, title: event.target.value }))}
+                    />
+                  </FormField>
+                  <div className="record-grid">
+                    <FormField label="Status">
+                      <input
+                        value={createDraft.status}
+                        onChange={(event) => setCreateDraft((current) => ({ ...current, status: event.target.value }))}
+                      />
+                    </FormField>
+                    <FormField label="Priority">
+                      <input
+                        min="1"
+                        max="5"
+                        type="number"
+                        value={createDraft.priority}
+                        onChange={(event) => setCreateDraft((current) => ({ ...current, priority: Number(event.target.value) || 3 }))}
+                      />
+                    </FormField>
+                  </div>
+                  <FormField label="Description" inputId="create-requirement-description-input">
+                    <textarea
+                      id="create-requirement-description-input"
+                      rows={4}
+                      value={createDraft.description}
+                      onChange={(event) => setCreateDraft((current) => ({ ...current, description: event.target.value }))}
+                    />
+                  </FormField>
+                </div>
+
+                <div className="metric-strip compact">
+                  <div className="mini-card">
+                    <strong>{createSelectedTestCaseIds.length}</strong>
+                    <span>Linked test cases</span>
+                  </div>
+                  <div className="mini-card">
+                    <strong>{currentAppTypeName}</strong>
+                    <span>Coverage source</span>
+                  </div>
+                </div>
+
+                <div className="detail-summary">
+                  <strong>Link reusable test cases while creating</strong>
+                  <span>Use the selector below to attach existing test cases now. You can always link or unlink more later from the selected requirement details.</span>
+                </div>
+
+                <section className="requirement-link-section">
+                  <div className="panel-head">
+                    <div>
+                      <h3>Existing test cases</h3>
+                      <p>{appTypeId ? `Select reusable cases from ${currentAppTypeName} to link immediately.` : "Select an app type first to link existing reusable test cases."}</p>
+                    </div>
+                  </div>
+
+                  <RequirementTestCasePicker
+                    emptyText={appTypeId ? "No reusable test cases are available for this app type." : "Select an app type first to link reusable test cases."}
+                    selectedIds={createSelectedTestCaseIds}
+                    testCases={testCases}
+                    onToggle={(testCaseId, checked) => toggleSelectedTestCase(setCreateSelectedTestCaseIds, testCaseId, checked)}
+                  />
+                </section>
+              </div>
+
+              <div className="action-row requirement-create-modal-actions">
+                <button className="ghost-button" disabled={createRequirement.isPending || replaceMappings.isPending} onClick={closeCreateRequirementModal} type="button">
+                  Cancel
+                </button>
+                <button className="primary-button" disabled={createRequirement.isPending || replaceMappings.isPending} type="submit">
+                  {createRequirement.isPending || replaceMappings.isPending ? "Creating…" : "Create requirement"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
       {isAiStudioOpen ? (
-        <div className="modal-backdrop" role="presentation">
-          <div className="modal-card ai-modal-card" role="dialog" aria-modal="true" aria-label="AI design studio">
+        <div className="modal-backdrop" onClick={() => setIsAiStudioOpen(false)} role="presentation">
+          <div className="modal-card ai-modal-card" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="AI design studio">
             <div className="panel-head">
               <div>
                 <h3>AI Design Studio</h3>
@@ -542,7 +758,7 @@ export function RequirementsPage() {
               </div>
 
               <div className="detail-summary">
-                <strong>{appTypes.find((item) => item.id === appTypeId)?.name || "No app type selected"}</strong>
+                <strong>{currentAppTypeName}</strong>
                 <span>The current app type controls where accepted cases will be created.</span>
                 <span>Associated test cases already linked to the selected requirement are shown below for quick comparison.</span>
               </div>
@@ -647,6 +863,43 @@ export function RequirementsPage() {
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function RequirementTestCasePicker({
+  testCases,
+  selectedIds,
+  onToggle,
+  emptyText
+}: {
+  testCases: TestCase[];
+  selectedIds: string[];
+  onToggle: (testCaseId: string, checked: boolean) => void;
+  emptyText: string;
+}) {
+  if (!testCases.length) {
+    return <div className="empty-state compact">{emptyText}</div>;
+  }
+
+  return (
+    <div className="modal-case-picker requirement-link-picker">
+      {testCases.map((testCase) => (
+        <label className="modal-case-option requirement-link-option" key={testCase.id}>
+          <input
+            checked={selectedIds.includes(testCase.id)}
+            onChange={(event) => onToggle(testCase.id, event.target.checked)}
+            type="checkbox"
+          />
+          <div>
+            <strong>{testCase.title}</strong>
+            <span>{testCase.description || "No description available."}</span>
+            <span className="requirement-link-option-meta">
+              Priority P{testCase.priority ?? 3} · {testCase.status || "draft"}
+            </span>
+          </div>
+        </label>
+      ))}
     </div>
   );
 }
