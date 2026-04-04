@@ -8,7 +8,7 @@ export function StatCard({
   hint: string;
 }) {
   return (
-    <div className="stat-card">
+    <div className="stat-card card">
       <span>{label}</span>
       <strong>{value}</strong>
       <p>{hint}</p>

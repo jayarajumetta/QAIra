@@ -12,7 +12,7 @@ export function PageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <header className="page-header">
+    <header className="page-header card">
       <div>
         <p className="eyebrow">{eyebrow}</p>
         <h2>{title}</h2>

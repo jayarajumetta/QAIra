@@ -185,6 +185,37 @@ CREATE TABLE execution_suites (
   FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
 );
 
+CREATE TABLE execution_case_snapshots (
+  execution_id TEXT NOT NULL,
+  test_case_id TEXT NOT NULL,
+  test_case_title TEXT NOT NULL,
+  test_case_description TEXT,
+  suite_id TEXT,
+  suite_name TEXT,
+  priority INTEGER,
+  status TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (execution_id, test_case_id),
+  FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE execution_step_snapshots (
+  execution_id TEXT NOT NULL,
+  test_case_id TEXT NOT NULL,
+  snapshot_step_id TEXT NOT NULL,
+  step_order INTEGER NOT NULL,
+  action TEXT,
+  expected_result TEXT,
+  PRIMARY KEY (execution_id, snapshot_step_id),
+  FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_execution_case_snapshots_execution_id
+  ON execution_case_snapshots (execution_id, sort_order);
+
+CREATE INDEX idx_execution_step_snapshots_execution_case
+  ON execution_step_snapshots (execution_id, test_case_id, step_order);
+
 CREATE TABLE execution_results (
   id TEXT PRIMARY KEY,
   execution_id TEXT NOT NULL,

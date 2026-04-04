@@ -1,6 +1,26 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 
+const selectRoleByName = db.prepare(`
+  SELECT id
+  FROM roles
+  WHERE name = ?
+`);
+
+const selectAdminUsers = db.prepare(`
+  SELECT DISTINCT users.id
+  FROM users
+  JOIN project_members ON project_members.user_id = users.id
+  JOIN roles ON roles.id = project_members.role_id
+  WHERE roles.name = 'admin'
+`);
+
+const insertProjectMember = db.prepare(`
+  INSERT INTO project_members (id, project_id, user_id, role_id)
+  VALUES (?, ?, ?, ?)
+  ON CONFLICT (project_id, user_id) DO NOTHING
+`);
+
 exports.createProject = async ({ name, description, created_by }) => {
   if (!name || !created_by) throw new Error("Missing fields");
 
@@ -9,10 +29,35 @@ exports.createProject = async ({ name, description, created_by }) => {
   const user = await db.prepare("SELECT id FROM users WHERE id = ?").get(created_by);
   if (!user) throw new Error("Invalid user");
 
-  await db.prepare(`
-    INSERT INTO projects (id, name, description, created_by)
-    VALUES (?, ?, ?, ?)
-  `).run(id, name, description, created_by);
+  const adminRole = await selectRoleByName.get("admin");
+  const memberRole = await selectRoleByName.get("member");
+  const fallbackRoleId = adminRole?.id || memberRole?.id;
+
+  if (!fallbackRoleId) {
+    throw new Error("No project roles are configured");
+  }
+
+  const adminUsers = await selectAdminUsers.all();
+  const memberships = new Map();
+
+  for (const adminUser of adminUsers) {
+    memberships.set(adminUser.id, adminRole?.id || fallbackRoleId);
+  }
+
+  memberships.set(created_by, adminRole?.id || fallbackRoleId);
+
+  const createProjectWithMemberships = db.transaction(async () => {
+    await db.prepare(`
+      INSERT INTO projects (id, name, description, created_by)
+      VALUES (?, ?, ?, ?)
+    `).run(id, name, description, created_by);
+
+    for (const [userId, roleId] of memberships.entries()) {
+      await insertProjectMember.run(uuid(), id, userId, roleId);
+    }
+  });
+
+  await createProjectWithMemberships();
 
   return { id };
 };

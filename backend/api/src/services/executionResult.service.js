@@ -12,6 +12,12 @@ const getPrimarySuiteForTestCase = db.prepare(`
   LIMIT 1
 `);
 
+const getExecutionCaseSnapshot = db.prepare(`
+  SELECT test_case_id, test_case_title, suite_id, suite_name
+  FROM execution_case_snapshots
+  WHERE execution_id = ? AND test_case_id = ?
+`);
+
 // Create Result
 exports.createExecutionResult = async (data) => {
 
@@ -32,19 +38,12 @@ exports.createExecutionResult = async (data) => {
 
   // Validate execution
   const execution = await db.prepare(`
-    SELECT id FROM executions WHERE id = ?
+    SELECT id, app_type_id FROM executions WHERE id = ?
   `).get(execution_id);
 
   if (!execution) throw new Error("Execution not found");
 
-  // Validate test case
-  const testCase = await db.prepare(`
-    SELECT id, title, suite_id
-    FROM test_cases
-    WHERE id = ?
-  `).get(test_case_id);
-
-  if (!testCase) throw new Error("Test case not found");
+  const snapshotCase = await getExecutionCaseSnapshot.get(execution_id, test_case_id);
 
   // Validate app type
   const appType = await db.prepare(`
@@ -52,6 +51,33 @@ exports.createExecutionResult = async (data) => {
   `).get(app_type_id);
 
   if (!appType) throw new Error("App type not found");
+  if (execution.app_type_id && execution.app_type_id !== app_type_id) {
+    throw new Error("App type does not match the execution scope");
+  }
+
+  let resolvedTitle = null;
+  let resolvedSuiteId = null;
+  let resolvedSuiteName = null;
+
+  if (snapshotCase) {
+    resolvedTitle = snapshotCase.test_case_title;
+    resolvedSuiteId = snapshotCase.suite_id || null;
+    resolvedSuiteName = snapshotCase.suite_name || null;
+  } else {
+    // Backward compatibility for executions created before snapshotting support.
+    const testCase = await db.prepare(`
+      SELECT id, title, suite_id
+      FROM test_cases
+      WHERE id = ?
+    `).get(test_case_id);
+
+    if (!testCase) throw new Error("Test case not found");
+
+    const suiteSnapshot = await getPrimarySuiteForTestCase.get(test_case_id);
+    resolvedTitle = testCase.title;
+    resolvedSuiteId = suiteSnapshot?.id || testCase.suite_id || null;
+    resolvedSuiteName = suiteSnapshot?.name || null;
+  }
 
   // Optional: Validate user
   if (executed_by) {
@@ -62,7 +88,6 @@ exports.createExecutionResult = async (data) => {
     if (!user) throw new Error("Invalid user");
   }
 
-  const suiteSnapshot = await getPrimarySuiteForTestCase.get(test_case_id);
   const id = uuid();
 
   await db.prepare(`
@@ -73,9 +98,9 @@ exports.createExecutionResult = async (data) => {
     id,
     execution_id,
     test_case_id,
-    testCase.title,
-    suiteSnapshot?.id || testCase.suite_id || null,
-    suiteSnapshot?.name || null,
+    resolvedTitle,
+    resolvedSuiteId,
+    resolvedSuiteName,
     app_type_id,
     status,
     duration_ms || null,

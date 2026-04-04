@@ -1,9 +1,10 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StatusBadge } from "../components/StatusBadge";
+import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { parseTestCaseCsv, type ImportedTestCaseRow } from "../lib/testCaseImport";
 import { api } from "../lib/api";
@@ -22,6 +23,12 @@ type StepDraft = {
   expected_result: string;
 };
 
+type DraftTestStep = {
+  id: string;
+  action: string;
+  expected_result: string;
+};
+
 const EMPTY_CASE_DRAFT: TestCaseDraft = {
   title: "",
   description: "",
@@ -35,6 +42,27 @@ const EMPTY_STEP_DRAFT: StepDraft = {
   expected_result: ""
 };
 
+const createDraftStepId = () =>
+  globalThis.crypto?.randomUUID?.() || `draft-step-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+const splitImportedStepValue = (value?: string) =>
+  String(value || "")
+    .split(/\r?\n|\|/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+const countImportedSteps = (row: ImportedTestCaseRow) =>
+  Math.max(splitImportedStepValue(row.action).length, splitImportedStepValue(row.expected_result).length, 0);
+
+const normalizeDraftSteps = (steps: DraftTestStep[]) =>
+  steps
+    .map((step, index) => ({
+      step_order: index + 1,
+      action: step.action.trim(),
+      expected_result: step.expected_result.trim()
+    }))
+    .filter((step) => step.action || step.expected_result);
+
 const toCsvCell = (value: string | number | null | undefined) => {
   const normalized = String(value ?? "");
   return /[",\n]/.test(normalized) ? `"${normalized.replace(/"/g, "\"\"")}"` : normalized;
@@ -46,12 +74,15 @@ export function TestCasesPage() {
   const [appTypeId, setAppTypeId] = useState("");
   const [selectedTestCaseId, setSelectedTestCaseId] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const deferredSearchTerm = useDeferredValue(searchTerm);
   const [isCreating, setIsCreating] = useState(false);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const [caseDraft, setCaseDraft] = useState<TestCaseDraft>(EMPTY_CASE_DRAFT);
   const [newStepDraft, setNewStepDraft] = useState<StepDraft>(EMPTY_STEP_DRAFT);
+  const [draftSteps, setDraftSteps] = useState<DraftTestStep[]>([]);
   const [expandedStepIds, setExpandedStepIds] = useState<string[]>([]);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [importFileName, setImportFileName] = useState("");
   const [importRows, setImportRows] = useState<ImportedTestCaseRow[]>([]);
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
@@ -79,6 +110,11 @@ export function TestCasesPage() {
   const executionResultsQuery = useQuery({
     queryKey: ["global-test-case-results", appTypeId],
     queryFn: () => api.executionResults.list({ app_type_id: appTypeId }),
+    enabled: Boolean(appTypeId)
+  });
+  const allTestStepsQuery = useQuery({
+    queryKey: ["global-test-steps", appTypeId],
+    queryFn: () => api.testSteps.list(),
     enabled: Boolean(appTypeId)
   });
   const stepsQuery = useQuery({
@@ -110,9 +146,23 @@ export function TestCasesPage() {
   const requirements = requirementsQuery.data || [];
   const testCases = testCasesQuery.data || [];
   const executionResults = executionResultsQuery.data || [];
+  const allTestSteps = allTestStepsQuery.data || [];
   const steps = useMemo(
     () => ((stepsQuery.data || []) as TestStep[]).slice().sort((left, right) => left.step_order - right.step_order),
     [stepsQuery.data]
+  );
+  const displaySteps = useMemo(
+    () =>
+      isCreating
+        ? draftSteps.map((step, index) => ({
+            id: step.id,
+            test_case_id: selectedTestCaseId || "draft",
+            step_order: index + 1,
+            action: step.action,
+            expected_result: step.expected_result
+          }))
+        : steps,
+    [draftSteps, isCreating, selectedTestCaseId, steps]
   );
 
   const showSuccess = (text: string) => {
@@ -123,6 +173,15 @@ export function TestCasesPage() {
   const showError = (error: unknown, fallback: string) => {
     setMessageTone("error");
     setMessage(error instanceof Error ? error.message : fallback);
+  };
+
+  const beginCreateCase = () => {
+    setIsCreating(true);
+    setSelectedTestCaseId("");
+    setCaseDraft(EMPTY_CASE_DRAFT);
+    setDraftSteps([]);
+    setNewStepDraft(EMPTY_STEP_DRAFT);
+    setExpandedStepIds([]);
   };
 
   useEffect(() => {
@@ -145,8 +204,10 @@ export function TestCasesPage() {
   useEffect(() => {
     setSelectedTestCaseId("");
     setIsCreating(false);
+    setIsImportModalOpen(false);
     setCaseDraft(EMPTY_CASE_DRAFT);
     setNewStepDraft(EMPTY_STEP_DRAFT);
+    setDraftSteps([]);
     setExpandedStepIds([]);
     setImportRows([]);
     setImportWarnings([]);
@@ -169,8 +230,23 @@ export function TestCasesPage() {
     return map;
   }, [executionResults]);
 
+  const stepCountByCaseId = useMemo(() => {
+    const scopedCaseIds = new Set(testCases.map((testCase) => testCase.id));
+    const counts: Record<string, number> = {};
+
+    allTestSteps.forEach((step) => {
+      if (!scopedCaseIds.has(step.test_case_id)) {
+        return;
+      }
+
+      counts[step.test_case_id] = (counts[step.test_case_id] || 0) + 1;
+    });
+
+    return counts;
+  }, [allTestSteps, testCases]);
+
   const filteredCases = useMemo(() => {
-    const search = searchTerm.trim().toLowerCase();
+    const search = deferredSearchTerm.trim().toLowerCase();
 
     return testCases.filter((testCase) => {
       if (!search) {
@@ -183,7 +259,7 @@ export function TestCasesPage() {
         requirements.find((item) => item.id === testCase.requirement_id)?.title || ""
       ].some((value) => value.toLowerCase().includes(search));
     });
-  }, [requirements, searchTerm, testCases]);
+  }, [deferredSearchTerm, requirements, testCases]);
 
   const selectedTestCase = useMemo(
     () => filteredCases.find((item) => item.id === selectedTestCaseId) || testCases.find((item) => item.id === selectedTestCaseId) || null,
@@ -222,8 +298,31 @@ export function TestCasesPage() {
   }, [selectedTestCaseId]);
 
   useEffect(() => {
-    setExpandedStepIds((current) => current.filter((id) => steps.some((step) => step.id === id)));
-  }, [steps]);
+    setExpandedStepIds((current) => {
+      const validIds = current.filter((id) => displaySteps.some((step) => step.id === id));
+
+      if (!isCreating && displaySteps.length && validIds.length === 0) {
+        return displaySteps.map((step) => step.id);
+      }
+
+      return validIds;
+    });
+  }, [displaySteps, isCreating]);
+
+  useEffect(() => {
+    if (!isImportModalOpen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsImportModalOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [isImportModalOpen]);
 
   const refreshCases = async () => {
     await Promise.all([
@@ -248,12 +347,14 @@ export function TestCasesPage() {
           priority: Number(caseDraft.priority),
           status: caseDraft.status,
           requirement_ids: caseDraft.requirement_id ? [caseDraft.requirement_id] : [],
-          suite_ids: []
+          suite_ids: [],
+          steps: normalizeDraftSteps(draftSteps)
         });
 
         setSelectedTestCaseId(response.id);
         setIsCreating(false);
-        showSuccess("Test case created.");
+        setDraftSteps([]);
+        showSuccess("Test case created with its draft steps.");
       } else if (selectedTestCase) {
         await updateTestCase.mutateAsync({
           id: selectedTestCase.id,
@@ -296,6 +397,26 @@ export function TestCasesPage() {
   const handleCreateStep = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    const normalizedDraft = {
+      action: newStepDraft.action.trim(),
+      expected_result: newStepDraft.expected_result.trim()
+    };
+
+    if (!normalizedDraft.action && !normalizedDraft.expected_result) {
+      setMessageTone("error");
+      setMessage("Add an action or expected result before creating a step.");
+      return;
+    }
+
+    if (isCreating) {
+      const draftId = createDraftStepId();
+      setDraftSteps((current) => [...current, { id: draftId, ...normalizedDraft }]);
+      setExpandedStepIds((current) => [...new Set([...current, draftId])]);
+      setNewStepDraft(EMPTY_STEP_DRAFT);
+      showSuccess("Draft step added to the new test case.");
+      return;
+    }
+
     if (!selectedTestCaseId) {
       return;
     }
@@ -305,8 +426,8 @@ export function TestCasesPage() {
       const response = await createStep.mutateAsync({
         test_case_id: selectedTestCaseId,
         step_order: nextStepOrder,
-        action: newStepDraft.action || undefined,
-        expected_result: newStepDraft.expected_result || undefined
+        action: normalizedDraft.action || undefined,
+        expected_result: normalizedDraft.expected_result || undefined
       });
       setNewStepDraft(EMPTY_STEP_DRAFT);
       setExpandedStepIds((current) => [...new Set([...current, response.id])]);
@@ -362,6 +483,13 @@ export function TestCasesPage() {
   };
 
   const handleDeleteStep = async (stepId: string) => {
+    if (isCreating) {
+      setDraftSteps((current) => current.filter((step) => step.id !== stepId));
+      setExpandedStepIds((current) => current.filter((id) => id !== stepId));
+      showSuccess("Draft step removed.");
+      return;
+    }
+
     if (!window.confirm("Delete this step?")) {
       return;
     }
@@ -374,6 +502,37 @@ export function TestCasesPage() {
     } catch (error) {
       showError(error, "Unable to delete step");
     }
+  };
+
+  const handleUpdateDraftStep = (stepId: string, input: StepDraft) => {
+    setDraftSteps((current) =>
+      current.map((step) =>
+        step.id === stepId
+          ? {
+              ...step,
+              action: input.action,
+              expected_result: input.expected_result
+            }
+          : step
+      )
+    );
+  };
+
+  const handleReorderDraftStep = (stepId: string, direction: "up" | "down") => {
+    setDraftSteps((current) => {
+      const currentIndex = current.findIndex((step) => step.id === stepId);
+      const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+
+      if (currentIndex === -1 || targetIndex < 0 || targetIndex >= current.length) {
+        return current;
+      }
+
+      const reordered = [...current];
+      const [movedStep] = reordered.splice(currentIndex, 1);
+      reordered.splice(targetIndex, 0, movedStep);
+      return reordered;
+    });
+    showSuccess("Draft step order updated.");
   };
 
   const handleImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -426,6 +585,9 @@ export function TestCasesPage() {
       setImportFileName("");
       if (response.created[0]) {
         setSelectedTestCaseId(response.created[0].id);
+      }
+      if (!response.failed) {
+        setIsImportModalOpen(false);
       }
       await refreshCases();
     } catch (error) {
@@ -498,6 +660,11 @@ export function TestCasesPage() {
       withSuites
     };
   }, [historyByCaseId, testCases]);
+  const importStepCount = useMemo(
+    () => importRows.reduce((total, row) => total + countImportedSteps(row), 0),
+    [importRows]
+  );
+  const isLibraryLoading = testCasesQuery.isLoading || executionResultsQuery.isLoading || allTestStepsQuery.isLoading;
 
   const selectedRequirement = requirements.find((item) => item.id === caseDraft.requirement_id) || null;
   const selectedHistory = selectedTestCase ? historyByCaseId[selectedTestCase.id] || [] : [];
@@ -510,25 +677,25 @@ export function TestCasesPage() {
         description="Manage reusable cases as the core asset of the system, import them in bulk, link them to requirements, and keep execution history visible even when the live design changes."
         actions={
           <div className="page-actions">
+            <button className="ghost-button" disabled={!appTypeId} onClick={() => setIsImportModalOpen(true)} type="button">
+              Bulk Import
+            </button>
             <button className="ghost-button" disabled={!filteredCases.length} onClick={() => void handleExportCsv()} type="button">
               Export CSV
             </button>
             <button
               className="primary-button"
-              onClick={() => {
-                setIsCreating(true);
-                setSelectedTestCaseId("");
-                setCaseDraft(EMPTY_CASE_DRAFT);
-              }}
+              disabled={!appTypeId}
+              onClick={beginCreateCase}
               type="button"
             >
-              + New Test Case
+              New Test Case
             </button>
           </div>
         }
       />
 
-      {message ? <p className={messageTone === "error" ? "inline-message error-message" : "inline-message success-message"}>{message}</p> : null}
+      <ToastMessage message={message} onDismiss={() => setMessage("")} tone={messageTone} />
 
       <WorkspaceScopeBar
         appTypeId={appTypeId}
@@ -558,10 +725,317 @@ export function TestCasesPage() {
         </div>
       </div>
 
-      <div className="workspace-grid">
-        <div className="detail-stack">
-          <Panel title="Bulk import from CSV" subtitle="Mandatory: title. Optional: action becomes steps and expected result is mapped when present.">
-            <div className="detail-stack">
+      <div className="test-case-workspace">
+        <div className="test-case-sidebar">
+          <Panel title="Test case library" subtitle={appTypeId ? "Search the library, scan quick quality signals, and jump into a case without the list taking over the page." : "Choose an app type to begin."}>
+            <div className="design-list-toolbar">
+              <input
+                placeholder="Search title, description, or requirement"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+              />
+              <button className="ghost-button" disabled={!appTypeId} onClick={beginCreateCase} type="button">
+                New case
+              </button>
+            </div>
+
+            {isLibraryLoading ? (
+              <div className="record-list">
+                <div className="skeleton-block" />
+                <div className="skeleton-block" />
+                <div className="skeleton-block" />
+              </div>
+            ) : null}
+
+            {!isLibraryLoading ? (
+              <div className="record-list test-case-library-scroll">
+                {filteredCases.map((testCase) => {
+                  const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
+                  const latest = history[0];
+                  const requirement = requirements.find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id));
+                  const stepCount = stepCountByCaseId[testCase.id] || 0;
+
+                  return (
+                    <button
+                      className={selectedTestCaseId === testCase.id && !isCreating ? "record-card tile-card test-case-card is-active" : "record-card tile-card test-case-card"}
+                      key={testCase.id}
+                      onClick={() => {
+                        setSelectedTestCaseId(testCase.id);
+                        setIsCreating(false);
+                        setDraftSteps([]);
+                      }}
+                      type="button"
+                    >
+                      <div className="tile-card-main">
+                        <div className="tile-card-header">
+                          <div className="record-card-icon test-case">TC</div>
+                          <div className="tile-card-title-group">
+                            <strong>{testCase.title}</strong>
+                            <span className="tile-card-kicker">{requirement?.title || "No requirement linked"}</span>
+                          </div>
+                          <span className="object-type-badge test-case">Reusable</span>
+                        </div>
+                        <p className="tile-card-description">{testCase.description || "No description yet for this test case."}</p>
+                        <div className="tile-card-metrics">
+                          <span className="tile-metric">Priority P{testCase.priority || 3}</span>
+                          <span className="tile-metric">{stepCount} steps</span>
+                          <span className="tile-metric">{(testCase.suite_ids || []).length || 0} suites</span>
+                          <span className="tile-metric">{history.length} runs</span>
+                        </div>
+                        <div className="tile-card-footer">
+                          <div className="history-bars" aria-label="Execution history">
+                            {history.length ? history.map((result) => (
+                              <span
+                                key={result.id}
+                                className={result.status === "passed" ? "history-bar is-passed" : result.status === "failed" ? "history-bar is-failed" : "history-bar is-blocked"}
+                                title={`${result.status} · ${result.created_at || "recent"}`}
+                              />
+                            )) : <span className="history-bar" />}
+                          </div>
+                        </div>
+                      </div>
+                      <StatusBadge value={latest?.status || testCase.status || "active"} />
+                    </button>
+                  );
+                })}
+                {!filteredCases.length ? <div className="empty-state compact">No test cases found for this app type.</div> : null}
+              </div>
+            ) : null}
+          </Panel>
+        </div>
+
+        <div className="test-case-editor-column">
+          <Panel title={isCreating ? "New test case" : selectedTestCase ? "Selected test case" : "Test case editor"} subtitle={selectedTestCaseId || isCreating ? "Keep the reusable case definition, step flow, and execution history in one place without losing context." : "Select a test case or create a new one."}>
+            {selectedTestCaseId || isCreating ? (
+              <div className="detail-stack">
+                <div className="metric-strip">
+                  <div className="mini-card">
+                    <strong>{selectedTestCase?.suite_ids?.length || 0}</strong>
+                    <span>Linked suites</span>
+                  </div>
+                  <div className="mini-card">
+                    <strong>{selectedHistory.length}</strong>
+                    <span>Execution records</span>
+                  </div>
+                  <div className="mini-card">
+                    <strong>{displaySteps.length}</strong>
+                    <span>{isCreating ? "Draft steps" : "Defined steps"}</span>
+                  </div>
+                  <div className="mini-card">
+                    <strong>{selectedRequirement ? "Linked" : "Open"}</strong>
+                    <span>{selectedRequirement?.title || "Requirement not linked yet"}</span>
+                  </div>
+                </div>
+
+                <form className="form-grid" onSubmit={(event) => void handleSaveCase(event)}>
+                  <div className="record-grid">
+                    <FormField label="Title" required>
+                      <input
+                        required
+                        value={caseDraft.title}
+                        onChange={(event) => setCaseDraft((current) => ({ ...current, title: event.target.value }))}
+                      />
+                    </FormField>
+                    <FormField label="Status">
+                      <select
+                        value={caseDraft.status}
+                        onChange={(event) => setCaseDraft((current) => ({ ...current, status: event.target.value }))}
+                      >
+                        <option value="active">active</option>
+                        <option value="draft">draft</option>
+                        <option value="ready">ready</option>
+                        <option value="retired">retired</option>
+                      </select>
+                    </FormField>
+                    <FormField label="Requirement">
+                      <select
+                        value={caseDraft.requirement_id}
+                        onChange={(event) => setCaseDraft((current) => ({ ...current, requirement_id: event.target.value }))}
+                      >
+                        <option value="">No requirement</option>
+                        {requirements.map((requirement: Requirement) => (
+                          <option key={requirement.id} value={requirement.id}>{requirement.title}</option>
+                        ))}
+                      </select>
+                    </FormField>
+                    <FormField label="Priority">
+                      <input
+                        min="1"
+                        max="5"
+                        type="number"
+                        value={caseDraft.priority}
+                        onChange={(event) => setCaseDraft((current) => ({ ...current, priority: Number(event.target.value) || 3 }))}
+                      />
+                    </FormField>
+                  </div>
+                  <FormField label="Description">
+                    <textarea
+                      rows={4}
+                      value={caseDraft.description}
+                      onChange={(event) => setCaseDraft((current) => ({ ...current, description: event.target.value }))}
+                    />
+                  </FormField>
+
+                  <div className="detail-summary">
+                    <strong>{isCreating ? "Create with steps attached" : "Live case definition"}</strong>
+                    <span>{isCreating ? `This test case will be saved with ${displaySteps.length} draft step${displaySteps.length === 1 ? "" : "s"} attached.` : "Edits here update the reusable test case while execution history remains preserved."}</span>
+                  </div>
+
+                  <div className="action-row">
+                    <button className="primary-button" disabled={createTestCase.isPending || updateTestCase.isPending} type="submit">
+                      {isCreating ? (createTestCase.isPending ? "Creating…" : "Create test case") : (updateTestCase.isPending ? "Saving…" : "Save test case")}
+                    </button>
+                    {isCreating ? (
+                      <button
+                        className="ghost-button"
+                        onClick={() => {
+                          setIsCreating(false);
+                          setDraftSteps([]);
+                          setNewStepDraft(EMPTY_STEP_DRAFT);
+                        }}
+                        type="button"
+                      >
+                        Cancel new case
+                      </button>
+                    ) : null}
+                    {!isCreating && selectedTestCase ? (
+                      <button className="ghost-button danger" onClick={() => void handleDeleteCase()} type="button">
+                        Delete test case
+                      </button>
+                    ) : null}
+                  </div>
+                </form>
+
+                <div className="step-editor">
+                  <div className="panel-head">
+                    <div>
+                      <h3>{isCreating ? "Draft steps" : "Test steps"}</h3>
+                      <p>{isCreating ? "Attach the execution flow now so the new test case is created fully defined." : "Collapse or expand individual steps while editing. Execution history stays even if this live definition changes later."}</p>
+                    </div>
+                  </div>
+
+                  {!isCreating && displaySteps.length ? (
+                    <div className="action-row">
+                      <button className="ghost-button" onClick={() => setExpandedStepIds(displaySteps.map((step) => step.id))} type="button">
+                        Expand all
+                      </button>
+                      <button className="ghost-button" onClick={() => setExpandedStepIds([])} type="button">
+                        Collapse all
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {!isCreating && stepsQuery.isLoading ? <div className="empty-state compact">Loading steps…</div> : null}
+                  {!displaySteps.length ? <div className="empty-state compact">{isCreating ? "No draft steps yet. Add steps below before you save if this case needs guided execution." : "No steps yet for this test case."}</div> : null}
+
+                  <div className="step-list">
+                    {isCreating
+                      ? draftSteps.map((step, index) => (
+                          <DraftStepCard
+                            canMoveDown={index < draftSteps.length - 1}
+                            canMoveUp={index > 0}
+                            key={step.id}
+                            onChange={(input) => handleUpdateDraftStep(step.id, input)}
+                            onDelete={() => void handleDeleteStep(step.id)}
+                            onMoveDown={() => handleReorderDraftStep(step.id, "down")}
+                            onMoveUp={() => handleReorderDraftStep(step.id, "up")}
+                            step={{ ...step, step_order: index + 1 }}
+                          />
+                        ))
+                      : steps.map((step, index) => (
+                          <EditableStepCard
+                            key={step.id}
+                            canMoveDown={index < steps.length - 1}
+                            canMoveUp={index > 0}
+                            isExpanded={expandedStepIds.includes(step.id)}
+                            onDelete={() => void handleDeleteStep(step.id)}
+                            onMoveDown={() => void handleReorderStep(step.id, "down")}
+                            onMoveUp={() => void handleReorderStep(step.id, "up")}
+                            onSave={(input) => void handleUpdateStep(step, input)}
+                            onToggle={() =>
+                              setExpandedStepIds((current) =>
+                                current.includes(step.id) ? current.filter((id) => id !== step.id) : [...current, step.id]
+                              )
+                            }
+                            step={step}
+                          />
+                        ))}
+                  </div>
+
+                  <form className="step-create" onSubmit={(event) => void handleCreateStep(event)}>
+                    <strong>{isCreating ? "+ Add Draft Step" : "+ Add Step"}</strong>
+                    <FormField label="Action">
+                      <input
+                        value={newStepDraft.action}
+                        onChange={(event) => setNewStepDraft((current) => ({ ...current, action: event.target.value }))}
+                      />
+                    </FormField>
+                    <FormField label="Expected result">
+                      <textarea
+                        rows={3}
+                        value={newStepDraft.expected_result}
+                        onChange={(event) => setNewStepDraft((current) => ({ ...current, expected_result: event.target.value }))}
+                      />
+                    </FormField>
+                    <button className="primary-button" type="submit">{isCreating ? "Attach draft step" : "Add step"}</button>
+                  </form>
+                </div>
+
+                {!isCreating ? (
+                  <div className="step-editor step-history">
+                    <div className="panel-head">
+                      <div>
+                        <h3>Execution history</h3>
+                        <p>Recent recorded outcomes for this reusable test case.</p>
+                      </div>
+                    </div>
+
+                    <div className="stack-list">
+                      {selectedHistory.map((result) => (
+                        <div className="stack-item" key={result.id}>
+                          <div>
+                            <strong>{result.test_case_title || selectedTestCase?.title || "Execution record"}</strong>
+                            <span>{result.error || result.logs || result.created_at || "Historical execution evidence retained."}</span>
+                          </div>
+                          <StatusBadge value={result.status} />
+                        </div>
+                      ))}
+                      {!selectedHistory.length ? <div className="empty-state compact">No execution history yet for this test case.</div> : null}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <div className="empty-state compact">Select a test case from the library, or start a new one for this app type.</div>
+            )}
+          </Panel>
+        </div>
+      </div>
+
+      {isImportModalOpen ? (
+        <div
+          className="modal-backdrop"
+          onClick={() => setIsImportModalOpen(false)}
+        >
+          <div
+            aria-labelledby="bulk-import-title"
+            aria-modal="true"
+            className="modal-card import-modal-card"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="import-modal-header">
+              <div className="import-modal-title">
+                <p className="eyebrow">Bulk Import</p>
+                <h3 id="bulk-import-title">Import test cases from CSV</h3>
+                <p>Upload reusable cases in bulk. Action and Expected Result columns are converted into attached test steps automatically.</p>
+              </div>
+              <button aria-label="Close bulk import dialog" className="ghost-button" onClick={() => setIsImportModalOpen(false)} type="button">
+                Close
+              </button>
+            </div>
+
+            <div className="import-modal-body">
               <div className="record-grid">
                 <FormField label="CSV file">
                   <input accept=".csv,text/csv" onChange={(event) => void handleImportFile(event)} type="file" />
@@ -577,10 +1051,20 @@ export function TestCasesPage() {
                 </FormField>
               </div>
 
+              <div className="metric-strip compact">
+                <div className="mini-card">
+                  <strong>{importRows.length}</strong>
+                  <span>Rows ready</span>
+                </div>
+                <div className="mini-card">
+                  <strong>{importStepCount}</strong>
+                  <span>Steps detected</span>
+                </div>
+              </div>
+
               <div className="detail-summary">
                 <strong>{importFileName || "No CSV loaded yet"}</strong>
-                <span>Rows ready: {importRows.length}</span>
-                <span>Steps can be split with new lines or the `|` character inside the Action and Expected Result columns.</span>
+                <span>Use new lines or the `|` character in Action and Expected Result to create multiple steps per test case.</span>
               </div>
 
               {importWarnings.length ? (
@@ -592,265 +1076,49 @@ export function TestCasesPage() {
               ) : null}
 
               {importRows.length ? (
-                <div className="table-wrap">
+                <div className="table-wrap import-preview-table">
                   <table className="data-table">
                     <thead>
                       <tr>
                         <th>Title</th>
-                        <th>Action / Steps</th>
-                        <th>Expected Result</th>
+                        <th>Step count</th>
+                        <th>Preview</th>
                       </tr>
                     </thead>
                     <tbody>
                       {importRows.slice(0, 5).map((row, index) => (
                         <tr key={`${row.title}-${index}`}>
                           <td>{row.title}</td>
-                          <td>{row.action || "No action supplied"}</td>
-                          <td>{row.expected_result || "No expected result"}</td>
+                          <td>{countImportedSteps(row)}</td>
+                          <td>{splitImportedStepValue(row.action)[0] || splitImportedStepValue(row.expected_result)[0] || "No step content supplied"}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               ) : null}
-
-              <div className="action-row">
-                <button className="primary-button" disabled={!appTypeId || !importRows.length} onClick={() => void handleBulkImport()} type="button">
-                  Import {importRows.length || ""} Test Cases
-                </button>
-                <button
-                  className="ghost-button"
-                  disabled={!importRows.length}
-                  onClick={() => {
-                    setImportRows([]);
-                    setImportWarnings([]);
-                    setImportFileName("");
-                  }}
-                  type="button"
-                >
-                  Clear preview
-                </button>
-              </div>
-            </div>
-          </Panel>
-
-          <Panel title="Test case library" subtitle={appTypeId ? "Search the app-type-wide library and inspect the latest execution trend for each case." : "Choose an app type to begin."}>
-            <div className="design-list-toolbar">
-              <input
-                placeholder="Search title, description, or requirement"
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-              />
             </div>
 
-            {testCasesQuery.isLoading || executionResultsQuery.isLoading ? (
-              <div className="record-list">
-                <div className="skeleton-block" />
-                <div className="skeleton-block" />
-                <div className="skeleton-block" />
-              </div>
-            ) : null}
-            {!testCasesQuery.isLoading && !filteredCases.length ? <div className="empty-state compact">No test cases found for this app type.</div> : null}
-
-            <div className="record-list">
-              {filteredCases.map((testCase: TestCase) => {
-                const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
-                const latest = history[0];
-                const requirement = requirements.find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id));
-
-                return (
-                  <button
-                    className={selectedTestCaseId === testCase.id ? "record-card tile-card test-case-card is-active" : "record-card tile-card test-case-card"}
-                    key={testCase.id}
-                    onClick={() => {
-                      setSelectedTestCaseId(testCase.id);
-                      setIsCreating(false);
-                    }}
-                    type="button"
-                  >
-                    <div className="tile-card-main">
-                      <div className="tile-card-header">
-                        <div className="record-card-icon test-case">TC</div>
-                        <div className="tile-card-title-group">
-                          <strong>{testCase.title}</strong>
-                          <span className="tile-card-kicker">{requirement?.title || "No requirement linked"}</span>
-                        </div>
-                        <span className="object-type-badge test-case">Reusable</span>
-                      </div>
-                      <p className="tile-card-description">{testCase.description || "No description yet for this test case."}</p>
-                      <div className="tile-card-metrics">
-                        <span className="tile-metric">Priority P{testCase.priority || 3}</span>
-                        <span className="tile-metric">{(testCase.suite_ids || []).length || 0} suites</span>
-                        <span className="tile-metric">{history.length} runs</span>
-                      </div>
-                      <div className="tile-card-footer">
-                        <div className="history-bars" aria-label="Execution history">
-                          {history.length ? history.map((result) => (
-                            <span
-                              key={result.id}
-                              className={result.status === "passed" ? "history-bar is-passed" : result.status === "failed" ? "history-bar is-failed" : "history-bar is-blocked"}
-                              title={`${result.status} · ${result.created_at || "recent"}`}
-                            />
-                          )) : <span className="history-bar" />}
-                        </div>
-                      </div>
-                    </div>
-                    <StatusBadge value={latest?.status || testCase.status || "active"} />
-                  </button>
-                );
-              })}
+            <div className="action-row import-modal-actions">
+              <button className="primary-button" disabled={!appTypeId || !importRows.length || importTestCases.isPending} onClick={() => void handleBulkImport()} type="button">
+                {importTestCases.isPending ? "Importing…" : `Import ${importRows.length || ""} Test Cases`}
+              </button>
+              <button
+                className="ghost-button"
+                disabled={!importRows.length}
+                onClick={() => {
+                  setImportRows([]);
+                  setImportWarnings([]);
+                  setImportFileName("");
+                }}
+                type="button"
+              >
+                Clear preview
+              </button>
             </div>
-          </Panel>
+          </div>
         </div>
-
-        <Panel title={isCreating ? "New test case" : selectedTestCase ? "Selected test case" : "Test case editor"} subtitle={selectedTestCaseId || isCreating ? "Edit the core test case once here, then reuse it in suites while keeping past executions intact." : "Select a test case or create a new one."}>
-          {selectedTestCaseId || isCreating ? (
-            <div className="detail-stack">
-              <div className="metric-strip">
-                <div className="mini-card">
-                  <strong>{selectedTestCase?.suite_ids?.length || 0}</strong>
-                  <span>Linked suites</span>
-                </div>
-                <div className="mini-card">
-                  <strong>{selectedHistory.length}</strong>
-                  <span>Execution records</span>
-                </div>
-                <div className="mini-card">
-                  <strong>{steps.length}</strong>
-                  <span>Defined steps</span>
-                </div>
-                <div className="mini-card">
-                  <strong>{selectedRequirement ? "Linked" : "Open"}</strong>
-                  <span>{selectedRequirement?.title || "Requirement not linked yet"}</span>
-                </div>
-              </div>
-
-              <form className="form-grid" onSubmit={(event) => void handleSaveCase(event)}>
-                <div className="record-grid">
-                  <FormField label="Title">
-                    <input
-                      required
-                      value={caseDraft.title}
-                      onChange={(event) => setCaseDraft((current) => ({ ...current, title: event.target.value }))}
-                    />
-                  </FormField>
-                  <FormField label="Status">
-                    <select
-                      value={caseDraft.status}
-                      onChange={(event) => setCaseDraft((current) => ({ ...current, status: event.target.value }))}
-                    >
-                      <option value="active">active</option>
-                      <option value="draft">draft</option>
-                      <option value="ready">ready</option>
-                      <option value="retired">retired</option>
-                    </select>
-                  </FormField>
-                  <FormField label="Requirement">
-                    <select
-                      value={caseDraft.requirement_id}
-                      onChange={(event) => setCaseDraft((current) => ({ ...current, requirement_id: event.target.value }))}
-                    >
-                      <option value="">No requirement</option>
-                      {requirements.map((requirement: Requirement) => (
-                        <option key={requirement.id} value={requirement.id}>{requirement.title}</option>
-                      ))}
-                    </select>
-                  </FormField>
-                  <FormField label="Priority">
-                    <input
-                      min="1"
-                      max="5"
-                      type="number"
-                      value={caseDraft.priority}
-                      onChange={(event) => setCaseDraft((current) => ({ ...current, priority: Number(event.target.value) || 3 }))}
-                    />
-                  </FormField>
-                </div>
-                <FormField label="Description">
-                  <textarea
-                    rows={4}
-                    value={caseDraft.description}
-                    onChange={(event) => setCaseDraft((current) => ({ ...current, description: event.target.value }))}
-                  />
-                </FormField>
-
-                <div className="action-row">
-                  <button className="primary-button" type="submit">{isCreating ? "Create test case" : "Save test case"}</button>
-                  {!isCreating && selectedTestCase ? (
-                    <button className="ghost-button danger" onClick={() => void handleDeleteCase()} type="button">
-                      Delete test case
-                    </button>
-                  ) : null}
-                </div>
-              </form>
-
-              {!isCreating ? (
-                <div className="step-editor">
-                  <div className="panel-head">
-                    <div>
-                      <h3>Test steps</h3>
-                      <p>Collapse or expand individual steps while editing. Execution history stays even if this live definition changes later.</p>
-                    </div>
-                  </div>
-
-                  <div className="action-row">
-                    <button className="ghost-button" onClick={() => setExpandedStepIds(steps.map((step) => step.id))} type="button">
-                      Expand all
-                    </button>
-                    <button className="ghost-button" onClick={() => setExpandedStepIds([])} type="button">
-                      Collapse all
-                    </button>
-                  </div>
-
-                  {stepsQuery.isLoading ? <div className="empty-state compact">Loading steps…</div> : null}
-                  {!stepsQuery.isLoading && !steps.length ? <div className="empty-state compact">No steps yet for this test case.</div> : null}
-
-                  <div className="step-list">
-                    {steps.map((step, index) => (
-                      <EditableStepCard
-                        key={step.id}
-                        canMoveDown={index < steps.length - 1}
-                        canMoveUp={index > 0}
-                        isExpanded={expandedStepIds.includes(step.id)}
-                        onDelete={() => void handleDeleteStep(step.id)}
-                        onMoveDown={() => void handleReorderStep(step.id, "down")}
-                        onMoveUp={() => void handleReorderStep(step.id, "up")}
-                        onSave={(input) => void handleUpdateStep(step, input)}
-                        onToggle={() =>
-                          setExpandedStepIds((current) =>
-                            current.includes(step.id) ? current.filter((id) => id !== step.id) : [...current, step.id]
-                          )
-                        }
-                        step={step}
-                      />
-                    ))}
-                  </div>
-
-                  <form className="step-create" onSubmit={(event) => void handleCreateStep(event)}>
-                    <strong>+ Add Step</strong>
-                    <FormField label="Action">
-                      <input
-                        value={newStepDraft.action}
-                        onChange={(event) => setNewStepDraft((current) => ({ ...current, action: event.target.value }))}
-                      />
-                    </FormField>
-                    <FormField label="Expected result">
-                      <textarea
-                        rows={3}
-                        value={newStepDraft.expected_result}
-                        onChange={(event) => setNewStepDraft((current) => ({ ...current, expected_result: event.target.value }))}
-                      />
-                    </FormField>
-                    <button className="primary-button" type="submit">Add step</button>
-                  </form>
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <div className="empty-state compact">Select a test case from the left, or start a new one for this app type.</div>
-          )}
-        </Panel>
-      </div>
+      ) : null}
     </div>
   );
 }
@@ -914,6 +1182,55 @@ function EditableStepCard({
           </div>
         </div>
       ) : null}
+    </article>
+  );
+}
+
+function DraftStepCard({
+  step,
+  canMoveUp,
+  canMoveDown,
+  onChange,
+  onDelete,
+  onMoveUp,
+  onMoveDown
+}: {
+  step: { step_order: number; action: string; expected_result: string };
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onChange: (input: StepDraft) => void;
+  onDelete: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+}) {
+  return (
+    <article className="step-card is-expanded">
+      <div className="step-card-top">
+        <div>
+          <strong>Step {step.step_order}</strong>
+          <span>{step.action || step.expected_result || "Draft step details"}</span>
+        </div>
+      </div>
+      <div className="step-card-body">
+        <FormField label="Action">
+          <input
+            value={step.action}
+            onChange={(event) => onChange({ action: event.target.value, expected_result: step.expected_result })}
+          />
+        </FormField>
+        <FormField label="Expected result">
+          <textarea
+            rows={3}
+            value={step.expected_result}
+            onChange={(event) => onChange({ action: step.action, expected_result: event.target.value })}
+          />
+        </FormField>
+        <div className="action-row">
+          <button className="ghost-button" disabled={!canMoveUp} onClick={onMoveUp} type="button">Move up</button>
+          <button className="ghost-button" disabled={!canMoveDown} onClick={onMoveDown} type="button">Move down</button>
+          <button className="ghost-button danger" onClick={onDelete} type="button">Delete step</button>
+        </div>
+      </div>
     </article>
   );
 }

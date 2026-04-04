@@ -147,7 +147,7 @@ export function AppShell() {
   }, [location.pathname]);
 
   return (
-    <div className="app-shell">
+    <div className="app-shell app-layout">
       {error && (
         <div className="global-alert" role="alert">
           <p>{error}</p>
@@ -197,33 +197,28 @@ export function AppShell() {
           ) : null}
 
           {!isCollapsed ? (
-            <>
-              <p className="sidebar-copy">
-                A unified QA workspace for authoring, executions, governance, and release readiness.
-              </p>
-              {hasNoProjects ? (
-                <div className="sidebar-notice">
-                  <p>No projects assigned yet.</p>
-                  <p className="text-muted">Ask an admin to add you to a project.</p>
-                </div>
-              ) : (
-                <label className="sidebar-project-picker">
-                  <span>Current Project</span>
-                  <select
-                    value={sidebarProjectId}
-                    onChange={(event) => {
-                      setSidebarProjectId(event.target.value);
-                      navigate("/projects");
-                    }}
-                    aria-label="Select a project"
-                  >
-                    {projects.map((project) => (
-                      <option key={project.id} value={project.id}>{project.name}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </>
+            hasNoProjects ? (
+              <div className="sidebar-notice">
+                <p>No projects assigned yet.</p>
+                <p className="text-muted">Ask an admin to add you to a project.</p>
+              </div>
+            ) : (
+              <label className="sidebar-project-picker">
+                <span>Current Project</span>
+                <select
+                  value={sidebarProjectId}
+                  onChange={(event) => {
+                    setSidebarProjectId(event.target.value);
+                    navigate("/projects");
+                  }}
+                  aria-label="Select a project"
+                >
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>{project.name}</option>
+                  ))}
+                </select>
+              </label>
+            )
           ) : null}
         </div>
 
@@ -239,27 +234,53 @@ export function AppShell() {
                     const isOpen = expandedGroups[item.id] ?? true;
                     const hasActiveChild = item.children.some((child) => child.to === location.pathname);
                     const isDisabled = hasNoProjects;
+                    const firstChild = item.children[0];
 
                     return (
                       <div className="nav-branch" key={item.id}>
-                        <button
-                          aria-expanded={isOpen}
-                          className={hasActiveChild ? "nav-link nav-branch-toggle is-active" : "nav-link nav-branch-toggle"}
-                          onClick={() => {
-                            if (isCollapsed) {
-                              setIsCollapsed(false);
-                              return;
-                            }
+                        <div className="nav-branch-control">
+                          <NavLink
+                            aria-label={item.label}
+                            className={hasActiveChild ? "nav-link nav-branch-link is-active" : "nav-link nav-branch-link"}
+                            onClick={(event) => {
+                              if (isDisabled || !firstChild) {
+                                event.preventDefault();
+                                return;
+                              }
 
-                            setExpandedGroups((current) => ({ ...current, [item.id]: !isOpen }));
-                          }}
-                          style={{ opacity: isDisabled ? 0.5 : 1 }}
-                          type="button"
-                        >
-                          <span className="nav-link-icon" aria-hidden="true"><Icon /></span>
-                          {!isCollapsed ? <span className="nav-link-label">{item.label}</span> : null}
-                          {!isCollapsed ? <span className={isOpen ? "nav-link-caret is-open" : "nav-link-caret"}><ChevronIcon /></span> : null}
-                        </button>
+                              if (isCollapsed) {
+                                setIsCollapsed(false);
+                              }
+
+                              setExpandedGroups((current) => ({ ...current, [item.id]: true }));
+                            }}
+                            style={{ opacity: isDisabled ? 0.5 : 1, cursor: isDisabled ? "not-allowed" : "pointer" }}
+                            title={isCollapsed ? item.label : undefined}
+                            to={firstChild?.to || "/"}
+                          >
+                            <span className="nav-link-icon" aria-hidden="true"><Icon /></span>
+                            {!isCollapsed ? <span className="nav-link-label">{item.label}</span> : null}
+                          </NavLink>
+
+                          {!isCollapsed ? (
+                            <button
+                              aria-expanded={isOpen}
+                              aria-label={isOpen ? `Collapse ${item.label}` : `Expand ${item.label}`}
+                              className={hasActiveChild ? "nav-branch-caret-button is-active" : "nav-branch-caret-button"}
+                              disabled={isDisabled}
+                              onClick={() => {
+                                if (isDisabled) {
+                                  return;
+                                }
+
+                                setExpandedGroups((current) => ({ ...current, [item.id]: !isOpen }));
+                              }}
+                              type="button"
+                            >
+                              <span className={isOpen ? "nav-link-caret is-open" : "nav-link-caret"}><ChevronIcon /></span>
+                            </button>
+                          ) : null}
+                        </div>
 
                         {!isCollapsed && isOpen ? (
                           <div className="nav-subgroup">
@@ -365,7 +386,7 @@ export function AppShell() {
         </div>
       </aside>
 
-      <main className="workspace-main" data-section={currentSection}>
+      <main className="workspace-main main" data-section={currentSection}>
         <Outlet />
       </main>
     </div>

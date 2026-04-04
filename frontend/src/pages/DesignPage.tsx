@@ -4,6 +4,7 @@ import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StatusBadge } from "../components/StatusBadge";
+import { ToastMessage } from "../components/ToastMessage";
 import { api } from "../lib/api";
 import type { AppType, Project, Requirement, TestCase, TestStep, TestSuite } from "../types";
 
@@ -690,10 +691,10 @@ export function DesignPage() {
         actions={<button className="primary-button" onClick={() => {
           setSuiteModalMode("create");
           setIsSuiteModalOpen(true);
-        }} type="button">+ Create Suite</button>}
+        }} disabled={!appTypeId} type="button">Create Suite</button>}
       />
 
-      {message ? <p className={messageTone === "error" ? "inline-message error-message" : "inline-message success-message"}>{message}</p> : null}
+      <ToastMessage message={message} onDismiss={() => setMessage("")} tone={messageTone} />
 
       <div className="design-context-bar">
         <ProjectSelector projects={projects} value={projectId} onChange={handleProjectChange} />
@@ -719,6 +720,7 @@ export function DesignPage() {
           isLoading={suitesQuery.isLoading && Boolean(appTypeId)}
           selectedAppType={selectedAppType}
           selectedSuite={selectedSuite}
+          canCreateSuite={Boolean(appTypeId)}
         />
 
         <TestCaseList
@@ -785,6 +787,7 @@ export function DesignPage() {
 
       {isSuiteModalOpen ? (
         <SuiteModal
+          key={`${suiteModalMode}-${selectedSuite?.id || "new"}`}
           mode={suiteModalMode}
           suite={selectedSuite}
           suites={suites}
@@ -855,7 +858,8 @@ function SuiteSidebar({
   onDeleteSuite,
   isLoading,
   selectedAppType,
-  selectedSuite
+  selectedSuite,
+  canCreateSuite
 }: {
   suites: TestSuite[];
   activeSuiteId: string;
@@ -868,17 +872,23 @@ function SuiteSidebar({
   isLoading: boolean;
   selectedAppType: AppType | null;
   selectedSuite: TestSuite | null;
+  canCreateSuite: boolean;
 }) {
   return (
     <Panel title="Suites" subtitle={selectedAppType ? `${selectedAppType.name} · ${selectedAppType.type}` : "Select a project and app type first."}>
       <div className="design-sidebar-actions">
-        <button className="primary-button" onClick={onCreateSuite} type="button">Create Suite</button>
+        <button className="primary-button" disabled={!canCreateSuite} onClick={onCreateSuite} type="button">Create Suite</button>
         <button className="ghost-button" disabled={!selectedSuite} onClick={onEditSuite} type="button">Edit Suite</button>
         <button className="ghost-button" onClick={onViewAllCases} type="button">View All Test Cases</button>
         <button className="ghost-button danger" disabled={!selectedSuite} onClick={onDeleteSuite} type="button">Delete Suite</button>
       </div>
       {isLoading ? <div className="empty-state compact">Loading suites…</div> : null}
-      {!isLoading && !suites.length ? <div className="empty-state compact">No suites yet for this app type.</div> : null}
+      {!isLoading && !suites.length ? (
+        <div className="empty-state compact">
+          <div>No suites yet. Create your first suite to start organizing reusable cases.</div>
+          <button className="primary-button" disabled={!canCreateSuite} onClick={onCreateSuite} type="button">Create first suite</button>
+        </div>
+      ) : null}
 
       <div className="suite-sidebar-list">
         {suites.map((suite) => (
@@ -1293,15 +1303,9 @@ function SuiteModal({
     return selectedCaseIds;
   }, [appTypeCases, mode, selectedCaseIds, suite]);
 
-  const [name, setName] = useState(mode === "edit" && suite ? suite.name : "");
-  const [parentId, setParentId] = useState(mode === "edit" && suite ? suite.parent_id || "" : "");
-  const [localSelectedIds, setLocalSelectedIds] = useState<string[]>(initialSelectedIds);
-
-  useEffect(() => {
-    setName(mode === "edit" && suite ? suite.name : "");
-    setParentId(mode === "edit" && suite ? suite.parent_id || "" : "");
-    setLocalSelectedIds(initialSelectedIds);
-  }, [initialSelectedIds, mode, suite]);
+  const [name, setName] = useState(() => (mode === "edit" && suite ? suite.name : ""));
+  const [parentId, setParentId] = useState(() => (mode === "edit" && suite ? suite.parent_id || "" : ""));
+  const [localSelectedIds, setLocalSelectedIds] = useState<string[]>(() => initialSelectedIds);
 
   return (
     <div className="modal-backdrop" role="presentation">
@@ -1314,7 +1318,7 @@ function SuiteModal({
         </div>
 
         <form
-          className="form-grid"
+          className="form-grid suite-modal-form"
           onSubmit={(event) => {
             event.preventDefault();
             onSubmit({
@@ -1325,7 +1329,7 @@ function SuiteModal({
           }}
         >
           <FormField label="Suite name">
-            <input required value={name} onChange={(event) => setName(event.target.value)} />
+            <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} />
           </FormField>
           <FormField label="Parent suite">
             <select value={parentId} onChange={(event) => setParentId(event.target.value)}>
@@ -1358,7 +1362,7 @@ function SuiteModal({
             ))}
           </div>
 
-          <div className="action-row">
+          <div className="action-row suite-modal-actions">
             <button className="primary-button" disabled={isSaving} type="submit">
               {isSaving ? "Saving…" : mode === "edit" ? "Save Suite" : "Create Suite"}
             </button>

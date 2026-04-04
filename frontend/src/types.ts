@@ -108,12 +108,35 @@ export type Execution = {
   app_type_id: string | null;
   suite_ids: string[];
   suite_snapshots?: Array<{ id: string; name: string }>;
+  case_snapshots?: ExecutionCaseSnapshot[];
+  step_snapshots?: ExecutionStepSnapshot[];
   name: string | null;
   trigger: "manual" | "ci" | null;
   status: "queued" | "running" | "completed" | "failed" | null;
   created_by: string | null;
   started_at: string | null;
   ended_at: string | null;
+};
+
+export type ExecutionCaseSnapshot = {
+  execution_id: string;
+  test_case_id: string;
+  test_case_title: string;
+  test_case_description: string | null;
+  suite_id: string | null;
+  suite_name: string | null;
+  priority: number | null;
+  status: string | null;
+  sort_order: number;
+};
+
+export type ExecutionStepSnapshot = {
+  execution_id: string;
+  test_case_id: string;
+  snapshot_step_id: string;
+  step_order: number;
+  action: string | null;
+  expected_result: string | null;
 };
 
 export type ExecutionResult = {

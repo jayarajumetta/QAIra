@@ -96,6 +96,28 @@ export function OverviewPage() {
       .slice(0, 6);
   }, [executionResultsList]);
 
+  const actionRequiredItems = useMemo(() => {
+    return [
+      ...coverageGaps.slice(0, 3).map((requirement) => ({
+        id: requirement.id,
+        title: requirement.title,
+        detail: requirement.description || "Requirement still needs linked test coverage.",
+        tone: "info" as const,
+        label: "Needs design"
+      })),
+      ...executionsList
+        .filter((execution) => execution.status === "failed")
+        .slice(0, 3)
+        .map((execution) => ({
+          id: execution.id,
+          title: execution.name || "Unnamed execution",
+          detail: "Execution ended in a failed state and likely needs triage.",
+          tone: "danger" as const,
+          label: "Investigate"
+        }))
+    ].slice(0, 6);
+  }, [coverageGaps, executionsList]);
+
   const appHealth = useMemo(() => {
     return appTypesList.map((appType) => {
       const scopedCases = testCasesList.filter((testCase) => testCase.app_type_id === appType.id);
@@ -175,6 +197,38 @@ export function OverviewPage() {
           </div>
         }
       />
+
+      <div className="two-column-grid">
+        <Panel title="Critical failures" subtitle="The highest-risk failed results that need attention first.">
+          <div className="stack-list">
+            {failureWatch.slice(0, 4).map((result) => (
+              <div className="stack-item" key={result.id}>
+                <div>
+                  <strong>{result.test_case_title || result.test_case_id}</strong>
+                  <span>{result.error || "Failure logged without an explicit error message."}</span>
+                </div>
+                <StatusBadge value={result.status} />
+              </div>
+            ))}
+            {!failureWatch.length ? <div className="empty-state compact">No critical failures are active right now.</div> : null}
+          </div>
+        </Panel>
+
+        <Panel title="Action required" subtitle="Shortlist of items that will move quality readiness forward fastest.">
+          <div className="stack-list">
+            {actionRequiredItems.map((item) => (
+              <div className="stack-item" key={item.id}>
+                <div>
+                  <strong>{item.title}</strong>
+                  <span>{item.detail}</span>
+                </div>
+                <span className={item.tone === "danger" ? "count-pill tone-danger" : "count-pill"}>{item.label}</span>
+              </div>
+            ))}
+            {!actionRequiredItems.length ? <div className="empty-state compact">Nothing urgent is waiting in the queue.</div> : null}
+          </div>
+        </Panel>
+      </div>
 
       <div className="stats-grid">
         <StatCard label="Workspace Members" value={usersList.length} hint="Available for authoring, review, and execution" />

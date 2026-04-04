@@ -247,14 +247,14 @@ export const api = {
   testCases: {
     list: (query?: { suite_id?: string; requirement_id?: string; status?: string; app_type_id?: string }) =>
       request<TestCase[]>(`/test-cases${toQueryString(query)}`),
-    create: (input: { app_type_id?: string; suite_id?: string; suite_ids?: string[]; title: string; description?: string; priority?: number; status?: string; requirement_id?: string; requirement_ids?: string[] }) =>
+    create: (input: { app_type_id?: string; suite_id?: string; suite_ids?: string[]; title: string; description?: string; priority?: number; status?: string; requirement_id?: string; requirement_ids?: string[]; steps?: Array<{ step_order?: number; action?: string; expected_result?: string }> }) =>
       request<{ id: string }>("/test-cases", { method: "POST", body: JSON.stringify(input) }),
     bulkImport: (input: { app_type_id: string; requirement_id?: string; rows: Array<Record<string, string | number | null | undefined>> }) =>
       request<{ imported: number; failed: number; created: Array<{ row: number; id: string; title: string }>; errors: Array<{ row: number; title?: string | null; message: string }> }>("/test-cases/import", {
         method: "POST",
         body: JSON.stringify(input)
       }),
-    update: (id: string, input: Partial<{ app_type_id: string; suite_id: string; suite_ids: string[]; title: string; description: string; priority: number; status: string; requirement_id: string; requirement_ids: string[] }>) =>
+    update: (id: string, input: Partial<{ app_type_id: string; suite_id: string; suite_ids: string[]; title: string; description: string; priority: number; status: string; requirement_id: string; requirement_ids: string[]; steps: Array<{ step_order?: number; action?: string; expected_result?: string }> }>) =>
       request<{ updated: boolean }>(`/test-cases/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/test-cases/${id}`, { method: "DELETE" })
   },
@@ -284,6 +284,8 @@ export const api = {
   executions: {
     list: (query?: { project_id?: string; status?: string }) =>
       request<Execution[]>(`/executions${toQueryString(query)}`),
+    get: (id: string) =>
+      request<Execution>(`/executions/${id}`),
     create: (input: { project_id: string; app_type_id?: string; suite_ids?: string[]; name?: string; created_by: string }) =>
       request<{ id: string }>("/executions", { method: "POST", body: JSON.stringify(input) }),
     start: (id: string) => request<{ started: boolean }>(`/executions/${id}/start`, { method: "POST" }),

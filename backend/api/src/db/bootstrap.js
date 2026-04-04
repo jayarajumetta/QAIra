@@ -28,7 +28,34 @@ const statements = [
   `ALTER TABLE integrations ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE`,
   `ALTER TABLE integrations ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
   `ALTER TABLE integrations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
-  `CREATE INDEX IF NOT EXISTS idx_integrations_type_active ON integrations (type, is_active)`
+  `CREATE INDEX IF NOT EXISTS idx_integrations_type_active ON integrations (type, is_active)`,
+  `
+    CREATE TABLE IF NOT EXISTS execution_case_snapshots (
+      execution_id TEXT NOT NULL,
+      test_case_id TEXT NOT NULL,
+      test_case_title TEXT NOT NULL,
+      test_case_description TEXT,
+      suite_id TEXT,
+      suite_name TEXT,
+      priority INTEGER,
+      status TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (execution_id, test_case_id)
+    )
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS execution_step_snapshots (
+      execution_id TEXT NOT NULL,
+      test_case_id TEXT NOT NULL,
+      snapshot_step_id TEXT NOT NULL,
+      step_order INTEGER NOT NULL,
+      action TEXT,
+      expected_result TEXT,
+      PRIMARY KEY (execution_id, snapshot_step_id)
+    )
+  `,
+  `CREATE INDEX IF NOT EXISTS idx_execution_case_snapshots_execution_id ON execution_case_snapshots (execution_id, sort_order)`,
+  `CREATE INDEX IF NOT EXISTS idx_execution_step_snapshots_execution_case ON execution_step_snapshots (execution_id, test_case_id, step_order)`
 ];
 
 const ensureRuntimeSchema = async () => {

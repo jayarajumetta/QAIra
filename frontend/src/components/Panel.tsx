@@ -10,7 +10,7 @@ export function Panel({
   children: ReactNode;
 }) {
   return (
-    <section className="panel">
+    <section className="panel card">
       <div className="panel-head">
         <div>
           <h3>{title}</h3>

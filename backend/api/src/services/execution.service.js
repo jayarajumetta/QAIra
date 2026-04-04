@@ -8,10 +8,130 @@ const getSuiteIdsForExecution = db.prepare(`
   ORDER BY suite_id ASC
 `);
 
+const getCaseSnapshotsForExecution = db.prepare(`
+  SELECT execution_id, test_case_id, test_case_title, test_case_description, suite_id, suite_name, priority, status, sort_order
+  FROM execution_case_snapshots
+  WHERE execution_id = ?
+  ORDER BY sort_order ASC, test_case_title ASC
+`);
+
+const getStepSnapshotsForExecution = db.prepare(`
+  SELECT execution_id, test_case_id, snapshot_step_id, step_order, action, expected_result
+  FROM execution_step_snapshots
+  WHERE execution_id = ?
+  ORDER BY test_case_id ASC, step_order ASC
+`);
+
 const insertExecutionSuite = db.prepare(`
   INSERT INTO execution_suites (execution_id, suite_id, suite_name)
   VALUES (?, ?, ?)
 `);
+
+const insertExecutionCaseSnapshot = db.prepare(`
+  INSERT INTO execution_case_snapshots (
+    execution_id,
+    test_case_id,
+    test_case_title,
+    test_case_description,
+    suite_id,
+    suite_name,
+    priority,
+    status,
+    sort_order
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+const insertExecutionStepSnapshot = db.prepare(`
+  INSERT INTO execution_step_snapshots (
+    execution_id,
+    test_case_id,
+    snapshot_step_id,
+    step_order,
+    action,
+    expected_result
+  )
+  VALUES (?, ?, ?, ?, ?, ?)
+`);
+
+const validateSuite = db.prepare(`
+  SELECT id, app_type_id, name
+  FROM test_suites
+  WHERE id = ?
+`);
+
+const selectCasesForSuite = db.prepare(`
+  SELECT
+    test_cases.id AS test_case_id,
+    test_cases.title AS test_case_title,
+    test_cases.description AS test_case_description,
+    test_cases.priority,
+    test_cases.status,
+    suite_test_cases.sort_order
+  FROM suite_test_cases
+  JOIN test_cases ON test_cases.id = suite_test_cases.test_case_id
+  WHERE suite_test_cases.suite_id = ?
+  ORDER BY suite_test_cases.sort_order ASC, test_cases.created_at DESC
+`);
+
+const selectStepsForCase = db.prepare(`
+  SELECT id, step_order, action, expected_result
+  FROM test_steps
+  WHERE test_case_id = ?
+  ORDER BY step_order ASC, id ASC
+`);
+
+async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
+  const seenCaseIds = new Set();
+  const caseSnapshots = [];
+  const stepSnapshots = [];
+  let sortOrder = 0;
+
+  for (const suiteRow of suiteRows) {
+    const suiteCases = await selectCasesForSuite.all(suiteRow.suite_id);
+
+    for (const suiteCase of suiteCases) {
+      if (seenCaseIds.has(suiteCase.test_case_id)) {
+        continue;
+      }
+
+      seenCaseIds.add(suiteCase.test_case_id);
+      sortOrder += 1;
+
+      caseSnapshots.push({
+        execution_id: executionId,
+        test_case_id: suiteCase.test_case_id,
+        test_case_title: suiteCase.test_case_title,
+        test_case_description: suiteCase.test_case_description,
+        suite_id: suiteRow.suite_id,
+        suite_name: suiteRow.suite_name,
+        priority: suiteCase.priority,
+        status: suiteCase.status,
+        sort_order: sortOrder
+      });
+
+      const steps = await selectStepsForCase.all(suiteCase.test_case_id);
+
+      for (const step of steps) {
+        stepSnapshots.push({
+          execution_id: executionId,
+          test_case_id: suiteCase.test_case_id,
+          snapshot_step_id: options.persisted
+            ? uuid()
+            : `${executionId}:${suiteCase.test_case_id}:${step.id}`,
+          step_order: step.step_order,
+          action: step.action,
+          expected_result: step.expected_result
+        });
+      }
+    }
+  }
+
+  return {
+    caseSnapshots,
+    stepSnapshots
+  };
+}
 
 async function attachScope(execution) {
   if (!execution) {
@@ -25,6 +145,39 @@ async function attachScope(execution) {
     ...execution,
     suite_ids,
     suite_snapshots: suiteRows.map((row) => ({ id: row.suite_id, name: row.suite_name || "Deleted Suite" }))
+  };
+}
+
+async function attachDetailedScope(execution) {
+  if (!execution) {
+    return execution;
+  }
+
+  const hydrated = await attachScope(execution);
+  const suiteRows = await getSuiteIdsForExecution.all(execution.id);
+  const storedCaseSnapshots = await getCaseSnapshotsForExecution.all(execution.id);
+  const storedStepSnapshots = await getStepSnapshotsForExecution.all(execution.id);
+
+  if (storedCaseSnapshots.length || storedStepSnapshots.length || !suiteRows.length) {
+    return {
+      ...hydrated,
+      case_snapshots: storedCaseSnapshots,
+      step_snapshots: storedStepSnapshots
+    };
+  }
+
+  const liveSnapshotPayload = await buildSnapshotPayload(
+    execution.id,
+    suiteRows.map((row) => ({
+      suite_id: row.suite_id,
+      suite_name: row.suite_name || "Deleted Suite"
+    }))
+  );
+
+  return {
+    ...hydrated,
+    case_snapshots: liveSnapshotPayload.caseSnapshots,
+    step_snapshots: liveSnapshotPayload.stepSnapshots
   };
 }
 
@@ -62,11 +215,7 @@ exports.createExecution = async ({ project_id, app_type_id, suite_ids = [], name
     throw new Error("app_type_id is required when suite_ids are provided");
   }
 
-  const validateSuite = db.prepare(`
-    SELECT id, app_type_id, name
-    FROM test_suites
-    WHERE id = ?
-  `);
+  const suiteRows = [];
 
   for (const suiteId of uniqueSuiteIds) {
     const suite = await validateSuite.get(suiteId);
@@ -78,6 +227,11 @@ exports.createExecution = async ({ project_id, app_type_id, suite_ids = [], name
     if (suite.app_type_id !== app_type_id) {
       throw new Error("All suites must belong to the selected app type");
     }
+
+    suiteRows.push({
+      suite_id: suite.id,
+      suite_name: suite.name
+    });
   }
 
   const id = uuid();
@@ -89,9 +243,35 @@ exports.createExecution = async ({ project_id, app_type_id, suite_ids = [], name
       VALUES (?, ?, ?, ?, 'manual', 'queued', ?)
     `).run(id, project_id, app_type_id || null, name || "Execution Run", created_by);
 
-    for (const suiteId of uniqueSuiteIds) {
-      const suite = await validateSuite.get(suiteId);
-      await insertExecutionSuite.run(id, suiteId, suite?.name || null);
+    for (const suiteRow of suiteRows) {
+      await insertExecutionSuite.run(id, suiteRow.suite_id, suiteRow.suite_name);
+    }
+
+    const snapshotPayload = await buildSnapshotPayload(id, suiteRows, { persisted: true });
+
+    for (const caseSnapshot of snapshotPayload.caseSnapshots) {
+      await insertExecutionCaseSnapshot.run(
+        caseSnapshot.execution_id,
+        caseSnapshot.test_case_id,
+        caseSnapshot.test_case_title,
+        caseSnapshot.test_case_description,
+        caseSnapshot.suite_id,
+        caseSnapshot.suite_name,
+        caseSnapshot.priority,
+        caseSnapshot.status,
+        caseSnapshot.sort_order
+      );
+    }
+
+    for (const stepSnapshot of snapshotPayload.stepSnapshots) {
+      await insertExecutionStepSnapshot.run(
+        stepSnapshot.execution_id,
+        stepSnapshot.test_case_id,
+        stepSnapshot.snapshot_step_id,
+        stepSnapshot.step_order,
+        stepSnapshot.action,
+        stepSnapshot.expected_result
+      );
     }
   });
 
@@ -127,7 +307,7 @@ exports.getExecution = async (id) => {
 
   if (!execution) throw new Error("Execution not found");
 
-  return attachScope(execution);
+  return attachDetailedScope(execution);
 };
 
 exports.startExecution = async (id) => {
@@ -177,6 +357,8 @@ exports.deleteExecution = async (id) => {
     throw new Error("Cannot delete execution with results");
   }
 
+  await db.prepare(`DELETE FROM execution_step_snapshots WHERE execution_id = ?`).run(id);
+  await db.prepare(`DELETE FROM execution_case_snapshots WHERE execution_id = ?`).run(id);
   await db.prepare(`DELETE FROM execution_suites WHERE execution_id = ?`).run(id);
   await db.prepare(`DELETE FROM executions WHERE id = ?`).run(id);
 

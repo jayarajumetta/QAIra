@@ -5,6 +5,7 @@ import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { SubnavTabs } from "../components/SubnavTabs";
+import { ToastMessage } from "../components/ToastMessage";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 import { useAuth } from "../auth/AuthContext";
 import type { AppType } from "../types";
@@ -18,6 +19,7 @@ export function ProjectsPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [section, setSection] = useState<ProjectSection>("members");
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"success" | "error">("success");
 
   const projectItems = projects.data || [];
   const selectedProject = useMemo(
@@ -45,28 +47,40 @@ export function ProjectsPage() {
   const createProject = useMutation({
     mutationFn: api.projects.create,
     onSuccess: async () => {
+      setMessageTone("success");
       setMessage("Project created.");
       await invalidate();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to create project")
+    onError: (error) => {
+      setMessageTone("error");
+      setMessage(error instanceof Error ? error.message : "Unable to create project");
+    }
   });
 
   const createMember = useMutation({
     mutationFn: api.projectMembers.create,
     onSuccess: async () => {
+      setMessageTone("success");
       setMessage("Project member added.");
       await invalidate();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to add project member")
+    onError: (error) => {
+      setMessageTone("error");
+      setMessage(error instanceof Error ? error.message : "Unable to add project member");
+    }
   });
 
   const createAppType = useMutation({
     mutationFn: api.appTypes.create,
     onSuccess: async () => {
+      setMessageTone("success");
       setMessage("App type added.");
       await invalidate();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to add app type")
+    onError: (error) => {
+      setMessageTone("error");
+      setMessage(error instanceof Error ? error.message : "Unable to add app type");
+    }
   });
 
   const handleProjectCreate = (event: FormEvent<HTMLFormElement>) => {
@@ -91,9 +105,11 @@ export function ProjectsPage() {
 
     try {
       await api.projectMembers.delete(member.id);
+      setMessageTone("success");
       setMessage(`Member removed. ${member.user_id === session?.user.id ? "You have been removed from this project." : ""}`);
       await invalidate();
     } catch (error) {
+      setMessageTone("error");
       setMessage(error instanceof Error ? error.message : "Unable to remove member");
     }
   };
@@ -104,21 +120,27 @@ export function ProjectsPage() {
         eyebrow="Projects & Scope"
         title="Projects"
         description="A project catalog for scope, membership, and application boundaries, with the selected project staying in focus while you work."
-        actions={<button className="primary-button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} type="button">Add new project</button>}
+        actions={<button className="primary-button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} type="button">Create Project</button>}
       />
 
-      {message ? <p className="inline-message">{message}</p> : null}
+      <ToastMessage
+        message={message}
+        onDismiss={() => setMessage("")}
+        tone={messageTone}
+      />
 
       <div className="workspace-grid">
         <Panel title="Project catalog" subtitle="Create a project, then switch context through the catalog cards below.">
           <form className="form-grid" onSubmit={handleProjectCreate}>
-            <FormField label="Project name">
-              <input name="name" required placeholder="Checkout modernization" />
+            <FormField label="Project name" required>
+              <input autoComplete="organization" name="name" required />
             </FormField>
             <FormField label="Description">
-              <textarea name="description" rows={3} placeholder="Scope, notes, or release focus" />
+              <textarea name="description" rows={3} />
             </FormField>
-            <button className="primary-button" type="submit">Create project</button>
+            <button className="primary-button" disabled={createProject.isPending} type="submit">
+              {createProject.isPending ? "Creating…" : "Create project"}
+            </button>
           </form>
 
           <div className="catalog-grid compact">
@@ -135,7 +157,7 @@ export function ProjectsPage() {
               </button>
             ))}
           </div>
-          {!projectItems.length ? <div className="empty-state compact">No projects created yet.</div> : null}
+          {!projectItems.length ? <div className="empty-state compact">No projects yet. Create the first project to automatically add admins and establish workspace scope.</div> : null}
         </Panel>
 
         <div className="stack-grid">
@@ -199,7 +221,9 @@ export function ProjectsPage() {
                   <option value="" disabled>Select role</option>
                   {(roles.data || []).map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
                 </select>
-                <button className="primary-button" disabled={!projectId} type="submit">Add member</button>
+                <button className="primary-button" disabled={!projectId || createMember.isPending} type="submit">
+                  {createMember.isPending ? "Adding…" : "Add member"}
+                </button>
               </form>
 
               <div className="record-grid">
@@ -257,7 +281,9 @@ export function ProjectsPage() {
                   <input name="is_unified" type="checkbox" />
                   Unified
                 </label>
-                <button className="primary-button" disabled={!projectId} type="submit">Add app type</button>
+                <button className="primary-button" disabled={!projectId || createAppType.isPending} type="submit">
+                  {createAppType.isPending ? "Adding…" : "Add app type"}
+                </button>
               </form>
 
               <div className="record-grid">
@@ -267,7 +293,14 @@ export function ProjectsPage() {
                     <span>{item.type}{item.is_unified ? " · unified" : ""}</span>
                     <button
                       className="ghost-button danger"
-                      onClick={() => void api.appTypes.delete(item.id).then(invalidate).catch((error: Error) => setMessage(error.message))}
+                      onClick={() => void api.appTypes.delete(item.id).then(() => {
+                        setMessageTone("success");
+                        setMessage("App type deleted.");
+                        return invalidate();
+                      }).catch((error: Error) => {
+                        setMessageTone("error");
+                        setMessage(error.message);
+                      })}
                       type="button"
                     >
                       Delete
