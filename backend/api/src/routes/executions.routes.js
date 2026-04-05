@@ -11,6 +11,7 @@ module.exports = async function (fastify) {
       project_id: { required: true, type: "string" },
       app_type_id: { required: false, type: "string" },
       suite_ids: { required: false, type: "array", items: "string" },
+      test_case_ids: { required: false, type: "array", items: "string" },
       name: { required: false, type: "string" },
       created_by: { required: true, type: "string" }
     }, req.body);

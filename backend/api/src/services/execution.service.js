@@ -1,6 +1,9 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 
+const DIRECT_CASE_SUITE_ID = "default";
+const DIRECT_CASE_SUITE_NAME = "Default";
+
 const getSuiteIdsForExecution = db.prepare(`
   SELECT suite_id, suite_name
   FROM execution_suites
@@ -74,6 +77,18 @@ const selectCasesForSuite = db.prepare(`
   ORDER BY suite_test_cases.sort_order ASC, test_cases.created_at DESC
 `);
 
+const selectCaseForExecution = db.prepare(`
+  SELECT
+    id AS test_case_id,
+    app_type_id,
+    title AS test_case_title,
+    description AS test_case_description,
+    priority,
+    status
+  FROM test_cases
+  WHERE id = ?
+`);
+
 const selectStepsForCase = db.prepare(`
   SELECT id, step_order, action, expected_result
   FROM test_steps
@@ -119,6 +134,47 @@ async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
           snapshot_step_id: options.persisted
             ? uuid()
             : `${executionId}:${suiteCase.test_case_id}:${step.id}`,
+          step_order: step.step_order,
+          action: step.action,
+          expected_result: step.expected_result
+        });
+      }
+    }
+  }
+
+  const directCases = Array.isArray(options.directCases) ? options.directCases : [];
+  const directSuiteRow = options.directSuiteRow || null;
+
+  if (directSuiteRow && directCases.length) {
+    for (const directCase of directCases) {
+      if (seenCaseIds.has(directCase.test_case_id)) {
+        continue;
+      }
+
+      seenCaseIds.add(directCase.test_case_id);
+      sortOrder += 1;
+
+      caseSnapshots.push({
+        execution_id: executionId,
+        test_case_id: directCase.test_case_id,
+        test_case_title: directCase.test_case_title,
+        test_case_description: directCase.test_case_description,
+        suite_id: directSuiteRow.suite_id,
+        suite_name: directSuiteRow.suite_name,
+        priority: directCase.priority,
+        status: directCase.status,
+        sort_order: sortOrder
+      });
+
+      const steps = await selectStepsForCase.all(directCase.test_case_id);
+
+      for (const step of steps) {
+        stepSnapshots.push({
+          execution_id: executionId,
+          test_case_id: directCase.test_case_id,
+          snapshot_step_id: options.persisted
+            ? uuid()
+            : `${executionId}:${directCase.test_case_id}:${step.id}`,
           step_order: step.step_order,
           action: step.action,
           expected_result: step.expected_result
@@ -181,7 +237,7 @@ async function attachDetailedScope(execution) {
   };
 }
 
-exports.createExecution = async ({ project_id, app_type_id, suite_ids = [], name, created_by }) => {
+exports.createExecution = async ({ project_id, app_type_id, suite_ids = [], test_case_ids = [], name, created_by }) => {
   if (!project_id || !created_by) {
     throw new Error("Missing required fields");
   }
@@ -210,9 +266,10 @@ exports.createExecution = async ({ project_id, app_type_id, suite_ids = [], name
   }
 
   const uniqueSuiteIds = [...new Set(suite_ids)];
+  const uniqueTestCaseIds = [...new Set(test_case_ids)];
 
-  if (uniqueSuiteIds.length && !app_type_id) {
-    throw new Error("app_type_id is required when suite_ids are provided");
+  if ((uniqueSuiteIds.length || uniqueTestCaseIds.length) && !app_type_id) {
+    throw new Error("app_type_id is required when scope is provided");
   }
 
   const suiteRows = [];
@@ -234,6 +291,30 @@ exports.createExecution = async ({ project_id, app_type_id, suite_ids = [], name
     });
   }
 
+  const directCaseRows = [];
+
+  for (const testCaseId of uniqueTestCaseIds) {
+    const testCase = await selectCaseForExecution.get(testCaseId);
+
+    if (!testCase) {
+      throw new Error(`Test case not found: ${testCaseId}`);
+    }
+
+    if (testCase.app_type_id !== app_type_id) {
+      throw new Error("All test cases must belong to the selected app type");
+    }
+
+    directCaseRows.push(testCase);
+  }
+
+  const directSuiteRow = directCaseRows.length
+    ? {
+        suite_id: DIRECT_CASE_SUITE_ID,
+        suite_name: DIRECT_CASE_SUITE_NAME
+      }
+    : null;
+  const executionSuiteRows = directSuiteRow ? [...suiteRows, directSuiteRow] : suiteRows;
+
   const id = uuid();
 
   const transaction = db.transaction(async () => {
@@ -243,11 +324,15 @@ exports.createExecution = async ({ project_id, app_type_id, suite_ids = [], name
       VALUES (?, ?, ?, ?, 'manual', 'queued', ?)
     `).run(id, project_id, app_type_id || null, name || "Execution Run", created_by);
 
-    for (const suiteRow of suiteRows) {
+    for (const suiteRow of executionSuiteRows) {
       await insertExecutionSuite.run(id, suiteRow.suite_id, suiteRow.suite_name);
     }
 
-    const snapshotPayload = await buildSnapshotPayload(id, suiteRows, { persisted: true });
+    const snapshotPayload = await buildSnapshotPayload(id, suiteRows, {
+      persisted: true,
+      directCases: directCaseRows,
+      directSuiteRow
+    });
 
     for (const caseSnapshot of snapshotPayload.caseSnapshots) {
       await insertExecutionCaseSnapshot.run(

@@ -303,7 +303,7 @@ export const api = {
       request<Execution[]>(`/executions${toQueryString(query)}`),
     get: (id: string) =>
       request<Execution>(`/executions/${id}`),
-    create: (input: { project_id: string; app_type_id?: string; suite_ids?: string[]; name?: string; created_by: string }) =>
+    create: (input: { project_id: string; app_type_id?: string; suite_ids?: string[]; test_case_ids?: string[]; name?: string; created_by: string }) =>
       request<{ id: string }>("/executions", { method: "POST", body: JSON.stringify(input) }),
     start: (id: string) => request<{ started: boolean }>(`/executions/${id}/start`, { method: "POST" }),
     complete: (id: string, input: { status: "completed" | "failed" }) =>

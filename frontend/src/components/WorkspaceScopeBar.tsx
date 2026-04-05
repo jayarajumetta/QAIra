@@ -1,4 +1,5 @@
 import type { AppType, Project } from "../types";
+import { ProjectDropdown } from "./ProjectDropdown";
 
 export function WorkspaceScopeBar({
   projects,
@@ -21,14 +22,15 @@ export function WorkspaceScopeBar({
 }) {
   return (
     <div className="design-context-bar is-sticky">
-      <label className="context-field">
+      <div className="context-field">
         <span>{projectLabel}</span>
-        <select value={projectId} onChange={(event) => onProjectChange(event.target.value)}>
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>{project.name}</option>
-          ))}
-        </select>
-      </label>
+        <ProjectDropdown
+          ariaLabel={`Select ${projectLabel.toLowerCase()}`}
+          onChange={onProjectChange}
+          projects={projects}
+          value={projectId}
+        />
+      </div>
 
       <label className="context-field">
         <span>{appTypeLabel}</span>

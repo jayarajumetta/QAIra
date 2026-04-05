@@ -5,6 +5,7 @@ import { useAuth } from "../auth/AuthContext";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { ProjectDropdown } from "../components/ProjectDropdown";
 import { ProgressMeter } from "../components/ProgressMeter";
 import { StatusBadge } from "../components/StatusBadge";
 import { SubnavTabs } from "../components/SubnavTabs";
@@ -1489,13 +1490,12 @@ function ExecutionCreateModal({
           <div className="execution-create-body">
             <div className="execution-create-grid">
               <FormField label="Project" required>
-                <select value={projectId} onChange={(event) => onProjectChange(event.target.value)}>
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
+                <ProjectDropdown
+                  ariaLabel="Select a project"
+                  onChange={onProjectChange}
+                  projects={projects}
+                  value={projectId}
+                />
               </FormField>
 
               <FormField label="App type" required>

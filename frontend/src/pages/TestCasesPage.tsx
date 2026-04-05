@@ -1,17 +1,20 @@
 import { ChangeEvent, FormEvent, useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext";
 import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StatusBadge } from "../components/StatusBadge";
+import { SuiteCasePicker } from "../components/SuiteCasePicker";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { parseTestCaseCsv, type ImportedTestCaseRow } from "../lib/testCaseImport";
 import { api } from "../lib/api";
 import { appendUniqueImages, parseExternalLinks, readImageFiles, toggleRequirementOnPreviewCase } from "../lib/aiDesignStudio";
-import type { AiDesignImageInput, AiDesignedTestCaseCandidate, ExecutionResult, Requirement, TestCase, TestStep } from "../types";
+import type { AiDesignImageInput, AiDesignedTestCaseCandidate, AppType, ExecutionResult, Project, Requirement, TestCase, TestStep, TestSuite } from "../types";
 
 type TestCaseDraft = {
   title: string;
@@ -49,7 +52,7 @@ const EMPTY_STEP_DRAFT: StepDraft = {
 
 const createDefaultTestCaseSections = (): Record<TestCaseEditorSectionKey, boolean> => ({
   case: true,
-  steps: true,
+  steps: false,
   history: false
 });
 
@@ -81,14 +84,19 @@ const toCsvCell = (value: string | number | null | undefined) => {
 
 export function TestCasesPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const { session } = useAuth();
   const [projectId, setProjectId] = useCurrentProject();
   const [appTypeId, setAppTypeId] = useState("");
   const [selectedTestCaseId, setSelectedTestCaseId] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const [isCreating, setIsCreating] = useState(false);
-  const [deleteSelectedTestCaseIds, setDeleteSelectedTestCaseIds] = useState<string[]>([]);
+  const [selectedActionTestCaseIds, setSelectedActionTestCaseIds] = useState<string[]>([]);
   const [isDeletingSelectedTestCases, setIsDeletingSelectedTestCases] = useState(false);
+  const [isCreateSuiteModalOpen, setIsCreateSuiteModalOpen] = useState(false);
+  const [isCreateExecutionModalOpen, setIsCreateExecutionModalOpen] = useState(false);
+  const [executionName, setExecutionName] = useState("");
   const [expandedSections, setExpandedSections] = useState<Record<TestCaseEditorSectionKey, boolean>>(createDefaultTestCaseSections);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
@@ -126,6 +134,11 @@ export function TestCasesPage() {
     queryFn: () => api.requirements.list({ project_id: projectId }),
     enabled: Boolean(projectId)
   });
+  const suitesQuery = useQuery({
+    queryKey: ["test-case-suites", appTypeId],
+    queryFn: () => api.testSuites.list({ app_type_id: appTypeId }),
+    enabled: Boolean(appTypeId)
+  });
   const testCasesQuery = useQuery({
     queryKey: ["global-test-cases", appTypeId],
     queryFn: () => api.testCases.list({ app_type_id: appTypeId }),
@@ -152,6 +165,11 @@ export function TestCasesPage() {
   });
 
   const createTestCase = useMutation({ mutationFn: api.testCases.create });
+  const createSuite = useMutation({ mutationFn: api.testSuites.create });
+  const assignSuiteCases = useMutation({
+    mutationFn: ({ id, testCaseIds }: { id: string; testCaseIds: string[] }) => api.testSuites.assignTestCases(id, testCaseIds)
+  });
+  const createExecution = useMutation({ mutationFn: api.executions.create });
   const updateTestCase = useMutation({
     mutationFn: ({ id, input }: { id: string; input: Parameters<typeof api.testCases.update>[1] }) =>
       api.testCases.update(id, input)
@@ -174,6 +192,7 @@ export function TestCasesPage() {
   const projects = projectsQuery.data || [];
   const appTypes = appTypesQuery.data || [];
   const requirements = requirementsQuery.data || [];
+  const suites = suitesQuery.data || [];
   const testCases = testCasesQuery.data || [];
   const executionResults = executionResultsQuery.data || [];
   const allTestSteps = allTestStepsQuery.data || [];
@@ -258,10 +277,14 @@ export function TestCasesPage() {
     setSelectedTestCaseId("");
     setIsCreating(false);
     setIsImportModalOpen(false);
+    setIsCreateSuiteModalOpen(false);
+    setIsCreateExecutionModalOpen(false);
+    setExecutionName("");
     setCaseDraft(EMPTY_CASE_DRAFT);
     setNewStepDraft(EMPTY_STEP_DRAFT);
     setDraftSteps([]);
     setExpandedStepIds([]);
+    setSelectedActionTestCaseIds([]);
     setImportRows([]);
     setImportWarnings([]);
     setImportFileName("");
@@ -273,7 +296,7 @@ export function TestCasesPage() {
   }, [appTypeId]);
 
   useEffect(() => {
-    setDeleteSelectedTestCaseIds((current) => current.filter((id) => testCases.some((item) => item.id === id)));
+    setSelectedActionTestCaseIds((current) => current.filter((id) => testCases.some((item) => item.id === id)));
   }, [testCases]);
 
   const historyByCaseId = useMemo(() => {
@@ -323,7 +346,13 @@ export function TestCasesPage() {
   }, [deferredSearchTerm, requirements, testCases]);
 
   const areAllFilteredCasesSelected =
-    filteredCases.length > 0 && filteredCases.every((item) => deleteSelectedTestCaseIds.includes(item.id));
+    filteredCases.length > 0 && filteredCases.every((item) => selectedActionTestCaseIds.includes(item.id));
+  const selectedProject = projects.find((project) => project.id === projectId) || null;
+  const selectedAppType = appTypes.find((appType) => appType.id === appTypeId) || null;
+  const selectedActionCases = useMemo(
+    () => testCases.filter((item) => selectedActionTestCaseIds.includes(item.id)),
+    [selectedActionTestCaseIds, testCases]
+  );
 
   const selectedTestCase = useMemo(
     () => filteredCases.find((item) => item.id === selectedTestCaseId) || testCases.find((item) => item.id === selectedTestCaseId) || null,
@@ -365,14 +394,9 @@ export function TestCasesPage() {
   useEffect(() => {
     setExpandedStepIds((current) => {
       const validIds = current.filter((id) => displaySteps.some((step) => step.id === id));
-
-      if (!isCreating && displaySteps.length && validIds.length === 0) {
-        return displaySteps.map((step) => step.id);
-      }
-
       return validIds;
     });
-  }, [displaySteps, isCreating]);
+  }, [displaySteps]);
 
   useEffect(() => {
     if (!isImportModalOpen) {
@@ -408,9 +432,12 @@ export function TestCasesPage() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["global-test-cases", appTypeId] }),
       queryClient.invalidateQueries({ queryKey: ["global-test-case-results", appTypeId] }),
+      queryClient.invalidateQueries({ queryKey: ["test-case-suites", appTypeId] }),
+      queryClient.invalidateQueries({ queryKey: ["test-suites"] }),
       queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] }),
       queryClient.invalidateQueries({ queryKey: ["requirements", projectId] }),
       queryClient.invalidateQueries({ queryKey: ["design-test-cases", appTypeId] }),
+      queryClient.invalidateQueries({ queryKey: ["design-suites", appTypeId] }),
       queryClient.invalidateQueries({ queryKey: ["test-cases"] })
     ]);
   };
@@ -464,7 +491,7 @@ export function TestCasesPage() {
 
     try {
       await deleteTestCase.mutateAsync(selectedTestCase.id);
-      setDeleteSelectedTestCaseIds((current) => current.filter((id) => id !== selectedTestCase.id));
+      setSelectedActionTestCaseIds((current) => current.filter((id) => id !== selectedTestCase.id));
       setSelectedTestCaseId("");
       setCaseDraft(EMPTY_CASE_DRAFT);
       setIsCreating(false);
@@ -476,7 +503,7 @@ export function TestCasesPage() {
   };
 
   const handleDeleteSelectedCases = async () => {
-    const selectedCases = testCases.filter((item) => deleteSelectedTestCaseIds.includes(item.id));
+    const selectedCases = testCases.filter((item) => selectedActionTestCaseIds.includes(item.id));
 
     if (!selectedCases.length) {
       return;
@@ -499,7 +526,7 @@ export function TestCasesPage() {
         .map((testCase) => testCase.id);
       const failedResults = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
 
-      setDeleteSelectedTestCaseIds((current) => current.filter((id) => !deletedIds.includes(id)));
+      setSelectedActionTestCaseIds((current) => current.filter((id) => !deletedIds.includes(id)));
 
       if (deletedIds.includes(selectedTestCaseId)) {
         setSelectedTestCaseId("");
@@ -526,6 +553,73 @@ export function TestCasesPage() {
       );
     } finally {
       setIsDeletingSelectedTestCases(false);
+    }
+  };
+
+  const handleCreateSuite = async (input: { name: string; parent_id?: string; selectedIds: string[] }) => {
+    if (!appTypeId) {
+      setMessageTone("error");
+      setMessage("Select an app type before creating a suite.");
+      return;
+    }
+
+    try {
+      const response = await createSuite.mutateAsync({
+        app_type_id: appTypeId,
+        name: input.name,
+        parent_id: input.parent_id || undefined
+      });
+
+      if (input.selectedIds.length) {
+        await assignSuiteCases.mutateAsync({
+          id: response.id,
+          testCaseIds: input.selectedIds
+        });
+      }
+
+      setIsCreateSuiteModalOpen(false);
+      setSelectedActionTestCaseIds([]);
+      showSuccess(input.selectedIds.length ? "Suite created and linked to the selected test cases." : "Suite created.");
+      await refreshCases();
+    } catch (error) {
+      showError(error, "Unable to create suite");
+    }
+  };
+
+  const handleCreateExecution = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!session?.user.id) {
+      setMessageTone("error");
+      setMessage("You need an active session before creating an execution.");
+      return;
+    }
+
+    if (!projectId || !appTypeId || !selectedActionTestCaseIds.length) {
+      setMessageTone("error");
+      setMessage("Select one or more test cases before creating an execution.");
+      return;
+    }
+
+    try {
+      const response = await createExecution.mutateAsync({
+        project_id: projectId,
+        app_type_id: appTypeId,
+        test_case_ids: selectedActionTestCaseIds,
+        name: executionName.trim() || undefined,
+        created_by: session.user.id
+      });
+
+      setExecutionName("");
+      setIsCreateExecutionModalOpen(false);
+      setSelectedActionTestCaseIds([]);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["executions"] }),
+        queryClient.invalidateQueries({ queryKey: ["executions", projectId] })
+      ]);
+      navigate(`/executions?execution=${response.id}`);
+    } catch (error) {
+      showError(error, "Unable to create execution");
     }
   };
 
@@ -984,7 +1078,7 @@ export function TestCasesPage() {
                 className="ghost-button"
                 disabled={!filteredCases.length || areAllFilteredCasesSelected}
                 onClick={() =>
-                  setDeleteSelectedTestCaseIds((current) => [...new Set([...current, ...filteredCases.map((item) => item.id)])])
+                  setSelectedActionTestCaseIds((current) => [...new Set([...current, ...filteredCases.map((item) => item.id)])])
                 }
                 type="button"
               >
@@ -992,29 +1086,40 @@ export function TestCasesPage() {
               </button>
               <button
                 className="ghost-button"
-                disabled={!deleteSelectedTestCaseIds.length}
-                onClick={() => setDeleteSelectedTestCaseIds([])}
+                disabled={!selectedActionTestCaseIds.length}
+                onClick={() => setSelectedActionTestCaseIds([])}
                 type="button"
               >
                 Clear selection
               </button>
+              <button className="ghost-button" disabled={!appTypeId} onClick={() => setIsCreateSuiteModalOpen(true)} type="button">
+                Create suite
+              </button>
+              <button
+                className="ghost-button"
+                disabled={!projectId || !appTypeId || !selectedActionTestCaseIds.length || !session?.user.id}
+                onClick={() => setIsCreateExecutionModalOpen(true)}
+                type="button"
+              >
+                Create execution
+              </button>
               <button
                 className="ghost-button danger"
-                disabled={!deleteSelectedTestCaseIds.length || isDeletingSelectedTestCases}
+                disabled={!selectedActionTestCaseIds.length || isDeletingSelectedTestCases}
                 onClick={() => void handleDeleteSelectedCases()}
                 type="button"
               >
-                {isDeletingSelectedTestCases ? "Deleting…" : `Delete selected${deleteSelectedTestCaseIds.length ? ` (${deleteSelectedTestCaseIds.length})` : ""}`}
+                {isDeletingSelectedTestCases ? "Deleting…" : `Delete selected${selectedActionTestCaseIds.length ? ` (${selectedActionTestCaseIds.length})` : ""}`}
               </button>
               <button className="ghost-button" disabled={!appTypeId} onClick={beginCreateCase} type="button">
                 New case
               </button>
             </div>
 
-            {deleteSelectedTestCaseIds.length ? (
+            {selectedActionTestCaseIds.length ? (
               <div className="detail-summary test-case-selection-summary">
-                <strong>{deleteSelectedTestCaseIds.length} test case{deleteSelectedTestCaseIds.length === 1 ? "" : "s"} marked for delete</strong>
-                <span>Checkbox selections are only used for bulk delete. Click a card body to keep editing one test case at a time.</span>
+                <strong>{selectedActionTestCaseIds.length} test case{selectedActionTestCaseIds.length === 1 ? "" : "s"} selected for bulk actions</strong>
+                <span>Use the checked cases to create a suite, create an execution under the linked Default suite snapshot, or bulk delete them. Click a card body to keep editing one test case at a time.</span>
               </div>
             ) : null}
 
@@ -1029,7 +1134,7 @@ export function TestCasesPage() {
             {!isLibraryLoading ? (
               <div className="record-list test-case-library-scroll">
                 {filteredCases.map((testCase) => {
-                  const isSelectedForDelete = deleteSelectedTestCaseIds.includes(testCase.id);
+                  const isSelectedForAction = selectedActionTestCaseIds.includes(testCase.id);
                   const isActive = selectedTestCaseId === testCase.id && !isCreating;
                   const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
                   const latest = history[0];
@@ -1041,7 +1146,7 @@ export function TestCasesPage() {
                       className={[
                         "record-card tile-card test-case-card test-case-catalog-card",
                         isActive ? "is-active" : "",
-                        isSelectedForDelete ? "is-marked-for-delete" : ""
+                        isSelectedForAction ? "is-marked-for-delete" : ""
                       ].filter(Boolean).join(" ")}
                       key={testCase.id}
                       onClick={() => {
@@ -1080,15 +1185,15 @@ export function TestCasesPage() {
                         </div>
                         <label className="checkbox-field test-case-delete-checkbox" onClick={(event) => event.stopPropagation()}>
                           <input
-                            checked={isSelectedForDelete}
+                            checked={isSelectedForAction}
                             onChange={(event) =>
-                              setDeleteSelectedTestCaseIds((current) =>
+                              setSelectedActionTestCaseIds((current) =>
                                 event.target.checked ? [...new Set([...current, testCase.id])] : current.filter((id) => id !== testCase.id)
                               )
                             }
                             type="checkbox"
                           />
-                          Mark for delete
+                          Select case
                         </label>
                       </div>
                       <StatusBadge value={latest?.status || testCase.status || "active"} />
@@ -1337,6 +1442,37 @@ export function TestCasesPage() {
         </div>
       </div>
 
+      {isCreateSuiteModalOpen ? (
+        <TestCaseSuiteModal
+          appTypeCases={testCases}
+          isSaving={createSuite.isPending || assignSuiteCases.isPending}
+          onClose={() => setIsCreateSuiteModalOpen(false)}
+          onSubmit={handleCreateSuite}
+          selectedCaseIds={selectedActionTestCaseIds}
+          suites={suites}
+        />
+      ) : null}
+
+      {isCreateExecutionModalOpen ? (
+        <TestCaseExecutionModal
+          canCreateExecution={Boolean(projectId && appTypeId && selectedActionCases.length && session?.user.id)}
+          executionName={executionName}
+          isSubmitting={createExecution.isPending}
+          onClose={() => {
+            setIsCreateExecutionModalOpen(false);
+            setExecutionName("");
+          }}
+          onExecutionNameChange={setExecutionName}
+          onRemoveTestCase={(testCaseId) =>
+            setSelectedActionTestCaseIds((current) => current.filter((id) => id !== testCaseId))
+          }
+          onSubmit={handleCreateExecution}
+          selectedAppType={selectedAppType?.name || ""}
+          selectedProject={selectedProject?.name || ""}
+          testCases={selectedActionCases}
+        />
+      ) : null}
+
       {isImportModalOpen ? (
         <div
           className="modal-backdrop"
@@ -1498,6 +1634,181 @@ export function TestCasesPage() {
           selectedRequirementIds={aiSelectedRequirements.map((requirement) => requirement.id)}
         />
       ) : null}
+    </div>
+  );
+}
+
+function TestCaseSuiteModal({
+  suites,
+  appTypeCases,
+  selectedCaseIds,
+  onClose,
+  onSubmit,
+  isSaving
+}: {
+  suites: TestSuite[];
+  appTypeCases: TestCase[];
+  selectedCaseIds: string[];
+  onClose: () => void;
+  onSubmit: (input: { name: string; parent_id?: string; selectedIds: string[] }) => void;
+  isSaving: boolean;
+}) {
+  const [name, setName] = useState("");
+  const [parentId, setParentId] = useState("");
+  const [localSelectedIds, setLocalSelectedIds] = useState<string[]>(() => selectedCaseIds);
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <div className="modal-card" role="dialog" aria-modal="true" aria-label="Create suite from test cases">
+        <div className="panel-head">
+          <div>
+            <h3>Create Suite</h3>
+            <p>Name a suite and choose which reusable cases should be linked into it.</p>
+          </div>
+        </div>
+
+        <form
+          className="form-grid suite-modal-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit({
+              name,
+              parent_id: parentId || undefined,
+              selectedIds: localSelectedIds
+            });
+          }}
+        >
+          <FormField label="Suite name">
+            <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} />
+          </FormField>
+          <FormField label="Parent suite">
+            <select value={parentId} onChange={(event) => setParentId(event.target.value)}>
+              <option value="">None</option>
+              {suites.map((suite) => (
+                <option key={suite.id} value={suite.id}>{suite.name}</option>
+              ))}
+            </select>
+          </FormField>
+
+          <SuiteCasePicker
+            cases={appTypeCases}
+            description="Use bulk selection when needed, then set the saved suite order before creating it."
+            emptyMessage="No test cases available in this app type yet."
+            heading="Reusable test cases"
+            onChange={setLocalSelectedIds}
+            selectedCaseIds={localSelectedIds}
+          />
+
+          <div className="action-row suite-modal-actions">
+            <button className="primary-button" disabled={isSaving} type="submit">
+              {isSaving ? "Saving…" : "Create Suite"}
+            </button>
+            <button className="ghost-button" disabled={isSaving} onClick={onClose} type="button">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function TestCaseExecutionModal({
+  testCases,
+  selectedProject,
+  selectedAppType,
+  executionName,
+  canCreateExecution,
+  isSubmitting,
+  onExecutionNameChange,
+  onRemoveTestCase,
+  onClose,
+  onSubmit
+}: {
+  testCases: TestCase[];
+  selectedProject: string;
+  selectedAppType: string;
+  executionName: string;
+  canCreateExecution: boolean;
+  isSubmitting: boolean;
+  onExecutionNameChange: (value: string) => void;
+  onRemoveTestCase: (testCaseId: string) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div className="modal-backdrop" onClick={() => !isSubmitting && onClose()} role="presentation">
+      <div
+        aria-labelledby="create-test-case-execution-title"
+        aria-modal="true"
+        className="modal-card execution-create-modal"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <form className="execution-create-form" onSubmit={onSubmit}>
+          <div className="execution-create-header">
+            <div className="execution-create-title">
+              <p className="eyebrow">Test Cases</p>
+              <h3 id="create-test-case-execution-title">Create execution</h3>
+              <p>The selected test cases will be snapshotted under a linked Default suite without creating a real suite record.</p>
+            </div>
+            <button
+              aria-label="Close create execution dialog"
+              className="ghost-button"
+              disabled={isSubmitting}
+              onClick={onClose}
+              type="button"
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="execution-create-body">
+            <FormField label="Execution name">
+              <input
+                autoFocus
+                placeholder="Optional run name"
+                value={executionName}
+                onChange={(event) => onExecutionNameChange(event.target.value)}
+              />
+            </FormField>
+
+            <div className="detail-summary">
+              <strong>{selectedProject || "Select a project to continue"}</strong>
+              <span>{selectedAppType ? `${selectedAppType} app type selected for this snapshot.` : "Choose an app type to load test cases."}</span>
+              <span>{testCases.length ? `${testCases.length} test cases selected for this execution.` : "No test cases selected yet."}</span>
+            </div>
+
+            <FormField label="Execution scope" required>
+              <div className="selection-summary-card">
+                <div className="selection-summary-header">
+                  <div>
+                    <strong>{testCases.length ? `${testCases.length} test cases selected` : "No test cases selected yet"}</strong>
+                    <span>These came from the checkbox selections in the test case library. Remove any chip here before creating the execution.</span>
+                  </div>
+                </div>
+
+                {testCases.length ? (
+                  <div className="selection-chip-row">
+                    {testCases.map((testCase) => (
+                      <button key={testCase.id} className="selection-chip" disabled={isSubmitting} onClick={() => onRemoveTestCase(testCase.id)} type="button">
+                        {testCase.title}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </FormField>
+          </div>
+
+          <div className="action-row execution-create-actions">
+            <button className="primary-button" disabled={!canCreateExecution || isSubmitting} type="submit">
+              {isSubmitting ? "Creating…" : "Create execution"}
+            </button>
+            <button className="ghost-button" disabled={isSubmitting} onClick={onClose} type="button">
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

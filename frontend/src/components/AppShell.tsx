@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../auth/AuthContext";
+import { ProjectDropdown } from "./ProjectDropdown";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { api } from "../lib/api";
 
@@ -282,18 +283,15 @@ export function AppShell() {
                 <p className="text-muted">Ask an admin to add you to a project.</p>
               </div>
             ) : (
-              <label className="sidebar-project-picker">
+              <div className="sidebar-project-picker">
                 <span>Current Project</span>
-                <select
+                <ProjectDropdown
+                  ariaLabel="Select a project"
+                  onChange={setSidebarProjectId}
+                  projects={projects}
                   value={sidebarProjectId}
-                  onChange={(event) => setSidebarProjectId(event.target.value)}
-                  aria-label="Select a project"
-                >
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>{project.name}</option>
-                  ))}
-                </select>
-              </label>
+                />
+              </div>
             )
           ) : null}
         </div>
