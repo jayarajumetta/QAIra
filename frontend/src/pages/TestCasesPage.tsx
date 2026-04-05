@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
 import { FormField } from "../components/FormField";
@@ -31,6 +31,8 @@ type DraftTestStep = {
   action: string;
   expected_result: string;
 };
+
+type EditorSection = "case" | "steps";
 
 const EMPTY_CASE_DRAFT: TestCaseDraft = {
   title: "",
@@ -79,6 +81,7 @@ export function TestCasesPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const [isCreating, setIsCreating] = useState(false);
+  const [activeEditorSection, setActiveEditorSection] = useState<EditorSection>("case");
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const [caseDraft, setCaseDraft] = useState<TestCaseDraft>(EMPTY_CASE_DRAFT);
@@ -197,6 +200,7 @@ export function TestCasesPage() {
 
   const beginCreateCase = () => {
     setIsCreating(true);
+    setActiveEditorSection("case");
     setSelectedTestCaseId("");
     setCaseDraft(EMPTY_CASE_DRAFT);
     setDraftSteps([]);
@@ -245,6 +249,7 @@ export function TestCasesPage() {
 
   useEffect(() => {
     setSelectedTestCaseId("");
+    setActiveEditorSection("case");
     setIsCreating(false);
     setIsImportModalOpen(false);
     setCaseDraft(EMPTY_CASE_DRAFT);
@@ -341,7 +346,8 @@ export function TestCasesPage() {
   useEffect(() => {
     setNewStepDraft(EMPTY_STEP_DRAFT);
     setExpandedStepIds([]);
-  }, [selectedTestCaseId]);
+    setActiveEditorSection("case");
+  }, [isCreating, selectedTestCaseId]);
 
   useEffect(() => {
     setExpandedStepIds((current) => {
@@ -816,6 +822,16 @@ export function TestCasesPage() {
 
   const selectedRequirement = requirements.find((item) => item.id === caseDraft.requirement_id) || null;
   const selectedHistory = selectedTestCase ? historyByCaseId[selectedTestCase.id] || [] : [];
+  const stepCountLabel = `${displaySteps.length} step${displaySteps.length === 1 ? "" : "s"}`;
+  const firstStepPreview = displaySteps[0]?.action || displaySteps[0]?.expected_result || "";
+  const caseSectionSummary = isCreating
+    ? caseDraft.title.trim() || "Start defining the reusable case before saving it."
+    : selectedTestCase?.title || "Select a test case from the library to edit it here.";
+  const stepSectionSummary = firstStepPreview
+    ? `Starts with: ${firstStepPreview}`
+    : isCreating
+      ? "No draft steps added yet."
+      : "No steps added yet for this test case.";
   const aiSelectedRequirements = useMemo(
     () => requirements.filter((requirement) => aiRequirementIds.includes(requirement.id)),
     [aiRequirementIds, requirements]
@@ -920,6 +936,7 @@ export function TestCasesPage() {
                       key={testCase.id}
                       onClick={() => {
                         setSelectedTestCaseId(testCase.id);
+                        setActiveEditorSection("case");
                         setIsCreating(false);
                         setDraftSteps([]);
                       }}
@@ -964,7 +981,7 @@ export function TestCasesPage() {
         </div>
 
         <div className="test-case-editor-column">
-          <Panel title={isCreating ? "New test case" : selectedTestCase ? "Selected test case" : "Test case editor"} subtitle={selectedTestCaseId || isCreating ? "Keep the reusable case definition, step flow, and execution history in one place without losing context." : "Select a test case or create a new one."}>
+          <Panel title="Test case workspace" subtitle={selectedTestCaseId || isCreating ? "Switch between case details and step editing without losing the selected context." : "Select a test case or create a new one."}>
             {selectedTestCaseId || isCreating ? (
               <div className="detail-stack">
                 <div className="metric-strip">
@@ -986,158 +1003,176 @@ export function TestCasesPage() {
                   </div>
                 </div>
 
-                <form className="form-grid" onSubmit={(event) => void handleSaveCase(event)}>
-                  <div className="record-grid">
-                    <FormField label="Title" required>
-                      <input
-                        required
-                        value={caseDraft.title}
-                        onChange={(event) => setCaseDraft((current) => ({ ...current, title: event.target.value }))}
-                      />
-                    </FormField>
-                    <FormField label="Status">
-                      <select
-                        value={caseDraft.status}
-                        onChange={(event) => setCaseDraft((current) => ({ ...current, status: event.target.value }))}
-                      >
-                        <option value="active">active</option>
-                        <option value="draft">draft</option>
-                        <option value="ready">ready</option>
-                        <option value="retired">retired</option>
-                      </select>
-                    </FormField>
-                    <FormField label="Requirement">
-                      <select
-                        value={caseDraft.requirement_id}
-                        onChange={(event) => setCaseDraft((current) => ({ ...current, requirement_id: event.target.value }))}
-                      >
-                        <option value="">No requirement</option>
-                        {requirements.map((requirement: Requirement) => (
-                          <option key={requirement.id} value={requirement.id}>{requirement.title}</option>
-                        ))}
-                      </select>
-                    </FormField>
-                    <FormField label="Priority">
-                      <input
-                        min="1"
-                        max="5"
-                        type="number"
-                        value={caseDraft.priority}
-                        onChange={(event) => setCaseDraft((current) => ({ ...current, priority: Number(event.target.value) || 3 }))}
-                      />
-                    </FormField>
-                  </div>
-                  <FormField label="Description">
-                    <textarea
-                      rows={4}
-                      value={caseDraft.description}
-                      onChange={(event) => setCaseDraft((current) => ({ ...current, description: event.target.value }))}
-                    />
-                  </FormField>
-
-                  <div className="detail-summary">
-                    <strong>{isCreating ? "Create with steps attached" : "Live case definition"}</strong>
-                    <span>{isCreating ? `This test case will be saved with ${displaySteps.length} draft step${displaySteps.length === 1 ? "" : "s"} attached.` : "Edits here update the reusable test case while execution history remains preserved."}</span>
-                  </div>
-
-                  <div className="action-row">
-                    <button className="primary-button" disabled={createTestCase.isPending || updateTestCase.isPending} type="submit">
-                      {isCreating ? (createTestCase.isPending ? "Creating…" : "Create test case") : (updateTestCase.isPending ? "Saving…" : "Save test case")}
-                    </button>
-                    {isCreating ? (
-                      <button
-                        className="ghost-button"
-                        onClick={() => {
-                          setIsCreating(false);
-                          setDraftSteps([]);
-                          setNewStepDraft(EMPTY_STEP_DRAFT);
-                        }}
-                        type="button"
-                      >
-                        Cancel new case
-                      </button>
-                    ) : null}
-                    {!isCreating && selectedTestCase ? (
-                      <button className="ghost-button danger" onClick={() => void handleDeleteCase()} type="button">
-                        Delete test case
-                      </button>
-                    ) : null}
-                  </div>
-                </form>
-
-                <div className="step-editor">
-                  <div className="panel-head">
-                    <div>
-                      <h3>{isCreating ? "Draft steps" : "Test steps"}</h3>
-                      <p>{isCreating ? "Attach the execution flow now so the new test case is created fully defined." : "Collapse or expand individual steps while editing. Execution history stays even if this live definition changes later."}</p>
-                    </div>
-                  </div>
-
-                  {!isCreating && displaySteps.length ? (
-                    <div className="action-row">
-                      <button className="ghost-button" onClick={() => setExpandedStepIds(displaySteps.map((step) => step.id))} type="button">
-                        Expand all
-                      </button>
-                      <button className="ghost-button" onClick={() => setExpandedStepIds([])} type="button">
-                        Collapse all
-                      </button>
-                    </div>
-                  ) : null}
-
-                  {!isCreating && stepsQuery.isLoading ? <div className="empty-state compact">Loading steps…</div> : null}
-                  {!displaySteps.length ? <div className="empty-state compact">{isCreating ? "No draft steps yet. Add steps below before you save if this case needs guided execution." : "No steps yet for this test case."}</div> : null}
-
-                  <div className="step-list">
-                    {isCreating
-                      ? draftSteps.map((step, index) => (
-                          <DraftStepCard
-                            canMoveDown={index < draftSteps.length - 1}
-                            canMoveUp={index > 0}
-                            key={step.id}
-                            onChange={(input) => handleUpdateDraftStep(step.id, input)}
-                            onDelete={() => void handleDeleteStep(step.id)}
-                            onMoveDown={() => handleReorderDraftStep(step.id, "down")}
-                            onMoveUp={() => handleReorderDraftStep(step.id, "up")}
-                            step={{ ...step, step_order: index + 1 }}
+                <div className="editor-accordion">
+                  <EditorAccordionSection
+                    countLabel={isCreating ? "Draft" : caseDraft.status || "active"}
+                    isExpanded={activeEditorSection === "case"}
+                    onExpand={() => setActiveEditorSection("case")}
+                    summary={caseSectionSummary}
+                    title={isCreating ? "New test case" : "Selected test case"}
+                  >
+                    <form className="form-grid" onSubmit={(event) => void handleSaveCase(event)}>
+                      <div className="record-grid">
+                        <FormField label="Title" required>
+                          <input
+                            required
+                            value={caseDraft.title}
+                            onChange={(event) => setCaseDraft((current) => ({ ...current, title: event.target.value }))}
                           />
-                        ))
-                      : steps.map((step, index) => (
-                          <EditableStepCard
-                            key={step.id}
-                            canMoveDown={index < steps.length - 1}
-                            canMoveUp={index > 0}
-                            isExpanded={expandedStepIds.includes(step.id)}
-                            onDelete={() => void handleDeleteStep(step.id)}
-                            onMoveDown={() => void handleReorderStep(step.id, "down")}
-                            onMoveUp={() => void handleReorderStep(step.id, "up")}
-                            onSave={(input) => void handleUpdateStep(step, input)}
-                            onToggle={() =>
-                              setExpandedStepIds((current) =>
-                                current.includes(step.id) ? current.filter((id) => id !== step.id) : [...current, step.id]
-                              )
-                            }
-                            step={step}
+                        </FormField>
+                        <FormField label="Status">
+                          <select
+                            value={caseDraft.status}
+                            onChange={(event) => setCaseDraft((current) => ({ ...current, status: event.target.value }))}
+                          >
+                            <option value="active">active</option>
+                            <option value="draft">draft</option>
+                            <option value="ready">ready</option>
+                            <option value="retired">retired</option>
+                          </select>
+                        </FormField>
+                        <FormField label="Requirement">
+                          <select
+                            value={caseDraft.requirement_id}
+                            onChange={(event) => setCaseDraft((current) => ({ ...current, requirement_id: event.target.value }))}
+                          >
+                            <option value="">No requirement</option>
+                            {requirements.map((requirement: Requirement) => (
+                              <option key={requirement.id} value={requirement.id}>{requirement.title}</option>
+                            ))}
+                          </select>
+                        </FormField>
+                        <FormField label="Priority">
+                          <input
+                            min="1"
+                            max="5"
+                            type="number"
+                            value={caseDraft.priority}
+                            onChange={(event) => setCaseDraft((current) => ({ ...current, priority: Number(event.target.value) || 3 }))}
                           />
-                        ))}
-                  </div>
+                        </FormField>
+                      </div>
+                      <FormField label="Description">
+                        <textarea
+                          rows={4}
+                          value={caseDraft.description}
+                          onChange={(event) => setCaseDraft((current) => ({ ...current, description: event.target.value }))}
+                        />
+                      </FormField>
 
-                  <form className="step-create" onSubmit={(event) => void handleCreateStep(event)}>
-                    <strong>{isCreating ? "+ Add Draft Step" : "+ Add Step"}</strong>
-                    <FormField label="Action">
-                      <input
-                        value={newStepDraft.action}
-                        onChange={(event) => setNewStepDraft((current) => ({ ...current, action: event.target.value }))}
-                      />
-                    </FormField>
-                    <FormField label="Expected result">
-                      <textarea
-                        rows={3}
-                        value={newStepDraft.expected_result}
-                        onChange={(event) => setNewStepDraft((current) => ({ ...current, expected_result: event.target.value }))}
-                      />
-                    </FormField>
-                    <button className="primary-button" type="submit">{isCreating ? "Attach draft step" : "Add step"}</button>
-                  </form>
+                      <div className="detail-summary">
+                        <strong>{isCreating ? "Create with steps attached" : "Live case definition"}</strong>
+                        <span>{isCreating ? `This test case will be saved with ${displaySteps.length} draft step${displaySteps.length === 1 ? "" : "s"} attached.` : "Edits here update the reusable test case while execution history remains preserved."}</span>
+                      </div>
+
+                      <div className="action-row">
+                        <button className="primary-button" disabled={createTestCase.isPending || updateTestCase.isPending} type="submit">
+                          {isCreating ? (createTestCase.isPending ? "Creating…" : "Create test case") : (updateTestCase.isPending ? "Saving…" : "Save test case")}
+                        </button>
+                        {isCreating ? (
+                          <button
+                            className="ghost-button"
+                            onClick={() => {
+                              setIsCreating(false);
+                              setDraftSteps([]);
+                              setNewStepDraft(EMPTY_STEP_DRAFT);
+                            }}
+                            type="button"
+                          >
+                            Cancel new case
+                          </button>
+                        ) : null}
+                        {!isCreating && selectedTestCase ? (
+                          <button className="ghost-button danger" onClick={() => void handleDeleteCase()} type="button">
+                            Delete test case
+                          </button>
+                        ) : null}
+                      </div>
+                    </form>
+                  </EditorAccordionSection>
+
+                  <EditorAccordionSection
+                    countLabel={stepCountLabel}
+                    isExpanded={activeEditorSection === "steps"}
+                    onExpand={() => setActiveEditorSection("steps")}
+                    summary={stepSectionSummary}
+                    title={isCreating ? "Draft steps" : "Test steps"}
+                  >
+                    <div className="step-editor step-editor--embedded">
+                      <div className="panel-head">
+                        <div>
+                          <h3>{isCreating ? "Draft steps" : "Test steps"}</h3>
+                          <p>{isCreating ? "Attach the execution flow now so the new test case is created fully defined." : "Collapse or expand individual steps while editing. Execution history stays even if this live definition changes later."}</p>
+                        </div>
+                      </div>
+
+                      {!isCreating && displaySteps.length ? (
+                        <div className="action-row">
+                          <button className="ghost-button" onClick={() => setExpandedStepIds(displaySteps.map((step) => step.id))} type="button">
+                            Expand all
+                          </button>
+                          <button className="ghost-button" onClick={() => setExpandedStepIds([])} type="button">
+                            Collapse all
+                          </button>
+                        </div>
+                      ) : null}
+
+                      {!isCreating && stepsQuery.isLoading ? <div className="empty-state compact">Loading steps…</div> : null}
+                      {!displaySteps.length ? <div className="empty-state compact">{isCreating ? "No draft steps yet. Add steps below before you save if this case needs guided execution." : "No steps yet for this test case."}</div> : null}
+
+                      <div className="step-list">
+                        {isCreating
+                          ? draftSteps.map((step, index) => (
+                              <DraftStepCard
+                                canMoveDown={index < draftSteps.length - 1}
+                                canMoveUp={index > 0}
+                                key={step.id}
+                                onChange={(input) => handleUpdateDraftStep(step.id, input)}
+                                onDelete={() => void handleDeleteStep(step.id)}
+                                onMoveDown={() => handleReorderDraftStep(step.id, "down")}
+                                onMoveUp={() => handleReorderDraftStep(step.id, "up")}
+                                step={{ ...step, step_order: index + 1 }}
+                              />
+                            ))
+                          : steps.map((step, index) => (
+                              <EditableStepCard
+                                key={step.id}
+                                canMoveDown={index < steps.length - 1}
+                                canMoveUp={index > 0}
+                                isExpanded={expandedStepIds.includes(step.id)}
+                                onDelete={() => void handleDeleteStep(step.id)}
+                                onMoveDown={() => void handleReorderStep(step.id, "down")}
+                                onMoveUp={() => void handleReorderStep(step.id, "up")}
+                                onSave={(input) => void handleUpdateStep(step, input)}
+                                onToggle={() =>
+                                  setExpandedStepIds((current) =>
+                                    current.includes(step.id) ? current.filter((id) => id !== step.id) : [...current, step.id]
+                                  )
+                                }
+                                step={step}
+                              />
+                            ))}
+                      </div>
+
+                      <form className="step-create" onSubmit={(event) => void handleCreateStep(event)}>
+                        <strong>{isCreating ? "+ Add Draft Step" : "+ Add Step"}</strong>
+                        <FormField label="Action">
+                          <input
+                            value={newStepDraft.action}
+                            onChange={(event) => setNewStepDraft((current) => ({ ...current, action: event.target.value }))}
+                          />
+                        </FormField>
+                        <FormField label="Expected result">
+                          <textarea
+                            rows={3}
+                            value={newStepDraft.expected_result}
+                            onChange={(event) => setNewStepDraft((current) => ({ ...current, expected_result: event.target.value }))}
+                          />
+                        </FormField>
+                        <button className="primary-button" type="submit">{isCreating ? "Attach draft step" : "Add step"}</button>
+                      </form>
+                    </div>
+                  </EditorAccordionSection>
                 </div>
 
                 {!isCreating ? (
@@ -1336,6 +1371,43 @@ export function TestCasesPage() {
   );
 }
 
+function EditorAccordionSection({
+  title,
+  summary,
+  countLabel,
+  isExpanded,
+  onExpand,
+  children
+}: {
+  title: string;
+  summary: string;
+  countLabel: string;
+  isExpanded: boolean;
+  onExpand: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section className={isExpanded ? "editor-accordion-section is-expanded" : "editor-accordion-section"}>
+      <button
+        aria-expanded={isExpanded}
+        className="editor-accordion-toggle"
+        onClick={onExpand}
+        type="button"
+      >
+        <div className="editor-accordion-toggle-main">
+          <strong>{title}</strong>
+          <span>{summary}</span>
+        </div>
+        <div className="editor-accordion-toggle-meta">
+          <span className="editor-accordion-toggle-count">{countLabel}</span>
+          <span className="editor-accordion-toggle-state">{isExpanded ? "Expanded" : "Expand"}</span>
+        </div>
+      </button>
+      {isExpanded ? <div className="editor-accordion-body">{children}</div> : null}
+    </section>
+  );
+}
+
 function EditableStepCard({
   step,
   isExpanded,
@@ -1372,11 +1444,11 @@ function EditableStepCard({
   return (
     <article className={isExpanded ? "step-card is-expanded" : "step-card"}>
       <button className="step-card-toggle" onClick={onToggle} type="button">
-        <div>
+        <div className="step-card-summary">
           <strong>Step {step.step_order}</strong>
           <span>{draft.action || "No action written yet"}</span>
         </div>
-        <span>{isExpanded ? "Hide" : "Show"}</span>
+        <span className="step-card-toggle-state">{isExpanded ? "Hide" : "Show"}</span>
       </button>
 
       {isExpanded ? (
@@ -1419,7 +1491,7 @@ function DraftStepCard({
   return (
     <article className="step-card is-expanded">
       <div className="step-card-top">
-        <div>
+        <div className="step-card-summary">
           <strong>Step {step.step_order}</strong>
           <span>{step.action || step.expected_result || "Draft step details"}</span>
         </div>

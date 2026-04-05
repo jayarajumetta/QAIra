@@ -1070,6 +1070,84 @@ textarea {
   border-top: 1px solid var(--line);
 }
 
+.editor-accordion {
+  display: grid;
+  gap: 1rem;
+}
+
+.editor-accordion-section {
+  border: 1px solid rgba(18, 40, 75, 0.08);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.72);
+  overflow: hidden;
+}
+
+.editor-accordion-section.is-expanded {
+  background: linear-gradient(180deg, rgba(255, 251, 245, 0.96), rgba(243, 231, 214, 0.82));
+}
+
+.editor-accordion-toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  text-align: left;
+}
+
+.editor-accordion-toggle-main {
+  min-width: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.editor-accordion-toggle-main strong {
+  display: block;
+}
+
+.editor-accordion-toggle-main span {
+  color: var(--text-secondary);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.editor-accordion-toggle-meta {
+  flex-shrink: 0;
+  display: grid;
+  gap: 0.25rem;
+  justify-items: end;
+}
+
+.editor-accordion-toggle-count {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.editor-accordion-toggle-state {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+
+.editor-accordion-body {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem 1.1rem 1.1rem;
+  border-top: 1px solid var(--line);
+}
+
+.editor-accordion-body .step-editor {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .step-card,
 .step-create {
   background: rgba(255, 255, 255, 0.68);
@@ -1110,7 +1188,11 @@ textarea {
   border: 0;
   background: transparent;
   padding: 0;
-  display: block;
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
   text-align: left;
   color: inherit;
 }
@@ -1129,8 +1211,30 @@ textarea {
   flex-shrink: 0;
 }
 
-.step-card-toggle span {
+.step-card-summary {
+  min-width: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.step-card-summary strong {
+  display: block;
+}
+
+.step-card-summary span {
+  display: block;
   color: var(--muted);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.step-card-toggle-state {
+  flex-shrink: 0;
+  color: var(--primary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .step-card-body {
@@ -1311,7 +1415,7 @@ textarea {
 }
 
 :root[data-sidebar="collapsed"] .app-shell {
-  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
 }
 
 .app-shell {
@@ -1846,7 +1950,7 @@ body {
 }
 
 :root[data-sidebar="collapsed"] .app-shell {
-  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
 }
 
 .sidebar {
@@ -2675,7 +2779,7 @@ body {
 }
 
 :root[data-sidebar="collapsed"] .app-shell {
-  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
 }
 
 .sidebar,
@@ -2929,12 +3033,37 @@ body {
 }
 
 .sidebar.is-collapsed {
-  padding: 0.75rem 0.35rem;
+  padding: 0.7rem 0.28rem;
 }
 
 .sidebar.is-collapsed .sidebar-top {
-  gap: 0.5rem;
-  justify-items: center;
+  gap: 0.45rem;
+  justify-items: stretch;
+  align-items: stretch;
+}
+
+.sidebar.is-collapsed .sidebar-brand-row,
+.sidebar.is-collapsed .sidebar-brand-lockup {
+  justify-content: flex-start;
+}
+
+.sidebar.is-collapsed .sidebar-brand-lockup {
+  width: 100%;
+}
+
+.sidebar.is-collapsed .brand-mark {
+  min-width: 2.2rem;
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 14px;
+  margin-bottom: 0;
+  padding: 0;
+  font-size: 0.92rem;
+}
+
+.sidebar.is-collapsed .nav-list,
+.sidebar.is-collapsed .sidebar-footer {
+  justify-items: stretch;
 }
 
 .sidebar.is-collapsed .nav-link,
@@ -2942,18 +3071,32 @@ body {
 .sidebar.is-collapsed .sidebar-collapse-button-compact,
 .sidebar.is-collapsed .sidebar-icon-button,
 .sidebar.is-collapsed .sidebar-signout {
-  width: 2.5rem;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.5rem;
+  justify-content: flex-start;
+  padding-inline: 0.55rem 0.3rem;
 }
 
 .sidebar.is-collapsed .nav-link,
 .sidebar.is-collapsed .nav-branch-link {
-  justify-content: center;
-  padding-inline: 0;
+  justify-content: flex-start;
+  padding-inline: 0.55rem 0.3rem;
+}
+
+.sidebar.is-collapsed .nav-link-icon {
+  min-width: 1.2rem;
+}
+
+.sidebar.is-collapsed .sidebar-collapse-button-compact,
+.sidebar.is-collapsed .sidebar-icon-button,
+.sidebar.is-collapsed .sidebar-signout {
+  justify-self: stretch;
 }
 
 .sidebar.is-collapsed .nav-branch-control {
   width: 100%;
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 .subnav-tabs {
@@ -4250,7 +4393,7 @@ textarea:disabled {
 }
 
 .app-layout .sidebar {
-  width: 16.25rem;
+  width: auto;
   flex-shrink: 0;
 }
 

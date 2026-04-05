@@ -166,7 +166,13 @@ export function AppShell() {
         <div className="sidebar-top">
           <div className="sidebar-brand-row">
             <div className="sidebar-brand-lockup">
-              <div className="brand-mark" aria-label="QAIra Home">QAIra</div>
+              <div
+                aria-label="QAIra Home"
+                className="brand-mark"
+                title={isCollapsed ? "QAIra Home" : undefined}
+              >
+                {isCollapsed ? "Q" : "QAIra"}
+              </div>
               {!isCollapsed ? (
                 <div className="brand-copy">
                   <strong>QAIra</strong>
@@ -191,6 +197,7 @@ export function AppShell() {
               aria-label="Expand sidebar"
               className="sidebar-collapse-button sidebar-collapse-button-compact ghost-button"
               onClick={() => setIsCollapsed((current) => !current)}
+              title="Expand sidebar"
               type="button"
             >
               <MenuIcon />
@@ -356,6 +363,7 @@ export function AppShell() {
               aria-label="Toggle theme"
               className={theme === "dark" ? "sidebar-icon-button is-dark" : "sidebar-icon-button"}
               onClick={() => setTheme((current) => current === "light" ? "dark" : "light")}
+              title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
               type="button"
             >
               {theme === "dark" ? <MoonIcon /> : <SunIcon />}
@@ -377,6 +385,7 @@ export function AppShell() {
             onClick={logout} 
             type="button"
             aria-label="Sign out"
+            title={isCollapsed ? "Sign out" : undefined}
           >
             <LogoutIcon />
             {!isCollapsed ? <span>Sign out</span> : null}
