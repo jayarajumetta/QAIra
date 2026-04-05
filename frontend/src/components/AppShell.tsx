@@ -8,6 +8,7 @@ import { api } from "../lib/api";
 
 const THEME_KEY = "app_theme";
 const SIDEBAR_KEY = "sidebar_collapsed";
+const MOBILE_SIDEBAR_BREAKPOINT = "(max-width: 768px)";
 
 const navigation = [
   {
@@ -77,6 +78,8 @@ export function AppShell() {
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
   const [isCollapsed, setIsCollapsed] = useState(() => window.localStorage.getItem(SIDEBAR_KEY) === "true");
+  const [isMobileViewport, setIsMobileViewport] = useState(() => window.matchMedia(MOBILE_SIDEBAR_BREAKPOINT).matches);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [sidebarProjectId, setSidebarProjectId] = useCurrentProject();
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
     authoring: true,
@@ -98,6 +101,61 @@ export function AppShell() {
     document.documentElement.dataset.sidebar = isCollapsed ? "collapsed" : "expanded";
     window.localStorage.setItem(SIDEBAR_KEY, String(isCollapsed));
   }, [isCollapsed]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(MOBILE_SIDEBAR_BREAKPOINT);
+
+    const syncViewport = (event: MediaQueryList | MediaQueryListEvent) => {
+      setIsMobileViewport(event.matches);
+    };
+
+    syncViewport(mediaQuery);
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", syncViewport);
+      return () => mediaQuery.removeEventListener("change", syncViewport);
+    }
+
+    mediaQuery.addListener(syncViewport);
+    return () => mediaQuery.removeListener(syncViewport);
+  }, []);
+
+  useEffect(() => {
+    setIsMobileSidebarOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!isMobileViewport) {
+      setIsMobileSidebarOpen(false);
+    }
+  }, [isMobileViewport]);
+
+  useEffect(() => {
+    if (!isMobileSidebarOpen) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsMobileSidebarOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isMobileSidebarOpen]);
+
+  useEffect(() => {
+    if (!isMobileViewport || !isMobileSidebarOpen) {
+      document.body.style.overflow = "";
+      return;
+    }
+
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [isMobileSidebarOpen, isMobileViewport]);
 
   useEffect(() => {
     if (projectsQuery.isPending) {
@@ -147,6 +205,9 @@ export function AppShell() {
     return "Workspace";
   }, [location.pathname]);
 
+  const shouldCollapseSidebar = isCollapsed && !isMobileViewport;
+  const sidebarClassName = `${shouldCollapseSidebar ? "sidebar is-collapsed" : "sidebar"}${isMobileSidebarOpen ? " is-mobile-open" : ""}`;
+
   return (
     <div className={`app-shell app-layout${isWorkspaceWideLibrary ? " app-layout--workspace-wide" : ""}`}>
       {error && (
@@ -162,27 +223,37 @@ export function AppShell() {
         </div>
       )}
       
-      <aside className={isCollapsed ? "sidebar is-collapsed" : "sidebar"} role="navigation">
+      <aside className={sidebarClassName} id="app-sidebar" role="navigation">
         <div className="sidebar-top">
           <div className="sidebar-brand-row">
             <div className="sidebar-brand-lockup">
               <div
                 aria-label="QAIra Home"
                 className="brand-mark"
-                title={isCollapsed ? "QAIra Home" : undefined}
+                title={shouldCollapseSidebar ? "QAIra Home" : undefined}
               >
-                {isCollapsed ? "Q" : "QAIra"}
+                {shouldCollapseSidebar ? "Q" : "QAIra"}
               </div>
-              {!isCollapsed ? (
+              {!shouldCollapseSidebar ? (
                 <div className="brand-copy">
                   <strong>QAIra</strong>
                   <span>Workspace</span>
                 </div>
               ) : null}
             </div>
-            {!isCollapsed ? (
+            {isMobileViewport ? (
               <button
-                aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                aria-label="Close navigation"
+                className="sidebar-mobile-close ghost-button"
+                onClick={() => setIsMobileSidebarOpen(false)}
+                type="button"
+              >
+                <CloseIcon />
+              </button>
+            ) : null}
+            {!shouldCollapseSidebar && !isMobileViewport ? (
+              <button
+                aria-label={shouldCollapseSidebar ? "Expand sidebar" : "Collapse sidebar"}
                 className="sidebar-collapse-button ghost-button"
                 onClick={() => setIsCollapsed((current) => !current)}
                 type="button"
@@ -192,7 +263,7 @@ export function AppShell() {
             ) : null}
           </div>
 
-          {isCollapsed ? (
+          {shouldCollapseSidebar ? (
             <button
               aria-label="Expand sidebar"
               className="sidebar-collapse-button sidebar-collapse-button-compact ghost-button"
@@ -204,7 +275,7 @@ export function AppShell() {
             </button>
           ) : null}
 
-          {!isCollapsed ? (
+          {!shouldCollapseSidebar ? (
             hasNoProjects ? (
               <div className="sidebar-notice">
                 <p>No projects assigned yet.</p>
@@ -230,7 +301,7 @@ export function AppShell() {
         <nav className="nav-list" aria-label="Main navigation">
           {navigation.map((group) => (
             <div className="nav-group" key={group.label}>
-              {!isCollapsed ? <p className="nav-group-label">{group.label}</p> : null}
+              {!shouldCollapseSidebar ? <p className="nav-group-label">{group.label}</p> : null}
               <div className="nav-group-items">
                 {group.items.map((item) => {
                   const Icon = item.icon;
@@ -253,21 +324,21 @@ export function AppShell() {
                                 return;
                               }
 
-                              if (isCollapsed) {
+                              if (shouldCollapseSidebar) {
                                 setIsCollapsed(false);
                               }
 
                               setExpandedGroups((current) => ({ ...current, [item.id]: true }));
                             }}
                             style={{ opacity: isDisabled ? 0.5 : 1, cursor: isDisabled ? "not-allowed" : "pointer" }}
-                            title={isCollapsed ? item.label : undefined}
+                            title={shouldCollapseSidebar ? item.label : undefined}
                             to={firstChild?.to || "/"}
                           >
                             <span className="nav-link-icon" aria-hidden="true"><Icon /></span>
-                            {!isCollapsed ? <span className="nav-link-label">{item.label}</span> : null}
+                            {!shouldCollapseSidebar ? <span className="nav-link-label">{item.label}</span> : null}
                           </NavLink>
 
-                          {!isCollapsed ? (
+                          {!shouldCollapseSidebar ? (
                             <button
                               aria-expanded={isOpen}
                               aria-label={isOpen ? `Collapse ${item.label}` : `Expand ${item.label}`}
@@ -287,7 +358,7 @@ export function AppShell() {
                           ) : null}
                         </div>
 
-                        {!isCollapsed && isOpen ? (
+                        {!shouldCollapseSidebar && isOpen ? (
                           <div className="nav-subgroup">
                             {item.children.map((child) => {
                               const childDisabled = hasNoProjects;
@@ -322,7 +393,7 @@ export function AppShell() {
                       key={item.to}
                       to={item.to}
                       className={({ isActive }) => isActive ? "nav-link is-active" : "nav-link"}
-                      title={isCollapsed ? item.label : undefined}
+                      title={shouldCollapseSidebar ? item.label : undefined}
                       aria-label={item.label}
                       onClick={(e) => {
                         if (isDisabled) {
@@ -332,8 +403,8 @@ export function AppShell() {
                       style={{ opacity: isDisabled ? 0.5 : 1, cursor: isDisabled ? "not-allowed" : "pointer" }}
                     >
                       <span className="nav-link-icon" aria-hidden="true"><Icon /></span>
-                      {!isCollapsed ? <span className="nav-link-label">{item.label}</span> : null}
-                      {!isCollapsed && typeof badgeCount === "number" ? <span className="nav-link-badge">{badgeCount}</span> : null}
+                      {!shouldCollapseSidebar ? <span className="nav-link-label">{item.label}</span> : null}
+                      {!shouldCollapseSidebar && typeof badgeCount === "number" ? <span className="nav-link-badge">{badgeCount}</span> : null}
                     </NavLink>
                   );
                 })}
@@ -343,7 +414,7 @@ export function AppShell() {
         </nav>
 
         <div className="sidebar-footer">
-          {!isCollapsed ? (
+          {!shouldCollapseSidebar ? (
             <div className="theme-toggle">
               <div>
                 <strong>Theme</strong>
@@ -372,7 +443,7 @@ export function AppShell() {
 
           <div className="user-chip" role="status">
             <strong>{session?.user.name || "Workspace User"}</strong>
-            {!isCollapsed ? (
+            {!shouldCollapseSidebar ? (
               <>
                 <span>{session?.user.email}</span>
                 <span>{session?.user.role === "admin" ? "Admin" : "Member"}</span>
@@ -385,18 +456,43 @@ export function AppShell() {
             onClick={logout} 
             type="button"
             aria-label="Sign out"
-            title={isCollapsed ? "Sign out" : undefined}
+            title={shouldCollapseSidebar ? "Sign out" : undefined}
           >
             <LogoutIcon />
-            {!isCollapsed ? <span>Sign out</span> : null}
+            {!shouldCollapseSidebar ? <span>Sign out</span> : null}
           </button>
         </div>
       </aside>
+
+      {isMobileViewport ? (
+        <button
+          aria-hidden={!isMobileSidebarOpen}
+          className={isMobileSidebarOpen ? "sidebar-backdrop is-visible" : "sidebar-backdrop"}
+          onClick={() => setIsMobileSidebarOpen(false)}
+          tabIndex={isMobileSidebarOpen ? 0 : -1}
+          type="button"
+        />
+      ) : null}
 
       <main
         className={`workspace-main main${isWorkspaceWideLibrary ? " main--library-fill" : ""}`}
         data-section={currentSection}
       >
+        {isMobileViewport ? (
+          <div className="mobile-sidebar-bar">
+            <button
+              aria-controls="app-sidebar"
+              aria-expanded={isMobileSidebarOpen}
+              className="mobile-sidebar-toggle ghost-button"
+              onClick={() => setIsMobileSidebarOpen(true)}
+              type="button"
+            >
+              <MenuIcon />
+              <span>Navigation</span>
+            </button>
+            <span className="mobile-sidebar-section">{currentSection}</span>
+          </div>
+        ) : null}
         <Outlet />
       </main>
     </div>
@@ -465,6 +561,10 @@ function SupportIcon() {
 
 function MenuIcon() {
   return <IconFrame><path d="M4 7h16" /><path d="M4 12h16" /><path d="M4 17h16" /></IconFrame>;
+}
+
+function CloseIcon() {
+  return <IconFrame><path d="m6 6 12 12" /><path d="M18 6 6 18" /></IconFrame>;
 }
 
 function SunIcon() {
