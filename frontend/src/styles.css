@@ -1148,6 +1148,99 @@ textarea {
   border-top: 0;
 }
 
+.requirement-accordion {
+  display: grid;
+  gap: 1rem;
+}
+
+.requirement-accordion-section {
+  border: 1px solid rgba(18, 40, 75, 0.08);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.72);
+  overflow: hidden;
+}
+
+.requirement-accordion-section.is-expanded {
+  background: linear-gradient(180deg, rgba(255, 251, 245, 0.96), rgba(243, 231, 214, 0.82));
+}
+
+.requirement-accordion-toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  text-align: left;
+}
+
+.requirement-accordion-toggle-main {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+}
+
+.requirement-accordion-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+  color: var(--primary);
+  transition: transform 180ms ease;
+}
+
+.requirement-accordion-icon.is-expanded {
+  transform: rotate(90deg);
+}
+
+.requirement-accordion-toggle-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.requirement-accordion-toggle-copy strong {
+  display: block;
+}
+
+.requirement-accordion-toggle-copy span {
+  color: var(--text-secondary);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.requirement-accordion-toggle-meta {
+  flex-shrink: 0;
+  display: grid;
+  gap: 0.25rem;
+  justify-items: end;
+}
+
+.requirement-accordion-toggle-count {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.requirement-accordion-toggle-state {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+
+.requirement-accordion-body {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem 1.1rem 1.1rem;
+  border-top: 1px solid var(--line);
+}
+
 .step-card,
 .step-create {
   background: rgba(255, 255, 255, 0.68);
@@ -2105,6 +2198,10 @@ body {
   flex-direction: column;
   gap: 1rem;
   overflow: hidden;
+}
+
+.modal-card.ai-design-modal.ai-design-modal--requirements {
+  width: min(calc(100vw - 2rem), 1720px);
 }
 
 .ai-studio-header {
@@ -4756,8 +4853,49 @@ textarea:disabled {
   background: linear-gradient(135deg, rgba(33, 104, 243, 0.18), rgba(31, 183, 160, 0.24));
 }
 
+.project-catalog-card {
+  position: relative;
+}
+
+.project-catalog-card.is-active {
+  border-color: rgba(33, 104, 243, 0.28);
+  background: linear-gradient(180deg, rgba(244, 248, 255, 0.98), rgba(233, 241, 255, 0.98));
+  box-shadow:
+    inset 0 0 0 1px rgba(33, 104, 243, 0.14),
+    0 1rem 2rem rgba(33, 104, 243, 0.12);
+}
+
+.project-catalog-card.is-active .project-card-icon {
+  background: linear-gradient(135deg, rgba(33, 104, 243, 0.28), rgba(31, 183, 160, 0.34));
+}
+
+.project-catalog-card.is-active .tile-card-kicker {
+  color: #2158ba;
+}
+
+.project-selection-indicator {
+  margin-top: 0.1rem;
+}
+
 .project-catalog-card .object-type-badge {
   justify-self: start;
+}
+
+:root[data-theme="dark"] .project-catalog-card.is-active {
+  border-color: rgba(108, 167, 255, 0.28);
+  background: linear-gradient(180deg, rgba(21, 38, 66, 0.98), rgba(16, 31, 55, 0.98));
+  box-shadow:
+    inset 0 0 0 1px rgba(108, 167, 255, 0.16),
+    0 1rem 2rem rgba(5, 10, 20, 0.35);
+}
+
+:root[data-theme="dark"] .project-catalog-card.is-active .tile-card-kicker {
+  color: #9fc4ff;
+}
+
+:root[data-theme="dark"] .requirement-catalog-card.is-marked-for-delete {
+  border-color: rgba(240, 106, 135, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(240, 106, 135, 0.12);
 }
 
 .project-member-note {
@@ -4914,12 +5052,40 @@ textarea:disabled {
   scrollbar-gutter: stable;
 }
 
+.requirement-catalog-toolbar {
+  margin-bottom: 0.9rem;
+}
+
+.requirement-catalog-toolbar input {
+  flex: 1 1 18rem;
+  min-width: min(100%, 18rem);
+}
+
+.requirement-selection-summary {
+  margin-bottom: 1rem;
+}
+
 .requirement-card-icon {
   background: linear-gradient(135deg, rgba(31, 100, 229, 0.2), rgba(82, 188, 148, 0.24));
 }
 
 .requirement-catalog-card .object-type-badge {
   justify-self: start;
+}
+
+.requirement-catalog-card.is-marked-for-delete {
+  border-color: rgba(205, 54, 88, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(205, 54, 88, 0.08);
+}
+
+.requirement-catalog-card.is-marked-for-delete .requirement-delete-checkbox {
+  color: var(--danger);
+}
+
+.requirement-delete-checkbox {
+  margin-top: 0.1rem;
+  width: fit-content;
+  font-size: 0.82rem;
 }
 
 .requirement-link-section {
@@ -4933,6 +5099,12 @@ textarea:disabled {
   overflow-y: auto;
   padding-right: 0.75rem;
   scrollbar-gutter: stable;
+}
+
+.requirement-link-picker--workspace {
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
 }
 
 .requirement-link-option {
@@ -5697,6 +5869,16 @@ textarea:disabled {
   .page-header {
     padding: 1rem;
     flex-direction: column;
+  }
+
+  .requirement-accordion-toggle {
+    flex-direction: column;
+  }
+
+  .requirement-accordion-toggle-meta {
+    width: 100%;
+    justify-items: start;
+    padding-left: 2rem;
   }
 
   .page-actions {

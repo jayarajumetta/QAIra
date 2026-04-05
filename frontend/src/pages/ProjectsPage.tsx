@@ -368,31 +368,37 @@ export function ProjectsPage() {
       <div className="workspace-grid">
         <Panel title="Project catalog" subtitle="Select a project card to switch context. Create Project opens a guided setup modal for scope, app types, and initial members.">
           <div className="catalog-grid compact">
-            {projectItems.map((project) => (
-              <button
-                key={project.id}
-                className={selectedProject?.id === project.id ? "catalog-card tile-card project-catalog-card is-active" : "catalog-card tile-card project-catalog-card"}
-                onClick={() => setSelectedProjectId(project.id)}
-                type="button"
-              >
-                <div className="tile-card-main">
-                  <div className="tile-card-header">
-                    <div className="record-card-icon project-card-icon">PR</div>
-                    <div className="tile-card-title-group">
-                      <strong>{project.name}</strong>
-                      <span className="tile-card-kicker">Created workspace scope</span>
+            {projectItems.map((project) => {
+              const isSelected = selectedProject?.id === project.id;
+
+              return (
+                <button
+                  key={project.id}
+                  aria-pressed={isSelected}
+                  className={isSelected ? "catalog-card tile-card project-catalog-card is-active" : "catalog-card tile-card project-catalog-card"}
+                  onClick={() => setSelectedProjectId(project.id)}
+                  type="button"
+                >
+                  <div className="tile-card-main">
+                    <div className="tile-card-header">
+                      <div className="record-card-icon project-card-icon">PR</div>
+                      <div className="tile-card-title-group">
+                        <strong>{project.name}</strong>
+                        <span className="tile-card-kicker">Created workspace scope</span>
+                      </div>
+                      <span className="object-type-badge">PROJECT</span>
                     </div>
-                    <span className="object-type-badge">PROJECT</span>
+                    <p className="tile-card-description">{project.description || "No description yet."}</p>
+                    <div className="tile-card-metrics">
+                      <span className="tile-metric">{memberCountByProjectId[project.id] || 0} members</span>
+                      <span className="tile-metric">{requirementCountByProjectId[project.id] || 0} requirements</span>
+                      <span className="tile-metric">{testCaseCountByProjectId[project.id] || 0} test cases</span>
+                    </div>
+                    {isSelected ? <span className="status-pill tone-info project-selection-indicator">Current Project</span> : null}
                   </div>
-                  <p className="tile-card-description">{project.description || "No description yet."}</p>
-                  <div className="tile-card-metrics">
-                    <span className="tile-metric">{memberCountByProjectId[project.id] || 0} members</span>
-                    <span className="tile-metric">{requirementCountByProjectId[project.id] || 0} requirements</span>
-                    <span className="tile-metric">{testCaseCountByProjectId[project.id] || 0} test cases</span>
-                  </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
           {!projectItems.length ? <div className="empty-state compact">No projects yet. Create the first project to add scope, app types, and the initial team in one flow.</div> : null}
         </Panel>

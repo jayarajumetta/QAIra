@@ -38,7 +38,8 @@ export function AiDesignStudioModal({
   disablePreview,
   disableAccept,
   closeDisabled = false,
-  acceptLabel
+  acceptLabel,
+  dialogClassName
 }: {
   eyebrow: string;
   requirementLabel: string;
@@ -77,6 +78,7 @@ export function AiDesignStudioModal({
   disableAccept: boolean;
   closeDisabled?: boolean;
   acceptLabel: string;
+  dialogClassName?: string;
 }) {
   const selectedRequirements = requirements.filter((requirement) => selectedRequirementIds.includes(requirement.id));
 
@@ -98,7 +100,7 @@ export function AiDesignStudioModal({
       <div
         aria-label="AI test case generation"
         aria-modal="true"
-        className="modal-card ai-modal-card ai-design-modal"
+        className={dialogClassName ? `modal-card ai-modal-card ai-design-modal ${dialogClassName}` : "modal-card ai-modal-card ai-design-modal"}
         onClick={(event) => event.stopPropagation()}
         role="dialog"
       >

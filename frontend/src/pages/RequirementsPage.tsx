@@ -1,4 +1,4 @@
-import { ChangeEvent, Dispatch, FormEvent, SetStateAction, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, Dispatch, FormEvent, ReactNode, SetStateAction, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
@@ -21,12 +21,20 @@ type RequirementDraft = {
   status: string;
 };
 
+type RequirementSectionKey = "details" | "linked" | "library";
+
 const EMPTY_REQUIREMENT: RequirementDraft = {
   title: "",
   description: "",
   priority: 3,
   status: "open"
 };
+
+const createDefaultRequirementSections = (): Record<RequirementSectionKey, boolean> => ({
+  details: true,
+  linked: true,
+  library: false
+});
 
 export function RequirementsPage() {
   const navigate = useNavigate();
@@ -36,6 +44,10 @@ export function RequirementsPage() {
   const [appTypeId, setAppTypeId] = useState("");
   const [selectedRequirementId, setSelectedRequirementId] = useState("");
   const [selectedTestCaseIds, setSelectedTestCaseIds] = useState<string[]>([]);
+  const [deleteSelectedRequirementIds, setDeleteSelectedRequirementIds] = useState<string[]>([]);
+  const [isDeletingSelectedRequirements, setIsDeletingSelectedRequirements] = useState(false);
+  const [requirementSearchTerm, setRequirementSearchTerm] = useState("");
+  const [expandedSections, setExpandedSections] = useState<Record<RequirementSectionKey, boolean>>(createDefaultRequirementSections);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const [draft, setDraft] = useState<RequirementDraft>(EMPTY_REQUIREMENT);
@@ -170,10 +182,35 @@ export function RequirementsPage() {
     }
   }, [requirements, selectedRequirementId]);
 
+  useEffect(() => {
+    setDeleteSelectedRequirementIds((current) => current.filter((id) => requirements.some((item) => item.id === id)));
+  }, [requirements]);
+
   const selectedRequirement = useMemo(
     () => requirements.find((item) => item.id === selectedRequirementId) || requirements[0] || null,
     [requirements, selectedRequirementId]
   );
+
+  const filteredRequirements = useMemo(() => {
+    const normalizedSearch = requirementSearchTerm.trim().toLowerCase();
+
+    if (!normalizedSearch) {
+      return requirements;
+    }
+
+    return requirements.filter((item) =>
+      [
+        item.title,
+        item.description || "",
+        item.status || "open",
+        `p${item.priority ?? 3}`,
+        `priority ${item.priority ?? 3}`
+      ].some((value) => value.toLowerCase().includes(normalizedSearch))
+    );
+  }, [requirementSearchTerm, requirements]);
+
+  const areAllFilteredRequirementsSelected =
+    filteredRequirements.length > 0 && filteredRequirements.every((item) => deleteSelectedRequirementIds.includes(item.id));
 
   const aiRequirement = useMemo(
     () => requirements.find((item) => item.id === aiRequirementId) || selectedRequirement || requirements[0] || null,
@@ -192,13 +229,13 @@ export function RequirementsPage() {
   }, [aiRequirement, testCases]);
 
   const selectedVisibleCases = useMemo(() => {
-    if (!selectedRequirement) {
+    if (!selectedTestCaseIds.length) {
       return [];
     }
 
-    const linkedIds = new Set(selectedRequirement.test_case_ids || []);
+    const linkedIds = new Set(selectedTestCaseIds);
     return testCases.filter((testCase) => linkedIds.has(testCase.id));
-  }, [selectedRequirement, testCases]);
+  }, [selectedTestCaseIds, testCases]);
 
   useEffect(() => {
     if (!selectedRequirement) {
@@ -215,6 +252,10 @@ export function RequirementsPage() {
     });
     setSelectedTestCaseIds(selectedRequirement.test_case_ids || []);
   }, [selectedRequirement]);
+
+  useEffect(() => {
+    setExpandedSections(createDefaultRequirementSections());
+  }, [selectedRequirement?.id]);
 
   useEffect(() => {
     if (!aiRequirementId && selectedRequirement) {
@@ -443,6 +484,59 @@ export function RequirementsPage() {
     }
   };
 
+  const handleDeleteSelectedRequirements = async () => {
+    const selectedRequirements = requirements.filter((item) => deleteSelectedRequirementIds.includes(item.id));
+
+    if (!selectedRequirements.length) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${selectedRequirements.length} requirement${selectedRequirements.length === 1 ? "" : "s"}? Linked test cases will remain in the library.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsDeletingSelectedRequirements(true);
+
+    try {
+      const results = await Promise.allSettled(selectedRequirements.map((requirement) => api.requirements.delete(requirement.id)));
+      const deletedIds = selectedRequirements
+        .filter((_, index) => results[index]?.status === "fulfilled")
+        .map((requirement) => requirement.id);
+      const failedResults = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+
+      setDeleteSelectedRequirementIds((current) => current.filter((id) => !deletedIds.includes(id)));
+
+      if (deletedIds.includes(selectedRequirementId)) {
+        setSelectedRequirementId("");
+      }
+
+      if (deletedIds.includes(aiRequirementId)) {
+        setAiRequirementId("");
+      }
+
+      if (deletedIds.length) {
+        await refresh();
+      }
+
+      if (!failedResults.length) {
+        showSuccess(`${deletedIds.length} requirement${deletedIds.length === 1 ? "" : "s"} deleted.`);
+        return;
+      }
+
+      const firstError = failedResults[0]?.reason;
+      setMessageTone("error");
+      setMessage(
+        `${deletedIds.length} requirement${deletedIds.length === 1 ? "" : "s"} deleted, ${failedResults.length} failed.${firstError instanceof Error ? ` ${firstError.message}` : ""}`
+      );
+    } finally {
+      setIsDeletingSelectedRequirements(false);
+    }
+  };
+
   const handleAddAiReferenceImages = async (files: FileList | null) => {
     try {
       const images = await readImageFiles(files);
@@ -604,33 +698,96 @@ export function RequirementsPage() {
       <div className="requirement-workspace">
         <div className="requirement-sidebar">
           <Panel title="Requirement catalog" subtitle="Select a requirement card to review its details, adjust coverage links, or send it into the AI design studio.">
+            <div className="design-list-toolbar requirement-catalog-toolbar">
+              <input
+                placeholder="Search title, description, status, or priority"
+                value={requirementSearchTerm}
+                onChange={(event) => setRequirementSearchTerm(event.target.value)}
+              />
+              <button
+                className="ghost-button"
+                disabled={!filteredRequirements.length || areAllFilteredRequirementsSelected}
+                onClick={() =>
+                  setDeleteSelectedRequirementIds((current) => [...new Set([...current, ...filteredRequirements.map((item) => item.id)])])
+                }
+                type="button"
+              >
+                Select all visible
+              </button>
+              <button
+                className="ghost-button"
+                disabled={!deleteSelectedRequirementIds.length}
+                onClick={() => setDeleteSelectedRequirementIds([])}
+                type="button"
+              >
+                Clear selection
+              </button>
+              <button
+                className="ghost-button danger"
+                disabled={!deleteSelectedRequirementIds.length || isDeletingSelectedRequirements}
+                onClick={() => void handleDeleteSelectedRequirements()}
+                type="button"
+              >
+                {isDeletingSelectedRequirements ? "Deleting…" : `Delete selected${deleteSelectedRequirementIds.length ? ` (${deleteSelectedRequirementIds.length})` : ""}`}
+              </button>
+            </div>
+
+            {deleteSelectedRequirementIds.length ? (
+              <div className="detail-summary requirement-selection-summary">
+                <strong>{deleteSelectedRequirementIds.length} requirement{deleteSelectedRequirementIds.length === 1 ? "" : "s"} marked for delete</strong>
+                <span>Checkbox selections are only used for bulk delete. Click a card body to keep editing one requirement at a time.</span>
+              </div>
+            ) : null}
+
             <div className="record-list requirement-card-list">
-              {requirements.map((item) => (
-                <button
-                  key={item.id}
-                  className={selectedRequirement?.id === item.id ? "record-card tile-card requirement-catalog-card is-active" : "record-card tile-card requirement-catalog-card"}
-                  onClick={() => setSelectedRequirementId(item.id)}
-                  type="button"
-                >
-                  <div className="tile-card-main">
-                    <div className="tile-card-header">
-                      <div className="record-card-icon requirement-card-icon">RQ</div>
-                      <div className="tile-card-title-group">
-                        <strong>{item.title}</strong>
-                        <span className="tile-card-kicker">{item.status || "open"} · Priority P{item.priority ?? 3}</span>
+              {filteredRequirements.map((item) => {
+                const isSelectedForDelete = deleteSelectedRequirementIds.includes(item.id);
+                const isActive = selectedRequirement?.id === item.id;
+
+                return (
+                  <button
+                    key={item.id}
+                    className={[
+                      "record-card tile-card requirement-catalog-card",
+                      isActive ? "is-active" : "",
+                      isSelectedForDelete ? "is-marked-for-delete" : ""
+                    ].filter(Boolean).join(" ")}
+                    onClick={() => setSelectedRequirementId(item.id)}
+                    type="button"
+                  >
+                    <div className="tile-card-main">
+                      <div className="tile-card-header">
+                        <div className="record-card-icon requirement-card-icon">RQ</div>
+                        <div className="tile-card-title-group">
+                          <strong>{item.title}</strong>
+                          <span className="tile-card-kicker">{item.status || "open"} · Priority P{item.priority ?? 3}</span>
+                        </div>
+                        <span className="object-type-badge">REQUIREMENT</span>
                       </div>
-                      <span className="object-type-badge">REQUIREMENT</span>
+                      <p className="tile-card-description">{item.description || "No description yet."}</p>
+                      <div className="tile-card-metrics">
+                        <span className="tile-metric">{(item.test_case_ids || []).length} linked cases</span>
+                        <span className="tile-metric">{currentAppTypeName}</span>
+                      </div>
+                      <label className="checkbox-field requirement-delete-checkbox" onClick={(event) => event.stopPropagation()}>
+                        <input
+                          checked={isSelectedForDelete}
+                          onChange={(event) =>
+                            setDeleteSelectedRequirementIds((current) =>
+                              event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id)
+                            )
+                          }
+                          type="checkbox"
+                        />
+                        Mark for delete
+                      </label>
                     </div>
-                    <p className="tile-card-description">{item.description || "No description yet."}</p>
-                    <div className="tile-card-metrics">
-                      <span className="tile-metric">{(item.test_case_ids || []).length} linked cases</span>
-                      <span className="tile-metric">{currentAppTypeName}</span>
-                    </div>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
             {!requirements.length ? <div className="empty-state compact">No requirements yet for this project.</div> : null}
+            {requirements.length && !filteredRequirements.length ? <div className="empty-state compact">No requirements match the current search.</div> : null}
           </Panel>
         </div>
 
@@ -638,90 +795,113 @@ export function RequirementsPage() {
           <Panel title={selectedRequirement ? selectedRequirement.title : "Requirement details"} subtitle={selectedRequirement ? "Edit the requirement, manage reusable coverage links, and keep the selected item in focus." : "Select a requirement to review its details."}>
             {selectedRequirement ? (
               <div className="detail-stack">
-                <div className="detail-summary">
-                  <strong>{selectedRequirement.title}</strong>
-                  <span>{selectedRequirement.description || "No description yet for this requirement."}</span>
-                  <span>{currentAppTypeName} · {(selectedRequirement.test_case_ids || []).length} linked case{(selectedRequirement.test_case_ids || []).length === 1 ? "" : "s"} across the workspace</span>
-                </div>
-
-                <div className="metric-strip">
-                  <div className="mini-card">
-                    <strong>P{draft.priority || 3}</strong>
-                    <span>Priority</span>
-                  </div>
-                  <div className="mini-card">
-                    <strong>{draft.status || "open"}</strong>
-                    <span>Status</span>
-                  </div>
-                  <div className="mini-card">
-                    <strong>{selectedTestCaseIds.length}</strong>
-                    <span>Total linked cases</span>
-                  </div>
-                  <div className="mini-card">
-                    <strong>{selectedVisibleCases.length}</strong>
-                    <span>Visible in current app type</span>
-                  </div>
-                </div>
-
-                <form className="form-grid" onSubmit={(event) => void handleSaveRequirement(event)}>
-                  <div className="record-grid">
-                    <FormField label="Title" required>
-                      <input required value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} />
-                    </FormField>
-                    <FormField label="Status">
-                      <input value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value }))} />
-                    </FormField>
-                    <FormField label="Priority">
-                      <input min="1" max="5" type="number" value={draft.priority} onChange={(event) => setDraft((current) => ({ ...current, priority: Number(event.target.value) || 3 }))} />
-                    </FormField>
-                  </div>
-                  <FormField label="Description">
-                    <textarea rows={4} value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} />
-                  </FormField>
-
-                  <div className="action-row">
-                    <button className="primary-button" disabled={updateRequirement.isPending || replaceMappings.isPending} type="submit">
-                      {updateRequirement.isPending || replaceMappings.isPending ? "Saving…" : "Save requirement"}
-                    </button>
-                    <button className="ghost-button danger" disabled={deleteRequirement.isPending} onClick={() => void handleDeleteRequirement()} type="button">
-                      Delete requirement
-                    </button>
-                  </div>
-                </form>
-
-                <section className="requirement-link-section">
-                  <div className="panel-head">
-                    <div>
-                      <h3>Link or unlink existing test cases</h3>
-                      <p>Choose the reusable cases from the selected app type that cover this requirement. Hidden links from other app types stay intact unless you change them elsewhere.</p>
+                <div className="requirement-accordion">
+                  <RequirementAccordionSection
+                    countLabel={`${selectedTestCaseIds.length} linked`}
+                    isExpanded={expandedSections.details}
+                    onToggle={() => setExpandedSections((current) => ({ ...current, details: !current.details }))}
+                    summary="Review the requirement header details, update the draft, then save or delete from one focused section."
+                    title="Requirement header details"
+                  >
+                    <div className="detail-summary">
+                      <strong>{selectedRequirement.title}</strong>
+                      <span>{selectedRequirement.description || "No description yet for this requirement."}</span>
+                      <span>{currentAppTypeName} · {selectedTestCaseIds.length} linked case{selectedTestCaseIds.length === 1 ? "" : "s"} across the workspace</span>
                     </div>
-                  </div>
 
-                  <div className="detail-summary">
-                    <strong>{selectedTestCaseIds.length} linked case{selectedTestCaseIds.length === 1 ? "" : "s"}</strong>
-                    <span>{appTypeId ? `Currently browsing reusable cases for ${currentAppTypeName}.` : "Select an app type first to manage linked coverage."}</span>
-                  </div>
-
-                  <div className="stack-list">
-                    {selectedVisibleCases.map((testCase) => (
-                      <div className="stack-item" key={testCase.id}>
-                        <div>
-                          <strong>{testCase.title}</strong>
-                          <span>{testCase.description || "No description available."}</span>
-                        </div>
-                        <span className="count-pill">Linked</span>
+                    <div className="metric-strip">
+                      <div className="mini-card">
+                        <strong>P{draft.priority || 3}</strong>
+                        <span>Priority</span>
                       </div>
-                    ))}
-                    {!selectedVisibleCases.length ? <div className="empty-state compact">No linked test cases are visible in the current app type yet.</div> : null}
-                  </div>
+                      <div className="mini-card">
+                        <strong>{draft.status || "open"}</strong>
+                        <span>Status</span>
+                      </div>
+                      <div className="mini-card">
+                        <strong>{selectedTestCaseIds.length}</strong>
+                        <span>Total linked cases</span>
+                      </div>
+                      <div className="mini-card">
+                        <strong>{selectedVisibleCases.length}</strong>
+                        <span>Visible in current app type</span>
+                      </div>
+                    </div>
 
-                  <RequirementTestCasePicker
-                    emptyText={appTypeId ? "No reusable test cases are available for this app type." : "Select an app type first to link reusable test cases."}
-                    selectedIds={selectedTestCaseIds}
-                    testCases={testCases}
-                    onToggle={(testCaseId, checked) => toggleSelectedTestCase(setSelectedTestCaseIds, testCaseId, checked)}
-                  />
-                </section>
+                    <form className="form-grid" onSubmit={(event) => void handleSaveRequirement(event)}>
+                      <div className="record-grid">
+                        <FormField label="Title" required>
+                          <input required value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} />
+                        </FormField>
+                        <FormField label="Status">
+                          <input value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value }))} />
+                        </FormField>
+                        <FormField label="Priority">
+                          <input min="1" max="5" type="number" value={draft.priority} onChange={(event) => setDraft((current) => ({ ...current, priority: Number(event.target.value) || 3 }))} />
+                        </FormField>
+                      </div>
+                      <FormField label="Description">
+                        <textarea rows={4} value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} />
+                      </FormField>
+
+                      <div className="action-row">
+                        <button className="primary-button" disabled={updateRequirement.isPending || replaceMappings.isPending} type="submit">
+                          {updateRequirement.isPending || replaceMappings.isPending ? "Saving…" : "Save requirement"}
+                        </button>
+                        <button className="ghost-button danger" disabled={deleteRequirement.isPending} onClick={() => void handleDeleteRequirement()} type="button">
+                          Delete requirement
+                        </button>
+                      </div>
+                    </form>
+                  </RequirementAccordionSection>
+
+                  <RequirementAccordionSection
+                    countLabel={`${selectedVisibleCases.length} visible`}
+                    isExpanded={expandedSections.linked}
+                    onToggle={() => setExpandedSections((current) => ({ ...current, linked: !current.linked }))}
+                    summary="Review the linked reusable cases currently staged for this requirement in the active app type."
+                    title="Linked test cases"
+                  >
+                    <div className="detail-summary">
+                      <strong>{selectedTestCaseIds.length} linked case{selectedTestCaseIds.length === 1 ? "" : "s"}</strong>
+                      <span>{appTypeId ? `Currently browsing reusable cases for ${currentAppTypeName}. Hidden links from other app types stay intact unless you change them elsewhere.` : "Select an app type first to manage linked coverage."}</span>
+                    </div>
+
+                    <div className="stack-list">
+                      {selectedVisibleCases.map((testCase) => (
+                        <div className="stack-item" key={testCase.id}>
+                          <div>
+                            <strong>{testCase.title}</strong>
+                            <span>{testCase.description || "No description available."}</span>
+                          </div>
+                          <span className="count-pill">Linked</span>
+                        </div>
+                      ))}
+                      {!selectedVisibleCases.length ? <div className="empty-state compact">No linked test cases are visible in the current app type yet.</div> : null}
+                    </div>
+                  </RequirementAccordionSection>
+
+                  <RequirementAccordionSection
+                    countLabel={`${testCases.length} available`}
+                    isExpanded={expandedSections.library}
+                    onToggle={() => setExpandedSections((current) => ({ ...current, library: !current.library }))}
+                    summary="Browse all reusable cases in the active app type and choose what should stay linked to this requirement."
+                    title="All existing test cases"
+                  >
+                    <div className="detail-summary">
+                      <strong>Link or unlink existing test cases</strong>
+                      <span>{appTypeId ? `Select reusable cases from ${currentAppTypeName} to update this requirement's coverage.` : "Select an app type first to link reusable test cases."}</span>
+                    </div>
+
+                    <RequirementTestCasePicker
+                      emptyText={appTypeId ? "No reusable test cases are available for this app type." : "Select an app type first to link reusable test cases."}
+                      pickerClassName="requirement-link-picker--workspace"
+                      selectedIds={selectedTestCaseIds}
+                      testCases={testCases}
+                      onToggle={(testCaseId, checked) => toggleSelectedTestCase(setSelectedTestCaseIds, testCaseId, checked)}
+                    />
+                  </RequirementAccordionSection>
+                </div>
               </div>
             ) : (
               <div className="empty-state compact">Select a requirement from the catalog to view and edit its details.</div>
@@ -948,6 +1128,7 @@ export function RequirementsPage() {
           closeDisabled={previewDesignedCases.isPending || acceptDesignedCases.isPending}
           disableAccept={!previewCases.length || acceptDesignedCases.isPending}
           disablePreview={!aiRequirement || !appTypeId || previewDesignedCases.isPending || !integrations.length}
+          dialogClassName="ai-design-modal--requirements"
           existingCases={associatedCases}
           existingCasesSubtitle="These are already associated with the selected requirement in the current app type."
           existingCasesTitle="Existing linked cases"
@@ -991,19 +1172,21 @@ function RequirementTestCasePicker({
   testCases,
   selectedIds,
   onToggle,
-  emptyText
+  emptyText,
+  pickerClassName
 }: {
   testCases: TestCase[];
   selectedIds: string[];
   onToggle: (testCaseId: string, checked: boolean) => void;
   emptyText: string;
+  pickerClassName?: string;
 }) {
   if (!testCases.length) {
     return <div className="empty-state compact">{emptyText}</div>;
   }
 
   return (
-    <div className="modal-case-picker requirement-link-picker">
+    <div className={pickerClassName ? `modal-case-picker requirement-link-picker ${pickerClassName}` : "modal-case-picker requirement-link-picker"}>
       {testCases.map((testCase) => (
         <label className="modal-case-option requirement-link-option" key={testCase.id}>
           <input
@@ -1021,5 +1204,55 @@ function RequirementTestCasePicker({
         </label>
       ))}
     </div>
+  );
+}
+
+function RequirementAccordionSection({
+  title,
+  summary,
+  countLabel,
+  isExpanded,
+  onToggle,
+  children
+}: {
+  title: string;
+  summary: string;
+  countLabel: string;
+  isExpanded: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section className={isExpanded ? "requirement-accordion-section is-expanded" : "requirement-accordion-section"}>
+      <button
+        aria-expanded={isExpanded}
+        className="requirement-accordion-toggle"
+        onClick={onToggle}
+        type="button"
+      >
+        <div className="requirement-accordion-toggle-main">
+          <span aria-hidden="true" className={isExpanded ? "requirement-accordion-icon is-expanded" : "requirement-accordion-icon"}>
+            <RequirementAccordionChevronIcon />
+          </span>
+          <div className="requirement-accordion-toggle-copy">
+            <strong>{title}</strong>
+            <span>{summary}</span>
+          </div>
+        </div>
+        <div className="requirement-accordion-toggle-meta">
+          <span className="requirement-accordion-toggle-count">{countLabel}</span>
+          <span className="requirement-accordion-toggle-state">{isExpanded ? "Collapse" : "Expand"}</span>
+        </div>
+      </button>
+      {isExpanded ? <div className="requirement-accordion-body">{children}</div> : null}
+    </section>
+  );
+}
+
+function RequirementAccordionChevronIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width="18">
+      <path d="m9 6 6 6-6 6" />
+    </svg>
   );
 }
