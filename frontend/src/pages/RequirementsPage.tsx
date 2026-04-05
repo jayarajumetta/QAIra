@@ -562,7 +562,7 @@ export function RequirementsPage() {
               }}
               type="button"
             >
-              AI Design Studio
+              AI Test Case Generation
             </button>
             <button className="primary-button" disabled={!projectId} onClick={openCreateRequirementModal} type="button">
               Create Requirement

@@ -96,7 +96,7 @@ export function AiDesignStudioModal({
   return (
     <div className="modal-backdrop" onClick={() => !closeDisabled && onClose()} role="presentation">
       <div
-        aria-label="AI design studio"
+        aria-label="AI test case generation"
         aria-modal="true"
         className="modal-card ai-modal-card ai-design-modal"
         onClick={(event) => event.stopPropagation()}
@@ -105,7 +105,7 @@ export function AiDesignStudioModal({
         <div className="ai-studio-header">
           <div className="ai-studio-header-copy">
             <p className="eyebrow">{eyebrow}</p>
-            <h3>AI Design Studio</h3>
+            <h3>AI Test Case Generation</h3>
             <p>Shape the LLM prompt with source requirements, extra context, photos, and external links before reviewing the generated cases for approval.</p>
           </div>
           <button className="ghost-button" disabled={closeDisabled} onClick={onClose} type="button">
@@ -260,7 +260,7 @@ export function AiDesignStudioModal({
 
             {!integrations.length ? (
               <div className="inline-message error-message">
-                No active LLM integrations are available yet. Create one in Integrations to use AI design.
+                No active LLM integrations are available yet. Create one in Integrations to use AI test case generation.
               </div>
             ) : null}
 

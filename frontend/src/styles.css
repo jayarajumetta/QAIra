@@ -2094,13 +2094,13 @@ body {
   background: rgba(10, 16, 28, 0.45);
 }
 
-.ai-modal-card {
-  width: min(1200px, 100%);
+.modal-card.ai-modal-card {
+  width: min(94vw, 1440px);
 }
 
-.ai-design-modal {
-  width: min(1380px, 100%);
-  max-height: min(90vh, 58rem);
+.modal-card.ai-design-modal {
+  width: min(96vw, 1520px);
+  max-height: min(92vh, 64rem);
   display: flex;
   flex-direction: column;
   gap: 1rem;
@@ -2128,8 +2128,8 @@ body {
 
 .ai-studio-shell {
   display: grid;
-  grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
-  gap: 1rem;
+  grid-template-columns: minmax(20rem, 23rem) minmax(0, 1fr);
+  gap: 1.25rem;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
@@ -2145,14 +2145,14 @@ body {
   display: grid;
   gap: 1rem;
   overflow-y: auto;
-  padding-right: 0.3rem;
+  padding-right: 0.45rem;
 }
 
 .ai-studio-main {
   display: grid;
-  gap: 1rem;
+  gap: 1.25rem;
   overflow-y: auto;
-  padding-right: 0.3rem;
+  padding-right: 0.45rem;
 }
 
 .ai-studio-panel {
@@ -2213,8 +2213,8 @@ body {
 
 .ai-modal-grid {
   display: grid;
-  gap: 1rem;
-  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 1.25rem;
+  grid-template-columns: minmax(20rem, 22rem) minmax(0, 1fr);
   align-items: start;
 }
 

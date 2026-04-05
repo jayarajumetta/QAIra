@@ -858,7 +858,7 @@ export function TestCasesPage() {
               Bulk Import
             </button>
             <button className="ghost-button" disabled={!requirements.length || !appTypeId} onClick={openAiStudio} type="button">
-              AI Design Studio
+              AI Test Case Generation
             </button>
             <button className="ghost-button" disabled={!filteredCases.length} onClick={() => void handleExportCsv()} type="button">
               Export CSV
