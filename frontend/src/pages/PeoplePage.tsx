@@ -11,6 +11,9 @@ import type { Role, User } from "../types";
 
 type PeopleView = "users" | "roles";
 
+const createEmptyUserDraft = (roleId = "") => ({ name: "", email: "", password_hash: "", role_id: roleId });
+const EMPTY_ROLE_DRAFT = { name: "" };
+
 export function PeoplePage() {
   const queryClient = useQueryClient();
   const { session } = useAuth();
@@ -19,8 +22,12 @@ export function PeoplePage() {
   const [view, setView] = useState<PeopleView>("users");
   const [selectedUserId, setSelectedUserId] = useState("");
   const [selectedRoleId, setSelectedRoleId] = useState("");
-  const [userDraft, setUserDraft] = useState({ name: "", email: "", password_hash: "", role_id: "" });
-  const [roleDraft, setRoleDraft] = useState({ name: "" });
+  const [userDraft, setUserDraft] = useState(createEmptyUserDraft());
+  const [roleDraft, setRoleDraft] = useState(EMPTY_ROLE_DRAFT);
+  const [isCreateUserModalOpen, setIsCreateUserModalOpen] = useState(false);
+  const [isCreateRoleModalOpen, setIsCreateRoleModalOpen] = useState(false);
+  const [createUserDraft, setCreateUserDraft] = useState(createEmptyUserDraft());
+  const [createRoleDraft, setCreateRoleDraft] = useState(EMPTY_ROLE_DRAFT);
 
   const userItems = users.data || [];
   const roleItems = roles.data || [];
@@ -65,10 +72,41 @@ export function PeoplePage() {
     ]);
   };
 
+  const openCreateUserModal = () => {
+    setCreateUserDraft(createEmptyUserDraft(defaultMemberRoleId));
+    setIsCreateUserModalOpen(true);
+  };
+
+  const closeCreateUserModal = () => {
+    if (createUser.isPending) {
+      return;
+    }
+
+    setIsCreateUserModalOpen(false);
+    setCreateUserDraft(createEmptyUserDraft(defaultMemberRoleId));
+  };
+
+  const openCreateRoleModal = () => {
+    setCreateRoleDraft(EMPTY_ROLE_DRAFT);
+    setIsCreateRoleModalOpen(true);
+  };
+
+  const closeCreateRoleModal = () => {
+    if (createRole.isPending) {
+      return;
+    }
+
+    setIsCreateRoleModalOpen(false);
+    setCreateRoleDraft(EMPTY_ROLE_DRAFT);
+  };
+
   const createUser = useMutation({
     mutationFn: api.users.create,
-    onSuccess: async () => {
+    onSuccess: async (response) => {
       setMessage("User created.");
+      setSelectedUserId(response.id);
+      setIsCreateUserModalOpen(false);
+      setCreateUserDraft(createEmptyUserDraft(defaultMemberRoleId));
       await invalidate();
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to create user")
@@ -96,8 +134,11 @@ export function PeoplePage() {
 
   const createRole = useMutation({
     mutationFn: api.roles.create,
-    onSuccess: async () => {
+    onSuccess: async (response) => {
       setMessage("Role created.");
+      setSelectedRoleId(response.id);
+      setIsCreateRoleModalOpen(false);
+      setCreateRoleDraft(EMPTY_ROLE_DRAFT);
       await invalidate();
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to create role")
@@ -124,29 +165,63 @@ export function PeoplePage() {
 
   const handleUserCreate = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const formData = new FormData(event.currentTarget);
     createUser.mutate({
-      email: String(formData.get("email") || ""),
-      password_hash: String(formData.get("password_hash") || ""),
-      name: String(formData.get("name") || ""),
-      role_id: String(formData.get("role_id") || defaultMemberRoleId)
+      email: createUserDraft.email,
+      password_hash: createUserDraft.password_hash,
+      name: createUserDraft.name,
+      role_id: createUserDraft.role_id || defaultMemberRoleId
     });
-    event.currentTarget.reset();
   };
 
   const handleRoleCreate = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    createRole.mutate({ name: String(formData.get("name") || "") });
-    event.currentTarget.reset();
+    createRole.mutate({ name: createRoleDraft.name });
   };
+
+  useEffect(() => {
+    if (!isCreateUserModalOpen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !createUser.isPending) {
+        closeCreateUserModal();
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [createUser.isPending, isCreateUserModalOpen]);
+
+  useEffect(() => {
+    if (!isCreateRoleModalOpen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !createRole.isPending) {
+        closeCreateRoleModal();
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [createRole.isPending, isCreateRoleModalOpen]);
 
   return (
     <div className="page-content">
       <PageHeader
         eyebrow="People & Access"
         title="User Management"
-        actions={isAdmin ? <button className="primary-button" onClick={() => setView("users")} type="button">Add new user</button> : null}
+        actions={
+          isAdmin ? (
+            view === "users" ? (
+              <button className="primary-button" onClick={openCreateUserModal} type="button">Create user</button>
+            ) : (
+              <button className="primary-button" onClick={openCreateRoleModal} type="button">Create role</button>
+            )
+          ) : null
+        }
       />
 
       {message ? <p className="inline-message">{message}</p> : null}
@@ -269,32 +344,6 @@ export function PeoplePage() {
               )}
             </Panel>
 
-            {isAdmin ? (
-              <Panel title="Add user" subtitle="Use this form for direct CRUD inserts into the workspace.">
-                <form className="form-grid" onSubmit={handleUserCreate}>
-                  <FormField label="Name">
-                    <input name="name" placeholder="Quality lead" />
-                  </FormField>
-                  <FormField label="Email">
-                    <input name="email" type="email" required />
-                  </FormField>
-                  <FormField label="Role">
-                    <select name="role_id" required>
-                      <option value="">Select a role</option>
-                      {roleItems.map((role) => (
-                        <option key={role.id} value={role.id}>
-                          {role.name.charAt(0).toUpperCase() + role.name.slice(1)}
-                        </option>
-                      ))}
-                    </select>
-                  </FormField>
-                  <FormField label="Password hash">
-                    <input name="password_hash" required placeholder="Stored password value" />
-                  </FormField>
-                  <button className="primary-button" type="submit">Create user</button>
-                </form>
-              </Panel>
-            ) : null}
           </div>
         </div>
       ) : (
@@ -355,19 +404,141 @@ export function PeoplePage() {
               )}
             </Panel>
 
-            {isAdmin ? (
-              <Panel title="Add role" subtitle="Keep names short so they read well in assignment lists and filters.">
-                <form className="form-grid" onSubmit={handleRoleCreate}>
-                  <FormField label="Role name">
-                    <input name="name" required placeholder="qa-manager" />
-                  </FormField>
-                  <button className="primary-button" type="submit">Create role</button>
-                </form>
-              </Panel>
-            ) : null}
           </div>
         </div>
       )}
+
+      {isCreateUserModalOpen ? (
+        <div className="modal-backdrop" onClick={closeCreateUserModal} role="presentation">
+          <div
+            aria-labelledby="create-user-title"
+            aria-modal="true"
+            className="modal-card people-modal-card"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="people-modal-header">
+              <div className="people-modal-title">
+                <p className="eyebrow">People & Access</p>
+                <h3 id="create-user-title">Create user</h3>
+                <p>Add a workspace user without leaving the directory view.</p>
+              </div>
+              <button
+                aria-label="Close create user dialog"
+                className="ghost-button"
+                onClick={closeCreateUserModal}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+
+            <form className="people-modal-form" onSubmit={handleUserCreate}>
+              <div className="people-modal-body">
+                <div className="record-grid">
+                  <FormField label="Name">
+                    <input
+                      name="name"
+                      placeholder="Quality lead"
+                      value={createUserDraft.name}
+                      onChange={(event) => setCreateUserDraft((current) => ({ ...current, name: event.target.value }))}
+                    />
+                  </FormField>
+                  <FormField label="Email" required>
+                    <input
+                      name="email"
+                      type="email"
+                      value={createUserDraft.email}
+                      onChange={(event) => setCreateUserDraft((current) => ({ ...current, email: event.target.value }))}
+                    />
+                  </FormField>
+                  <FormField label="Role" required>
+                    <select
+                      name="role_id"
+                      value={createUserDraft.role_id}
+                      onChange={(event) => setCreateUserDraft((current) => ({ ...current, role_id: event.target.value }))}
+                    >
+                      <option value="">Select a role</option>
+                      {roleItems.map((role) => (
+                        <option key={role.id} value={role.id}>
+                          {role.name.charAt(0).toUpperCase() + role.name.slice(1)}
+                        </option>
+                      ))}
+                    </select>
+                  </FormField>
+                  <FormField label="Password hash" required>
+                    <input
+                      name="password_hash"
+                      placeholder="Stored password value"
+                      value={createUserDraft.password_hash}
+                      onChange={(event) => setCreateUserDraft((current) => ({ ...current, password_hash: event.target.value }))}
+                    />
+                  </FormField>
+                </div>
+              </div>
+
+              <div className="action-row people-modal-actions">
+                <button className="primary-button" disabled={createUser.isPending} type="submit">
+                  {createUser.isPending ? "Creating…" : "Create user"}
+                </button>
+                <button className="ghost-button" disabled={createUser.isPending} onClick={closeCreateUserModal} type="button">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {isCreateRoleModalOpen ? (
+        <div className="modal-backdrop" onClick={closeCreateRoleModal} role="presentation">
+          <div
+            aria-labelledby="create-role-title"
+            aria-modal="true"
+            className="modal-card people-modal-card people-role-modal-card"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="people-modal-header">
+              <div className="people-modal-title">
+                <p className="eyebrow">People & Access</p>
+                <h3 id="create-role-title">Create role</h3>
+                <p>Keep the role library concise and reusable across assignments.</p>
+              </div>
+              <button
+                aria-label="Close create role dialog"
+                className="ghost-button"
+                onClick={closeCreateRoleModal}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+
+            <form className="people-modal-form" onSubmit={handleRoleCreate}>
+              <div className="people-modal-body">
+                <FormField label="Role name" required>
+                  <input
+                    name="name"
+                    placeholder="qa-manager"
+                    value={createRoleDraft.name}
+                    onChange={(event) => setCreateRoleDraft({ name: event.target.value })}
+                  />
+                </FormField>
+              </div>
+
+              <div className="action-row people-modal-actions">
+                <button className="primary-button" disabled={createRole.isPending} type="submit">
+                  {createRole.isPending ? "Creating…" : "Create role"}
+                </button>
+                <button className="ghost-button" disabled={createRole.isPending} onClick={closeCreateRoleModal} type="button">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

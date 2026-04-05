@@ -4700,6 +4700,58 @@ textarea:disabled {
   background: var(--panel-strong);
 }
 
+.people-modal-card {
+  width: min(42rem, 100%);
+  max-height: min(86vh, 46rem);
+}
+
+.people-role-modal-card {
+  width: min(30rem, 100%);
+}
+
+.people-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--line);
+}
+
+.people-modal-title {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.people-modal-title p,
+.people-modal-title h3 {
+  margin: 0;
+}
+
+.people-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.people-modal-body {
+  display: grid;
+  gap: var(--space-md);
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.people-modal-actions {
+  margin-top: auto;
+  justify-content: flex-end;
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+
 .project-card-icon {
   background: linear-gradient(135deg, rgba(33, 104, 243, 0.18), rgba(31, 183, 160, 0.24));
 }
