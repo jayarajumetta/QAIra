@@ -5049,6 +5049,8 @@ textarea:disabled {
   max-height: min(68vh, 52rem);
   overflow-y: auto;
   padding-right: 0.5rem;
+  align-content: start;
+  grid-auto-rows: max-content;
   scrollbar-gutter: stable;
 }
 
@@ -5071,6 +5073,10 @@ textarea:disabled {
 
 .requirement-catalog-card .object-type-badge {
   justify-self: start;
+}
+
+.requirement-catalog-card {
+  align-self: start;
 }
 
 .requirement-catalog-card.is-marked-for-delete {
