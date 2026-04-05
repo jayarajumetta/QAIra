@@ -36,8 +36,7 @@ const navigation = [
         label: "Test Runs",
         icon: PlayIcon,
         children: [
-          { id: "executions", to: "/executions", label: "Executions" },
-          { id: "feedback", to: "/feedback", label: "Reporting & Feedback" }
+          { id: "executions", to: "/executions", label: "Executions" }
         ]
       }
     ]
@@ -54,7 +53,8 @@ const navigation = [
     items: [
       { id: "support", to: "/support", label: "Support", icon: SupportIcon },
       { id: "notifications", to: "/notifications", label: "Notifications", icon: BellIcon },
-      { id: "settings", to: "/settings", label: "Settings", icon: CogIcon }
+      { id: "settings", to: "/settings", label: "Settings", icon: CogIcon },
+      { id: "feedback", to: "/feedback", label: "Reporting & Feedback", icon: ChatIcon }
     ]
   }
 ] as const;
