@@ -1,33 +1,24 @@
-import { Dispatch, FormEvent, SetStateAction, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, Dispatch, FormEvent, SetStateAction, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
+import { useCurrentProject } from "../hooks/useCurrentProject";
 import { api } from "../lib/api";
-import type { Integration, Requirement, TestCase } from "../types";
+import { appendUniqueImages, parseExternalLinks, readImageFiles } from "../lib/aiDesignStudio";
+import { parseRequirementCsv } from "../lib/requirementImport";
+import type { AiDesignImageInput, AiDesignedTestCaseCandidate, Requirement, TestCase } from "../types";
 
 type RequirementDraft = {
   title: string;
   description: string;
   priority: number;
   status: string;
-};
-
-type DesignedCaseDraft = {
-  client_id: string;
-  title: string;
-  description: string;
-  priority: number;
-  steps: Array<{
-    step_order: number;
-    action: string;
-    expected_result: string;
-  }>;
-  step_count: number;
 };
 
 const EMPTY_REQUIREMENT: RequirementDraft = {
@@ -41,7 +32,7 @@ export function RequirementsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { session } = useAuth();
-  const [projectId, setProjectId] = useState("");
+  const [projectId, setProjectId] = useCurrentProject();
   const [appTypeId, setAppTypeId] = useState("");
   const [selectedRequirementId, setSelectedRequirementId] = useState("");
   const [selectedTestCaseIds, setSelectedTestCaseIds] = useState<string[]>([]);
@@ -55,9 +46,16 @@ export function RequirementsPage() {
   const [aiRequirementId, setAiRequirementId] = useState("");
   const [integrationId, setIntegrationId] = useState("");
   const [maxCases, setMaxCases] = useState(6);
-  const [previewCases, setPreviewCases] = useState<DesignedCaseDraft[]>([]);
+  const [aiAdditionalContext, setAiAdditionalContext] = useState("");
+  const [aiExternalLinksText, setAiExternalLinksText] = useState("");
+  const [aiReferenceImages, setAiReferenceImages] = useState<AiDesignImageInput[]>([]);
+  const [previewCases, setPreviewCases] = useState<AiDesignedTestCaseCandidate[]>([]);
   const [previewMessage, setPreviewMessage] = useState("");
   const [previewTone, setPreviewTone] = useState<"success" | "error">("success");
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importRows, setImportRows] = useState<Array<{ title: string; description?: string; priority?: number; status?: string }>>([]);
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  const [importFileName, setImportFileName] = useState("");
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -85,6 +83,7 @@ export function RequirementsPage() {
   });
 
   const createRequirement = useMutation({ mutationFn: api.requirements.create });
+  const bulkImportRequirements = useMutation({ mutationFn: api.requirements.bulkImport });
   const updateRequirement = useMutation({
     mutationFn: ({ id, input }: { id: string; input: Parameters<typeof api.requirements.update>[1] }) =>
       api.requirements.update(id, input)
@@ -120,10 +119,21 @@ export function RequirementsPage() {
   };
 
   useEffect(() => {
-    if (!projectId && projects[0]) {
+    if (projectsQuery.isPending) {
+      return;
+    }
+
+    if (!projects.length) {
+      if (projectId) {
+        setProjectId("");
+      }
+      return;
+    }
+
+    if (!projects.some((project) => project.id === projectId)) {
       setProjectId(projects[0].id);
     }
-  }, [projectId, projects]);
+  }, [projectId, projects, projectsQuery.isPending, setProjectId]);
 
   useEffect(() => {
     if (!appTypes.length) {
@@ -228,6 +238,36 @@ export function RequirementsPage() {
   }, [createRequirement.isPending, isCreateModalOpen, replaceMappings.isPending]);
 
   useEffect(() => {
+    if (!isImportModalOpen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !bulkImportRequirements.isPending) {
+        setIsImportModalOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [bulkImportRequirements.isPending, isImportModalOpen]);
+
+  useEffect(() => {
+    if (!isAiStudioOpen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !previewDesignedCases.isPending && !acceptDesignedCases.isPending) {
+        setIsAiStudioOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [acceptDesignedCases.isPending, isAiStudioOpen, previewDesignedCases.isPending]);
+
+  useEffect(() => {
     if (!isCreateModalOpen) {
       return;
     }
@@ -324,6 +364,67 @@ export function RequirementsPage() {
     }
   };
 
+  const handleRequirementImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const parsed = parseRequirementCsv(text);
+
+      setImportRows(parsed.rows);
+      setImportWarnings(parsed.warnings);
+      setImportFileName(file.name);
+      setMessageTone(parsed.rows.length ? "success" : "error");
+      setMessage(
+        parsed.rows.length
+          ? `Prepared ${parsed.rows.length} requirements from ${file.name}.`
+          : parsed.warnings[0] || "No requirements could be parsed from the CSV file."
+      );
+    } catch (error) {
+      showError(error, "Unable to read the CSV file");
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const handleBulkImportRequirements = async () => {
+    if (!projectId || !importRows.length) {
+      return;
+    }
+
+    try {
+      const response = await bulkImportRequirements.mutateAsync({
+        project_id: projectId,
+        rows: importRows
+      });
+
+      setMessageTone(response.failed ? "error" : "success");
+      setMessage(
+        response.failed
+          ? `${response.imported} requirements imported, ${response.failed} rows skipped.`
+          : `${response.imported} requirements imported successfully.`
+      );
+      setImportWarnings(response.errors.map((item) => `Row ${item.row}: ${item.message}`));
+      setImportRows([]);
+      setImportFileName("");
+      const lastCreated = response.created[response.created.length - 1];
+      if (lastCreated) {
+        setSelectedRequirementId(lastCreated.id);
+        setAiRequirementId(lastCreated.id);
+      }
+      if (!response.failed) {
+        setIsImportModalOpen(false);
+      }
+      await refresh();
+    } catch (error) {
+      showError(error, "Unable to import requirements");
+    }
+  };
+
   const handleDeleteRequirement = async () => {
     if (!selectedRequirement || !window.confirm(`Delete requirement "${selectedRequirement.title}"? Linked test cases will remain in the library.`)) {
       return;
@@ -342,6 +443,16 @@ export function RequirementsPage() {
     }
   };
 
+  const handleAddAiReferenceImages = async (files: FileList | null) => {
+    try {
+      const images = await readImageFiles(files);
+      setAiReferenceImages((current) => appendUniqueImages(current, images));
+    } catch (error) {
+      setPreviewTone("error");
+      setPreviewMessage(error instanceof Error ? error.message : "Unable to attach the selected image");
+    }
+  };
+
   const handlePreviewDesignedCases = async () => {
     if (!aiRequirement || !appTypeId) {
       return;
@@ -353,24 +464,14 @@ export function RequirementsPage() {
         input: {
           app_type_id: appTypeId,
           integration_id: integrationId || undefined,
-          max_cases: maxCases
+          max_cases: maxCases,
+          additional_context: aiAdditionalContext || undefined,
+          external_links: parseExternalLinks(aiExternalLinksText),
+          images: aiReferenceImages
         }
       });
 
-      setPreviewCases(
-        response.cases.map((item) => ({
-          client_id: item.client_id,
-          title: item.title,
-          description: item.description || "",
-          priority: item.priority,
-          step_count: item.step_count,
-          steps: item.steps.map((step) => ({
-            step_order: step.step_order,
-            action: step.action || "",
-            expected_result: step.expected_result || ""
-          }))
-        }))
-      );
+      setPreviewCases(response.cases);
       setPreviewTone("success");
       setPreviewMessage(`${response.generated} draft cases generated using ${response.integration.name}. Review them before accepting.`);
     } catch (error) {
@@ -394,6 +495,7 @@ export function RequirementsPage() {
             title: item.title,
             description: item.description,
             priority: item.priority,
+            requirement_ids: item.requirement_ids,
             steps: item.steps.map((step) => ({
               step_order: step.step_order,
               action: step.action,
@@ -429,13 +531,25 @@ export function RequirementsPage() {
   }, [requirements]);
 
   return (
-    <div className="page-content">
+    <div className="page-content page-content--library-full">
       <PageHeader
         eyebrow="Requirements"
         title="Requirements Workspace"
-        description="Manage business intent separately from suite design, link reusable cases, and review AI-drafted cases before they become part of the central test case library."
         actions={
-          <div className="page-actions">
+          <>
+            <button
+              className="ghost-button"
+              disabled={!projectId}
+              onClick={() => {
+                setImportRows([]);
+                setImportWarnings([]);
+                setImportFileName("");
+                setIsImportModalOpen(true);
+              }}
+              type="button"
+            >
+              Import from CSV
+            </button>
             <button
               className="ghost-button"
               disabled={!requirements.length || !appTypeId}
@@ -453,7 +567,7 @@ export function RequirementsPage() {
             <button className="primary-button" disabled={!projectId} onClick={openCreateRequirementModal} type="button">
               Create Requirement
             </button>
-          </div>
+          </>
         }
       />
 
@@ -721,147 +835,153 @@ export function RequirementsPage() {
         </div>
       ) : null}
 
-      {isAiStudioOpen ? (
-        <div className="modal-backdrop" onClick={() => setIsAiStudioOpen(false)} role="presentation">
-          <div className="modal-card ai-modal-card" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="AI design studio">
-            <div className="panel-head">
-              <div>
-                <h3>AI Design Studio</h3>
-                <p>Select the requirement and LLM integration, review the proposed cases, remove any weak drafts, and then accept the remaining ones into the central test case library.</p>
+      {isImportModalOpen ? (
+        <div className="modal-backdrop" onClick={() => !bulkImportRequirements.isPending && setIsImportModalOpen(false)} role="presentation">
+          <div
+            aria-labelledby="bulk-requirement-import-title"
+            aria-modal="true"
+            className="modal-card import-modal-card"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="import-modal-header">
+              <div className="import-modal-title">
+                <p className="eyebrow">Bulk Import</p>
+                <h3 id="bulk-requirement-import-title">Import requirements from CSV</h3>
+                <p>
+                  Upload many requirements at once. Use columns: <strong>title</strong> (required), plus optional{" "}
+                  <strong>description</strong>, <strong>priority</strong> (1–5), and <strong>status</strong>.
+                </p>
               </div>
+              <button
+                aria-label="Close bulk requirement import dialog"
+                className="ghost-button"
+                disabled={bulkImportRequirements.isPending}
+                onClick={() => setIsImportModalOpen(false)}
+                type="button"
+              >
+                Close
+              </button>
             </div>
 
-            <div className="detail-stack">
-              <div className="record-grid">
-                <FormField label="Requirement">
-                  <select value={aiRequirement?.id || ""} onChange={(event) => setAiRequirementId(event.target.value)}>
-                    {requirements.map((requirement) => (
-                      <option key={requirement.id} value={requirement.id}>{requirement.title}</option>
-                    ))}
-                  </select>
-                </FormField>
+            <div className="import-modal-body">
+              <FormField label="CSV file">
+                <input accept=".csv,text/csv" onChange={(event) => void handleRequirementImportFile(event)} type="file" />
+              </FormField>
 
-                <FormField label="LLM integration">
-                  <select value={integrationId} onChange={(event) => setIntegrationId(event.target.value)}>
-                    <option value="">Default active integration</option>
-                    {integrations.map((integration: Integration) => (
-                      <option key={integration.id} value={integration.id}>
-                        {integration.name}
-                      </option>
-                    ))}
-                  </select>
-                </FormField>
-
-                <FormField label="Draft cases to generate">
-                  <input min="1" max="20" type="number" value={maxCases} onChange={(event) => setMaxCases(Number(event.target.value) || 6)} />
-                </FormField>
+              <div className="metric-strip compact">
+                <div className="mini-card">
+                  <strong>{importRows.length}</strong>
+                  <span>Rows ready</span>
+                </div>
               </div>
 
               <div className="detail-summary">
-                <strong>{currentAppTypeName}</strong>
-                <span>The current app type controls where accepted cases will be created.</span>
-                <span>Associated test cases already linked to the selected requirement are shown below for quick comparison.</span>
+                <strong>{importFileName || "No CSV loaded yet"}</strong>
+                <span>Rows apply to the project selected in the workspace scope bar above.</span>
               </div>
 
-              {previewMessage ? <p className={previewTone === "error" ? "inline-message error-message" : "inline-message success-message"}>{previewMessage}</p> : null}
-
-              {!integrations.length ? (
-                <div className="inline-message error-message">
-                  No active LLM integrations are available yet. Create one in Admin &gt; Integrations to use AI design.
+              {importWarnings.length ? (
+                <div className="empty-state compact">
+                  {importWarnings.slice(0, 6).map((warning) => (
+                    <div key={warning}>{warning}</div>
+                  ))}
                 </div>
               ) : null}
 
-              <div className="action-row">
-                <button className="primary-button" disabled={!aiRequirement || !appTypeId || previewDesignedCases.isPending || !integrations.length} onClick={() => void handlePreviewDesignedCases()} type="button">
-                  {previewDesignedCases.isPending ? "Designing…" : "Generate Preview"}
-                </button>
-                <button
-                  className="ghost-button"
-                  onClick={() => {
-                    setIsAiStudioOpen(false);
-                    setPreviewCases([]);
-                    setPreviewMessage("");
-                  }}
-                  type="button"
-                >
-                  Close
-                </button>
-              </div>
-
-              <div className="ai-modal-grid">
-                <div className="detail-stack">
-                  <div className="panel-head">
-                    <div>
-                      <h3>Existing linked cases</h3>
-                      <p>These are already associated with the selected requirement in the current app type.</p>
-                    </div>
-                  </div>
-
-                  <div className="stack-list">
-                    {associatedCases.map((testCase) => (
-                      <div className="stack-item" key={testCase.id}>
-                        <div>
-                          <strong>{testCase.title}</strong>
-                          <span>{testCase.description || "No description"}</span>
-                        </div>
-                        <span className="count-pill">Linked</span>
-                      </div>
-                    ))}
-                    {!associatedCases.length ? <div className="empty-state compact">No associated cases yet for this requirement in the current app type.</div> : null}
-                  </div>
+              {importRows.length ? (
+                <div className="table-wrap import-preview-table">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Title</th>
+                        <th>Priority</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importRows.slice(0, 5).map((row, index) => (
+                        <tr key={`${row.title}-${index}`}>
+                          <td>{row.title}</td>
+                          <td>{row.priority ?? "—"}</td>
+                          <td>{row.status || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
+              ) : null}
+            </div>
 
-                <div className="detail-stack">
-                  <div className="panel-head">
-                    <div>
-                      <h3>AI draft cases</h3>
-                      <p>Remove any draft you do not want before accepting the rest into the system.</p>
-                    </div>
-                  </div>
-
-                  <div className="ai-case-list">
-                    {previewCases.map((item) => (
-                      <article className="ai-case-card" key={item.client_id}>
-                        <div className="step-card-top">
-                          <div>
-                            <strong>{item.title}</strong>
-                            <span>Priority {item.priority} · {item.step_count} steps</span>
-                          </div>
-                          <button
-                            className="ghost-button danger"
-                            onClick={() => setPreviewCases((current) => current.filter((candidate) => candidate.client_id !== item.client_id))}
-                            type="button"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                        <span>{item.description || "No description generated."}</span>
-                        <div className="ai-case-steps">
-                          {item.steps.map((step) => (
-                            <div className="segment" key={`${item.client_id}-${step.step_order}`}>
-                              <div>
-                                <strong>Step {step.step_order}</strong>
-                                <span>{step.action || "No action"}</span>
-                              </div>
-                              <span>{step.expected_result || "No expected result"}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </article>
-                    ))}
-                    {!previewCases.length ? <div className="empty-state compact">Generate a preview to review AI-drafted cases here.</div> : null}
-                  </div>
-                </div>
-              </div>
-
-              <div className="action-row">
-                <button className="primary-button" disabled={!previewCases.length || acceptDesignedCases.isPending} onClick={() => void handleAcceptDesignedCases()} type="button">
-                  {acceptDesignedCases.isPending ? "Accepting…" : "Accept And Move To Test Cases"}
-                </button>
-              </div>
+            <div className="action-row import-modal-actions">
+              <button
+                className="primary-button"
+                disabled={!projectId || !importRows.length || bulkImportRequirements.isPending}
+                onClick={() => void handleBulkImportRequirements()}
+                type="button"
+              >
+                {bulkImportRequirements.isPending ? "Importing…" : `Import ${importRows.length || ""} Requirements`}
+              </button>
+              <button
+                className="ghost-button"
+                disabled={!importRows.length || bulkImportRequirements.isPending}
+                onClick={() => {
+                  setImportRows([]);
+                  setImportWarnings([]);
+                  setImportFileName("");
+                }}
+                type="button"
+              >
+                Clear preview
+              </button>
             </div>
           </div>
         </div>
+      ) : null}
+
+      {isAiStudioOpen ? (
+        <AiDesignStudioModal
+          acceptLabel="Accept And Move To Test Cases"
+          additionalContext={aiAdditionalContext}
+          allowMultipleRequirements={false}
+          appTypeName={currentAppTypeName}
+          closeDisabled={previewDesignedCases.isPending || acceptDesignedCases.isPending}
+          disableAccept={!previewCases.length || acceptDesignedCases.isPending}
+          disablePreview={!aiRequirement || !appTypeId || previewDesignedCases.isPending || !integrations.length}
+          existingCases={associatedCases}
+          existingCasesSubtitle="These are already associated with the selected requirement in the current app type."
+          existingCasesTitle="Existing linked cases"
+          externalLinksText={aiExternalLinksText}
+          eyebrow="Requirements"
+          integrationId={integrationId}
+          integrations={integrations}
+          isAccepting={acceptDesignedCases.isPending}
+          isPreviewing={previewDesignedCases.isPending}
+          maxCases={maxCases}
+          onAccept={() => void handleAcceptDesignedCases()}
+          onAddImages={(files) => void handleAddAiReferenceImages(files)}
+          onAdditionalContextChange={setAiAdditionalContext}
+          onClose={() => {
+            setIsAiStudioOpen(false);
+            setPreviewCases([]);
+            setPreviewMessage("");
+          }}
+          onExternalLinksTextChange={setAiExternalLinksText}
+          onIntegrationIdChange={setIntegrationId}
+          onPreview={() => void handlePreviewDesignedCases()}
+          onRemoveImage={(imageUrl) => setAiReferenceImages((current) => current.filter((image) => image.url !== imageUrl))}
+          onRemovePreviewCase={(clientId) => setPreviewCases((current) => current.filter((candidate) => candidate.client_id !== clientId))}
+          onRequirementSelectionChange={(requirementIds) => setAiRequirementId(requirementIds[0] || "")}
+          onMaxCasesChange={setMaxCases}
+          previewCases={previewCases}
+          previewMessage={previewMessage}
+          previewTone={previewTone}
+          referenceImages={aiReferenceImages}
+          requirementHelpText="Select the requirement, shape the prompt, then review the AI-generated reusable cases before approving them."
+          requirementLabel="Requirement"
+          requirements={requirements}
+          selectedRequirementIds={aiRequirement?.id ? [aiRequirement.id] : []}
+        />
       ) : null}
     </div>
   );

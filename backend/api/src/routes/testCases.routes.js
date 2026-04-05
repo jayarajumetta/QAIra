@@ -1,6 +1,30 @@
 const service = require("../services/testCase.service");
 const appTypeService = require("../services/appType.service");
 const projectService = require("../services/project.service");
+const requirementService = require("../services/requirement.service");
+const requirementDesignService = require("../services/requirementDesign.service");
+
+const resolveScopedRequirements = async (requirementIds = [], projectId) => {
+  const ids = [...new Set((Array.isArray(requirementIds) ? requirementIds : []).filter(Boolean))];
+
+  if (!ids.length) {
+    throw new Error("Select at least one requirement");
+  }
+
+  const requirements = [];
+
+  for (const requirementId of ids) {
+    const requirement = await requirementService.getRequirement(requirementId);
+
+    if (requirement.project_id !== projectId) {
+      throw new Error("Requirement must belong to the same project as the selected app type");
+    }
+
+    requirements.push(requirement);
+  }
+
+  return requirements;
+};
 
 module.exports = async function (fastify) {
   fastify.post("/test-cases", async (req) => {
@@ -69,6 +93,60 @@ module.exports = async function (fastify) {
       await projectService.getProject(appType.project_id, req.user.id);
     }
     return testCase;
+  });
+
+  fastify.post("/test-cases/design-test-cases-preview", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      app_type_id: { required: true, type: "string" },
+      requirement_ids: { required: true, type: "array", items: "string" },
+      integration_id: { required: false, type: "string" },
+      max_cases: { required: false, type: "number" },
+      additional_context: { required: false, type: "string" },
+      external_links: { required: false, type: "array", items: "string" },
+      images: { required: false, type: "array" }
+    }, req.body);
+
+    const appType = await appTypeService.getAppType(req.body.app_type_id);
+    await projectService.getProject(appType.project_id, req.user.id);
+    const requirements = await resolveScopedRequirements(req.body.requirement_ids, appType.project_id);
+
+    return requirementDesignService.previewRequirementsTestCases({
+      requirements,
+      appType,
+      integration_id: req.body.integration_id,
+      max_cases: req.body.max_cases,
+      additional_context: req.body.additional_context,
+      external_links: req.body.external_links,
+      images: req.body.images
+    });
+  });
+
+  fastify.post("/test-cases/design-test-cases-accept", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      app_type_id: { required: true, type: "string" },
+      requirement_ids: { required: true, type: "array", items: "string" },
+      status: { required: false, type: "string" },
+      cases: { required: true, type: "array" }
+    }, req.body);
+
+    if (!req.body.cases.every((item) => item && typeof item === "object" && !Array.isArray(item))) {
+      throw new Error("cases must contain test case objects");
+    }
+
+    const appType = await appTypeService.getAppType(req.body.app_type_id);
+    await projectService.getProject(appType.project_id, req.user.id);
+    const requirements = await resolveScopedRequirements(req.body.requirement_ids, appType.project_id);
+
+    return requirementDesignService.acceptGeneratedTestCases({
+      requirements,
+      appType,
+      status: req.body.status,
+      cases: req.body.cases
+    });
   });
 
   fastify.put("/test-cases/:id", async (req) => {

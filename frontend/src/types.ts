@@ -72,6 +72,45 @@ export type Integration = {
   updated_at?: string;
 };
 
+export type AiDesignImageInput = {
+  name?: string | null;
+  url: string;
+};
+
+export type AiDesignedTestCaseCandidate = {
+  client_id: string;
+  title: string;
+  description: string | null;
+  priority: number;
+  requirement_ids: string[];
+  requirement_titles: string[];
+  steps: Array<{
+    step_order: number;
+    action: string | null;
+    expected_result: string | null;
+  }>;
+  step_count: number;
+};
+
+export type AiDesignPreviewResponse = {
+  generated: number;
+  cases: AiDesignedTestCaseCandidate[];
+  integration: {
+    id: string;
+    name: string;
+    type: string;
+    model?: string | null;
+  };
+  requirements: Array<{
+    id: string;
+    title: string;
+  }>;
+  app_type: {
+    id: string;
+    name: string;
+  };
+};
+
 export type TestSuite = {
   id: string;
   app_type_id: string;

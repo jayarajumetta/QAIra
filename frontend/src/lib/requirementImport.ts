@@ -1,9 +1,7 @@
 import { parseCsvGrid } from "./csvGrid";
 
-export type ImportedTestCaseRow = {
+export type ImportedRequirementRow = {
   title: string;
-  action?: string;
-  expected_result?: string;
   description?: string;
   priority?: number;
   status?: string;
@@ -11,15 +9,13 @@ export type ImportedTestCaseRow = {
 
 type ParsedCsv = {
   headers: string[];
-  rows: ImportedTestCaseRow[];
+  rows: ImportedRequirementRow[];
   warnings: string[];
 };
 
-const HEADER_ALIASES: Record<keyof ImportedTestCaseRow, string[]> = {
-  title: ["title", "testcasetitle", "testcase", "testcasename", "name"],
-  action: ["action", "actions", "step", "steps", "teststep", "teststeps"],
-  expected_result: ["expectedresult", "expectedresults", "expected", "result", "outcome"],
-  description: ["description", "details", "notes", "scenario"],
+const HEADER_ALIASES: Record<keyof ImportedRequirementRow, string[]> = {
+  title: ["title", "requirement", "requirementtitle", "name", "summary"],
+  description: ["description", "details", "notes", "acceptancecriteria", "story"],
   priority: ["priority", "severity"],
   status: ["status", "state"]
 };
@@ -29,12 +25,12 @@ const normalizeHeader = (header: string) => header.toLowerCase().replace(/[^a-z0
 const findCanonicalKey = (header: string) => {
   const normalized = normalizeHeader(header);
 
-  return (Object.entries(HEADER_ALIASES) as Array<[keyof ImportedTestCaseRow, string[]]>).find(([, aliases]) =>
+  return (Object.entries(HEADER_ALIASES) as Array<[keyof ImportedRequirementRow, string[]]>).find(([, aliases]) =>
     aliases.includes(normalized)
   )?.[0];
 };
 
-export function parseTestCaseCsv(text: string): ParsedCsv {
+export function parseRequirementCsv(text: string): ParsedCsv {
   const grid = parseCsvGrid(text);
 
   if (!grid.length) {
@@ -51,12 +47,12 @@ export function parseTestCaseCsv(text: string): ParsedCsv {
   const warnings: string[] = [];
 
   if (!headerMap.includes("title")) {
-    warnings.push("A title column is required. Supported aliases include Title or Test Case Title.");
+    warnings.push("A title column is required. Supported aliases include Title, Requirement, or Summary.");
   }
 
   const normalizedRows = rows
     .map((row) =>
-      row.reduce<Partial<ImportedTestCaseRow>>((accumulator, value, index) => {
+      row.reduce<Partial<ImportedRequirementRow>>((accumulator, value, index) => {
         const key = headerMap[index];
 
         if (!key || !value.trim()) {
@@ -64,7 +60,8 @@ export function parseTestCaseCsv(text: string): ParsedCsv {
         }
 
         if (key === "priority") {
-          accumulator.priority = Number(value);
+          const parsed = Number(value);
+          accumulator.priority = Number.isFinite(parsed) ? parsed : undefined;
           return accumulator;
         }
 
@@ -72,10 +69,10 @@ export function parseTestCaseCsv(text: string): ParsedCsv {
         return accumulator;
       }, {})
     )
-    .filter((row): row is ImportedTestCaseRow => Boolean(row.title?.trim()));
+    .filter((row): row is ImportedRequirementRow => Boolean(row.title?.trim()));
 
   if (!normalizedRows.length && rows.length) {
-    warnings.push("No valid rows were found. Every imported row must include a test case title.");
+    warnings.push("No valid rows were found. Every imported row must include a requirement title.");
   }
 
   return {

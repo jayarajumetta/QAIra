@@ -146,9 +146,6 @@ export function PeoplePage() {
       <PageHeader
         eyebrow="People & Access"
         title="User Management"
-        description={isAdmin
-          ? "Manage users and roles from a clearer control surface with table-first visibility and admin-only edit actions."
-          : "User management is read-only for members. You can browse users and roles, but only admins can change them."}
         actions={isAdmin ? <button className="primary-button" onClick={() => setView("users")} type="button">Add new user</button> : null}
       />
 

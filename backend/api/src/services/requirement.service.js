@@ -13,6 +13,64 @@ const hydrateTestCaseIds = async (requirement) => {
   };
 };
 
+exports.bulkImportRequirements = async ({ project_id, rows = [] }) => {
+  if (!project_id) {
+    throw new Error("project_id is required");
+  }
+
+  if (!Array.isArray(rows) || !rows.length) {
+    throw new Error("At least one row is required");
+  }
+
+  const project = await db.prepare(`
+    SELECT id FROM projects WHERE id = ?
+  `).get(project_id);
+
+  if (!project) {
+    throw new Error("Project not found");
+  }
+
+  const created = [];
+  const errors = [];
+
+  for (const [index, row] of rows.entries()) {
+    const title = typeof row?.title === "string" ? row.title.trim() : "";
+
+    try {
+      if (title.length < 2) {
+        throw new Error("Title must be at least 2 characters");
+      }
+
+      const response = await exports.createRequirement({
+        project_id,
+        title,
+        description: typeof row?.description === "string" ? row.description : undefined,
+        priority: typeof row?.priority === "number" && Number.isFinite(row.priority) ? row.priority : undefined,
+        status: typeof row?.status === "string" ? row.status : undefined
+      });
+
+      created.push({
+        row: index + 1,
+        id: response.id,
+        title
+      });
+    } catch (error) {
+      errors.push({
+        row: index + 1,
+        title: title || null,
+        message: error.message || "Unable to import requirement"
+      });
+    }
+  }
+
+  return {
+    imported: created.length,
+    failed: errors.length,
+    created,
+    errors
+  };
+};
+
 exports.createRequirement = async ({ project_id, title, description, priority, status }) => {
   if (!project_id || !title) {
     throw new Error("Missing required fields");

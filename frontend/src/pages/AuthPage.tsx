@@ -431,7 +431,9 @@ export function AuthPage() {
               <>
                 <header className="auth-card-header">
                   <p className="eyebrow">{currentCopy.eyebrow}</p>
-                  <h2>{currentCopy.title}</h2>
+                  <div className="auth-card-title" role="heading" aria-level={2}>
+                    {currentCopy.title}
+                  </div>
                   <p>{currentCopy.description}</p>
                 </header>
 
@@ -465,7 +467,9 @@ export function AuthPage() {
             {isSuccessMode ? (
               <div className="success-screen">
                 <div className="success-icon" aria-hidden="true">✓</div>
-                <h2>{mode === "signup-success" ? "Account created" : "Password updated"}</h2>
+                <div className="success-screen-title" role="heading" aria-level={2}>
+                  {mode === "signup-success" ? "Account created" : "Password updated"}
+                </div>
                 <p className="success-message">
                   {mode === "signup-success"
                     ? "Your account is ready. Sign in with your new credentials to enter the workspace."

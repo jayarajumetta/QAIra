@@ -123,7 +123,6 @@ export function FeedbackPage() {
       <PageHeader
         eyebrow="Reporting & Feedback"
         title="Reporting & Feedback"
-        description="Capture requests, issues, and shared feedback in a cleaner reporting stream that sits alongside the rest of the QA workspace."
         actions={
           <button
             className="primary-button"

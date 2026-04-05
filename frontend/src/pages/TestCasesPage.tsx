@@ -1,14 +1,17 @@
 import { ChangeEvent, FormEvent, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StatusBadge } from "../components/StatusBadge";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
+import { useCurrentProject } from "../hooks/useCurrentProject";
 import { parseTestCaseCsv, type ImportedTestCaseRow } from "../lib/testCaseImport";
 import { api } from "../lib/api";
-import type { ExecutionResult, Requirement, TestCase, TestStep } from "../types";
+import { appendUniqueImages, parseExternalLinks, readImageFiles, toggleRequirementOnPreviewCase } from "../lib/aiDesignStudio";
+import type { AiDesignImageInput, AiDesignedTestCaseCandidate, ExecutionResult, Requirement, TestCase, TestStep } from "../types";
 
 type TestCaseDraft = {
   title: string;
@@ -70,7 +73,7 @@ const toCsvCell = (value: string | number | null | undefined) => {
 
 export function TestCasesPage() {
   const queryClient = useQueryClient();
-  const [projectId, setProjectId] = useState("");
+  const [projectId, setProjectId] = useCurrentProject();
   const [appTypeId, setAppTypeId] = useState("");
   const [selectedTestCaseId, setSelectedTestCaseId] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -87,6 +90,16 @@ export function TestCasesPage() {
   const [importRows, setImportRows] = useState<ImportedTestCaseRow[]>([]);
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [importRequirementId, setImportRequirementId] = useState("");
+  const [isAiStudioOpen, setIsAiStudioOpen] = useState(false);
+  const [aiRequirementIds, setAiRequirementIds] = useState<string[]>([]);
+  const [integrationId, setIntegrationId] = useState("");
+  const [maxCases, setMaxCases] = useState(8);
+  const [aiAdditionalContext, setAiAdditionalContext] = useState("");
+  const [aiExternalLinksText, setAiExternalLinksText] = useState("");
+  const [aiReferenceImages, setAiReferenceImages] = useState<AiDesignImageInput[]>([]);
+  const [aiPreviewCases, setAiPreviewCases] = useState<AiDesignedTestCaseCandidate[]>([]);
+  const [aiPreviewMessage, setAiPreviewMessage] = useState("");
+  const [aiPreviewTone, setAiPreviewTone] = useState<"success" | "error">("success");
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -117,6 +130,10 @@ export function TestCasesPage() {
     queryFn: () => api.testSteps.list(),
     enabled: Boolean(appTypeId)
   });
+  const integrationsQuery = useQuery({
+    queryKey: ["integrations", "llm"],
+    queryFn: () => api.integrations.list({ type: "llm", is_active: true })
+  });
   const stepsQuery = useQuery({
     queryKey: ["test-case-steps", selectedTestCaseId],
     queryFn: () => api.testSteps.list({ test_case_id: selectedTestCaseId }),
@@ -130,6 +147,8 @@ export function TestCasesPage() {
   });
   const deleteTestCase = useMutation({ mutationFn: api.testCases.delete });
   const importTestCases = useMutation({ mutationFn: api.testCases.bulkImport });
+  const previewDesignedCases = useMutation({ mutationFn: api.testCases.previewDesignedCases });
+  const acceptDesignedCases = useMutation({ mutationFn: api.testCases.acceptDesignedCases });
   const createStep = useMutation({ mutationFn: api.testSteps.create });
   const updateStep = useMutation({
     mutationFn: ({ id, input }: { id: string; input: Parameters<typeof api.testSteps.update>[1] }) =>
@@ -147,6 +166,7 @@ export function TestCasesPage() {
   const testCases = testCasesQuery.data || [];
   const executionResults = executionResultsQuery.data || [];
   const allTestSteps = allTestStepsQuery.data || [];
+  const integrations = integrationsQuery.data || [];
   const steps = useMemo(
     () => ((stepsQuery.data || []) as TestStep[]).slice().sort((left, right) => left.step_order - right.step_order),
     [stepsQuery.data]
@@ -185,10 +205,21 @@ export function TestCasesPage() {
   };
 
   useEffect(() => {
-    if (!projectId && projects[0]) {
+    if (projectsQuery.isPending) {
+      return;
+    }
+
+    if (!projects.length) {
+      if (projectId) {
+        setProjectId("");
+      }
+      return;
+    }
+
+    if (!projects.some((project) => project.id === projectId)) {
       setProjectId(projects[0].id);
     }
-  }, [projectId, projects]);
+  }, [projectId, projects, projectsQuery.isPending, setProjectId]);
 
   useEffect(() => {
     if (!appTypes.length) {
@@ -202,6 +233,17 @@ export function TestCasesPage() {
   }, [appTypeId, appTypes]);
 
   useEffect(() => {
+    if (!integrations.length) {
+      setIntegrationId("");
+      return;
+    }
+
+    if (!integrations.some((integration) => integration.id === integrationId)) {
+      setIntegrationId(integrations[0].id);
+    }
+  }, [integrationId, integrations]);
+
+  useEffect(() => {
     setSelectedTestCaseId("");
     setIsCreating(false);
     setIsImportModalOpen(false);
@@ -213,6 +255,10 @@ export function TestCasesPage() {
     setImportWarnings([]);
     setImportFileName("");
     setImportRequirementId("");
+    setIsAiStudioOpen(false);
+    setAiRequirementIds([]);
+    setAiPreviewCases([]);
+    setAiPreviewMessage("");
   }, [appTypeId]);
 
   const historyByCaseId = useMemo(() => {
@@ -323,6 +369,21 @@ export function TestCasesPage() {
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [isImportModalOpen]);
+
+  useEffect(() => {
+    if (!isAiStudioOpen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !previewDesignedCases.isPending && !acceptDesignedCases.isPending) {
+        setIsAiStudioOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [acceptDesignedCases.isPending, isAiStudioOpen, previewDesignedCases.isPending]);
 
   const refreshCases = async () => {
     await Promise.all([
@@ -648,6 +709,93 @@ export function TestCasesPage() {
     }
   };
 
+  const openAiStudio = () => {
+    const seededRequirementIds = [
+      ...(selectedTestCase?.requirement_ids || []),
+      ...(selectedTestCase?.requirement_id ? [selectedTestCase.requirement_id] : []),
+      ...(caseDraft.requirement_id ? [caseDraft.requirement_id] : [])
+    ].filter(Boolean);
+
+    setAiRequirementIds(seededRequirementIds.length ? [...new Set(seededRequirementIds)] : requirements[0] ? [requirements[0].id] : []);
+    setAiPreviewCases([]);
+    setAiPreviewMessage("");
+    setAiPreviewTone("success");
+    setIsAiStudioOpen(true);
+  };
+
+  const handleAddAiReferenceImages = async (files: FileList | null) => {
+    try {
+      const images = await readImageFiles(files);
+      setAiReferenceImages((current) => appendUniqueImages(current, images));
+    } catch (error) {
+      setAiPreviewTone("error");
+      setAiPreviewMessage(error instanceof Error ? error.message : "Unable to attach the selected image");
+    }
+  };
+
+  const handlePreviewDesignedCases = async () => {
+    if (!appTypeId || !aiRequirementIds.length) {
+      return;
+    }
+
+    try {
+      const response = await previewDesignedCases.mutateAsync({
+        app_type_id: appTypeId,
+        requirement_ids: aiRequirementIds,
+        integration_id: integrationId || undefined,
+        max_cases: maxCases,
+        additional_context: aiAdditionalContext || undefined,
+        external_links: parseExternalLinks(aiExternalLinksText),
+        images: aiReferenceImages
+      });
+
+      setAiPreviewCases(response.cases);
+      setAiPreviewTone("success");
+      setAiPreviewMessage(`${response.generated} draft cases generated using ${response.integration.name}. Review them before accepting.`);
+    } catch (error) {
+      setAiPreviewTone("error");
+      setAiPreviewMessage(error instanceof Error ? error.message : "Unable to preview AI-generated test cases");
+    }
+  };
+
+  const handleAcceptDesignedCases = async () => {
+    if (!appTypeId || !aiRequirementIds.length || !aiPreviewCases.length) {
+      return;
+    }
+
+    try {
+      const response = await acceptDesignedCases.mutateAsync({
+        app_type_id: appTypeId,
+        requirement_ids: aiRequirementIds,
+        status: "draft",
+        cases: aiPreviewCases.map((item) => ({
+          title: item.title,
+          description: item.description,
+          priority: item.priority,
+          requirement_ids: item.requirement_ids,
+          steps: item.steps.map((step) => ({
+            step_order: step.step_order,
+            action: step.action,
+            expected_result: step.expected_result
+          }))
+        }))
+      });
+
+      setAiPreviewCases([]);
+      setAiPreviewMessage("");
+      setIsAiStudioOpen(false);
+      if (response.created[0]) {
+        setSelectedTestCaseId(response.created[0].id);
+        setIsCreating(false);
+      }
+      showSuccess("AI-designed test cases accepted into the library.");
+      await refreshCases();
+    } catch (error) {
+      setAiPreviewTone("error");
+      setAiPreviewMessage(error instanceof Error ? error.message : "Unable to accept AI-generated test cases");
+    }
+  };
+
   const coverageMetrics = useMemo(() => {
     const covered = testCases.filter((testCase) => (testCase.requirement_ids || [testCase.requirement_id]).filter(Boolean).length).length;
     const withHistory = testCases.filter((testCase) => (historyByCaseId[testCase.id] || []).length).length;
@@ -668,30 +816,41 @@ export function TestCasesPage() {
 
   const selectedRequirement = requirements.find((item) => item.id === caseDraft.requirement_id) || null;
   const selectedHistory = selectedTestCase ? historyByCaseId[selectedTestCase.id] || [] : [];
+  const aiSelectedRequirements = useMemo(
+    () => requirements.filter((requirement) => aiRequirementIds.includes(requirement.id)),
+    [aiRequirementIds, requirements]
+  );
+  const aiExistingCases = useMemo(() => {
+    if (!aiRequirementIds.length) {
+      return [];
+    }
+
+    const requirementSet = new Set(aiRequirementIds);
+    return testCases.filter((testCase) =>
+      (testCase.requirement_ids || [testCase.requirement_id]).filter(Boolean).some((requirementId) => requirementSet.has(requirementId as string))
+    );
+  }, [aiRequirementIds, testCases]);
 
   return (
-    <div className="page-content">
+    <div className="page-content page-content--library-full">
       <PageHeader
         eyebrow="Test Cases"
         title="Test Case Library"
-        description="Manage reusable cases as the core asset of the system, import them in bulk, link them to requirements, and keep execution history visible even when the live design changes."
         actions={
-          <div className="page-actions">
+          <>
             <button className="ghost-button" disabled={!appTypeId} onClick={() => setIsImportModalOpen(true)} type="button">
               Bulk Import
+            </button>
+            <button className="ghost-button" disabled={!requirements.length || !appTypeId} onClick={openAiStudio} type="button">
+              AI Design Studio
             </button>
             <button className="ghost-button" disabled={!filteredCases.length} onClick={() => void handleExportCsv()} type="button">
               Export CSV
             </button>
-            <button
-              className="primary-button"
-              disabled={!appTypeId}
-              onClick={beginCreateCase}
-              type="button"
-            >
+            <button className="primary-button" disabled={!appTypeId} onClick={beginCreateCase} type="button">
               New Test Case
             </button>
-          </div>
+          </>
         }
       />
 
@@ -740,7 +899,7 @@ export function TestCasesPage() {
             </div>
 
             {isLibraryLoading ? (
-              <div className="record-list">
+              <div className="record-list test-case-library-scroll">
                 <div className="skeleton-block" />
                 <div className="skeleton-block" />
                 <div className="skeleton-block" />
@@ -1118,6 +1277,60 @@ export function TestCasesPage() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {isAiStudioOpen ? (
+        <AiDesignStudioModal
+          acceptLabel="Accept Into Test Case Library"
+          additionalContext={aiAdditionalContext}
+          allowMultipleRequirements={true}
+          appTypeName={appTypes.find((item) => item.id === appTypeId)?.name || "No app type selected"}
+          closeDisabled={previewDesignedCases.isPending || acceptDesignedCases.isPending}
+          disableAccept={!aiPreviewCases.length || acceptDesignedCases.isPending}
+          disablePreview={!aiRequirementIds.length || !appTypeId || previewDesignedCases.isPending || !integrations.length}
+          existingCases={aiExistingCases}
+          existingCasesSubtitle="These reusable cases are already linked to one or more of the selected requirements in the current app type."
+          existingCasesTitle="Existing related cases"
+          externalLinksText={aiExternalLinksText}
+          eyebrow="Test Cases"
+          integrationId={integrationId}
+          integrations={integrations}
+          isAccepting={acceptDesignedCases.isPending}
+          isPreviewing={previewDesignedCases.isPending}
+          maxCases={maxCases}
+          onAccept={() => void handleAcceptDesignedCases()}
+          onAddImages={(files) => void handleAddAiReferenceImages(files)}
+          onAdditionalContextChange={setAiAdditionalContext}
+          onClose={() => {
+            setIsAiStudioOpen(false);
+            setAiPreviewCases([]);
+            setAiPreviewMessage("");
+          }}
+          onExternalLinksTextChange={setAiExternalLinksText}
+          onIntegrationIdChange={setIntegrationId}
+          onPreview={() => void handlePreviewDesignedCases()}
+          onRemoveImage={(imageUrl) => setAiReferenceImages((current) => current.filter((image) => image.url !== imageUrl))}
+          onRemovePreviewCase={(clientId) => setAiPreviewCases((current) => current.filter((candidate) => candidate.client_id !== clientId))}
+          onRequirementSelectionChange={setAiRequirementIds}
+          onTogglePreviewRequirement={(clientId, requirementId) => {
+            const requirement = requirements.find((item) => item.id === requirementId);
+
+            if (!requirement) {
+              return;
+            }
+
+            setAiPreviewCases((current) => toggleRequirementOnPreviewCase(current, clientId, requirementId, requirement.title));
+          }}
+          onMaxCasesChange={setMaxCases}
+          previewCases={aiPreviewCases}
+          previewMessage={aiPreviewMessage}
+          previewTone={aiPreviewTone}
+          referenceImages={aiReferenceImages}
+          requirementHelpText="Select one or more requirements, provide extra context, then review the generated drafts before approving them into the reusable library."
+          requirementLabel="Requirements"
+          requirements={requirements}
+          selectedRequirementIds={aiSelectedRequirements.map((requirement) => requirement.id)}
+        />
       ) : null}
     </div>
   );

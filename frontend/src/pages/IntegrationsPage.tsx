@@ -162,7 +162,6 @@ export function IntegrationsPage() {
       <PageHeader
         eyebrow="Administration"
         title="Integrations"
-        description="Manage reusable connection profiles for LLM and Jira providers so admins can safely support AI-assisted design and external system workflows."
         actions={
           isAdmin ? (
             <button

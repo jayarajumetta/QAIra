@@ -1,11 +1,11 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { ProgressMeter } from "../components/ProgressMeter";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
-import { useAuth } from "../auth/AuthContext";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 
 export function OverviewPage() {
@@ -189,12 +189,15 @@ export function OverviewPage() {
       <PageHeader
         eyebrow="Overview"
         title={`Welcome back, ${session?.user.name || "teammate"}`}
-        description="Track readiness, coverage, and recent run quality from one sharper workspace dashboard inspired by an operations control center."
         actions={
-          <div className="page-actions">
-            <button className="ghost-button" onClick={() => navigate("/feedback")} type="button">Open Reporting</button>
-            <button className="primary-button" onClick={() => navigate("/executions")} type="button">Open Execution Hub</button>
-          </div>
+          <>
+            <button className="ghost-button" onClick={() => navigate("/feedback")} type="button">
+              Open Reporting
+            </button>
+            <button className="primary-button" onClick={() => navigate("/executions")} type="button">
+              Open Execution Hub
+            </button>
+          </>
         }
       />
 

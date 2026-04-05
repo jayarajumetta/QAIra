@@ -33,7 +33,6 @@ export function SupportPage() {
       <PageHeader
         eyebrow="Support"
         title="Support Center"
-        description="A calm place to find operating guidance, escalation paths, and contact channels for the QA workspace."
         actions={<button className="primary-button" type="button">Open Support Ticket</button>}
       />
 

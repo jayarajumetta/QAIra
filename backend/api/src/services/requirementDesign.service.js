@@ -12,6 +12,34 @@ const normalizeText = (value) => {
   return normalized ? normalized : null;
 };
 
+const normalizeTextList = (values = []) => {
+  const collection = Array.isArray(values) ? values : [values];
+  return collection.map((value) => normalizeText(value)).filter(Boolean);
+};
+
+const uniqueById = (items = []) => Array.from(new Map(items.filter(Boolean).map((item) => [item.id, item])).values());
+
+const normalizeImageAssets = (images = []) => {
+  if (!Array.isArray(images)) {
+    return [];
+  }
+
+  return images
+    .map((item, index) => ({
+      name: normalizeText(item?.name) || `Reference image ${index + 1}`,
+      url: normalizeText(item?.url)
+    }))
+    .filter((item) => item.url);
+};
+
+const buildRequirementReferenceMap = (requirements = []) =>
+  uniqueById(requirements).map((requirement, index) => ({
+    id: requirement.id,
+    title: requirement.title,
+    description: requirement.description || null,
+    ref: `R${index + 1}`
+  }));
+
 const extractJsonPayload = (content) => {
   const trimmed = String(content || "").trim();
 
@@ -55,22 +83,94 @@ const normalizeSteps = (steps = []) => {
     }));
 };
 
-const normalizeCaseDraft = (item, index) => {
+const normalizeRequirementRefs = (item = {}) => {
+  const raw =
+    item?.requirement_ids ||
+    item?.requirementIds ||
+    item?.requirement_refs ||
+    item?.requirementRefs ||
+    [];
+
+  if (Array.isArray(raw)) {
+    return normalizeTextList(raw).map((value) => value.toUpperCase());
+  }
+
+  return normalizeTextList(String(raw).split(",")).map((value) => value.toUpperCase());
+};
+
+const normalizeRequirementTitles = (item = {}) => {
+  const raw = item?.requirement_titles || item?.requirementTitles || item?.requirements || [];
+
+  if (Array.isArray(raw)) {
+    return normalizeTextList(raw).map((value) => value.toLowerCase());
+  }
+
+  return normalizeTextList(String(raw).split(",")).map((value) => value.toLowerCase());
+};
+
+const resolveCaseRequirements = (item, requirements = []) => {
+  const uniqueRequirements = uniqueById(requirements);
+
+  if (!uniqueRequirements.length) {
+    return [];
+  }
+
+  const explicitIds = normalizeTextList(item?.requirement_ids || item?.requirementIds || []);
+  const resolvedById = uniqueRequirements.filter((requirement) => explicitIds.includes(requirement.id));
+
+  if (resolvedById.length) {
+    return resolvedById;
+  }
+
+  const referenceMap = new Map(buildRequirementReferenceMap(uniqueRequirements).map((requirement) => [requirement.ref.toUpperCase(), requirement]));
+  const resolvedByRef = normalizeRequirementRefs(item)
+    .map((ref) => referenceMap.get(ref))
+    .filter(Boolean)
+    .map((match) => uniqueRequirements.find((requirement) => requirement.id === match.id))
+    .filter(Boolean);
+
+  if (resolvedByRef.length) {
+    return uniqueById(resolvedByRef);
+  }
+
+  const titleMatches = normalizeRequirementTitles(item);
+  const resolvedByTitle = uniqueRequirements.filter((requirement) => titleMatches.includes(String(requirement.title || "").trim().toLowerCase()));
+
+  if (resolvedByTitle.length) {
+    return resolvedByTitle;
+  }
+
+  if (uniqueRequirements.length === 1) {
+    return [uniqueRequirements[0]];
+  }
+
+  return [];
+};
+
+const normalizeCaseDraft = (item, index, { requirements = [], requireRequirementMapping = false } = {}) => {
   const title = normalizeText(item?.title);
 
   if (!title) {
     throw new Error(`Generated test case ${index + 1} is missing a title`);
   }
 
+  const resolvedRequirements = resolveCaseRequirements(item, requirements);
+
+  if (requireRequirementMapping && !resolvedRequirements.length) {
+    throw new Error(`Generated test case ${index + 1} must be linked to at least one requirement`);
+  }
+
   return {
     title,
     description: normalizeText(item?.description),
     priority: Number.isFinite(Number(item?.priority)) ? Number(item.priority) : 3,
+    requirement_ids: resolvedRequirements.map((requirement) => requirement.id),
+    requirement_titles: resolvedRequirements.map((requirement) => requirement.title),
     steps: normalizeSteps(item?.steps)
   };
 };
 
-const normalizeGeneratedCases = (payload, maxCases) => {
+const normalizeGeneratedCases = (payload, maxCases, requirements) => {
   const collection = Array.isArray(payload)
     ? payload
     : Array.isArray(payload?.testCases)
@@ -83,40 +183,75 @@ const normalizeGeneratedCases = (payload, maxCases) => {
     throw new Error("LLM did not return any test cases");
   }
 
-  return collection.slice(0, maxCases).map((item, index) => normalizeCaseDraft(item, index));
+  return collection.slice(0, maxCases).map((item, index) => normalizeCaseDraft(item, index, { requirements }));
 };
 
-const buildPrompt = ({ requirement, appType, maxCases }) => {
-  return [
-    "Design high-quality QA test cases for the following requirement.",
+const buildPrompt = ({ requirements, appType, maxCases, additionalContext, externalLinks, images }) => {
+  const references = buildRequirementReferenceMap(requirements);
+  const prompt = [
+    "Design high-quality QA test cases for the following product requirements.",
     "",
-    `Project requirement title: ${requirement.title}`,
-    `Project requirement description: ${requirement.description || "No description provided."}`,
-    `Application type: ${appType.name} (${appType.type})`,
-    "",
-    `Return up to ${maxCases} test cases as strict JSON with this shape:`,
-    "{",
-    '  "testCases": [',
-    "    {",
-    '      "title": "string",',
-    '      "description": "string",',
-    '      "priority": 1,',
-    '      "steps": [',
-    "        {",
-    '          "action": "string",',
-    '          "expected_result": "string"',
-    "        }",
-    "      ]",
-    "    }",
-    "  ]",
-    "}",
-    "",
-    "Guidance:",
-    "- Cover happy path, validation, edge conditions, negative conditions, and operational risk where relevant.",
-    "- Keep titles concise and reusable across suites.",
-    "- Use 1-5 priority where 1 is most critical.",
-    "- Do not include markdown or commentary outside the JSON."
-  ].join("\n");
+    "Requirements to cover:"
+  ];
+
+  references.forEach((requirement) => {
+    prompt.push(`- ${requirement.ref}: ${requirement.title}`);
+    prompt.push(`  Description: ${requirement.description || "No description provided."}`);
+  });
+
+  prompt.push("");
+  prompt.push(`Application type: ${appType.name} (${appType.type})`);
+
+  if (additionalContext) {
+    prompt.push("");
+    prompt.push("Additional testing context from the user:");
+    prompt.push(additionalContext);
+  }
+
+  if (externalLinks.length) {
+    prompt.push("");
+    prompt.push("External links supplied by the user. Treat them as references even if their contents are not fetched:");
+    externalLinks.forEach((link, index) => {
+      prompt.push(`- Link ${index + 1}: ${link}`);
+    });
+  }
+
+  if (images.length) {
+    prompt.push("");
+    prompt.push("Reference images are attached to this request. Use them when the selected model supports image input.");
+    images.forEach((image, index) => {
+      prompt.push(`- Image ${index + 1}: ${image.name}`);
+    });
+  }
+
+  prompt.push("");
+  prompt.push(`Return up to ${maxCases} test cases as strict JSON with this shape:`);
+  prompt.push("{");
+  prompt.push('  "testCases": [');
+  prompt.push("    {");
+  prompt.push('      "title": "string",');
+  prompt.push('      "description": "string",');
+  prompt.push('      "priority": 1,');
+  prompt.push('      "requirement_refs": ["R1"],');
+  prompt.push('      "steps": [');
+  prompt.push("        {");
+  prompt.push('          "action": "string",');
+  prompt.push('          "expected_result": "string"');
+  prompt.push("        }");
+  prompt.push("      ]");
+  prompt.push("    }");
+  prompt.push("  ]");
+  prompt.push("}");
+  prompt.push("");
+  prompt.push("Guidance:");
+  prompt.push("- Cover happy path, validation, edge conditions, negative conditions, and operational risk where relevant.");
+  prompt.push("- Keep titles concise and reusable across suites.");
+  prompt.push("- Use 1-5 priority where 1 is most critical.");
+  prompt.push("- Each generated case must include one or more requirement_refs from the provided requirement list.");
+  prompt.push("- Multiple requirements can appear on the same case only when the scenario genuinely covers them together.");
+  prompt.push("- Do not include markdown or commentary outside the JSON.");
+
+  return prompt.join("\n");
 };
 
 const resolveIntegration = async (integration_id) => {
@@ -139,7 +274,7 @@ const resolveIntegration = async (integration_id) => {
   return integration;
 };
 
-const requestGeneratedCases = async ({ integration, requirement, appType, maxCases }) => {
+const requestChatCompletion = async ({ integration, content }) => {
   const baseUrl = (integration.base_url || "https://api.openai.com/v1").replace(/\/$/, "");
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
@@ -157,7 +292,7 @@ const requestGeneratedCases = async ({ integration, requirement, appType, maxCas
         },
         {
           role: "user",
-          content: buildPrompt({ requirement, appType, maxCases })
+          content
         }
       ]
     })
@@ -166,42 +301,111 @@ const requestGeneratedCases = async ({ integration, requirement, appType, maxCas
   if (!response.ok) {
     const raw = await response.text();
     const detail = raw.slice(0, 200).trim();
-    throw new Error(`LLM request failed with status ${response.status}${detail ? `: ${detail}` : ""}`);
+    const error = new Error(`LLM request failed with status ${response.status}${detail ? `: ${detail}` : ""}`);
+    error.statusCode = response.status;
+    throw error;
   }
 
   const payload = await response.json();
-  const content = payload?.choices?.[0]?.message?.content;
+  const messageContent = payload?.choices?.[0]?.message?.content;
 
-  if (!content) {
+  if (!messageContent) {
     throw new Error("LLM response did not include generated content");
   }
 
-  return normalizeGeneratedCases(extractJsonPayload(content), maxCases);
+  return messageContent;
 };
 
-const normalizeAcceptedCases = (cases = []) => {
+const requestGeneratedCases = async ({
+  integration,
+  requirements,
+  appType,
+  maxCases,
+  additionalContext,
+  externalLinks,
+  images
+}) => {
+  const prompt = buildPrompt({
+    requirements,
+    appType,
+    maxCases,
+    additionalContext,
+    externalLinks,
+    images
+  });
+
+  try {
+    const content = images.length
+      ? await requestChatCompletion({
+          integration,
+          content: [
+            { type: "text", text: prompt },
+            ...images.map((image) => ({
+              type: "image_url",
+              image_url: {
+                url: image.url
+              }
+            }))
+          ]
+        })
+      : await requestChatCompletion({ integration, content: prompt });
+
+    return normalizeGeneratedCases(extractJsonPayload(content), maxCases, requirements);
+  } catch (error) {
+    if (!images.length || ![400, 415, 422].includes(Number(error?.statusCode || 0))) {
+      throw error;
+    }
+
+    const fallbackPrompt = [
+      prompt,
+      "",
+      "The selected model rejected direct image input. The following image labels were supplied by the user instead:",
+      ...images.map((image, index) => `- Image ${index + 1}: ${image.name}`)
+    ].join("\n");
+
+    const content = await requestChatCompletion({ integration, content: fallbackPrompt });
+    return normalizeGeneratedCases(extractJsonPayload(content), maxCases, requirements);
+  }
+};
+
+const normalizeAcceptedCases = (cases = [], requirements = []) => {
   if (!Array.isArray(cases) || !cases.length) {
     throw new Error("At least one generated test case is required");
   }
 
-  return cases.map((item, index) => normalizeCaseDraft(item, index));
+  return cases.map((item, index) => normalizeCaseDraft(item, index, { requirements, requireRequirementMapping: true }));
 };
 
-exports.previewRequirementTestCases = async ({
-  requirement,
+exports.previewRequirementsTestCases = async ({
+  requirements,
   appType,
   integration_id,
-  max_cases
+  max_cases,
+  additional_context,
+  external_links,
+  images
 }) => {
+  const scopedRequirements = uniqueById(requirements);
+
+  if (!scopedRequirements.length) {
+    throw new Error("At least one requirement is required");
+  }
+
   const maxCases = Number.isFinite(Number(max_cases))
     ? Math.max(1, Math.min(Number(max_cases), 20))
     : DEFAULT_CASE_LIMIT;
+  const additionalContext = normalizeText(additional_context);
+  const externalLinks = normalizeTextList(external_links);
+  const normalizedImages = normalizeImageAssets(images);
   const integration = await resolveIntegration(integration_id);
   const generatedCases = await requestGeneratedCases({
     integration,
-    requirement,
+    requirements: scopedRequirements,
     appType,
-    maxCases
+    maxCases,
+    additionalContext,
+    externalLinks,
+    images: normalizedImages
   });
 
   return {
@@ -211,10 +415,10 @@ exports.previewRequirementTestCases = async ({
       type: integration.type,
       model: integration.model
     },
-    requirement: {
+    requirements: scopedRequirements.map((requirement) => ({
       id: requirement.id,
       title: requirement.title
-    },
+    })),
     app_type: {
       id: appType.id,
       name: appType.name
@@ -228,13 +432,42 @@ exports.previewRequirementTestCases = async ({
   };
 };
 
-exports.acceptRequirementTestCases = async ({
+exports.previewRequirementTestCases = async ({
   requirement,
+  appType,
+  integration_id,
+  max_cases,
+  additional_context,
+  external_links,
+  images
+}) => {
+  const preview = await exports.previewRequirementsTestCases({
+    requirements: [requirement],
+    appType,
+    integration_id,
+    max_cases,
+    additional_context,
+    external_links,
+    images
+  });
+
+  return {
+    ...preview,
+    requirement: {
+      id: requirement.id,
+      title: requirement.title
+    }
+  };
+};
+
+exports.acceptGeneratedTestCases = async ({
+  requirements,
   appType,
   status = "draft",
   cases = []
 }) => {
-  const acceptedCases = normalizeAcceptedCases(cases);
+  const scopedRequirements = uniqueById(requirements);
+  const acceptedCases = normalizeAcceptedCases(cases, scopedRequirements);
   const created = [];
 
   for (const candidate of acceptedCases) {
@@ -244,14 +477,15 @@ exports.acceptRequirementTestCases = async ({
       description: candidate.description || undefined,
       priority: candidate.priority,
       status,
-      requirement_ids: [requirement.id],
+      requirement_ids: candidate.requirement_ids,
       steps: candidate.steps
     });
 
     created.push({
       id: response.id,
       title: candidate.title,
-      step_count: candidate.steps.length
+      step_count: candidate.steps.length,
+      requirement_ids: candidate.requirement_ids
     });
   }
 
@@ -261,18 +495,41 @@ exports.acceptRequirementTestCases = async ({
   };
 };
 
+exports.acceptRequirementTestCases = async ({
+  requirement,
+  appType,
+  status = "draft",
+  cases = []
+}) => {
+  return exports.acceptGeneratedTestCases({
+    requirements: [requirement],
+    appType,
+    status,
+    cases: cases.map((candidate) => ({
+      ...candidate,
+      requirement_ids: [requirement.id]
+    }))
+  });
+};
+
 exports.generateRequirementTestCases = async ({
   requirement,
   appType,
   integration_id,
   max_cases,
-  status = "draft"
+  status = "draft",
+  additional_context,
+  external_links,
+  images
 }) => {
   const preview = await exports.previewRequirementTestCases({
     requirement,
     appType,
     integration_id,
-    max_cases
+    max_cases,
+    additional_context,
+    external_links,
+    images
   });
 
   const accepted = await exports.acceptRequirementTestCases({

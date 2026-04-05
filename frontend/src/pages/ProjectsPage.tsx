@@ -6,6 +6,7 @@ import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { SubnavTabs } from "../components/SubnavTabs";
 import { ToastMessage } from "../components/ToastMessage";
+import { useCurrentProject } from "../hooks/useCurrentProject";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 import { useAuth } from "../auth/AuthContext";
 import type { AppType } from "../types";
@@ -47,7 +48,7 @@ export function ProjectsPage() {
   const queryClient = useQueryClient();
   const { session } = useAuth();
   const { projects, users, roles, projectMembers, appTypes, requirements, testCases } = useWorkspaceData();
-  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [selectedProjectId, setSelectedProjectId] = useCurrentProject();
   const [section, setSection] = useState<ProjectSection>("members");
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
@@ -57,6 +58,10 @@ export function ProjectsPage() {
   const projectItems = projects.data || [];
 
   useEffect(() => {
+    if (projects.isPending) {
+      return;
+    }
+
     if (!projectItems.length) {
       if (selectedProjectId) {
         setSelectedProjectId("");
@@ -67,7 +72,7 @@ export function ProjectsPage() {
     if (!selectedProjectId || !projectItems.some((project) => project.id === selectedProjectId)) {
       setSelectedProjectId(projectItems[0].id);
     }
-  }, [projectItems, selectedProjectId]);
+  }, [projectItems, projects.isPending, selectedProjectId, setSelectedProjectId]);
 
   const selectedProject = useMemo(
     () => projectItems.find((project) => project.id === selectedProjectId) || projectItems[0],
@@ -351,7 +356,6 @@ export function ProjectsPage() {
       <PageHeader
         eyebrow="Projects & Scope"
         title="Projects"
-        description="A project catalog for scope, membership, and application boundaries, with the selected project staying in focus while you work."
         actions={<button className="primary-button" onClick={openCreateProjectModal} type="button">Create Project</button>}
       />
 

@@ -1,10 +1,11 @@
-import { DragEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { DragEvent, FormEvent, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StatusBadge } from "../components/StatusBadge";
 import { ToastMessage } from "../components/ToastMessage";
+import { useCurrentProject } from "../hooks/useCurrentProject";
 import { api } from "../lib/api";
 import type { AppType, Project, Requirement, TestCase, TestStep, TestSuite } from "../types";
 
@@ -29,7 +30,7 @@ const DEFAULT_CASE_STATUS = "active";
 
 export function DesignPage() {
   const queryClient = useQueryClient();
-  const [projectId, setProjectId] = useState("");
+  const [projectId, setProjectId] = useCurrentProject();
   const [appTypeId, setAppTypeId] = useState("");
   const [selectedSuiteId, setSelectedSuiteId] = useState("");
   const [selectedTestCaseId, setSelectedTestCaseId] = useState("");
@@ -39,6 +40,9 @@ export function DesignPage() {
   const [isCreatingCase, setIsCreatingCase] = useState(false);
   const [suiteModalMode, setSuiteModalMode] = useState<SuiteModalMode>("create");
   const [isSuiteModalOpen, setIsSuiteModalOpen] = useState(false);
+  const [isSuitePanelMinimized, setIsSuitePanelMinimized] = useState(false);
+  const [isCasePanelMinimized, setIsCasePanelMinimized] = useState(false);
+  const [isEditorPanelMinimized, setIsEditorPanelMinimized] = useState(false);
   const [expandedStepId, setExpandedStepId] = useState("");
   const [isAddingStep, setIsAddingStep] = useState(false);
   const [message, setMessage] = useState("");
@@ -139,10 +143,21 @@ export function DesignPage() {
   const [stepDrafts, setStepDrafts] = useState<Record<string, StepDraft>>({});
 
   useEffect(() => {
-    if (!projectId && projects[0]) {
+    if (projectsQuery.isPending) {
+      return;
+    }
+
+    if (!projects.length) {
+      if (projectId) {
+        setProjectId("");
+      }
+      return;
+    }
+
+    if (!projects.some((project) => project.id === projectId)) {
       setProjectId(projects[0].id);
     }
-  }, [projectId, projects]);
+  }, [projectId, projects, projectsQuery.isPending, setProjectId]);
 
   useEffect(() => {
     if (!appTypes.length) {
@@ -345,6 +360,9 @@ export function DesignPage() {
     setSelectedTestCaseId("");
     setSelectedTestCaseIds([]);
     setIsCreatingCase(false);
+    setIsSuitePanelMinimized(false);
+    setIsCasePanelMinimized(false);
+    setIsEditorPanelMinimized(false);
     setExpandedStepId("");
     setMessage("");
   };
@@ -355,6 +373,9 @@ export function DesignPage() {
     setSelectedTestCaseId("");
     setSelectedTestCaseIds([]);
     setIsCreatingCase(false);
+    setIsSuitePanelMinimized(false);
+    setIsCasePanelMinimized(false);
+    setIsEditorPanelMinimized(false);
     setSearchTerm("");
     setStatusFilter("all");
     setExpandedStepId("");
@@ -687,11 +708,19 @@ export function DesignPage() {
       <PageHeader
         eyebrow="Test Design"
         title="Test Suites"
-        description="Choose project and app type once, browse suites on the left, scan test cases in the middle, and edit the selected case with live steps on the right."
-        actions={<button className="primary-button" onClick={() => {
-          setSuiteModalMode("create");
-          setIsSuiteModalOpen(true);
-        }} disabled={!appTypeId} type="button">Create Suite</button>}
+        actions={
+          <button
+            className="primary-button"
+            disabled={!appTypeId}
+            onClick={() => {
+              setSuiteModalMode("create");
+              setIsSuiteModalOpen(true);
+            }}
+            type="button"
+          >
+            Create Suite
+          </button>
+        }
       />
 
       <ToastMessage message={message} onDismiss={() => setMessage("")} tone={messageTone} />
@@ -701,88 +730,135 @@ export function DesignPage() {
         <AppTypeSelector appTypes={appTypes} value={appTypeId} onChange={handleAppTypeChange} disabled={!projectId} />
       </div>
 
-      <div className="design-layout">
-        <SuiteSidebar
-          suites={suites}
-          activeSuiteId={selectedSuiteId}
-          counts={suiteCounts}
-          onSelectSuite={setSelectedSuiteId}
-          onViewAllCases={() => setSelectedSuiteId("")}
-          onCreateSuite={() => {
-            setSuiteModalMode("create");
-            setIsSuiteModalOpen(true);
-          }}
-          onEditSuite={() => {
-            setSuiteModalMode("edit");
-            setIsSuiteModalOpen(true);
-          }}
-          onDeleteSuite={() => void handleDeleteSuite()}
-          isLoading={suitesQuery.isLoading && Boolean(appTypeId)}
-          selectedAppType={selectedAppType}
-          selectedSuite={selectedSuite}
-          canCreateSuite={Boolean(appTypeId)}
-        />
+      <div
+        className={[
+          "design-layout",
+          "execution-workspace",
+          isSuitePanelMinimized ? "execution-workspace--list-minimized" : "",
+          isCasePanelMinimized ? "execution-workspace--tree-minimized" : "",
+          isEditorPanelMinimized ? "execution-workspace--detail-minimized" : ""
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
+        <div className={isSuitePanelMinimized ? "execution-column execution-column--collapsed" : "execution-column sticky-column"}>
+          {isSuitePanelMinimized ? (
+            <DesignMinimizedRail count={suites.length} label="Suites" onExpand={() => setIsSuitePanelMinimized(false)} />
+          ) : (
+            <SuiteSidebar
+              actions={
+                <button className="ghost-button execution-panel-toggle" onClick={() => setIsSuitePanelMinimized(true)} type="button">
+                  Minimize
+                </button>
+              }
+              suites={suites}
+              activeSuiteId={selectedSuiteId}
+              counts={suiteCounts}
+              onSelectSuite={setSelectedSuiteId}
+              onViewAllCases={() => setSelectedSuiteId("")}
+              onCreateSuite={() => {
+                setSuiteModalMode("create");
+                setIsSuiteModalOpen(true);
+              }}
+              onEditSuite={() => {
+                setSuiteModalMode("edit");
+                setIsSuiteModalOpen(true);
+              }}
+              onDeleteSuite={() => void handleDeleteSuite()}
+              isLoading={suitesQuery.isLoading && Boolean(appTypeId)}
+              selectedAppType={selectedAppType}
+              selectedSuite={selectedSuite}
+              canCreateSuite={Boolean(appTypeId)}
+            />
+          )}
+        </div>
 
-        <TestCaseList
-          cases={filteredCases}
-          activeCaseId={selectedTestCaseId}
-          searchTerm={searchTerm}
-          statusFilter={statusFilter}
-          selectedCaseIds={selectedTestCaseIds}
-          selectedSuite={selectedSuite}
-          isLoading={isDesignLoading}
-          onSearch={setSearchTerm}
-          onStatusFilter={setStatusFilter}
-          onSelectCase={(testCaseId) => {
-            setSelectedTestCaseId(testCaseId);
-            setIsCreatingCase(false);
-          }}
-          onCreateCase={() => {
-            setSelectedTestCaseId("");
-            setIsCreatingCase(true);
-          }}
-          onToggleSelection={(testCaseId) => {
-            setSelectedTestCaseIds((current) =>
-              current.includes(testCaseId) ? current.filter((id) => id !== testCaseId) : [...current, testCaseId]
-            );
-          }}
-          onToggleSelectAll={() => {
-            const visibleIds = filteredCases.map((item) => item.id);
-            const allVisibleSelected = visibleIds.every((id) => selectedTestCaseIds.includes(id));
-            setSelectedTestCaseIds(allVisibleSelected ? [] : visibleIds);
-          }}
-          onReorderCases={handleReorderCases}
-        />
+        <div className={isCasePanelMinimized ? "execution-column execution-column--collapsed" : "execution-column"}>
+          {isCasePanelMinimized ? (
+            <DesignMinimizedRail count={filteredCases.length} label="Test cases" onExpand={() => setIsCasePanelMinimized(false)} />
+          ) : (
+            <TestCaseList
+              actions={
+                <button className="ghost-button execution-panel-toggle" onClick={() => setIsCasePanelMinimized(true)} type="button">
+                  Minimize
+                </button>
+              }
+              cases={filteredCases}
+              activeCaseId={selectedTestCaseId}
+              searchTerm={searchTerm}
+              statusFilter={statusFilter}
+              selectedCaseIds={selectedTestCaseIds}
+              selectedSuite={selectedSuite}
+              isLoading={isDesignLoading}
+              onSearch={setSearchTerm}
+              onStatusFilter={setStatusFilter}
+              onSelectCase={(testCaseId) => {
+                setSelectedTestCaseId(testCaseId);
+                setIsCreatingCase(false);
+              }}
+              onCreateCase={() => {
+                setSelectedTestCaseId("");
+                setIsCreatingCase(true);
+              }}
+              onToggleSelection={(testCaseId) => {
+                setSelectedTestCaseIds((current) =>
+                  current.includes(testCaseId) ? current.filter((id) => id !== testCaseId) : [...current, testCaseId]
+                );
+              }}
+              onToggleSelectAll={() => {
+                const visibleIds = filteredCases.map((item) => item.id);
+                const allVisibleSelected = visibleIds.every((id) => selectedTestCaseIds.includes(id));
+                setSelectedTestCaseIds(allVisibleSelected ? [] : visibleIds);
+              }}
+              onReorderCases={handleReorderCases}
+            />
+          )}
+        </div>
 
-        <TestCaseEditor
-          project={selectedProject}
-          appType={selectedAppType}
-          suites={suites}
-          selectedSuite={selectedSuite}
-          requirements={requirements}
-          selectedTestCase={selectedTestCase}
-          steps={sortedSteps}
-          stepDrafts={stepDrafts}
-          caseDraft={caseDraft}
-          newStepDraft={newStepDraft}
-          expandedStepId={expandedStepId}
-          isCreatingCase={isCreatingCase}
-          isAddingStep={isAddingStep}
-          isLoading={stepsQuery.isLoading}
-          onCaseDraftChange={setCaseDraft}
-          onSaveTestCase={handleSaveTestCase}
-          onDeleteTestCase={handleDeleteTestCase}
-          onToggleExpandStep={(stepId) => setExpandedStepId((current) => (current === stepId ? "" : stepId))}
-          onStepDraftChange={(stepId, draft) => {
-            setStepDrafts((current) => ({ ...current, [stepId]: draft }));
-          }}
-          onNewStepDraftChange={setNewStepDraft}
-          onToggleAddStep={() => setIsAddingStep((current) => !current)}
-          onCreateStep={handleCreateStep}
-          onUpdateStep={handleUpdateStep}
-          onDeleteStep={handleDeleteStep}
-          onReorderSteps={handleReorderSteps}
-        />
+        <div className={isEditorPanelMinimized ? "execution-column execution-column--collapsed" : "execution-column execution-column--detail"}>
+          {isEditorPanelMinimized ? (
+            <DesignMinimizedRail
+              count={isCreatingCase ? undefined : sortedSteps.length}
+              label="Case editor"
+              onExpand={() => setIsEditorPanelMinimized(false)}
+            />
+          ) : (
+            <TestCaseEditor
+              actions={
+                <button className="ghost-button execution-panel-toggle" onClick={() => setIsEditorPanelMinimized(true)} type="button">
+                  Minimize
+                </button>
+              }
+              project={selectedProject}
+              appType={selectedAppType}
+              suites={suites}
+              selectedSuite={selectedSuite}
+              requirements={requirements}
+              selectedTestCase={selectedTestCase}
+              steps={sortedSteps}
+              stepDrafts={stepDrafts}
+              caseDraft={caseDraft}
+              newStepDraft={newStepDraft}
+              expandedStepId={expandedStepId}
+              isCreatingCase={isCreatingCase}
+              isAddingStep={isAddingStep}
+              isLoading={stepsQuery.isLoading}
+              onCaseDraftChange={setCaseDraft}
+              onSaveTestCase={handleSaveTestCase}
+              onDeleteTestCase={handleDeleteTestCase}
+              onToggleExpandStep={(stepId) => setExpandedStepId((current) => (current === stepId ? "" : stepId))}
+              onStepDraftChange={(stepId, draft) => {
+                setStepDrafts((current) => ({ ...current, [stepId]: draft }));
+              }}
+              onNewStepDraftChange={setNewStepDraft}
+              onToggleAddStep={() => setIsAddingStep((current) => !current)}
+              onCreateStep={handleCreateStep}
+              onUpdateStep={handleUpdateStep}
+              onDeleteStep={handleDeleteStep}
+              onReorderSteps={handleReorderSteps}
+            />
+          )}
+        </div>
       </div>
 
       {isSuiteModalOpen ? (
@@ -799,6 +875,23 @@ export function DesignPage() {
         />
       ) : null}
     </div>
+  );
+}
+
+function DesignMinimizedRail({
+  label,
+  count,
+  onExpand
+}: {
+  label: string;
+  count?: number;
+  onExpand: () => void;
+}) {
+  return (
+    <button aria-label={`Expand ${label}`} className="execution-panel-rail" onClick={onExpand} type="button">
+      <span className="execution-panel-rail-label">{label}</span>
+      <span className="execution-panel-rail-meta">{typeof count === "number" ? count : "Show"}</span>
+    </button>
   );
 }
 
@@ -848,6 +941,7 @@ function AppTypeSelector({
 }
 
 function SuiteSidebar({
+  actions,
   suites,
   activeSuiteId,
   counts,
@@ -861,6 +955,7 @@ function SuiteSidebar({
   selectedSuite,
   canCreateSuite
 }: {
+  actions?: ReactNode;
   suites: TestSuite[];
   activeSuiteId: string;
   counts: Record<string, number>;
@@ -875,7 +970,11 @@ function SuiteSidebar({
   canCreateSuite: boolean;
 }) {
   return (
-    <Panel title="Suites" subtitle={selectedAppType ? `${selectedAppType.name} · ${selectedAppType.type}` : "Select a project and app type first."}>
+    <Panel
+      actions={actions}
+      title="Suites"
+      subtitle={selectedAppType ? `${selectedAppType.name} · ${selectedAppType.type}` : "Select a project and app type first."}
+    >
       <div className="design-sidebar-actions">
         <button className="primary-button" disabled={!canCreateSuite} onClick={onCreateSuite} type="button">Create Suite</button>
         <button className="ghost-button" disabled={!selectedSuite} onClick={onEditSuite} type="button">Edit Suite</button>
@@ -918,6 +1017,7 @@ function SuiteSidebar({
 }
 
 function TestCaseList({
+  actions,
   cases,
   activeCaseId,
   searchTerm,
@@ -933,6 +1033,7 @@ function TestCaseList({
   onToggleSelectAll,
   onReorderCases
 }: {
+  actions?: ReactNode;
   cases: TestCase[];
   activeCaseId: string;
   searchTerm: string;
@@ -952,7 +1053,11 @@ function TestCaseList({
   const [draggedCaseId, setDraggedCaseId] = useState("");
 
   return (
-    <Panel title="Test Cases" subtitle={selectedSuite ? `Scoped to ${selectedSuite.name}` : "Showing all cases for the current app type."}>
+    <Panel
+      actions={actions}
+      title="Test Cases"
+      subtitle={selectedSuite ? `Scoped to ${selectedSuite.name}` : "Showing all cases for the current app type."}
+    >
       <div className="design-list-toolbar">
         <input placeholder="Search cases" value={searchTerm} onChange={(event) => onSearch(event.target.value)} />
         <select value={statusFilter} onChange={(event) => onStatusFilter(event.target.value)}>
@@ -1019,6 +1124,7 @@ function TestCaseList({
 }
 
 function TestCaseEditor({
+  actions,
   project,
   appType,
   suites,
@@ -1045,6 +1151,7 @@ function TestCaseEditor({
   onDeleteStep,
   onReorderSteps
 }: {
+  actions?: ReactNode;
   project: Project | null;
   appType: AppType | null;
   suites: TestSuite[];
@@ -1078,7 +1185,7 @@ function TestCaseEditor({
       : "Choose a test case to start editing.";
 
   return (
-    <Panel title="Test Case Editor" subtitle={subtitle}>
+    <Panel actions={actions} title="Test Case Editor" subtitle={subtitle}>
       <div className="detail-summary">
         <strong>{selectedTestCase?.title || (isCreatingCase ? "New test case" : "No test case selected")}</strong>
         <span>{project?.name || "No project"} · {appType?.name || "No app type"}</span>

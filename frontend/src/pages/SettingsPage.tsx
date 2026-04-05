@@ -28,7 +28,6 @@ export function SettingsPage() {
       <PageHeader
         eyebrow="Settings"
         title="Workspace Settings"
-        description="Tune the workspace chrome, export posture, and preferences so the product feels right for your team."
         actions={<button className="primary-button" onClick={saveSettings} type="button">Save preferences</button>}
       />
 

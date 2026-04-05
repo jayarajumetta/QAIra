@@ -476,6 +476,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/IdResponse"
+  /requirements/import:
+    post:
+      tags: [Requirements]
+      summary: Bulk import requirements from parsed CSV rows
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkImportRequirementsRequest"
+      responses:
+        "200":
+          description: Import result with per-row outcomes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkImportRequirementsResponse"
   /requirements/{id}:
     parameters:
       - $ref: "#/components/parameters/IdParam"
@@ -1156,6 +1173,41 @@ components:
         description: { type: string }
         priority: { type: integer }
         status: { type: string }
+    BulkImportRequirementsRequest:
+      type: object
+      required: [project_id, rows]
+      properties:
+        project_id: { type: string }
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              title: { type: string }
+              description: { type: string }
+              priority: { type: integer }
+              status: { type: string }
+    BulkImportRequirementsResponse:
+      type: object
+      properties:
+        imported: { type: integer }
+        failed: { type: integer }
+        created:
+          type: array
+          items:
+            type: object
+            properties:
+              row: { type: integer }
+              id: { type: string }
+              title: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              row: { type: integer }
+              title: { type: string, nullable: true }
+              message: { type: string }
     TestSuite:
       type: object
       properties:

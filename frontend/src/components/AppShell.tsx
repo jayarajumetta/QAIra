@@ -1,13 +1,13 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../auth/AuthContext";
+import { useCurrentProject } from "../hooks/useCurrentProject";
 import { api } from "../lib/api";
 
 const THEME_KEY = "app_theme";
 const SIDEBAR_KEY = "sidebar_collapsed";
-const PROJECT_KEY = "sidebar_project_id";
 
 const navigation = [
   {
@@ -59,7 +59,6 @@ const navigation = [
 ] as const;
 
 export function AppShell() {
-  const navigate = useNavigate();
   const location = useLocation();
   const { session, logout, error, clearError } = useAuth();
   const projectsQuery = useQuery({
@@ -78,14 +77,14 @@ export function AppShell() {
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
   const [isCollapsed, setIsCollapsed] = useState(() => window.localStorage.getItem(SIDEBAR_KEY) === "true");
-  const [sidebarProjectId, setSidebarProjectId] = useState(() => window.localStorage.getItem(PROJECT_KEY) || "");
+  const [sidebarProjectId, setSidebarProjectId] = useCurrentProject();
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
     authoring: true,
     runs: true
   });
 
   const projects = projectsQuery.data || [];
-  const hasNoProjects = projects.length === 0;
+  const hasNoProjects = !projectsQuery.isPending && projects.length === 0;
   const navCounts = {
     projects: projects.length
   };
@@ -100,22 +99,22 @@ export function AppShell() {
     window.localStorage.setItem(SIDEBAR_KEY, String(isCollapsed));
   }, [isCollapsed]);
 
-  // Auto-select first project or clear if no projects
   useEffect(() => {
-    if (!sidebarProjectId && projects.length > 0) {
-      setSidebarProjectId(projects[0].id);
-    } else if (hasNoProjects) {
-      setSidebarProjectId("");
+    if (projectsQuery.isPending) {
+      return;
     }
-  }, [projects, sidebarProjectId, hasNoProjects]);
 
-  useEffect(() => {
-    if (sidebarProjectId) {
-      window.localStorage.setItem(PROJECT_KEY, sidebarProjectId);
-    } else {
-      window.localStorage.removeItem(PROJECT_KEY);
+    if (!projects.length) {
+      if (sidebarProjectId) {
+        setSidebarProjectId("");
+      }
+      return;
     }
-  }, [sidebarProjectId]);
+
+    if (!sidebarProjectId || !projects.some((project) => project.id === sidebarProjectId)) {
+      setSidebarProjectId(projects[0].id);
+    }
+  }, [projects, projectsQuery.isPending, setSidebarProjectId, sidebarProjectId]);
 
   useEffect(() => {
     navigation.forEach((group) => {
@@ -126,6 +125,8 @@ export function AppShell() {
       });
     });
   }, [location.pathname]);
+
+  const isWorkspaceWideLibrary = location.pathname === "/requirements" || location.pathname === "/test-cases";
 
   const currentSection = useMemo(() => {
     for (const group of navigation) {
@@ -147,7 +148,7 @@ export function AppShell() {
   }, [location.pathname]);
 
   return (
-    <div className="app-shell app-layout">
+    <div className={`app-shell app-layout${isWorkspaceWideLibrary ? " app-layout--workspace-wide" : ""}`}>
       {error && (
         <div className="global-alert" role="alert">
           <p>{error}</p>
@@ -207,10 +208,7 @@ export function AppShell() {
                 <span>Current Project</span>
                 <select
                   value={sidebarProjectId}
-                  onChange={(event) => {
-                    setSidebarProjectId(event.target.value);
-                    navigate("/projects");
-                  }}
+                  onChange={(event) => setSidebarProjectId(event.target.value)}
                   aria-label="Select a project"
                 >
                   {projects.map((project) => (
@@ -386,7 +384,10 @@ export function AppShell() {
         </div>
       </aside>
 
-      <main className="workspace-main main" data-section={currentSection}>
+      <main
+        className={`workspace-main main${isWorkspaceWideLibrary ? " main--library-fill" : ""}`}
+        data-section={currentSection}
+      >
         <Outlet />
       </main>
     </div>

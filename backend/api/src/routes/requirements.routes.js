@@ -21,6 +21,23 @@ module.exports = async function (fastify) {
     return service.createRequirement(req.body);
   });
 
+  fastify.post("/requirements/import", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      project_id: { required: true, type: "string" },
+      rows: { required: true, type: "array" }
+    }, req.body);
+
+    if (!req.body.rows.every((row) => row && typeof row === "object" && !Array.isArray(row))) {
+      throw new Error("rows must contain requirement objects");
+    }
+
+    await projectService.getProject(req.body.project_id, req.user.id);
+
+    return service.bulkImportRequirements(req.body);
+  });
+
   fastify.get("/requirements", async (req) => {
     await fastify.authenticate(req);
     const { project_id, status, priority } = req.query;
@@ -70,7 +87,10 @@ module.exports = async function (fastify) {
       app_type_id: { required: true, type: "string" },
       integration_id: { required: false, type: "string" },
       max_cases: { required: false, type: "number" },
-      status: { required: false, type: "string" }
+      status: { required: false, type: "string" },
+      additional_context: { required: false, type: "string" },
+      external_links: { required: false, type: "array", items: "string" },
+      images: { required: false, type: "array" }
     }, req.body);
 
     const requirement = await service.getRequirement(req.params.id);
@@ -87,7 +107,10 @@ module.exports = async function (fastify) {
       appType,
       integration_id: req.body.integration_id,
       max_cases: req.body.max_cases,
-      status: req.body.status
+      status: req.body.status,
+      additional_context: req.body.additional_context,
+      external_links: req.body.external_links,
+      images: req.body.images
     });
   });
 
@@ -97,7 +120,10 @@ module.exports = async function (fastify) {
     fastify.validate({
       app_type_id: { required: true, type: "string" },
       integration_id: { required: false, type: "string" },
-      max_cases: { required: false, type: "number" }
+      max_cases: { required: false, type: "number" },
+      additional_context: { required: false, type: "string" },
+      external_links: { required: false, type: "array", items: "string" },
+      images: { required: false, type: "array" }
     }, req.body);
 
     const requirement = await service.getRequirement(req.params.id);
@@ -113,7 +139,10 @@ module.exports = async function (fastify) {
       requirement,
       appType,
       integration_id: req.body.integration_id,
-      max_cases: req.body.max_cases
+      max_cases: req.body.max_cases,
+      additional_context: req.body.additional_context,
+      external_links: req.body.external_links,
+      images: req.body.images
     });
   });
 

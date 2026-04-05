@@ -19,11 +19,7 @@ export function NotificationsPage() {
 
   return (
     <div className="page-content">
-      <PageHeader
-        eyebrow="Notifications"
-        title="Notification Center"
-        description="Control what reaches the team, and keep the important execution, quality, and governance events visible."
-      />
+      <PageHeader eyebrow="Notifications" title="Notification Center" />
 
       <div className="workspace-grid">
         <Panel title="Rules" subtitle="Decide which events should surface immediately and which should wait for a digest.">

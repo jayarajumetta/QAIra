@@ -1,4 +1,6 @@
 import type {
+  AiDesignImageInput,
+  AiDesignPreviewResponse,
   ApiError,
   AppType,
   Execution,
@@ -184,17 +186,22 @@ export const api = {
       request<Requirement[]>(`/requirements${toQueryString(query)}`),
     create: (input: { project_id: string; title: string; description?: string; priority?: number; status?: string }) =>
       request<{ id: string }>("/requirements", { method: "POST", body: JSON.stringify(input) }),
-    previewDesignedTestCases: (id: string, input: { app_type_id: string; integration_id?: string; max_cases?: number }) =>
-      request<{ generated: number; cases: Array<{ client_id: string; title: string; description: string | null; priority: number; steps: Array<{ step_order: number; action: string | null; expected_result: string | null }>; step_count: number }>; integration: { id: string; name: string; type: string; model?: string | null } }>(`/requirements/${id}/design-test-cases-preview`, {
+    bulkImport: (input: { project_id: string; rows: Array<Record<string, string | number | null | undefined>> }) =>
+      request<{ imported: number; failed: number; created: Array<{ row: number; id: string; title: string }>; errors: Array<{ row: number; title?: string | null; message: string }> }>("/requirements/import", {
         method: "POST",
         body: JSON.stringify(input)
       }),
-    acceptDesignedTestCases: (id: string, input: { app_type_id: string; status?: string; cases: Array<{ title: string; description?: string | null; priority?: number; steps?: Array<{ step_order?: number; action?: string | null; expected_result?: string | null }> }> }) =>
-      request<{ accepted: number; created: Array<{ id: string; title: string; step_count: number }> }>(`/requirements/${id}/design-test-cases-accept`, {
+    previewDesignedTestCases: (id: string, input: { app_type_id: string; integration_id?: string; max_cases?: number; additional_context?: string; external_links?: string[]; images?: AiDesignImageInput[] }) =>
+      request<AiDesignPreviewResponse>(`/requirements/${id}/design-test-cases-preview`, {
         method: "POST",
         body: JSON.stringify(input)
       }),
-    generateTestCases: (id: string, input: { app_type_id: string; integration_id?: string; max_cases?: number; status?: string }) =>
+    acceptDesignedTestCases: (id: string, input: { app_type_id: string; status?: string; cases: Array<{ title: string; description?: string | null; priority?: number; requirement_ids?: string[]; steps?: Array<{ step_order?: number; action?: string | null; expected_result?: string | null }> }> }) =>
+      request<{ accepted: number; created: Array<{ id: string; title: string; step_count: number; requirement_ids: string[] }> }>(`/requirements/${id}/design-test-cases-accept`, {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
+    generateTestCases: (id: string, input: { app_type_id: string; integration_id?: string; max_cases?: number; status?: string; additional_context?: string; external_links?: string[]; images?: AiDesignImageInput[] }) =>
       request<{ generated: number; created: Array<{ id: string; title: string; step_count: number }>; integration: { id: string; name: string; type: string; model?: string | null } }>(`/requirements/${id}/generate-test-cases`, {
         method: "POST",
         body: JSON.stringify(input)
@@ -249,6 +256,16 @@ export const api = {
       request<TestCase[]>(`/test-cases${toQueryString(query)}`),
     create: (input: { app_type_id?: string; suite_id?: string; suite_ids?: string[]; title: string; description?: string; priority?: number; status?: string; requirement_id?: string; requirement_ids?: string[]; steps?: Array<{ step_order?: number; action?: string; expected_result?: string }> }) =>
       request<{ id: string }>("/test-cases", { method: "POST", body: JSON.stringify(input) }),
+    previewDesignedCases: (input: { app_type_id: string; requirement_ids: string[]; integration_id?: string; max_cases?: number; additional_context?: string; external_links?: string[]; images?: AiDesignImageInput[] }) =>
+      request<AiDesignPreviewResponse>("/test-cases/design-test-cases-preview", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
+    acceptDesignedCases: (input: { app_type_id: string; requirement_ids: string[]; status?: string; cases: Array<{ title: string; description?: string | null; priority?: number; requirement_ids?: string[]; steps?: Array<{ step_order?: number; action?: string | null; expected_result?: string | null }> }> }) =>
+      request<{ accepted: number; created: Array<{ id: string; title: string; step_count: number; requirement_ids: string[] }> }>("/test-cases/design-test-cases-accept", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
     bulkImport: (input: { app_type_id: string; requirement_id?: string; rows: Array<Record<string, string | number | null | undefined>> }) =>
       request<{ imported: number; failed: number; created: Array<{ row: number; id: string; title: string }>; errors: Array<{ row: number; title?: string | null; message: string }> }>("/test-cases/import", {
         method: "POST",
