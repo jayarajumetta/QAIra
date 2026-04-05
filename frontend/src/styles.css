@@ -1101,15 +1101,36 @@ textarea {
 
 .editor-accordion-toggle-main {
   min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+}
+
+.editor-accordion-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+  color: var(--primary);
+  transition: transform 180ms ease;
+}
+
+.editor-accordion-icon.is-expanded {
+  transform: rotate(90deg);
+}
+
+.editor-accordion-toggle-copy {
+  min-width: 0;
   display: grid;
   gap: 0.35rem;
 }
 
-.editor-accordion-toggle-main strong {
+.editor-accordion-toggle-copy strong {
   display: block;
 }
 
-.editor-accordion-toggle-main span {
+.editor-accordion-toggle-copy span {
   color: var(--text-secondary);
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -4639,6 +4660,8 @@ textarea:disabled {
   max-height: min(60vh, 48rem);
   overflow-y: auto;
   padding-right: 0.25rem;
+  align-content: start;
+  grid-auto-rows: max-content;
 }
 
 .test-case-library-scroll .record-card {
@@ -4893,6 +4916,11 @@ textarea:disabled {
   color: #9fc4ff;
 }
 
+:root[data-theme="dark"] .test-case-catalog-card.is-marked-for-delete {
+  border-color: rgba(240, 106, 135, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(240, 106, 135, 0.12);
+}
+
 :root[data-theme="dark"] .requirement-catalog-card.is-marked-for-delete {
   border-color: rgba(240, 106, 135, 0.28);
   box-shadow: inset 0 0 0 1px rgba(240, 106, 135, 0.12);
@@ -5061,6 +5089,38 @@ textarea:disabled {
 .requirement-catalog-toolbar input {
   flex: 1 1 18rem;
   min-width: min(100%, 18rem);
+}
+
+.test-case-catalog-toolbar {
+  margin-bottom: 0.9rem;
+}
+
+.test-case-catalog-toolbar input {
+  flex: 1 1 18rem;
+  min-width: min(100%, 18rem);
+}
+
+.test-case-selection-summary {
+  margin-bottom: 1rem;
+}
+
+.test-case-catalog-card {
+  align-self: start;
+}
+
+.test-case-catalog-card.is-marked-for-delete {
+  border-color: rgba(205, 54, 88, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(205, 54, 88, 0.08);
+}
+
+.test-case-catalog-card.is-marked-for-delete .test-case-delete-checkbox {
+  color: var(--danger);
+}
+
+.test-case-delete-checkbox {
+  margin-top: 0.1rem;
+  width: fit-content;
+  font-size: 0.82rem;
 }
 
 .requirement-selection-summary {
@@ -5877,10 +5937,12 @@ textarea:disabled {
     flex-direction: column;
   }
 
+  .editor-accordion-toggle,
   .requirement-accordion-toggle {
     flex-direction: column;
   }
 
+  .editor-accordion-toggle-meta,
   .requirement-accordion-toggle-meta {
     width: 100%;
     justify-items: start;

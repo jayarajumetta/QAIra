@@ -32,7 +32,7 @@ type DraftTestStep = {
   expected_result: string;
 };
 
-type EditorSection = "case" | "steps";
+type TestCaseEditorSectionKey = "case" | "steps" | "history";
 
 const EMPTY_CASE_DRAFT: TestCaseDraft = {
   title: "",
@@ -46,6 +46,12 @@ const EMPTY_STEP_DRAFT: StepDraft = {
   action: "",
   expected_result: ""
 };
+
+const createDefaultTestCaseSections = (): Record<TestCaseEditorSectionKey, boolean> => ({
+  case: true,
+  steps: true,
+  history: false
+});
 
 const createDraftStepId = () =>
   globalThis.crypto?.randomUUID?.() || `draft-step-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -81,7 +87,9 @@ export function TestCasesPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const [isCreating, setIsCreating] = useState(false);
-  const [activeEditorSection, setActiveEditorSection] = useState<EditorSection>("case");
+  const [deleteSelectedTestCaseIds, setDeleteSelectedTestCaseIds] = useState<string[]>([]);
+  const [isDeletingSelectedTestCases, setIsDeletingSelectedTestCases] = useState(false);
+  const [expandedSections, setExpandedSections] = useState<Record<TestCaseEditorSectionKey, boolean>>(createDefaultTestCaseSections);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const [caseDraft, setCaseDraft] = useState<TestCaseDraft>(EMPTY_CASE_DRAFT);
@@ -200,7 +208,6 @@ export function TestCasesPage() {
 
   const beginCreateCase = () => {
     setIsCreating(true);
-    setActiveEditorSection("case");
     setSelectedTestCaseId("");
     setCaseDraft(EMPTY_CASE_DRAFT);
     setDraftSteps([]);
@@ -249,7 +256,6 @@ export function TestCasesPage() {
 
   useEffect(() => {
     setSelectedTestCaseId("");
-    setActiveEditorSection("case");
     setIsCreating(false);
     setIsImportModalOpen(false);
     setCaseDraft(EMPTY_CASE_DRAFT);
@@ -265,6 +271,10 @@ export function TestCasesPage() {
     setAiPreviewCases([]);
     setAiPreviewMessage("");
   }, [appTypeId]);
+
+  useEffect(() => {
+    setDeleteSelectedTestCaseIds((current) => current.filter((id) => testCases.some((item) => item.id === id)));
+  }, [testCases]);
 
   const historyByCaseId = useMemo(() => {
     const map: Record<string, ExecutionResult[]> = {};
@@ -312,6 +322,9 @@ export function TestCasesPage() {
     });
   }, [deferredSearchTerm, requirements, testCases]);
 
+  const areAllFilteredCasesSelected =
+    filteredCases.length > 0 && filteredCases.every((item) => deleteSelectedTestCaseIds.includes(item.id));
+
   const selectedTestCase = useMemo(
     () => filteredCases.find((item) => item.id === selectedTestCaseId) || testCases.find((item) => item.id === selectedTestCaseId) || null,
     [filteredCases, selectedTestCaseId, testCases]
@@ -346,7 +359,7 @@ export function TestCasesPage() {
   useEffect(() => {
     setNewStepDraft(EMPTY_STEP_DRAFT);
     setExpandedStepIds([]);
-    setActiveEditorSection("case");
+    setExpandedSections(createDefaultTestCaseSections());
   }, [isCreating, selectedTestCaseId]);
 
   useEffect(() => {
@@ -451,6 +464,7 @@ export function TestCasesPage() {
 
     try {
       await deleteTestCase.mutateAsync(selectedTestCase.id);
+      setDeleteSelectedTestCaseIds((current) => current.filter((id) => id !== selectedTestCase.id));
       setSelectedTestCaseId("");
       setCaseDraft(EMPTY_CASE_DRAFT);
       setIsCreating(false);
@@ -458,6 +472,60 @@ export function TestCasesPage() {
       await refreshCases();
     } catch (error) {
       showError(error, "Unable to delete test case");
+    }
+  };
+
+  const handleDeleteSelectedCases = async () => {
+    const selectedCases = testCases.filter((item) => deleteSelectedTestCaseIds.includes(item.id));
+
+    if (!selectedCases.length) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${selectedCases.length} test case${selectedCases.length === 1 ? "" : "s"}? Historical execution evidence will stay preserved.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsDeletingSelectedTestCases(true);
+
+    try {
+      const results = await Promise.allSettled(selectedCases.map((testCase) => api.testCases.delete(testCase.id)));
+      const deletedIds = selectedCases
+        .filter((_, index) => results[index]?.status === "fulfilled")
+        .map((testCase) => testCase.id);
+      const failedResults = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+
+      setDeleteSelectedTestCaseIds((current) => current.filter((id) => !deletedIds.includes(id)));
+
+      if (deletedIds.includes(selectedTestCaseId)) {
+        setSelectedTestCaseId("");
+        setCaseDraft(EMPTY_CASE_DRAFT);
+        setDraftSteps([]);
+        setNewStepDraft(EMPTY_STEP_DRAFT);
+        setExpandedStepIds([]);
+        setIsCreating(false);
+      }
+
+      if (deletedIds.length) {
+        await refreshCases();
+      }
+
+      if (!failedResults.length) {
+        showSuccess(`${deletedIds.length} test case${deletedIds.length === 1 ? "" : "s"} deleted. Execution history remains preserved.`);
+        return;
+      }
+
+      const firstError = failedResults[0]?.reason;
+      setMessageTone("error");
+      setMessage(
+        `${deletedIds.length} test case${deletedIds.length === 1 ? "" : "s"} deleted, ${failedResults.length} failed.${firstError instanceof Error ? ` ${firstError.message}` : ""}`
+      );
+    } finally {
+      setIsDeletingSelectedTestCases(false);
     }
   };
 
@@ -832,6 +900,9 @@ export function TestCasesPage() {
     : isCreating
       ? "No draft steps added yet."
       : "No steps added yet for this test case.";
+  const historySectionSummary = selectedHistory.length
+    ? "Review the latest recorded outcomes and preserved execution evidence for this reusable test case."
+    : "No execution history has been recorded for this reusable test case yet.";
   const aiSelectedRequirements = useMemo(
     () => requirements.filter((requirement) => aiRequirementIds.includes(requirement.id)),
     [aiRequirementIds, requirements]
@@ -903,16 +974,49 @@ export function TestCasesPage() {
       <div className="test-case-workspace">
         <div className="test-case-sidebar">
           <Panel title="Test case library" subtitle={appTypeId ? "Search the library, scan quick quality signals, and jump into a case without the list taking over the page." : "Choose an app type to begin."}>
-            <div className="design-list-toolbar">
+            <div className="design-list-toolbar test-case-catalog-toolbar">
               <input
                 placeholder="Search title, description, or requirement"
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
               />
+              <button
+                className="ghost-button"
+                disabled={!filteredCases.length || areAllFilteredCasesSelected}
+                onClick={() =>
+                  setDeleteSelectedTestCaseIds((current) => [...new Set([...current, ...filteredCases.map((item) => item.id)])])
+                }
+                type="button"
+              >
+                Select all visible
+              </button>
+              <button
+                className="ghost-button"
+                disabled={!deleteSelectedTestCaseIds.length}
+                onClick={() => setDeleteSelectedTestCaseIds([])}
+                type="button"
+              >
+                Clear selection
+              </button>
+              <button
+                className="ghost-button danger"
+                disabled={!deleteSelectedTestCaseIds.length || isDeletingSelectedTestCases}
+                onClick={() => void handleDeleteSelectedCases()}
+                type="button"
+              >
+                {isDeletingSelectedTestCases ? "Deleting…" : `Delete selected${deleteSelectedTestCaseIds.length ? ` (${deleteSelectedTestCaseIds.length})` : ""}`}
+              </button>
               <button className="ghost-button" disabled={!appTypeId} onClick={beginCreateCase} type="button">
                 New case
               </button>
             </div>
+
+            {deleteSelectedTestCaseIds.length ? (
+              <div className="detail-summary test-case-selection-summary">
+                <strong>{deleteSelectedTestCaseIds.length} test case{deleteSelectedTestCaseIds.length === 1 ? "" : "s"} marked for delete</strong>
+                <span>Checkbox selections are only used for bulk delete. Click a card body to keep editing one test case at a time.</span>
+              </div>
+            ) : null}
 
             {isLibraryLoading ? (
               <div className="record-list test-case-library-scroll">
@@ -925,6 +1029,8 @@ export function TestCasesPage() {
             {!isLibraryLoading ? (
               <div className="record-list test-case-library-scroll">
                 {filteredCases.map((testCase) => {
+                  const isSelectedForDelete = deleteSelectedTestCaseIds.includes(testCase.id);
+                  const isActive = selectedTestCaseId === testCase.id && !isCreating;
                   const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
                   const latest = history[0];
                   const requirement = requirements.find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id));
@@ -932,11 +1038,14 @@ export function TestCasesPage() {
 
                   return (
                     <button
-                      className={selectedTestCaseId === testCase.id && !isCreating ? "record-card tile-card test-case-card is-active" : "record-card tile-card test-case-card"}
+                      className={[
+                        "record-card tile-card test-case-card test-case-catalog-card",
+                        isActive ? "is-active" : "",
+                        isSelectedForDelete ? "is-marked-for-delete" : ""
+                      ].filter(Boolean).join(" ")}
                       key={testCase.id}
                       onClick={() => {
                         setSelectedTestCaseId(testCase.id);
-                        setActiveEditorSection("case");
                         setIsCreating(false);
                         setDraftSteps([]);
                       }}
@@ -969,12 +1078,26 @@ export function TestCasesPage() {
                             )) : <span className="history-bar" />}
                           </div>
                         </div>
+                        <label className="checkbox-field test-case-delete-checkbox" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            checked={isSelectedForDelete}
+                            onChange={(event) =>
+                              setDeleteSelectedTestCaseIds((current) =>
+                                event.target.checked ? [...new Set([...current, testCase.id])] : current.filter((id) => id !== testCase.id)
+                              )
+                            }
+                            type="checkbox"
+                          />
+                          Mark for delete
+                        </label>
                       </div>
                       <StatusBadge value={latest?.status || testCase.status || "active"} />
                     </button>
                   );
                 })}
-                {!filteredCases.length ? <div className="empty-state compact">No test cases found for this app type.</div> : null}
+                {!filteredCases.length ? (
+                  <div className="empty-state compact">{testCases.length ? "No test cases match the current search." : "No test cases found for this app type."}</div>
+                ) : null}
               </div>
             ) : null}
           </Panel>
@@ -1006,8 +1129,8 @@ export function TestCasesPage() {
                 <div className="editor-accordion">
                   <EditorAccordionSection
                     countLabel={isCreating ? "Draft" : caseDraft.status || "active"}
-                    isExpanded={activeEditorSection === "case"}
-                    onExpand={() => setActiveEditorSection("case")}
+                    isExpanded={expandedSections.case}
+                    onToggle={() => setExpandedSections((current) => ({ ...current, case: !current.case }))}
                     summary={caseSectionSummary}
                     title={isCreating ? "New test case" : "Selected test case"}
                   >
@@ -1093,8 +1216,8 @@ export function TestCasesPage() {
 
                   <EditorAccordionSection
                     countLabel={stepCountLabel}
-                    isExpanded={activeEditorSection === "steps"}
-                    onExpand={() => setActiveEditorSection("steps")}
+                    isExpanded={expandedSections.steps}
+                    onToggle={() => setExpandedSections((current) => ({ ...current, steps: !current.steps }))}
                     summary={stepSectionSummary}
                     title={isCreating ? "Draft steps" : "Test steps"}
                   >
@@ -1173,31 +1296,39 @@ export function TestCasesPage() {
                       </form>
                     </div>
                   </EditorAccordionSection>
-                </div>
 
-                {!isCreating ? (
-                  <div className="step-editor step-history">
-                    <div className="panel-head">
-                      <div>
-                        <h3>Execution history</h3>
-                        <p>Recent recorded outcomes for this reusable test case.</p>
-                      </div>
-                    </div>
-
-                    <div className="stack-list">
-                      {selectedHistory.map((result) => (
-                        <div className="stack-item" key={result.id}>
+                  {!isCreating ? (
+                    <EditorAccordionSection
+                      countLabel={`${selectedHistory.length} record${selectedHistory.length === 1 ? "" : "s"}`}
+                      isExpanded={expandedSections.history}
+                      onToggle={() => setExpandedSections((current) => ({ ...current, history: !current.history }))}
+                      summary={historySectionSummary}
+                      title="Execution history"
+                    >
+                      <div className="step-editor step-history">
+                        <div className="panel-head">
                           <div>
-                            <strong>{result.test_case_title || selectedTestCase?.title || "Execution record"}</strong>
-                            <span>{result.error || result.logs || result.created_at || "Historical execution evidence retained."}</span>
+                            <h3>Execution history</h3>
+                            <p>Recent recorded outcomes for this reusable test case.</p>
                           </div>
-                          <StatusBadge value={result.status} />
                         </div>
-                      ))}
-                      {!selectedHistory.length ? <div className="empty-state compact">No execution history yet for this test case.</div> : null}
-                    </div>
-                  </div>
-                ) : null}
+
+                        <div className="stack-list">
+                          {selectedHistory.map((result) => (
+                            <div className="stack-item" key={result.id}>
+                              <div>
+                                <strong>{result.test_case_title || selectedTestCase?.title || "Execution record"}</strong>
+                                <span>{result.error || result.logs || result.created_at || "Historical execution evidence retained."}</span>
+                              </div>
+                              <StatusBadge value={result.status} />
+                            </div>
+                          ))}
+                          {!selectedHistory.length ? <div className="empty-state compact">No execution history yet for this test case.</div> : null}
+                        </div>
+                      </div>
+                    </EditorAccordionSection>
+                  ) : null}
+                </div>
               </div>
             ) : (
               <div className="empty-state compact">Select a test case from the library, or start a new one for this app type.</div>
@@ -1376,14 +1507,14 @@ function EditorAccordionSection({
   summary,
   countLabel,
   isExpanded,
-  onExpand,
+  onToggle,
   children
 }: {
   title: string;
   summary: string;
   countLabel: string;
   isExpanded: boolean;
-  onExpand: () => void;
+  onToggle: () => void;
   children: ReactNode;
 }) {
   return (
@@ -1391,20 +1522,33 @@ function EditorAccordionSection({
       <button
         aria-expanded={isExpanded}
         className="editor-accordion-toggle"
-        onClick={onExpand}
+        onClick={onToggle}
         type="button"
       >
         <div className="editor-accordion-toggle-main">
-          <strong>{title}</strong>
-          <span>{summary}</span>
+          <span aria-hidden="true" className={isExpanded ? "editor-accordion-icon is-expanded" : "editor-accordion-icon"}>
+            <EditorAccordionChevronIcon />
+          </span>
+          <div className="editor-accordion-toggle-copy">
+            <strong>{title}</strong>
+            <span>{summary}</span>
+          </div>
         </div>
         <div className="editor-accordion-toggle-meta">
           <span className="editor-accordion-toggle-count">{countLabel}</span>
-          <span className="editor-accordion-toggle-state">{isExpanded ? "Expanded" : "Expand"}</span>
+          <span className="editor-accordion-toggle-state">{isExpanded ? "Collapse" : "Expand"}</span>
         </div>
       </button>
       {isExpanded ? <div className="editor-accordion-body">{children}</div> : null}
     </section>
+  );
+}
+
+function EditorAccordionChevronIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width="18">
+      <path d="m9 6 6 6-6 6" />
+    </svg>
   );
 }
 
