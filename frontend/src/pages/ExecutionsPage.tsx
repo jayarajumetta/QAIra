@@ -707,7 +707,7 @@ export function ExecutionsPage() {
   };
 
   return (
-    <div className="page-content">
+    <div className="page-content page-content--executions-full">
       <PageHeader
         eyebrow="Executions"
         title="Test Executions"
@@ -794,6 +794,7 @@ export function ExecutionsPage() {
             />
           ) : (
             <Panel
+              className="execution-panel execution-panel--list"
               actions={
                 <button className="ghost-button execution-panel-toggle" onClick={() => setIsExecutionListMinimized(true)} type="button">
                   Minimize
@@ -802,70 +803,72 @@ export function ExecutionsPage() {
               title="Execution list"
               subtitle="Search and switch between recent runs."
             >
-              <div className="design-list-toolbar">
-                <input
-                  aria-label="Search executions"
-                  value={executionSearch}
-                  onChange={(event) => setExecutionSearch(event.target.value)}
-                  type="search"
-                />
-              </div>
-
-              {executionsQuery.isLoading ? (
-                <div className="record-list">
-                  <div className="skeleton-block" />
-                  <div className="skeleton-block" />
-                  <div className="skeleton-block" />
+              <div className="execution-panel-body execution-panel-body--list">
+                <div className="design-list-toolbar">
+                  <input
+                    aria-label="Search executions"
+                    value={executionSearch}
+                    onChange={(event) => setExecutionSearch(event.target.value)}
+                    type="search"
+                  />
                 </div>
-              ) : null}
 
-              {!executionsQuery.isLoading ? (
-                <VirtualList
-                  ariaLabel="Execution list"
-                  className="execution-list-virtual"
-                  emptyState={<div className="empty-state compact">No executions created yet.</div>}
-                  height={640}
-                  itemHeight={224}
-                  itemKey={(execution) => execution.id}
-                  items={filteredExecutions}
-                  renderItem={(execution: Execution) => (
-                    <button
-                      className={selectedExecution?.id === execution.id ? "record-card tile-card execution-card virtual-card is-active" : "record-card tile-card execution-card virtual-card"}
-                      onClick={() => setSelectedExecutionId(execution.id)}
-                      type="button"
-                    >
-                      <div className="tile-card-main">
-                        <div className="tile-card-header">
-                          <div className="record-card-icon execution">EX</div>
-                          <div className="tile-card-title-group">
-                            <strong>{execution.name || "Unnamed execution"}</strong>
-                            <span className="tile-card-kicker">{projects.find((project) => project.id === execution.project_id)?.name || execution.project_id}</span>
+                {executionsQuery.isLoading ? (
+                  <div className="record-list">
+                    <div className="skeleton-block" />
+                    <div className="skeleton-block" />
+                    <div className="skeleton-block" />
+                  </div>
+                ) : null}
+
+                {!executionsQuery.isLoading ? (
+                  <VirtualList
+                    ariaLabel="Execution list"
+                    className="execution-list-virtual"
+                    emptyState={<div className="empty-state compact">No executions created yet.</div>}
+                    fillHeight
+                    itemHeight={224}
+                    itemKey={(execution) => execution.id}
+                    items={filteredExecutions}
+                    renderItem={(execution: Execution) => (
+                      <button
+                        className={selectedExecution?.id === execution.id ? "record-card tile-card execution-card virtual-card is-active" : "record-card tile-card execution-card virtual-card"}
+                        onClick={() => setSelectedExecutionId(execution.id)}
+                        type="button"
+                      >
+                        <div className="tile-card-main">
+                          <div className="tile-card-header">
+                            <div className="record-card-icon execution">EX</div>
+                            <div className="tile-card-title-group">
+                              <strong>{execution.name || "Unnamed execution"}</strong>
+                              <span className="tile-card-kicker">{projects.find((project) => project.id === execution.project_id)?.name || execution.project_id}</span>
+                            </div>
                           </div>
+                          <p className="tile-card-description">
+                            {appTypes.find((appType) => appType.id === execution.app_type_id)?.name || "No app type scoped"} · {(execution.trigger || "manual").toUpperCase()} run
+                          </p>
+                          <div className="tile-card-metrics">
+                            <span className="tile-metric">{execution.suite_ids.length} suites</span>
+                            <span className="tile-metric">{executionSummaryById[execution.id]?.total || 0} results</span>
+                            <span className="tile-metric">{executionSummaryById[execution.id]?.failed || 0} failed</span>
+                          </div>
+                          <ProgressMeter
+                            detail={`${executionSummaryById[execution.id]?.passed || 0} passed · ${executionSummaryById[execution.id]?.failed || 0} failed · ${executionSummaryById[execution.id]?.blocked || 0} blocked`}
+                            segments={buildProgressSegments(
+                              executionSummaryById[execution.id]?.passed || 0,
+                              executionSummaryById[execution.id]?.failed || 0,
+                              executionSummaryById[execution.id]?.blocked || 0,
+                              executionSummaryById[execution.id]?.total || 0
+                            )}
+                            value={executionSummaryById[execution.id]?.passRate || 0}
+                          />
                         </div>
-                        <p className="tile-card-description">
-                          {appTypes.find((appType) => appType.id === execution.app_type_id)?.name || "No app type scoped"} · {(execution.trigger || "manual").toUpperCase()} run
-                        </p>
-                        <div className="tile-card-metrics">
-                          <span className="tile-metric">{execution.suite_ids.length} suites</span>
-                          <span className="tile-metric">{executionSummaryById[execution.id]?.total || 0} results</span>
-                          <span className="tile-metric">{executionSummaryById[execution.id]?.failed || 0} failed</span>
-                        </div>
-                        <ProgressMeter
-                          detail={`${executionSummaryById[execution.id]?.passed || 0} passed · ${executionSummaryById[execution.id]?.failed || 0} failed · ${executionSummaryById[execution.id]?.blocked || 0} blocked`}
-                          segments={buildProgressSegments(
-                            executionSummaryById[execution.id]?.passed || 0,
-                            executionSummaryById[execution.id]?.failed || 0,
-                            executionSummaryById[execution.id]?.blocked || 0,
-                            executionSummaryById[execution.id]?.total || 0
-                          )}
-                          value={executionSummaryById[execution.id]?.passRate || 0}
-                        />
-                      </div>
-                      <StatusBadge value={execution.status} />
-                    </button>
-                  )}
-                />
-              ) : null}
+                        <StatusBadge value={execution.status} />
+                      </button>
+                    )}
+                  />
+                ) : null}
+              </div>
             </Panel>
           )}
         </div>
@@ -879,6 +882,7 @@ export function ExecutionsPage() {
             />
           ) : (
             <Panel
+              className="execution-panel execution-panel--tree"
               actions={
                 <button className="ghost-button execution-panel-toggle" onClick={() => setIsSuiteTreeMinimized(true)} type="button">
                   Minimize
@@ -888,141 +892,150 @@ export function ExecutionsPage() {
               subtitle={selectedExecution ? "The center workspace for run scope and case selection." : "Select an execution to see its snapped scope."}
             >
               {selectedExecution ? (
-                <div className="suite-tree">
-                  <div className="metric-strip">
-                    <div className="mini-card">
-                      <ProgressMeter
-                        detail={`${executionStatusCounts.passed} passed · ${executionStatusCounts.failed} failed · ${executionStatusCounts.blocked} blocked`}
-                        label="Execution progress"
-                        segments={buildProgressSegments(
-                          executionStatusCounts.passed,
-                          executionStatusCounts.failed,
-                          executionStatusCounts.blocked,
-                          executionProgress.totalCases
-                        )}
-                        value={executionProgress.percent}
-                      />
+                <div className="execution-panel-body execution-panel-body--tree">
+                  <div className="suite-tree">
+                    <div className="metric-strip">
+                      <div className="mini-card">
+                        <ProgressMeter
+                          detail={`${executionStatusCounts.passed} passed · ${executionStatusCounts.failed} failed · ${executionStatusCounts.blocked} blocked`}
+                          label="Execution progress"
+                          segments={buildProgressSegments(
+                            executionStatusCounts.passed,
+                            executionStatusCounts.failed,
+                            executionStatusCounts.blocked,
+                            executionProgress.totalCases
+                          )}
+                          value={executionProgress.percent}
+                        />
+                      </div>
+                      <div className="mini-card">
+                        <strong>{executionProgress.completedCases}/{executionProgress.totalCases}</strong>
+                        <span>Completed cases</span>
+                      </div>
+                      <div className="mini-card">
+                        <strong>{selectedExecutionSuiteIds.length}</strong>
+                        <span>Scoped suites</span>
+                      </div>
                     </div>
-                    <div className="mini-card">
-                      <strong>{executionProgress.completedCases}/{executionProgress.totalCases}</strong>
-                      <span>Completed cases</span>
-                    </div>
-                    <div className="mini-card">
-                      <strong>{selectedExecutionSuiteIds.length}</strong>
-                      <span>Scoped suites</span>
-                    </div>
-                  </div>
 
-                  {!executionSuites.length ? <div className="empty-state compact">No suites were selected for this execution.</div> : null}
+                    {!executionSuites.length ? <div className="empty-state compact">No suites were selected for this execution.</div> : null}
 
-                  {executionSuites.map((suite) => {
-                    const suiteCases = displayCasesBySuiteId[suite.id] || [];
-                    const suiteMetric = suiteMetrics.find((item) => item.suiteId === suite.id);
-                    const isExpanded = expandedSuiteIds.includes(suite.id);
+                    {executionSuites.map((suite) => {
+                      const suiteCases = displayCasesBySuiteId[suite.id] || [];
+                      const suiteMetric = suiteMetrics.find((item) => item.suiteId === suite.id);
+                      const isExpanded = expandedSuiteIds.includes(suite.id);
 
-                    return (
-                      <div className="tree-suite" key={suite.id}>
-                        <div className={isExpanded ? "tree-suite-row record-card tile-card is-active" : "tree-suite-row record-card tile-card"}>
-                          <button
-                            className="tree-suite-expand"
-                            onClick={() => {
-                              setExpandedSuiteIds((current) =>
-                                current.includes(suite.id) ? current.filter((id) => id !== suite.id) : [...current, suite.id]
-                              );
-                            }}
-                            type="button"
-                          >
-                            <div className="tile-card-main">
-                              <div className="tile-card-header">
-                                <div className="record-card-icon test-suite">SU</div>
-                                <div className="tile-card-title-group">
-                                  <strong>{suite.name}</strong>
-                                  <span className="tile-card-kicker">{suite.isHistorical ? "Historical suite snapshot" : "Execution snapshot scope"}</span>
+                      return (
+                        <div className="tree-suite" key={suite.id}>
+                          <div className={isExpanded ? "tree-suite-row record-card tile-card is-active" : "tree-suite-row record-card tile-card"}>
+                            <button
+                              className="tree-suite-expand"
+                              onClick={() => {
+                                setExpandedSuiteIds((current) =>
+                                  current.includes(suite.id) ? current.filter((id) => id !== suite.id) : [...current, suite.id]
+                                );
+                              }}
+                              type="button"
+                            >
+                              <div className="tile-card-main">
+                                <div className="tile-card-header">
+                                  <div className="record-card-icon test-suite">SU</div>
+                                  <div className="tile-card-title-group">
+                                    <strong>{suite.name}</strong>
+                                    <span className="tile-card-kicker">{suite.isHistorical ? "Historical suite snapshot" : "Execution snapshot scope"}</span>
+                                  </div>
                                 </div>
+                                <p className="tile-card-description">Expand the suite to inspect cases. Use suite pass/fail to set every case in this suite at once.</p>
+                                <div className="tile-card-metrics">
+                                  <span className="tile-metric">{suiteMetric?.count || 0} cases</span>
+                                  <span className="tile-metric">{suiteMetric?.failedCount || 0} failed</span>
+                                  <span className="tile-metric">{suiteMetric?.blockedCount || 0} blocked</span>
+                                </div>
+                                <ProgressMeter
+                                  detail={`${suiteMetric?.passedCount || 0} passed · ${suiteMetric?.failedCount || 0} failed · ${suiteMetric?.blockedCount || 0} blocked`}
+                                  label="Suite completion"
+                                  segments={buildProgressSegments(
+                                    suiteMetric?.passedCount || 0,
+                                    suiteMetric?.failedCount || 0,
+                                    suiteMetric?.blockedCount || 0,
+                                    suiteMetric?.count || 0
+                                  )}
+                                  value={suiteMetric?.percent || 0}
+                                />
                               </div>
-                              <p className="tile-card-description">Expand the suite to inspect cases. Use suite pass/fail to set every case in this suite at once.</p>
-                              <div className="tile-card-metrics">
-                                <span className="tile-metric">{suiteMetric?.count || 0} cases</span>
-                                <span className="tile-metric">{suiteMetric?.failedCount || 0} failed</span>
-                                <span className="tile-metric">{suiteMetric?.blockedCount || 0} blocked</span>
-                              </div>
-                              <ProgressMeter
-                                detail={`${suiteMetric?.passedCount || 0} passed · ${suiteMetric?.failedCount || 0} failed · ${suiteMetric?.blockedCount || 0} blocked`}
-                                label="Suite completion"
-                                segments={buildProgressSegments(
-                                  suiteMetric?.passedCount || 0,
-                                  suiteMetric?.failedCount || 0,
-                                  suiteMetric?.blockedCount || 0,
-                                  suiteMetric?.count || 0
-                                )}
-                                value={suiteMetric?.percent || 0}
-                              />
-                            </div>
-                          </button>
-                          <div className="tree-suite-bulk-actions" role="group" aria-label={`${suite.name} suite-level results`}>
-                            <button
-                              className="ghost-button suite-bulk-pass"
-                              disabled={!isExecutionStarted || isExecutionLocked}
-                              onClick={() => void handleSuiteBulkStatus(suite.id, "passed")}
-                              type="button"
-                            >
-                              Suite pass
                             </button>
-                            <button
-                              className="ghost-button danger suite-bulk-fail"
-                              disabled={!isExecutionStarted || isExecutionLocked}
-                              onClick={() => void handleSuiteBulkStatus(suite.id, "failed")}
-                              type="button"
-                            >
-                              Suite fail
-                            </button>
-                          </div>
-                        </div>
-
-                        {isExpanded ? (
-                          <div className="tree-children">
-                            {!suiteCases.length ? <div className="empty-state compact">No test cases in this suite.</div> : null}
-                            {suiteCases.map((testCase) => (
+                            <div className="tree-suite-bulk-actions" role="group" aria-label={`${suite.name} suite-level results`}>
                               <button
-                                key={testCase.id}
-                                className={selectedTestCaseId === testCase.id ? "record-card tile-card test-case-card is-active" : "record-card tile-card test-case-card"}
-                                onClick={() => setSelectedTestCaseId(testCase.id)}
+                                className="ghost-button suite-bulk-pass"
+                                disabled={!isExecutionStarted || isExecutionLocked}
+                                onClick={() => void handleSuiteBulkStatus(suite.id, "passed")}
                                 type="button"
                               >
-                                <div className="tile-card-main">
-                                  <div className="tile-card-header">
-                                    <div className="record-card-icon test-case">TC</div>
-                                    <div className="tile-card-title-group">
-                                      <strong>{testCase.title}</strong>
-                                      <span className="tile-card-kicker">{suite.name}</span>
+                                Suite pass
+                              </button>
+                              <button
+                                className="ghost-button danger suite-bulk-fail"
+                                disabled={!isExecutionStarted || isExecutionLocked}
+                                onClick={() => void handleSuiteBulkStatus(suite.id, "failed")}
+                                type="button"
+                              >
+                                Suite fail
+                              </button>
+                            </div>
+                          </div>
+
+                          {isExpanded ? (
+                            <div className="tree-children">
+                              {!suiteCases.length ? <div className="empty-state compact">No test cases in this suite.</div> : null}
+                              {suiteCases.map((testCase) => (
+                                <button
+                                  key={testCase.id}
+                                  className={selectedTestCaseId === testCase.id ? "record-card tile-card test-case-card is-active" : "record-card tile-card test-case-card"}
+                                  onClick={() => setSelectedTestCaseId(testCase.id)}
+                                  type="button"
+                                >
+                                  <div className="tile-card-main">
+                                    <div className="tile-card-header">
+                                      <div className="record-card-icon test-case">TC</div>
+                                      <div className="tile-card-title-group">
+                                        <strong>{testCase.title}</strong>
+                                        <span className="tile-card-kicker">{suite.name}</span>
+                                      </div>
+                                    </div>
+                                    <p className="tile-card-description">{testCase.description || "No description recorded for this test case."}</p>
+                                    <div className="tile-card-metrics">
+                                      <span className="tile-metric">Priority P{testCase.priority || 3}</span>
+                                      <span className="tile-metric">Snapshot case</span>
                                     </div>
                                   </div>
-                                  <p className="tile-card-description">{testCase.description || "No description recorded for this test case."}</p>
-                                  <div className="tile-card-metrics">
-                                    <span className="tile-metric">Priority P{testCase.priority || 3}</span>
-                                    <span className="tile-metric">Snapshot case</span>
-                                  </div>
-                                </div>
-                                <StatusBadge value={caseDerivedStatus(testCase)} />
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
+                                  <StatusBadge value={caseDerivedStatus(testCase)} />
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               ) : (
-                <div className="empty-state compact">Select an execution to inspect its snapshot scope.</div>
+                <div className="execution-panel-body execution-panel-body--tree">
+                  <div className="empty-state compact">Select an execution to inspect its snapshot scope.</div>
+                </div>
               )}
             </Panel>
           )}
         </div>
 
         <div className="execution-column execution-column--detail">
-          <Panel title="Execution detail" subtitle={selectedExecutionCase ? "Focused detail for the selected case." : "Select a case to view step execution and logs."}>
+          <Panel
+            className="execution-panel execution-panel--detail"
+            title="Execution detail"
+            subtitle={selectedExecutionCase ? "Focused detail for the selected case." : "Select a case to view step execution and logs."}
+          >
             {selectedExecution ? (
-              <div className="detail-stack">
+              <div className="execution-panel-body execution-panel-body--detail">
+                <div className="detail-stack">
                 <div className="detail-summary">
                   <strong>{selectedExecutionCase?.title || selectedExecution.name || "Unnamed execution"}</strong>
                   <span>{selectedExecutionCase?.description || "Snapshot detail for the selected execution item."}</span>
@@ -1226,9 +1239,12 @@ export function ExecutionsPage() {
                     {!blockingCases.length ? <div className="empty-state compact">No failed or blocked cases in this execution.</div> : null}
                   </div>
                 ) : null}
+                </div>
               </div>
             ) : (
-              <div className="empty-state compact">Select an execution to continue.</div>
+              <div className="execution-panel-body execution-panel-body--detail">
+                <div className="empty-state compact">Select an execution to continue.</div>
+              </div>
             )}
           </Panel>
         </div>

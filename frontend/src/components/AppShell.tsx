@@ -185,7 +185,11 @@ export function AppShell() {
     });
   }, [location.pathname]);
 
-  const isWorkspaceWideLibrary = location.pathname === "/requirements" || location.pathname === "/test-cases";
+  const isWorkspaceWideLibrary =
+    location.pathname === "/requirements" ||
+    location.pathname === "/test-cases" ||
+    location.pathname === "/design" ||
+    location.pathname === "/executions";
 
   const currentSection = useMemo(() => {
     for (const group of navigation) {

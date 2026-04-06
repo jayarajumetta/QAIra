@@ -379,6 +379,14 @@ export function DesignPage() {
   }, [selectedSuiteId, suites]);
 
   useEffect(() => {
+    if (selectedSuiteId || !suites.length) {
+      return;
+    }
+
+    setSelectedSuiteId(suites[0].id);
+  }, [selectedSuiteId, suites]);
+
+  useEffect(() => {
     setSelectedSuiteActionIds((current) => current.filter((suiteId) => suites.some((suite) => suite.id === suiteId)));
   }, [suites]);
 
@@ -1389,6 +1397,9 @@ function SuiteSidebar({
                   <span className="object-type-badge test-suite">Suite</span>
                 </div>
                 <p className="tile-card-description">{selectedAppType ? `${selectedAppType.name} workspace suite` : "No app type selected"}</p>
+                <div className="tile-card-metrics">
+                  <span className="tile-metric">{counts[suite.id] || 0} mapped cases</span>
+                </div>
                 <label className="checkbox-field suite-card-action-checkbox" onClick={(event) => event.stopPropagation()}>
                   <input
                     checked={selectedSuiteActionIds.includes(suite.id)}
@@ -1398,7 +1409,6 @@ function SuiteSidebar({
                   Select suite
                 </label>
               </div>
-              <span className="count-pill">{counts[suite.id] || 0}</span>
             </button>
           ))}
         </div>
@@ -2181,14 +2191,27 @@ function SuiteModal({
   const [parentId, setParentId] = useState(() => (mode === "edit" && suite ? suite.parent_id || "" : ""));
   const [localSelectedIds, setLocalSelectedIds] = useState<string[]>(() => initialSelectedIds);
 
+  useEffect(() => {
+    setLocalSelectedIds(initialSelectedIds);
+  }, [initialSelectedIds]);
+
   return (
-    <div className="modal-backdrop" role="presentation">
-      <div className="modal-card" role="dialog" aria-modal="true" aria-label={mode === "edit" ? "Edit suite" : "Create suite"}>
-        <div className="panel-head">
-          <div>
+    <div className="modal-backdrop" onClick={() => !isSaving && onClose()} role="presentation">
+      <div
+        className="modal-card suite-create-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={mode === "edit" ? "Edit suite" : "Create suite"}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="suite-create-header">
+          <div className="suite-create-title">
             <h3>{mode === "edit" ? "Edit Suite" : "Create Suite"}</h3>
-            <p>Load all test cases for this app type and bulk assign the checked ones into the suite.</p>
+            <p>Choose the reusable cases once, keep their saved order with the arrow controls, and submit from this modal.</p>
           </div>
+          <button className="ghost-button" disabled={isSaving} onClick={onClose} type="button">
+            Close
+          </button>
         </div>
 
         <form
@@ -2202,34 +2225,40 @@ function SuiteModal({
             });
           }}
         >
-          <FormField label="Suite name">
-            <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} />
-          </FormField>
-          <FormField label="Parent suite">
-            <select value={parentId} onChange={(event) => setParentId(event.target.value)}>
-              <option value="">None</option>
-              {suites
-                .filter((item) => item.id !== suite?.id)
-                .map((item) => (
-                  <option key={item.id} value={item.id}>{item.name}</option>
-                ))}
-            </select>
-          </FormField>
+          <div className="suite-modal-body">
+            <div className="record-grid suite-modal-config-grid">
+              <FormField label="Suite name">
+                <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} />
+              </FormField>
+              <FormField label="Parent suite">
+                <select value={parentId} onChange={(event) => setParentId(event.target.value)}>
+                  <option value="">None</option>
+                  {suites
+                    .filter((item) => item.id !== suite?.id)
+                    .map((item) => (
+                      <option key={item.id} value={item.id}>{item.name}</option>
+                    ))}
+                </select>
+              </FormField>
+            </div>
 
-          <SuiteCasePicker
-            cases={appTypeCases}
-            description="Select every case you want in this suite, then fine-tune the saved order before submitting."
-            emptyMessage="No test cases available in this app type yet."
-            heading="App type test cases"
-            onChange={setLocalSelectedIds}
-            selectedCaseIds={localSelectedIds}
-          />
+            <div className="suite-modal-picker-shell">
+              <SuiteCasePicker
+                cases={appTypeCases}
+                description="Check the cases that belong in this suite, then use the up and down arrows to set the saved order."
+                emptyMessage="No test cases available in this app type yet."
+                heading="App type test cases"
+                onChange={setLocalSelectedIds}
+                selectedCaseIds={localSelectedIds}
+              />
+            </div>
+          </div>
 
           <div className="action-row suite-modal-actions">
             <button className="primary-button" disabled={isSaving} type="submit">
               {isSaving ? "Saving…" : mode === "edit" ? "Save Suite" : "Create Suite"}
             </button>
-            <button className="ghost-button" onClick={onClose} type="button">Cancel</button>
+            <button className="ghost-button" disabled={isSaving} onClick={onClose} type="button">Cancel</button>
           </div>
         </form>
       </div>
