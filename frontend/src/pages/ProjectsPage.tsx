@@ -356,6 +356,12 @@ export function ProjectsPage() {
       <PageHeader
         eyebrow="Projects & Scope"
         title="Projects"
+        description="Define workspace scope, onboard collaborators, and configure the delivery surfaces each team owns."
+        meta={[
+          { label: "Projects", value: projectItems.length },
+          { label: "Members in scope", value: selectedProject ? scopedMembers.length : 0 },
+          { label: "App types", value: selectedProject ? selectedProjectAppTypeCount : 0 }
+        ]}
         actions={<button className="primary-button" onClick={openCreateProjectModal} type="button">Create Project</button>}
       />
 

@@ -12,8 +12,11 @@ export function SubnavTabs<T extends string>({
       {items.map((item) => (
         <button
           key={item.value}
+          aria-selected={value === item.value}
           className={value === item.value ? "subnav-tab is-active" : "subnav-tab"}
           onClick={() => onChange(item.value)}
+          role="tab"
+          tabIndex={value === item.value ? 0 : -1}
           type="button"
         >
           <strong>{item.label}</strong>

@@ -629,6 +629,12 @@ export function RequirementsPage() {
       <PageHeader
         eyebrow="Requirements"
         title="Requirements Workspace"
+        description="Organize reusable requirement scope, keep coverage visible, and hand selected requirements into AI-assisted case design."
+        meta={[
+          { label: "Requirements", value: metrics.total },
+          { label: "Mapped", value: metrics.mapped },
+          { label: "High priority", value: metrics.highPriority }
+        ]}
         actions={
           <>
             <button

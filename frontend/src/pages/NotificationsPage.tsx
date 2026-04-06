@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { ToastMessage } from "../components/ToastMessage";
 
 const notificationFeed = [
   { title: "Execution failed in Checkout Regression", detail: "2 minutes ago · Web Portal · Assigned to release team", tone: "error" },
@@ -9,6 +10,8 @@ const notificationFeed = [
   { title: "Project membership changed", detail: "Today · Two new members added to Mobile QA", tone: "neutral" }
 ] as const;
 
+const NOTIFICATION_PREFERENCES_KEY = "notification_preferences";
+
 export function NotificationsPage() {
   const [channels, setChannels] = useState({
     failures: true,
@@ -16,10 +19,52 @@ export function NotificationsPage() {
     governance: false,
     digest: true
   });
+  const [message, setMessage] = useState("");
+  const enabledChannelCount = Object.values(channels).filter(Boolean).length;
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(NOTIFICATION_PREFERENCES_KEY);
+
+    if (!stored) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(stored) as typeof channels;
+
+      if (
+        typeof parsed.failures === "boolean" &&
+        typeof parsed.ai === "boolean" &&
+        typeof parsed.governance === "boolean" &&
+        typeof parsed.digest === "boolean"
+      ) {
+        setChannels(parsed);
+      }
+    } catch {
+      window.localStorage.removeItem(NOTIFICATION_PREFERENCES_KEY);
+    }
+  }, []);
+
+  const savePreferences = () => {
+    window.localStorage.setItem(NOTIFICATION_PREFERENCES_KEY, JSON.stringify(channels));
+    setMessage("Notification preferences saved locally for this browser.");
+  };
 
   return (
     <div className="page-content">
-      <PageHeader eyebrow="Notifications" title="Notification Center" />
+      <PageHeader
+        eyebrow="Notifications"
+        title="Notification Center"
+        description="Choose which quality events deserve immediate attention and which ones should stay in a calmer digest."
+        meta={[
+          { label: "Channels on", value: enabledChannelCount },
+          { label: "Recent events", value: notificationFeed.length },
+          { label: "Digest", value: channels.digest ? "Enabled" : "Off" }
+        ]}
+        actions={<button className="primary-button" onClick={savePreferences} type="button">Save preferences</button>}
+      />
+
+      <ToastMessage message={message} onDismiss={() => setMessage("")} />
 
       <div className="workspace-grid">
         <Panel title="Rules" subtitle="Decide which events should surface immediately and which should wait for a digest.">
@@ -40,7 +85,6 @@ export function NotificationsPage() {
               <input checked={channels.digest} onChange={(event) => setChannels((current) => ({ ...current, digest: event.target.checked }))} type="checkbox" />
               <span>Daily digest for workspace health and coverage updates</span>
             </label>
-            <button className="primary-button" type="button">Save notification preferences</button>
           </div>
         </Panel>
 

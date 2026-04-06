@@ -10,6 +10,7 @@ import { api } from "../lib/api";
 const THEME_KEY = "app_theme";
 const SIDEBAR_KEY = "sidebar_collapsed";
 const MOBILE_SIDEBAR_BREAKPOINT = "(max-width: 768px)";
+const PREFERENCES_UPDATED_EVENT = "qaira:preferences-updated";
 
 const navigation = [
   {
@@ -100,6 +101,9 @@ export function AppShell() {
 
   const projects = projectsQuery.data || [];
   const hasNoProjects = !projectsQuery.isPending && projects.length === 0;
+  const currentProjectName =
+    projects.find((project) => project.id === sidebarProjectId)?.name ||
+    (hasNoProjects ? "No active project" : "Select a project");
   const navCounts = {
     projects: projects.length
   };
@@ -113,6 +117,33 @@ export function AppShell() {
     document.documentElement.dataset.sidebar = isCollapsed ? "collapsed" : "expanded";
     window.localStorage.setItem(SIDEBAR_KEY, String(isCollapsed));
   }, [isCollapsed]);
+
+  useEffect(() => {
+    const syncPreferences = (event?: Event) => {
+      const detail =
+        event && "detail" in event
+          ? (event as CustomEvent<{ theme?: "light" | "dark"; sidebarMode?: "expanded" | "collapsed" }>).detail
+          : undefined;
+      const nextTheme = detail?.theme || window.localStorage.getItem(THEME_KEY);
+      const nextSidebarMode =
+        detail?.sidebarMode ??
+        (window.localStorage.getItem(SIDEBAR_KEY) === "true" ? "collapsed" : "expanded");
+
+      if (nextTheme === "light" || nextTheme === "dark") {
+        setTheme(nextTheme);
+      }
+
+      setIsCollapsed(nextSidebarMode === "collapsed");
+    };
+
+    window.addEventListener(PREFERENCES_UPDATED_EVENT, syncPreferences as EventListener);
+    window.addEventListener("storage", syncPreferences);
+
+    return () => {
+      window.removeEventListener(PREFERENCES_UPDATED_EVENT, syncPreferences as EventListener);
+      window.removeEventListener("storage", syncPreferences);
+    };
+  }, []);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia(MOBILE_SIDEBAR_BREAKPOINT);
@@ -506,7 +537,10 @@ export function AppShell() {
               <MenuIcon />
               <span>Navigation</span>
             </button>
-            <span className="mobile-sidebar-section">{currentSection}</span>
+            <div className="mobile-sidebar-copy">
+              <span className="mobile-sidebar-section">{currentSection}</span>
+              <span className="mobile-sidebar-context">{currentProjectName}</span>
+            </div>
           </div>
         ) : null}
         <Outlet />

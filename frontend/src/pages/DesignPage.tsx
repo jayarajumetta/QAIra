@@ -1084,6 +1084,12 @@ export function DesignPage() {
       <PageHeader
         eyebrow="Test Design"
         title="Test Suites"
+        description="Shape suite structure, assign reusable cases, and keep executable design tidy enough for fast execution handoff."
+        meta={[
+          { label: "Suites", value: designMetrics.totalSuites },
+          { label: "Cases", value: designMetrics.totalCases },
+          { label: "Steps", value: designMetrics.totalSteps }
+        ]}
         actions={
           <>
             <button className="ghost-button" disabled={!appTypeId || !suites.length} onClick={beginCreateCase} type="button">

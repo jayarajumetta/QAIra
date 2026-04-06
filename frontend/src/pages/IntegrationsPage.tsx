@@ -67,6 +67,7 @@ export function IntegrationsPage() {
     () => integrations.find((item) => item.id === selectedIntegrationId) || integrations[0] || null,
     [integrations, selectedIntegrationId]
   );
+  const activeIntegrationCount = integrations.filter((item) => item.is_active).length;
 
   useEffect(() => {
     if (isCreating) {
@@ -162,6 +163,12 @@ export function IntegrationsPage() {
       <PageHeader
         eyebrow="Administration"
         title="Integrations"
+        description="Manage the external systems that power AI generation, Jira synchronization, and other workspace automations."
+        meta={[
+          { label: "Configured", value: integrations.length },
+          { label: "Active", value: activeIntegrationCount },
+          { label: "Selected type", value: isCreating ? draft.type : selectedIntegration?.type || "None" }
+        ]}
         actions={
           isAdmin ? (
             <button

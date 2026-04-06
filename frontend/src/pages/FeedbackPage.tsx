@@ -28,8 +28,10 @@ export function FeedbackPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [draft, setDraft] = useState<FeedbackDraft>(EMPTY_DRAFT);
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"success" | "error">("success");
 
   const items = feedback.data || [];
+  const openFeedbackCount = items.filter((item) => (item.status || "open") === "open").length;
   const selectedItem = useMemo(
     () => items.find((item) => item.id === selectedFeedbackId) || items[0] || null,
     [items, selectedFeedbackId]
@@ -61,32 +63,44 @@ export function FeedbackPage() {
   const createFeedback = useMutation({
     mutationFn: api.feedback.create,
     onSuccess: async () => {
+      setMessageTone("success");
       setMessage("Feedback saved.");
       await refresh();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to save feedback")
+    onError: (error) => {
+      setMessageTone("error");
+      setMessage(error instanceof Error ? error.message : "Unable to save feedback");
+    }
   });
 
   const updateFeedback = useMutation({
     mutationFn: ({ id, input }: { id: string; input: Parameters<typeof api.feedback.update>[1] }) =>
       api.feedback.update(id, input),
     onSuccess: async () => {
+      setMessageTone("success");
       setMessage("Feedback updated.");
       await refresh();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to update feedback")
+    onError: (error) => {
+      setMessageTone("error");
+      setMessage(error instanceof Error ? error.message : "Unable to update feedback");
+    }
   });
 
   const deleteFeedback = useMutation({
     mutationFn: api.feedback.delete,
     onSuccess: async () => {
+      setMessageTone("success");
       setMessage("Feedback deleted.");
       setSelectedFeedbackId("");
       setDraft(EMPTY_DRAFT);
       setIsCreating(false);
       await refresh();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to delete feedback")
+    onError: (error) => {
+      setMessageTone("error");
+      setMessage(error instanceof Error ? error.message : "Unable to delete feedback");
+    }
   });
 
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
@@ -123,6 +137,12 @@ export function FeedbackPage() {
       <PageHeader
         eyebrow="Reporting & Feedback"
         title="Reporting & Feedback"
+        description="Capture bugs, product requests, and workflow feedback in a shared queue the whole team can track."
+        meta={[
+          { label: "Entries", value: items.length },
+          { label: "Open", value: openFeedbackCount },
+          { label: "Selected", value: isCreating ? "New draft" : selectedItem?.status || "None" }
+        ]}
         actions={
           <button
             className="primary-button"
@@ -138,7 +158,7 @@ export function FeedbackPage() {
         }
       />
 
-      {message ? <p className="inline-message success-message">{message}</p> : null}
+      {message ? <p className={messageTone === "error" ? "inline-message error-message" : "inline-message success-message"}>{message}</p> : null}
 
       <div className="workspace-grid">
         <Panel title="Feedback stream" subtitle="All submitted feedback is shown here, independent of project scope.">

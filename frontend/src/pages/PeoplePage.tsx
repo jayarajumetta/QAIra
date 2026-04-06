@@ -218,6 +218,12 @@ export function PeoplePage() {
       <PageHeader
         eyebrow="People & Access"
         title="User Management"
+        description="Review workspace users, refine role assignments, and keep access governance easy to audit."
+        meta={[
+          { label: "Users", value: userItems.length },
+          { label: "Roles", value: roleItems.length },
+          { label: "Your access", value: isAdmin ? "Admin" : "Member" }
+        ]}
         actions={
           isAdmin ? (
             view === "users" ? (

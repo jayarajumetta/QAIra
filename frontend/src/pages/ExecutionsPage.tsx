@@ -797,6 +797,12 @@ export function ExecutionsPage() {
       <PageHeader
         eyebrow="Executions"
         title="Test Executions"
+        description="Launch scoped runs, monitor live progress, and capture failure evidence without losing the surrounding suite and case context."
+        meta={[
+          { label: "Runs", value: executions.length },
+          { label: "Blocking cases", value: blockingCases.length },
+          { label: "Completion", value: `${executionProgress.percent}%` }
+        ]}
         actions={
           <button className="primary-button" onClick={() => setIsCreateExecutionModalOpen(true)} type="button">
             Create Execution

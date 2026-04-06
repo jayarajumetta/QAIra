@@ -289,8 +289,17 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
   const selectedEnvironment = environments.find((item) => item.id === selectedEnvironmentId) || null;
   const selectedConfiguration = configurations.find((item) => item.id === selectedConfigurationId) || null;
   const selectedDataSet = dataSets.find((item) => item.id === selectedDataSetId) || null;
+  const selectedProjectName = projects.find((project) => project.id === projectId)?.name || "No project selected";
+  const selectedAppTypeName = appTypes.find((item) => item.id === appTypeId)?.name || "All app types";
   const currentCreateLabel =
     view === "environments" ? "Create test environment" : view === "configurations" ? "Create configuration" : "Create test data";
+  const currentViewDescription =
+    view === "environments"
+      ? "Keep execution targets, URLs, and reusable environment variables organized by project and app type."
+      : view === "configurations"
+        ? "Maintain reusable browser, device, and platform combinations so runs stay consistent."
+        : "Store spreadsheet-style data and key/value sets that can be attached to executions on demand.";
+  const currentViewCount = view === "environments" ? environments.length : view === "configurations" ? configurations.length : dataSets.length;
 
   const showSuccess = (text: string) => {
     setMessageTone("success");
@@ -576,6 +585,12 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
       <PageHeader
         eyebrow="Test Environment"
         title="Execution context workspace"
+        description={currentViewDescription}
+        meta={[
+          { label: "Records", value: currentViewCount },
+          { label: "Project", value: selectedProjectName },
+          { label: "Scope", value: selectedAppTypeName }
+        ]}
         actions={<button className="primary-button" disabled={!projectId} onClick={openCreateModal} type="button">{currentCreateLabel}</button>}
       />
 

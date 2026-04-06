@@ -1076,6 +1076,12 @@ export function TestCasesPage() {
       <PageHeader
         eyebrow="Test Cases"
         title="Test Case Library"
+        description="Build reusable coverage with clean step detail, requirement traceability, suite linkage, and execution-ready exports."
+        meta={[
+          { label: "Cases", value: coverageMetrics.total },
+          { label: "Mapped", value: coverageMetrics.covered },
+          { label: "With history", value: coverageMetrics.withHistory }
+        ]}
         actions={
           <>
             <button className="ghost-button" disabled={!appTypeId} onClick={() => setIsImportModalOpen(true)} type="button">

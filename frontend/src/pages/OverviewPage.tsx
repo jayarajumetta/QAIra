@@ -583,6 +583,12 @@ export function OverviewPage() {
       <PageHeader
         eyebrow="Dashboard"
         title={`Product quality cockpit for ${session?.user.name || "your team"}`}
+        description="See coverage depth, execution quality, and release readiness in one place so the next quality decision is obvious."
+        meta={[
+          { label: "Projects", value: projectsList.length },
+          { label: "Pass rate", value: `${passRate}%` },
+          { label: "Active runs", value: executionStatusCounts.running }
+        ]}
         actions={
           <>
             <button className="ghost-button" onClick={() => navigate("/projects")} type="button">

@@ -33,7 +33,17 @@ export function SupportPage() {
       <PageHeader
         eyebrow="Support"
         title="Support Center"
-        actions={<button className="primary-button" type="button">Open Support Ticket</button>}
+        description="Find the fastest route for operational help, escalation, and internal guidance without leaving the workspace."
+        meta={[
+          { label: "Channels", value: supportChannels.length },
+          { label: "Playbooks", value: playbooks.length },
+          { label: "Status", value: "Monitoring" }
+        ]}
+        actions={
+          <a className="primary-button" href={`mailto:${supportChannels[0].value}?subject=QAIra%20Support%20Request`}>
+            Open Support Ticket
+          </a>
+        }
       />
 
       <div className="two-column-grid">
