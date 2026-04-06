@@ -1653,18 +1653,35 @@ function TestCaseSuiteModal({
   onSubmit: (input: { name: string; parent_id?: string; selectedIds: string[] }) => void;
   isSaving: boolean;
 }) {
+  const initialSelectedIds = useMemo(
+    () => selectedCaseIds.filter((testCaseId) => appTypeCases.some((testCase) => testCase.id === testCaseId)),
+    [appTypeCases, selectedCaseIds]
+  );
   const [name, setName] = useState("");
   const [parentId, setParentId] = useState("");
-  const [localSelectedIds, setLocalSelectedIds] = useState<string[]>(() => selectedCaseIds);
+  const [localSelectedIds, setLocalSelectedIds] = useState<string[]>(() => initialSelectedIds);
+
+  useEffect(() => {
+    setLocalSelectedIds(initialSelectedIds);
+  }, [initialSelectedIds]);
 
   return (
-    <div className="modal-backdrop" role="presentation">
-      <div className="modal-card" role="dialog" aria-modal="true" aria-label="Create suite from test cases">
-        <div className="panel-head">
-          <div>
+    <div className="modal-backdrop" onClick={() => !isSaving && onClose()} role="presentation">
+      <div
+        aria-label="Create suite from test cases"
+        aria-modal="true"
+        className="modal-card suite-create-modal"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <div className="suite-create-header">
+          <div className="suite-create-title">
             <h3>Create Suite</h3>
-            <p>Name a suite and choose which reusable cases should be linked into it.</p>
+            <p>Choose reusable cases, keep their saved order with the arrow controls, and create the suite from this dialog.</p>
           </div>
+          <button className="ghost-button" disabled={isSaving} onClick={onClose} type="button">
+            Close
+          </button>
         </div>
 
         <form
@@ -1678,26 +1695,32 @@ function TestCaseSuiteModal({
             });
           }}
         >
-          <FormField label="Suite name">
-            <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} />
-          </FormField>
-          <FormField label="Parent suite">
-            <select value={parentId} onChange={(event) => setParentId(event.target.value)}>
-              <option value="">None</option>
-              {suites.map((suite) => (
-                <option key={suite.id} value={suite.id}>{suite.name}</option>
-              ))}
-            </select>
-          </FormField>
+          <div className="suite-modal-body">
+            <div className="record-grid suite-modal-config-grid">
+              <FormField label="Suite name">
+                <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} />
+              </FormField>
+              <FormField label="Parent suite">
+                <select value={parentId} onChange={(event) => setParentId(event.target.value)}>
+                  <option value="">None</option>
+                  {suites.map((suite) => (
+                    <option key={suite.id} value={suite.id}>{suite.name}</option>
+                  ))}
+                </select>
+              </FormField>
+            </div>
 
-          <SuiteCasePicker
-            cases={appTypeCases}
-            description="Use bulk selection when needed, then set the saved suite order before creating it."
-            emptyMessage="No test cases available in this app type yet."
-            heading="Reusable test cases"
-            onChange={setLocalSelectedIds}
-            selectedCaseIds={localSelectedIds}
-          />
+            <div className="suite-modal-picker-shell">
+              <SuiteCasePicker
+                cases={appTypeCases}
+                description="Use bulk selection when needed, then set the saved suite order before creating it."
+                emptyMessage="No test cases available in this app type yet."
+                heading="Reusable test cases"
+                onChange={setLocalSelectedIds}
+                selectedCaseIds={localSelectedIds}
+              />
+            </div>
+          </div>
 
           <div className="action-row suite-modal-actions">
             <button className="primary-button" disabled={isSaving} type="submit">

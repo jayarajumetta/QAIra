@@ -188,6 +188,11 @@ export function DesignPage() {
     setMessage(error instanceof Error ? error.message : fallback);
   };
 
+  const openCreateSuiteModal = () => {
+    setSuiteModalMode("create");
+    setIsSuiteModalOpen(true);
+  };
+
   const [caseDraft, setCaseDraft] = useState<CaseDraft>(EMPTY_CASE_DRAFT);
   const [newStepDraft, setNewStepDraft] = useState(EMPTY_STEP_DRAFT);
   const [draftSteps, setDraftSteps] = useState<DraftTestStep[]>([]);
@@ -221,11 +226,7 @@ export function DesignPage() {
     }
   }, [appTypeId, appTypes]);
 
-  const suiteIds = useMemo(() => new Set(suites.map((suite) => suite.id)), [suites]);
-  const appTypeCases = useMemo(
-    () => allTestCases.filter((testCase) => (testCase.suite_ids || []).some((suiteId) => suiteIds.has(suiteId))),
-    [allTestCases, suiteIds]
-  );
+  const appTypeCases = useMemo(() => allTestCases, [allTestCases]);
 
   const suiteCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1071,10 +1072,7 @@ export function DesignPage() {
             <button
               className="primary-button"
               disabled={!appTypeId}
-              onClick={() => {
-                setSuiteModalMode("create");
-                setIsSuiteModalOpen(true);
-              }}
+              onClick={openCreateSuiteModal}
               type="button"
             >
               Create Suite
@@ -1133,10 +1131,7 @@ export function DesignPage() {
               setSelectedSuiteActionIds((current) => [...new Set([...current, ...filteredSuites.map((suite) => suite.id)])])
             }
             onClearSuiteSelection={() => setSelectedSuiteActionIds([])}
-            onCreateSuite={() => {
-              setSuiteModalMode("create");
-              setIsSuiteModalOpen(true);
-            }}
+            onCreateSuite={openCreateSuiteModal}
             onEditSuite={() => {
               setSuiteModalMode("edit");
               setIsSuiteModalOpen(true);
@@ -1246,9 +1241,9 @@ export function DesignPage() {
 
       {isSuiteModalOpen ? (
         <SuiteModal
-          key={`${suiteModalMode}-${selectedSuite?.id || "new"}`}
+          key={suiteModalMode === "edit" ? `edit-${selectedSuite?.id || "none"}` : "create-new"}
           mode={suiteModalMode}
-          suite={selectedSuite}
+          suite={suiteModalMode === "edit" ? selectedSuite : null}
           suites={suites}
           appTypeCases={allTestCases}
           selectedCaseIds={suiteModalMode === "edit" ? orderedSuiteCases.map((testCase) => testCase.id) : []}

@@ -10,6 +10,7 @@ import { useWorkspaceData } from "../hooks/useWorkspaceData";
 import type { Role, User } from "../types";
 
 type PeopleView = "users" | "roles";
+type FeedbackTone = "success" | "error";
 
 const createEmptyUserDraft = (roleId = "") => ({ name: "", email: "", password_hash: "", role_id: roleId });
 const EMPTY_ROLE_DRAFT = { name: "" };
@@ -18,7 +19,7 @@ export function PeoplePage() {
   const queryClient = useQueryClient();
   const { session } = useAuth();
   const { users, roles } = useWorkspaceData();
-  const [message, setMessage] = useState("");
+  const [feedback, setFeedback] = useState<{ message: string; tone: FeedbackTone } | null>(null);
   const [view, setView] = useState<PeopleView>("users");
   const [selectedUserId, setSelectedUserId] = useState("");
   const [selectedRoleId, setSelectedRoleId] = useState("");
@@ -72,6 +73,10 @@ export function PeoplePage() {
     ]);
   };
 
+  const showFeedback = (message: string, tone: FeedbackTone) => {
+    setFeedback({ message, tone });
+  };
+
   const openCreateUserModal = () => {
     setCreateUserDraft(createEmptyUserDraft(defaultMemberRoleId));
     setIsCreateUserModalOpen(true);
@@ -103,64 +108,64 @@ export function PeoplePage() {
   const createUser = useMutation({
     mutationFn: api.users.create,
     onSuccess: async (response) => {
-      setMessage("User created.");
+      showFeedback("User created.", "success");
       setSelectedUserId(response.id);
       setIsCreateUserModalOpen(false);
       setCreateUserDraft(createEmptyUserDraft(defaultMemberRoleId));
       await invalidate();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to create user")
+    onError: (error) => showFeedback(error instanceof Error ? error.message : "Unable to create user", "error")
   });
 
   const updateUser = useMutation({
     mutationFn: ({ id, input }: { id: string; input: Partial<{ email: string; password_hash: string; name: string; role_id: string }> }) =>
       api.users.update(id, input),
     onSuccess: async () => {
-      setMessage("User updated.");
+      showFeedback("User updated.", "success");
       await invalidate();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to update user")
+    onError: (error) => showFeedback(error instanceof Error ? error.message : "Unable to update user", "error")
   });
 
   const deleteUser = useMutation({
     mutationFn: api.users.delete,
     onSuccess: async () => {
-      setMessage("User removed.");
+      showFeedback("User removed.", "success");
       setSelectedUserId("");
       await invalidate();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to delete user")
+    onError: (error) => showFeedback(error instanceof Error ? error.message : "Unable to delete user", "error")
   });
 
   const createRole = useMutation({
     mutationFn: api.roles.create,
     onSuccess: async (response) => {
-      setMessage("Role created.");
+      showFeedback("Role created.", "success");
       setSelectedRoleId(response.id);
       setIsCreateRoleModalOpen(false);
       setCreateRoleDraft(EMPTY_ROLE_DRAFT);
       await invalidate();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to create role")
+    onError: (error) => showFeedback(error instanceof Error ? error.message : "Unable to create role", "error")
   });
 
   const updateRole = useMutation({
     mutationFn: ({ id, input }: { id: string; input: { name: string } }) => api.roles.update(id, input),
     onSuccess: async () => {
-      setMessage("Role updated.");
+      showFeedback("Role updated.", "success");
       await invalidate();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to update role")
+    onError: (error) => showFeedback(error instanceof Error ? error.message : "Unable to update role", "error")
   });
 
   const deleteRole = useMutation({
     mutationFn: api.roles.delete,
     onSuccess: async () => {
-      setMessage("Role removed.");
+      showFeedback("Role removed.", "success");
       setSelectedRoleId("");
       await invalidate();
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : "Unable to delete role")
+    onError: (error) => showFeedback(error instanceof Error ? error.message : "Unable to delete role", "error")
   });
 
   const handleUserCreate = (event: FormEvent<HTMLFormElement>) => {
@@ -224,7 +229,11 @@ export function PeoplePage() {
         }
       />
 
-      {message ? <p className="inline-message">{message}</p> : null}
+      {feedback ? (
+        <p className={`inline-message ${feedback.tone === "success" ? "success-message" : "error-message"}`}>
+          {feedback.message}
+        </p>
+      ) : null}
 
       <SubnavTabs
         value={view}
@@ -236,7 +245,7 @@ export function PeoplePage() {
       />
 
       {view === "users" ? (
-        <div className="workspace-grid">
+        <div className="workspace-grid people-users-grid">
           <Panel title="User directory" subtitle="Review users in a stable table, then inspect the selected record on the right.">
             <div className="table-wrap">
               <table className="data-table workspace-table selectable-table">
