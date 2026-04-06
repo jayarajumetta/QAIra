@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { FormField } from "../components/FormField";
+import { ExecutionContextSelector } from "../components/ExecutionContextSelector";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StatusBadge } from "../components/StatusBadge";
@@ -85,6 +86,9 @@ export function DesignPage() {
   const [isTestCaseEditorModalOpen, setIsTestCaseEditorModalOpen] = useState(false);
   const [isCreateExecutionModalOpen, setIsCreateExecutionModalOpen] = useState(false);
   const [executionName, setExecutionName] = useState("");
+  const [selectedExecutionEnvironmentId, setSelectedExecutionEnvironmentId] = useState("");
+  const [selectedExecutionConfigurationId, setSelectedExecutionConfigurationId] = useState("");
+  const [selectedExecutionDataSetId, setSelectedExecutionDataSetId] = useState("");
   const [suiteModalMode, setSuiteModalMode] = useState<SuiteModalMode>("create");
   const [isSuiteModalOpen, setIsSuiteModalOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<SuiteCaseEditorSectionKey, boolean>>(createDefaultSuiteCaseSections);
@@ -191,6 +195,18 @@ export function DesignPage() {
   const openCreateSuiteModal = () => {
     setSuiteModalMode("create");
     setIsSuiteModalOpen(true);
+  };
+
+  const resetExecutionContextSelection = () => {
+    setSelectedExecutionEnvironmentId("");
+    setSelectedExecutionConfigurationId("");
+    setSelectedExecutionDataSetId("");
+  };
+
+  const closeCreateExecutionModal = () => {
+    setIsCreateExecutionModalOpen(false);
+    setExecutionName("");
+    resetExecutionContextSelection();
   };
 
   const [caseDraft, setCaseDraft] = useState<CaseDraft>(EMPTY_CASE_DRAFT);
@@ -558,6 +574,7 @@ export function DesignPage() {
     setIsTestCaseEditorModalOpen(false);
     setIsCreateExecutionModalOpen(false);
     setExecutionName("");
+    resetExecutionContextSelection();
     setExpandedSections(createDefaultSuiteCaseSections());
     setExpandedStepIds([]);
     setDraftSteps([]);
@@ -575,6 +592,7 @@ export function DesignPage() {
     setIsTestCaseEditorModalOpen(false);
     setIsCreateExecutionModalOpen(false);
     setExecutionName("");
+    resetExecutionContextSelection();
     setSearchTerm("");
     setStatusFilter("all");
     setExpandedSections(createDefaultSuiteCaseSections());
@@ -782,12 +800,14 @@ export function DesignPage() {
         project_id: projectId,
         app_type_id: appTypeId,
         suite_ids: executionTargetSuiteIds,
+        test_environment_id: selectedExecutionEnvironmentId || undefined,
+        test_configuration_id: selectedExecutionConfigurationId || undefined,
+        test_data_set_id: selectedExecutionDataSetId || undefined,
         name: executionName.trim() || undefined,
         created_by: session.user.id
       });
 
-      setExecutionName("");
-      setIsCreateExecutionModalOpen(false);
+      closeCreateExecutionModal();
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["executions"] }),
         queryClient.invalidateQueries({ queryKey: ["executions", projectId] })
@@ -1223,17 +1243,22 @@ export function DesignPage() {
           canCreateExecution={Boolean(projectId && appTypeId && executionTargetSuiteIds.length && session?.user.id)}
           executionName={executionName}
           isSubmitting={createExecutionMutation.isPending}
-          onClose={() => {
-            setIsCreateExecutionModalOpen(false);
-            setExecutionName("");
-          }}
+          onClose={closeCreateExecutionModal}
+          onConfigurationChange={setSelectedExecutionConfigurationId}
+          onDataSetChange={setSelectedExecutionDataSetId}
+          onEnvironmentChange={setSelectedExecutionEnvironmentId}
           onExecutionNameChange={setExecutionName}
           onRemoveSuite={(suiteId) =>
             setSelectedSuiteActionIds((current) => current.filter((id) => id !== suiteId))
           }
           onSubmit={handleCreateExecution}
+          appTypeId={appTypeId}
+          projectId={projectId}
+          selectedConfigurationId={selectedExecutionConfigurationId}
           scopeSuiteCount={suites.length}
           selectedAppType={selectedAppType?.name || ""}
+          selectedDataSetId={selectedExecutionDataSetId}
+          selectedEnvironmentId={selectedExecutionEnvironmentId}
           selectedProject={selectedProject?.name || ""}
           suites={executionTargetSuites}
         />
@@ -2056,10 +2081,18 @@ function SuiteExecutionModal({
   suites,
   selectedProject,
   selectedAppType,
+  appTypeId,
+  projectId,
   scopeSuiteCount,
   executionName,
+  selectedEnvironmentId,
+  selectedConfigurationId,
+  selectedDataSetId,
   canCreateExecution,
   isSubmitting,
+  onEnvironmentChange,
+  onConfigurationChange,
+  onDataSetChange,
   onExecutionNameChange,
   onRemoveSuite,
   onClose,
@@ -2068,10 +2101,18 @@ function SuiteExecutionModal({
   suites: TestSuite[];
   selectedProject: string;
   selectedAppType: string;
+  appTypeId: string;
+  projectId: string;
   scopeSuiteCount: number;
   executionName: string;
+  selectedEnvironmentId: string;
+  selectedConfigurationId: string;
+  selectedDataSetId: string;
   canCreateExecution: boolean;
   isSubmitting: boolean;
+  onEnvironmentChange: (value: string) => void;
+  onConfigurationChange: (value: string) => void;
+  onDataSetChange: (value: string) => void;
   onExecutionNameChange: (value: string) => void;
   onRemoveSuite: (suiteId: string) => void;
   onClose: () => void;
@@ -2119,6 +2160,18 @@ function SuiteExecutionModal({
               <span>{selectedAppType ? `${selectedAppType} app type selected for this snapshot.` : "Choose an app type to load suite scope."}</span>
               <span>{scopeSuiteCount ? `${scopeSuiteCount} suites available in the current scope.` : "No suites available in the current scope yet."}</span>
             </div>
+
+            <ExecutionContextSelector
+              appTypeId={appTypeId}
+              onConfigurationChange={onConfigurationChange}
+              onDataSetChange={onDataSetChange}
+              onEnvironmentChange={onEnvironmentChange}
+              prefillFirstAvailable={true}
+              projectId={projectId}
+              selectedConfigurationId={selectedConfigurationId}
+              selectedDataSetId={selectedDataSetId}
+              selectedEnvironmentId={selectedEnvironmentId}
+            />
 
             <FormField label="Suite scope" required>
               <div className="selection-summary-card">

@@ -33,6 +33,27 @@ const resolvePoolConfig = () => {
 
 const pool = new Pool(resolvePoolConfig());
 
+const isPlainObject = (value) => {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
+
+const serializeParam = (value) => {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (Array.isArray(value) || isPlainObject(value)) {
+    return JSON.stringify(value);
+  }
+
+  return value;
+};
+
 const toPgPlaceholders = (sql) => {
   let index = 0;
   return sql.replace(/\?/g, () => `$${++index}`);
@@ -44,7 +65,7 @@ const getExecutor = () => {
 
 const query = async (sql, params = []) => {
   const executor = getExecutor();
-  return executor.query(toPgPlaceholders(sql), params);
+  return executor.query(toPgPlaceholders(sql), params.map(serializeParam));
 };
 
 const prepare = (sql) => {

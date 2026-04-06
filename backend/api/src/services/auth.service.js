@@ -59,10 +59,9 @@ const ensureMemberRole = async () => {
   return id;
 };
 
-const assignDefaultProjectMemberships = async (userId, roleId) => {
-  // Use provided roleId or default to member role if not specified
-  const finalRoleId = roleId || await ensureMemberRole();
-  
+const assignDefaultProjectMemberships = async (userId) => {
+  const memberRoleId = await ensureMemberRole();
+
   // Get only the first project (sample project) instead of all projects
   const firstProject = await db.prepare(`
     SELECT id FROM projects 
@@ -87,7 +86,7 @@ const assignDefaultProjectMemberships = async (userId, roleId) => {
 
   // Only add to first project
   if (!await existing.get(firstProject.id, userId)) {
-    await insertMembership.run(crypto.randomUUID(), firstProject.id, userId, finalRoleId);
+    await insertMembership.run(crypto.randomUUID(), firstProject.id, userId, memberRoleId);
   }
 };
 
@@ -95,7 +94,7 @@ const normalizeEmail = (email) => {
   return email.toLowerCase().trim();
 };
 
-exports.signup = async ({ email, password, name, role }) => {
+exports.signup = async ({ email, password, name }) => {
   if (!email || !password) {
     throw createError("Missing required fields", 400);
   }
@@ -118,7 +117,7 @@ exports.signup = async ({ email, password, name, role }) => {
     VALUES (?, ?, ?, ?)
   `).run(id, normalizedEmail, passwordHash, name || null);
 
-  await assignDefaultProjectMemberships(id, role);
+  await assignDefaultProjectMemberships(id);
 
   const user = await selectUserForSession(id);
 

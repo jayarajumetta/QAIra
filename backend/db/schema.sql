@@ -158,6 +158,59 @@ CREATE TABLE test_steps (
   FOREIGN KEY (test_case_id) REFERENCES test_cases(id)
 );
 
+CREATE TABLE test_environments (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  app_type_id TEXT,
+  name TEXT NOT NULL,
+  description TEXT,
+  base_url TEXT,
+  browser TEXT,
+  notes TEXT,
+  variables JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (app_type_id) REFERENCES app_types(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_test_environments_project_scope
+  ON test_environments (project_id, app_type_id);
+
+CREATE TABLE test_configurations (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  app_type_id TEXT,
+  name TEXT NOT NULL,
+  description TEXT,
+  browser TEXT,
+  mobile_os TEXT,
+  platform_version TEXT,
+  variables JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (app_type_id) REFERENCES app_types(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_test_configurations_project_scope
+  ON test_configurations (project_id, app_type_id);
+
+CREATE TABLE test_data_sets (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  app_type_id TEXT,
+  name TEXT NOT NULL,
+  description TEXT,
+  mode TEXT NOT NULL CHECK(mode IN ('key_value', 'table')),
+  columns JSONB NOT NULL DEFAULT '[]'::jsonb,
+  rows JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (app_type_id) REFERENCES app_types(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_test_data_sets_project_scope
+  ON test_data_sets (project_id, app_type_id);
+
 -- =========================
 -- EXECUTION
 -- =========================
@@ -169,6 +222,15 @@ CREATE TABLE executions (
   name TEXT,
   trigger TEXT CHECK(trigger IN ('manual','ci')),
   status TEXT CHECK(status IN ('queued','running','completed','failed')),
+  test_environment_id TEXT,
+  test_environment_name TEXT,
+  test_environment_snapshot JSONB,
+  test_configuration_id TEXT,
+  test_configuration_name TEXT,
+  test_configuration_snapshot JSONB,
+  test_data_set_id TEXT,
+  test_data_set_name TEXT,
+  test_data_set_snapshot JSONB,
   created_by TEXT,
   started_at TIMESTAMPTZ,
   ended_at TIMESTAMPTZ,

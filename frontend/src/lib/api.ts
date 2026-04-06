@@ -2,20 +2,25 @@ import type {
   AiDesignImageInput,
   AiDesignPreviewResponse,
   ApiError,
-  AppType,
-  Execution,
-  ExecutionResult,
-  Feedback,
-  Integration,
-  Project,
-  ProjectMember,
-  Requirement,
-  Role,
-  SessionPayload,
-  TestCase,
-  TestStep,
-  TestSuite,
-  User
+    AppType,
+    Execution,
+    ExecutionResult,
+    Feedback,
+    Integration,
+    KeyValueEntry,
+    Project,
+    ProjectMember,
+    Requirement,
+    Role,
+    SessionPayload,
+    TestConfiguration,
+    TestCase,
+    TestDataSet,
+    TestDataSetMode,
+    TestEnvironment,
+    TestStep,
+    TestSuite,
+    User
 } from "../types";
 
 declare global {
@@ -298,12 +303,39 @@ export const api = {
       }),
     delete: (id: string) => request<{ deleted: boolean }>(`/test-steps/${id}`, { method: "DELETE" })
   },
+  testEnvironments: {
+    list: (query?: { project_id?: string; app_type_id?: string }) =>
+      request<TestEnvironment[]>(`/test-environments${toQueryString(query)}`),
+    create: (input: { project_id: string; app_type_id?: string; name: string; description?: string; base_url?: string; variables?: KeyValueEntry[] }) =>
+      request<{ id: string }>("/test-environments", { method: "POST", body: JSON.stringify(input) }),
+    update: (id: string, input: Partial<{ project_id: string; app_type_id: string; name: string; description: string; base_url: string; variables: KeyValueEntry[] }>) =>
+      request<{ updated: boolean }>(`/test-environments/${id}`, { method: "PUT", body: JSON.stringify(input) }),
+    delete: (id: string) => request<{ deleted: boolean }>(`/test-environments/${id}`, { method: "DELETE" })
+  },
+  testConfigurations: {
+    list: (query?: { project_id?: string; app_type_id?: string }) =>
+      request<TestConfiguration[]>(`/test-configurations${toQueryString(query)}`),
+    create: (input: { project_id: string; app_type_id?: string; name: string; description?: string; browser?: string; mobile_os?: string; platform_version?: string; variables?: KeyValueEntry[] }) =>
+      request<{ id: string }>("/test-configurations", { method: "POST", body: JSON.stringify(input) }),
+    update: (id: string, input: Partial<{ project_id: string; app_type_id: string; name: string; description: string; browser: string; mobile_os: string; platform_version: string; variables: KeyValueEntry[] }>) =>
+      request<{ updated: boolean }>(`/test-configurations/${id}`, { method: "PUT", body: JSON.stringify(input) }),
+    delete: (id: string) => request<{ deleted: boolean }>(`/test-configurations/${id}`, { method: "DELETE" })
+  },
+  testDataSets: {
+    list: (query?: { project_id?: string; app_type_id?: string }) =>
+      request<TestDataSet[]>(`/test-data-sets${toQueryString(query)}`),
+    create: (input: { project_id: string; app_type_id?: string; name: string; description?: string; mode: TestDataSetMode; columns?: string[]; rows?: Array<Record<string, string>> }) =>
+      request<{ id: string }>("/test-data-sets", { method: "POST", body: JSON.stringify(input) }),
+    update: (id: string, input: Partial<{ project_id: string; app_type_id: string; name: string; description: string; mode: TestDataSetMode; columns: string[]; rows: Array<Record<string, string>> }>) =>
+      request<{ updated: boolean }>(`/test-data-sets/${id}`, { method: "PUT", body: JSON.stringify(input) }),
+    delete: (id: string) => request<{ deleted: boolean }>(`/test-data-sets/${id}`, { method: "DELETE" })
+  },
   executions: {
     list: (query?: { project_id?: string; status?: string }) =>
       request<Execution[]>(`/executions${toQueryString(query)}`),
     get: (id: string) =>
       request<Execution>(`/executions/${id}`),
-    create: (input: { project_id: string; app_type_id?: string; suite_ids?: string[]; test_case_ids?: string[]; name?: string; created_by: string }) =>
+    create: (input: { project_id: string; app_type_id?: string; suite_ids?: string[]; test_case_ids?: string[]; test_environment_id?: string; test_configuration_id?: string; test_data_set_id?: string; name?: string; created_by: string }) =>
       request<{ id: string }>("/executions", { method: "POST", body: JSON.stringify(input) }),
     start: (id: string) => request<{ started: boolean }>(`/executions/${id}/start`, { method: "POST" }),
     complete: (id: string, input: { status: "completed" | "failed" }) =>

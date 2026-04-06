@@ -21,6 +21,7 @@ import { IntegrationsPage } from "./pages/IntegrationsPage";
 import { SupportPage } from "./pages/SupportPage";
 import { NotificationsPage } from "./pages/NotificationsPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { TestEnvironmentPage } from "./pages/TestEnvironmentPage";
 
 const queryClient = new QueryClient();
 const THEME_KEY = "app_theme";
@@ -38,6 +39,9 @@ const PAGE_TITLES: Record<string, string> = {
   "/settings": "Settings · QAIra",
   "/test-cases": "Test Cases · QAIra",
   "/executions": "Executions · QAIra",
+  "/test-environments": "Test Environments · QAIra",
+  "/test-data": "Test Data · QAIra",
+  "/test-configurations": "Test Configurations · QAIra",
   "/auth": "Sign In · QAIra"
 };
 
@@ -125,7 +129,10 @@ const router = createBrowserRouter([
       { path: "notifications", element: <NotificationsPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "test-cases", element: <TestCasesPage /> },
-      { path: "executions", element: <ExecutionsPage /> }
+      { path: "executions", element: <ExecutionsPage /> },
+      { path: "test-environments", element: <TestEnvironmentPage view="environments" /> },
+      { path: "test-data", element: <TestEnvironmentPage view="data" /> },
+      { path: "test-configurations", element: <TestEnvironmentPage view="configurations" /> }
     ]
   }
 ]);

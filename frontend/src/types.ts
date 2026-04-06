@@ -141,6 +141,85 @@ export type TestStep = {
   expected_result: string | null;
 };
 
+export type KeyValueEntry = {
+  id?: string;
+  key: string;
+  value: string;
+  is_secret?: boolean;
+  has_stored_value?: boolean;
+};
+
+export type TestEnvironment = {
+  id: string;
+  project_id: string;
+  app_type_id: string | null;
+  name: string;
+  description: string | null;
+  base_url: string | null;
+  browser: string | null;
+  notes: string | null;
+  variables: KeyValueEntry[];
+  created_at?: string;
+};
+
+export type TestConfiguration = {
+  id: string;
+  project_id: string;
+  app_type_id: string | null;
+  name: string;
+  description: string | null;
+  browser: string | null;
+  mobile_os: string | null;
+  platform_version: string | null;
+  variables: KeyValueEntry[];
+  created_at?: string;
+};
+
+export type TestDataSetMode = "key_value" | "table";
+
+export type TestDataSetRow = Record<string, string>;
+
+export type TestDataSet = {
+  id: string;
+  project_id: string;
+  app_type_id: string | null;
+  name: string;
+  description: string | null;
+  mode: TestDataSetMode;
+  columns: string[];
+  rows: TestDataSetRow[];
+  created_at?: string;
+};
+
+export type ExecutionEnvironmentSnapshot = {
+  id: string;
+  name: string;
+  description: string | null;
+  base_url: string | null;
+  browser: string | null;
+  notes: string | null;
+  variables: KeyValueEntry[];
+};
+
+export type ExecutionConfigurationSnapshot = {
+  id: string;
+  name: string;
+  description: string | null;
+  browser: string | null;
+  mobile_os: string | null;
+  platform_version: string | null;
+  variables: KeyValueEntry[];
+};
+
+export type ExecutionDataSetSnapshot = {
+  id: string;
+  name: string;
+  description: string | null;
+  mode: TestDataSetMode;
+  columns: string[];
+  rows: TestDataSetRow[];
+};
+
 export type Execution = {
   id: string;
   project_id: string;
@@ -152,6 +231,21 @@ export type Execution = {
   name: string | null;
   trigger: "manual" | "ci" | null;
   status: "queued" | "running" | "completed" | "failed" | null;
+  test_environment?: {
+    id: string | null;
+    name: string;
+    snapshot: ExecutionEnvironmentSnapshot | null;
+  } | null;
+  test_configuration?: {
+    id: string | null;
+    name: string;
+    snapshot: ExecutionConfigurationSnapshot | null;
+  } | null;
+  test_data_set?: {
+    id: string | null;
+    name: string;
+    snapshot: ExecutionDataSetSnapshot | null;
+  } | null;
   created_by: string | null;
   started_at: string | null;
   ended_at: string | null;

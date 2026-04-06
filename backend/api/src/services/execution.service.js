@@ -1,5 +1,6 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
+const { sanitizeVariablesForRead } = require("../utils/contextVariables");
 
 const DIRECT_CASE_SUITE_ID = "default";
 const DIRECT_CASE_SUITE_NAME = "Default";
@@ -89,12 +90,117 @@ const selectCaseForExecution = db.prepare(`
   WHERE id = ?
 `);
 
+const selectTestEnvironment = db.prepare(`
+  SELECT id, project_id, app_type_id, name, description, base_url, browser, notes, variables
+  FROM test_environments
+  WHERE id = ?
+`);
+
+const selectTestConfiguration = db.prepare(`
+  SELECT id, project_id, app_type_id, name, description, browser, mobile_os, platform_version, variables
+  FROM test_configurations
+  WHERE id = ?
+`);
+
+const selectTestDataSet = db.prepare(`
+  SELECT id, project_id, app_type_id, name, description, mode, columns, rows
+  FROM test_data_sets
+  WHERE id = ?
+`);
+
 const selectStepsForCase = db.prepare(`
   SELECT id, step_order, action, expected_result
   FROM test_steps
   WHERE test_case_id = ?
   ORDER BY step_order ASC, id ASC
 `);
+
+function parseJsonValue(value, fallback) {
+  if (value === null || value === undefined || value === "") {
+    return fallback;
+  }
+
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return fallback;
+    }
+  }
+
+  return value;
+}
+
+function attachExecutionContext(execution) {
+  if (!execution) {
+    return execution;
+  }
+
+  const environmentSnapshot = parseJsonValue(execution.test_environment_snapshot, null);
+  const configurationSnapshot = parseJsonValue(execution.test_configuration_snapshot, null);
+  const dataSetSnapshot = parseJsonValue(execution.test_data_set_snapshot, null);
+
+  return {
+    ...execution,
+    test_environment: execution.test_environment_name || environmentSnapshot
+      ? {
+          id: execution.test_environment_id || environmentSnapshot?.id || null,
+          name: execution.test_environment_name || environmentSnapshot?.name || "Deleted environment",
+          snapshot: environmentSnapshot
+            ? {
+                ...environmentSnapshot,
+                variables: sanitizeVariablesForRead(environmentSnapshot.variables)
+              }
+            : null
+        }
+      : null,
+    test_configuration: execution.test_configuration_name || configurationSnapshot
+      ? {
+          id: execution.test_configuration_id || configurationSnapshot?.id || null,
+          name: execution.test_configuration_name || configurationSnapshot?.name || "Deleted configuration",
+          snapshot: configurationSnapshot
+            ? {
+                ...configurationSnapshot,
+                variables: sanitizeVariablesForRead(configurationSnapshot.variables)
+              }
+            : null
+        }
+      : null,
+    test_data_set: execution.test_data_set_name || dataSetSnapshot
+      ? {
+          id: execution.test_data_set_id || dataSetSnapshot?.id || null,
+          name: execution.test_data_set_name || dataSetSnapshot?.name || "Deleted data set",
+          snapshot: dataSetSnapshot
+        }
+      : null
+  };
+}
+
+async function resolveExecutionContextResource({ id, label, projectId, appTypeId, lookup, snapshotBuilder }) {
+  if (!id) {
+    return null;
+  }
+
+  const resource = await lookup.get(id);
+
+  if (!resource) {
+    throw new Error(`${label} not found`);
+  }
+
+  if (resource.project_id !== projectId) {
+    throw new Error(`${label} must belong to the selected project`);
+  }
+
+  if (resource.app_type_id && resource.app_type_id !== appTypeId) {
+    throw new Error(`${label} must belong to the selected app type or be shared at project level`);
+  }
+
+  return {
+    id: resource.id,
+    name: resource.name,
+    snapshot: snapshotBuilder(resource)
+  };
+}
 
 async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
   const seenCaseIds = new Set();
@@ -198,7 +304,7 @@ async function attachScope(execution) {
   const suite_ids = suiteRows.map((row) => row.suite_id);
 
   return {
-    ...execution,
+    ...attachExecutionContext(execution),
     suite_ids,
     suite_snapshots: suiteRows.map((row) => ({ id: row.suite_id, name: row.suite_name || "Deleted Suite" }))
   };
@@ -237,7 +343,17 @@ async function attachDetailedScope(execution) {
   };
 }
 
-exports.createExecution = async ({ project_id, app_type_id, suite_ids = [], test_case_ids = [], name, created_by }) => {
+exports.createExecution = async ({
+  project_id,
+  app_type_id,
+  suite_ids = [],
+  test_case_ids = [],
+  test_environment_id,
+  test_configuration_id,
+  test_data_set_id,
+  name,
+  created_by
+}) => {
   if (!project_id || !created_by) {
     throw new Error("Missing required fields");
   }
@@ -264,6 +380,54 @@ exports.createExecution = async ({ project_id, app_type_id, suite_ids = [], test
       throw new Error("App type must belong to the selected project");
     }
   }
+
+  const selectedEnvironment = await resolveExecutionContextResource({
+    id: test_environment_id,
+    label: "Test environment",
+    projectId: project_id,
+    appTypeId: app_type_id || null,
+    lookup: selectTestEnvironment,
+    snapshotBuilder: (resource) => ({
+      id: resource.id,
+      name: resource.name,
+      description: resource.description,
+      base_url: resource.base_url,
+      browser: resource.browser,
+      notes: resource.notes,
+      variables: parseJsonValue(resource.variables, [])
+    })
+  });
+  const selectedConfiguration = await resolveExecutionContextResource({
+    id: test_configuration_id,
+    label: "Test configuration",
+    projectId: project_id,
+    appTypeId: app_type_id || null,
+    lookup: selectTestConfiguration,
+    snapshotBuilder: (resource) => ({
+      id: resource.id,
+      name: resource.name,
+      description: resource.description,
+      browser: resource.browser,
+      mobile_os: resource.mobile_os,
+      platform_version: resource.platform_version,
+      variables: parseJsonValue(resource.variables, [])
+    })
+  });
+  const selectedDataSet = await resolveExecutionContextResource({
+    id: test_data_set_id,
+    label: "Test data set",
+    projectId: project_id,
+    appTypeId: app_type_id || null,
+    lookup: selectTestDataSet,
+    snapshotBuilder: (resource) => ({
+      id: resource.id,
+      name: resource.name,
+      description: resource.description,
+      mode: resource.mode,
+      columns: parseJsonValue(resource.columns, []),
+      rows: parseJsonValue(resource.rows, [])
+    })
+  });
 
   const uniqueSuiteIds = [...new Set(suite_ids)];
   const uniqueTestCaseIds = [...new Set(test_case_ids)];
@@ -320,9 +484,41 @@ exports.createExecution = async ({ project_id, app_type_id, suite_ids = [], test
   const transaction = db.transaction(async () => {
     await db.prepare(`
       INSERT INTO executions
-      (id, project_id, app_type_id, name, trigger, status, created_by)
-      VALUES (?, ?, ?, ?, 'manual', 'queued', ?)
-    `).run(id, project_id, app_type_id || null, name || "Execution Run", created_by);
+      (
+        id,
+        project_id,
+        app_type_id,
+        name,
+        trigger,
+        status,
+        test_environment_id,
+        test_environment_name,
+        test_environment_snapshot,
+        test_configuration_id,
+        test_configuration_name,
+        test_configuration_snapshot,
+        test_data_set_id,
+        test_data_set_name,
+        test_data_set_snapshot,
+        created_by
+      )
+      VALUES (?, ?, ?, ?, 'manual', 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      project_id,
+      app_type_id || null,
+      name || "Execution Run",
+      selectedEnvironment?.id || null,
+      selectedEnvironment?.name || null,
+      selectedEnvironment?.snapshot || null,
+      selectedConfiguration?.id || null,
+      selectedConfiguration?.name || null,
+      selectedConfiguration?.snapshot || null,
+      selectedDataSet?.id || null,
+      selectedDataSet?.name || null,
+      selectedDataSet?.snapshot || null,
+      created_by
+    );
 
     for (const suiteRow of executionSuiteRows) {
       await insertExecutionSuite.run(id, suiteRow.suite_id, suiteRow.suite_name);

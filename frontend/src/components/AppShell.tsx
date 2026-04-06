@@ -39,6 +39,16 @@ const navigation = [
         children: [
           { id: "executions", to: "/executions", label: "Executions" }
         ]
+      },
+      {
+        id: "environment",
+        label: "Test Environment",
+        icon: ServerIcon,
+        children: [
+          { id: "test-environments", to: "/test-environments", label: "Environments" },
+          { id: "test-data", to: "/test-data", label: "Test Data" },
+          { id: "test-configurations", to: "/test-configurations", label: "Configurations" }
+        ]
       }
     ]
   },
@@ -84,7 +94,8 @@ export function AppShell() {
   const [sidebarProjectId, setSidebarProjectId] = useCurrentProject();
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
     authoring: true,
-    runs: true
+    runs: true,
+    environment: true
   });
 
   const projects = projectsQuery.data || [];
@@ -189,7 +200,10 @@ export function AppShell() {
     location.pathname === "/requirements" ||
     location.pathname === "/test-cases" ||
     location.pathname === "/design" ||
-    location.pathname === "/executions";
+    location.pathname === "/executions" ||
+    location.pathname === "/test-environments" ||
+    location.pathname === "/test-data" ||
+    location.pathname === "/test-configurations";
 
   const currentSection = useMemo(() => {
     for (const group of navigation) {
@@ -515,6 +529,10 @@ function UsersIcon() {
 
 function FolderIcon() {
   return <IconFrame><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v9A2.5 2.5 0 0 1 18.5 21h-13A2.5 2.5 0 0 1 3 18.5z" /><path d="M9 12v5" /><path d="M13 14v3" /></IconFrame>;
+}
+
+function ServerIcon() {
+  return <IconFrame><rect x="4" y="4" width="16" height="6" rx="1.5" /><rect x="4" y="14" width="16" height="6" rx="1.5" /><path d="M8 7h.01" /><path d="M8 17h.01" /><path d="M16 7h2" /><path d="M16 17h2" /></IconFrame>;
 }
 
 function ChevronIcon() {

@@ -574,7 +574,7 @@ export function ProjectsPage() {
               <div className="project-create-title">
                 <p className="eyebrow">Projects & Scope</p>
                 <h3 id="create-project-title">Create project</h3>
-                <p>Create the project, attach app types, and select any extra members. Admins and your account are added automatically.</p>
+                <p>Create the project, attach app types, and select any extra members. Admins are added automatically, and your account is linked as a member.</p>
               </div>
               <button className="ghost-button" disabled={createProject.isPending} onClick={closeCreateProjectModal} type="button">
                 Close
@@ -616,7 +616,7 @@ export function ProjectsPage() {
 
                 <div className="detail-summary">
                   <strong>Automatic membership is handled for you</strong>
-                  <span>Admins and the project creator are linked by the backend automatically. Extra selected users are added as project members in the same create action.</span>
+                  <span>Admins are linked automatically with admin access, while the project creator is linked automatically as a member. Extra selected users are added as project members in the same create action.</span>
                 </div>
 
                 <section className="project-create-section">
@@ -674,7 +674,7 @@ export function ProjectsPage() {
                   <div className="project-create-section-head">
                     <div>
                       <h4>Project members</h4>
-                      <p>All existing users are listed here. Admins and your account are shown as auto-added, and any other users can be selected now.</p>
+                      <p>All existing users are listed here. Admins are auto-added, your account is auto-added as a member, and any other users can be selected now.</p>
                     </div>
                     <span className="status-pill tone-neutral">{projectDraft.memberIds.length} selected</span>
                   </div>
@@ -696,7 +696,7 @@ export function ProjectsPage() {
                               <strong>{user.name || user.email}</strong>
                               <span>{user.email}</span>
                               <span className="project-member-option-meta">
-                                {isAutoIncluded ? (user.id === session?.user.id ? "Project creator • auto-added" : "Admin • auto-added") : "Selectable member"}
+                                {isAutoIncluded ? (user.id === session?.user.id ? "Project creator • auto-added as member" : "Admin • auto-added") : "Selectable member"}
                               </span>
                             </div>
                           </label>

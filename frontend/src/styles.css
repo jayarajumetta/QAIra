@@ -1687,6 +1687,21 @@ textarea {
   display: block;
 }
 
+.execution-history-item {
+  align-items: flex-start;
+}
+
+.execution-history-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+
+.execution-history-item-actions .ghost-button {
+  white-space: nowrap;
+}
+
 .inline-form,
 .toolbar-row,
 .elevated-toolbar {
@@ -6112,7 +6127,7 @@ textarea:disabled,
 }
 
 .execution-create-modal {
-  width: min(58rem, 100%);
+  width: min(64rem, 100%);
   max-height: min(88vh, 54rem);
 }
 
@@ -6168,6 +6183,165 @@ textarea:disabled,
   background: var(--panel-strong);
 }
 
+.test-environment-workspace {
+  grid-template-columns: minmax(19rem, 24rem) minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.test-environment-workspace > .panel,
+.test-environment-workspace > .stack-grid {
+  min-height: 0;
+}
+
+.test-environment-list {
+  max-height: min(70vh, 48rem);
+  overflow-y: auto;
+  padding-right: 0.35rem;
+}
+
+.resource-modal-card {
+  width: min(76rem, 100%);
+  max-height: min(90vh, 60rem);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  overflow: hidden;
+}
+
+.resource-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--line);
+}
+
+.resource-modal-title {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.resource-modal-title h3,
+.resource-modal-title p {
+  margin: 0;
+}
+
+.resource-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-height: 0;
+}
+
+.resource-form-body {
+  display: grid;
+  gap: var(--space-md);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.3rem;
+  padding-bottom: var(--space-sm);
+}
+
+.resource-form-actions {
+  margin-top: auto;
+  justify-content: flex-end;
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+
+.resource-table-shell {
+  display: grid;
+  gap: 0.9rem;
+  min-height: 0;
+}
+
+.resource-table-empty {
+  padding: 1rem 1.1rem;
+}
+
+.resource-table-toolbar,
+.resource-table-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.resource-data-table {
+  min-width: max-content;
+}
+
+.resource-data-table input {
+  min-width: 10rem;
+}
+
+.resource-data-table textarea {
+  min-width: 10rem;
+  min-height: 4.5rem;
+  resize: vertical;
+}
+
+.resource-data-cell {
+  font: inherit;
+}
+
+.resource-secret-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+.resource-secret-toggle input {
+  width: auto;
+}
+
+.resource-table-remove {
+  white-space: nowrap;
+}
+
+.resource-column-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 11rem;
+}
+
+.resource-column-remove {
+  width: 2rem;
+  min-width: 2rem;
+  padding: 0.55rem;
+}
+
+.resource-import-feedback {
+  margin: 0;
+}
+
+.execution-context-block {
+  display: grid;
+  gap: var(--space-md);
+}
+
+.execution-context-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.execution-context-summary {
+  border: 1px solid var(--line);
+  background: rgba(33, 104, 243, 0.04);
+}
+
+:root[data-theme="dark"] .execution-context-summary {
+  background: linear-gradient(180deg, rgba(17, 31, 54, 0.98), rgba(13, 25, 44, 0.98));
+}
+
 .suite-tree {
   display: grid;
   gap: var(--space-md);
@@ -6182,6 +6356,14 @@ textarea:disabled,
   flex: 1 1 auto;
   min-height: 0;
   max-height: none;
+}
+
+@media (max-width: 1180px) {
+  .test-environment-workspace,
+  .execution-context-grid,
+  .execution-create-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .count-pill.tone-danger {
@@ -6620,6 +6802,15 @@ textarea:disabled,
   .page-header {
     padding: 1.1rem 1.2rem;
     align-items: flex-start;
+  }
+
+  .execution-history-item {
+    flex-direction: column;
+  }
+
+  .execution-history-item-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .page-actions {

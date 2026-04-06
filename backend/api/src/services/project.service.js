@@ -59,7 +59,7 @@ exports.createProject = async ({ name, description, created_by, member_ids, app_
 
   const adminRole = await selectRoleByName.get("admin");
   const memberRole = await selectRoleByName.get("member");
-  const creatorRoleId = adminRole?.id || memberRole?.id;
+  const creatorRoleId = memberRole?.id || adminRole?.id;
   const selectedMemberRoleId = memberRole?.id || adminRole?.id;
 
   if (!creatorRoleId || !selectedMemberRoleId) {
@@ -98,7 +98,7 @@ exports.createProject = async ({ name, description, created_by, member_ids, app_
     memberships.set(adminUser.id, adminRole?.id || creatorRoleId);
   }
 
-  memberships.set(created_by, adminRole?.id || creatorRoleId);
+  memberships.set(created_by, creatorRoleId);
 
   for (const memberId of normalizedMemberIds) {
     if (!memberships.has(memberId)) {

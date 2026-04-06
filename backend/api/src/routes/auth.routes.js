@@ -15,8 +15,7 @@ module.exports = async function (fastify) {
     fastify.validate({
       email: { required: true, type: "string", minLength: 3 },
       password: { required: true, type: "string", minLength: 6 },
-      name: { required: false, type: "string" },
-      role: { required: false, type: "string" }
+      name: { required: false, type: "string" }
     }, req.body);
 
     return service.signup(req.body);

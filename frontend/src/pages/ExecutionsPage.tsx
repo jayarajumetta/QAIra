@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { FormField } from "../components/FormField";
+import { ExecutionContextSelector } from "../components/ExecutionContextSelector";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { ProjectDropdown } from "../components/ProjectDropdown";
@@ -87,7 +88,7 @@ function buildProgressSegments(
 
 export function ExecutionsPage() {
   const queryClient = useQueryClient();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useAuth();
   const [projectId, setProjectId] = useCurrentProject();
   const [appTypeId, setAppTypeId] = useState("");
@@ -99,6 +100,9 @@ export function ExecutionsPage() {
   const [selectedTestCaseId, setSelectedTestCaseId] = useState("");
   const [bulkSelectedStepIds, setBulkSelectedStepIds] = useState<string[]>([]);
   const [executionName, setExecutionName] = useState("");
+  const [selectedExecutionEnvironmentId, setSelectedExecutionEnvironmentId] = useState("");
+  const [selectedExecutionConfigurationId, setSelectedExecutionConfigurationId] = useState("");
+  const [selectedExecutionDataSetId, setSelectedExecutionDataSetId] = useState("");
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const [activeTab, setActiveTab] = useState<ExecutionTab>("overview");
@@ -175,6 +179,50 @@ export function ExecutionsPage() {
     setIsSuitePickerOpen(false);
   };
 
+  const resetExecutionContextSelection = () => {
+    setSelectedExecutionEnvironmentId("");
+    setSelectedExecutionConfigurationId("");
+    setSelectedExecutionDataSetId("");
+  };
+
+  const closeExecutionBuilder = () => {
+    closeCreateExecutionModal();
+    setExecutionName("");
+    resetExecutionContextSelection();
+  };
+
+  const syncExecutionSearchParams = (executionId: string, testCaseId?: string | null) => {
+    const currentExecutionId = searchParams.get("execution") || "";
+    const currentTestCaseId = searchParams.get("testCase") || "";
+    const nextTestCaseId = testCaseId || "";
+
+    if (currentExecutionId === executionId && currentTestCaseId === nextTestCaseId) {
+      return;
+    }
+
+    const nextParams = new URLSearchParams(searchParams);
+
+    if (executionId) {
+      nextParams.set("execution", executionId);
+    } else {
+      nextParams.delete("execution");
+    }
+
+    if (testCaseId) {
+      nextParams.set("testCase", testCaseId);
+    } else {
+      nextParams.delete("testCase");
+    }
+
+    setSearchParams(nextParams, { replace: true });
+  };
+
+  const focusExecution = (executionId: string) => {
+    setSelectedExecutionId(executionId);
+    setSelectedTestCaseId("");
+    syncExecutionSearchParams(executionId, null);
+  };
+
   useEffect(() => {
     if (projectsQuery.isPending) {
       return;
@@ -196,20 +244,24 @@ export function ExecutionsPage() {
     if (!appTypes.length) {
       setAppTypeId("");
       setSelectedSuiteIds([]);
+      resetExecutionContextSelection();
       return;
     }
 
     if (!appTypes.some((item) => item.id === appTypeId)) {
       setAppTypeId(appTypes[0].id);
       setSelectedSuiteIds([]);
+      resetExecutionContextSelection();
     }
   }, [appTypeId, appTypes]);
 
   useEffect(() => {
     const requestedExecutionId = searchParams.get("execution");
 
-    if (requestedExecutionId && executions.some((execution) => execution.id === requestedExecutionId)) {
-      setSelectedExecutionId(requestedExecutionId);
+    if (requestedExecutionId) {
+      if (selectedExecutionId !== requestedExecutionId) {
+        setSelectedExecutionId(requestedExecutionId);
+      }
       return;
     }
 
@@ -265,12 +317,27 @@ export function ExecutionsPage() {
   );
 
   useEffect(() => {
+    const requestedTestCaseId = searchParams.get("testCase");
+
+    if (requestedTestCaseId && executionCaseOrder.some((testCase) => testCase.id === requestedTestCaseId)) {
+      const requestedSuiteId = executionCaseOrder.find((testCase) => testCase.id === requestedTestCaseId)?.suite_id;
+
+      if (requestedSuiteId) {
+        setExpandedSuiteIds((current) => (current.includes(requestedSuiteId) ? current : [...current, requestedSuiteId]));
+      }
+
+      if (selectedTestCaseId !== requestedTestCaseId) {
+        setSelectedTestCaseId(requestedTestCaseId);
+      }
+      return;
+    }
+
     if (selectedTestCaseId && executionCaseOrder.some((testCase) => testCase.id === selectedTestCaseId)) {
       return;
     }
 
     setSelectedTestCaseId(executionCaseOrder[0]?.id || "");
-  }, [executionCaseOrder, selectedTestCaseId]);
+  }, [executionCaseOrder, searchParams, selectedTestCaseId]);
 
   useEffect(() => {
     if (!executionSuites.length) {
@@ -400,21 +467,27 @@ export function ExecutionsPage() {
   const handleCreateExecution = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    if (!session?.user.id) {
+      setMessageTone("error");
+      setMessage("You need an active session before creating an execution.");
+      return;
+    }
+
     try {
       const response = await createExecution.mutateAsync({
         project_id: projectId,
         app_type_id: appTypeId || undefined,
         suite_ids: selectedSuiteIds,
+        test_environment_id: selectedExecutionEnvironmentId || undefined,
+        test_configuration_id: selectedExecutionConfigurationId || undefined,
+        test_data_set_id: selectedExecutionDataSetId || undefined,
         name: executionName || undefined,
-        created_by: session!.user.id
+        created_by: session.user.id
       });
 
-      setExecutionName("");
-      setSelectedExecutionId(response.id);
-      setSelectedTestCaseId("");
+      closeExecutionBuilder();
+      focusExecution(response.id);
       setExpandedSuiteIds([]);
-      setIsSuitePickerOpen(false);
-      setIsCreateExecutionModalOpen(false);
       showSuccess("Execution created from a snapshot of the selected suites.");
       await refreshExecutionScope(response.id);
     } catch (error) {
@@ -527,7 +600,7 @@ export function ExecutionsPage() {
           if (nextCase.suite_id && !expandedSuiteIds.includes(nextCase.suite_id)) {
             setExpandedSuiteIds((current) => [...current, nextCase.suite_id!]);
           }
-          setSelectedTestCaseId(nextCase.id);
+          focusExecutionCase(nextCase.id);
         }
       }
     } catch (error) {
@@ -578,6 +651,19 @@ export function ExecutionsPage() {
 
   const selectedExecutionCase = executionCaseOrder.find((testCase) => testCase.id === selectedTestCaseId) || null;
   const selectedExecutionResult = selectedExecutionCase ? resultByCaseId[selectedExecutionCase.id] : null;
+  const focusExecutionCase = (testCaseId: string, executionId = selectedExecutionId) => {
+    const scopedCase = executionCaseOrder.find((testCase) => testCase.id === testCaseId);
+
+    if (scopedCase?.suite_id) {
+      setExpandedSuiteIds((current) => (current.includes(scopedCase.suite_id!) ? current : [...current, scopedCase.suite_id!]));
+    }
+
+    setSelectedTestCaseId(testCaseId);
+
+    if (executionId) {
+      syncExecutionSearchParams(executionId, testCaseId);
+    }
+  };
   const selectedStepProgress = useMemo(() => {
     const passedCount = selectedSteps.filter((step) => stepStatuses[step.id] === "passed").length;
     const failedCount = selectedSteps.filter((step) => stepStatuses[step.id] === "failed").length;
@@ -727,8 +813,15 @@ export function ExecutionsPage() {
           setAppTypeId(value);
           setSelectedSuiteIds([]);
           setIsSuitePickerOpen(false);
+          resetExecutionContextSelection();
         }}
-        onProjectChange={setProjectId}
+        onProjectChange={(value) => {
+          setProjectId(value);
+          setAppTypeId("");
+          setSelectedSuiteIds([]);
+          setIsSuitePickerOpen(false);
+          resetExecutionContextSelection();
+        }}
         projectId={projectId}
         projects={projects}
       />
@@ -758,9 +851,11 @@ export function ExecutionsPage() {
               </div>
             </div>
 
+            <ExecutionContextSnapshotSummary execution={selectedExecution} />
+
             <div className="stack-list">
               {blockingCases.slice(0, 3).map((testCase) => (
-                <button className="stack-item stack-item-button" key={testCase.id} onClick={() => setSelectedTestCaseId(testCase.id)} type="button">
+                <button className="stack-item stack-item-button" key={testCase.id} onClick={() => focusExecutionCase(testCase.id)} type="button">
                   <div>
                     <strong>{testCase.title}</strong>
                     <span>{testCase.description || "Failure or block needs investigation."}</span>
@@ -833,7 +928,7 @@ export function ExecutionsPage() {
                     renderItem={(execution: Execution) => (
                       <button
                         className={selectedExecution?.id === execution.id ? "record-card tile-card execution-card virtual-card is-active" : "record-card tile-card execution-card virtual-card"}
-                        onClick={() => setSelectedExecutionId(execution.id)}
+                        onClick={() => focusExecution(execution.id)}
                         type="button"
                       >
                         <div className="tile-card-main">
@@ -991,7 +1086,7 @@ export function ExecutionsPage() {
                                 <button
                                   key={testCase.id}
                                   className={selectedTestCaseId === testCase.id ? "record-card tile-card test-case-card is-active" : "record-card tile-card test-case-card"}
-                                  onClick={() => setSelectedTestCaseId(testCase.id)}
+                                  onClick={() => focusExecutionCase(testCase.id)}
                                   type="button"
                                 >
                                   <div className="tile-card-main">
@@ -1228,7 +1323,7 @@ export function ExecutionsPage() {
                 {activeTab === "failures" ? (
                   <div className="stack-list">
                     {blockingCases.map((testCase) => (
-                      <button className="stack-item stack-item-button" key={testCase.id} onClick={() => setSelectedTestCaseId(testCase.id)} type="button">
+                      <button className="stack-item stack-item-button" key={testCase.id} onClick={() => focusExecutionCase(testCase.id)} type="button">
                         <div>
                           <strong>{testCase.title}</strong>
                           <span>{testCase.description || "Blocked or failed case."}</span>
@@ -1257,21 +1352,34 @@ export function ExecutionsPage() {
           canCreateExecution={canCreateExecution}
           executionName={executionName}
           isSubmitting={createExecution.isPending}
+          onConfigurationChange={setSelectedExecutionConfigurationId}
+          onDataSetChange={setSelectedExecutionDataSetId}
+          onEnvironmentChange={setSelectedExecutionEnvironmentId}
           onAppTypeChange={(value) => {
             setAppTypeId(value);
             setSelectedSuiteIds([]);
             setIsSuitePickerOpen(false);
+            resetExecutionContextSelection();
           }}
-          onClose={closeCreateExecutionModal}
+          onClose={closeExecutionBuilder}
           onExecutionNameChange={setExecutionName}
-          onProjectChange={setProjectId}
+          onProjectChange={(value) => {
+            setProjectId(value);
+            setAppTypeId("");
+            setSelectedSuiteIds([]);
+            setIsSuitePickerOpen(false);
+            resetExecutionContextSelection();
+          }}
           onRemoveSuite={(suiteId) => setSelectedSuiteIds((current) => current.filter((id) => id !== suiteId))}
           onSelectSuites={() => setIsSuitePickerOpen(true)}
           onSubmit={(event) => void handleCreateExecution(event)}
           projectId={projectId}
           projects={projects}
+          selectedConfigurationId={selectedExecutionConfigurationId}
           scopeSuites={scopeSuites}
           selectedAppType={selectedAppType?.name || ""}
+          selectedDataSetId={selectedExecutionDataSetId}
+          selectedEnvironmentId={selectedExecutionEnvironmentId}
           selectedProject={selectedProject?.name || ""}
           selectedScopeSuites={selectedScopeSuites}
         />
@@ -1449,7 +1557,13 @@ function ExecutionCreateModal({
   scopeSuites,
   selectedScopeSuites,
   executionName,
+  selectedEnvironmentId,
+  selectedConfigurationId,
+  selectedDataSetId,
   onExecutionNameChange,
+  onEnvironmentChange,
+  onConfigurationChange,
+  onDataSetChange,
   onSelectSuites,
   onRemoveSuite,
   canCreateExecution,
@@ -1468,7 +1582,13 @@ function ExecutionCreateModal({
   scopeSuites: TestSuite[];
   selectedScopeSuites: TestSuite[];
   executionName: string;
+  selectedEnvironmentId: string;
+  selectedConfigurationId: string;
+  selectedDataSetId: string;
   onExecutionNameChange: (value: string) => void;
+  onEnvironmentChange: (value: string) => void;
+  onConfigurationChange: (value: string) => void;
+  onDataSetChange: (value: string) => void;
   onSelectSuites: () => void;
   onRemoveSuite: (suiteId: string) => void;
   canCreateExecution: boolean;
@@ -1536,6 +1656,18 @@ function ExecutionCreateModal({
               <span>{scopeSuites.length ? `${scopeSuites.length} suites available in the current scope.` : "No suites available in the current scope yet."}</span>
             </div>
 
+            <ExecutionContextSelector
+              appTypeId={appTypeId}
+              onConfigurationChange={onConfigurationChange}
+              onDataSetChange={onDataSetChange}
+              onEnvironmentChange={onEnvironmentChange}
+              prefillFirstAvailable={true}
+              projectId={projectId}
+              selectedConfigurationId={selectedConfigurationId}
+              selectedDataSetId={selectedDataSetId}
+              selectedEnvironmentId={selectedEnvironmentId}
+            />
+
             <FormField label="Suite scope" required>
               <div className="selection-summary-card">
                 <div className="selection-summary-header">
@@ -1573,6 +1705,38 @@ function ExecutionCreateModal({
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+function ExecutionContextSnapshotSummary({ execution }: { execution: Execution }) {
+  const environmentSummary = execution.test_environment?.snapshot;
+  const configurationSummary = execution.test_configuration?.snapshot;
+  const dataSetSummary = execution.test_data_set?.snapshot;
+  const configurationTarget = [
+    configurationSummary?.browser,
+    configurationSummary?.mobile_os,
+    configurationSummary?.platform_version
+  ].filter(Boolean).join(" · ");
+
+  return (
+    <div className="detail-summary execution-context-summary">
+      <strong>Attached execution context</strong>
+      <span>
+        {execution.test_environment
+          ? `${execution.test_environment.name}${environmentSummary?.base_url ? ` · ${environmentSummary.base_url}` : ""}`
+          : "No test environment attached."}
+      </span>
+      <span>
+        {execution.test_configuration
+          ? `${execution.test_configuration.name}${configurationTarget ? ` · ${configurationTarget}` : configurationSummary?.variables?.length ? ` · ${configurationSummary.variables.length} variables` : ""}`
+          : "No test configuration attached."}
+      </span>
+      <span>
+        {execution.test_data_set
+          ? `${execution.test_data_set.name}${dataSetSummary ? ` · ${dataSetSummary.mode === "table" ? `${dataSetSummary.rows.length} rows` : `${dataSetSummary.rows.length} pairs`}` : ""}`
+          : "No test data attached."}
+      </span>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
+import { ExecutionContextSelector } from "../components/ExecutionContextSelector";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
@@ -14,7 +15,7 @@ import { useCurrentProject } from "../hooks/useCurrentProject";
 import { parseTestCaseCsv, type ImportedTestCaseRow } from "../lib/testCaseImport";
 import { api } from "../lib/api";
 import { appendUniqueImages, parseExternalLinks, readImageFiles, toggleRequirementOnPreviewCase } from "../lib/aiDesignStudio";
-import type { AiDesignImageInput, AiDesignedTestCaseCandidate, AppType, ExecutionResult, Project, Requirement, TestCase, TestStep, TestSuite } from "../types";
+import type { AiDesignImageInput, AiDesignedTestCaseCandidate, AppType, Execution, ExecutionResult, Project, Requirement, TestCase, TestStep, TestSuite } from "../types";
 
 type TestCaseDraft = {
   title: string;
@@ -50,6 +51,14 @@ const EMPTY_STEP_DRAFT: StepDraft = {
   expected_result: ""
 };
 
+const executionHistoryDateFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit"
+});
+
 const createDefaultTestCaseSections = (): Record<TestCaseEditorSectionKey, boolean> => ({
   case: true,
   steps: false,
@@ -82,6 +91,15 @@ const toCsvCell = (value: string | number | null | undefined) => {
   return /[",\n]/.test(normalized) ? `"${normalized.replace(/"/g, "\"\"")}"` : normalized;
 };
 
+const formatExecutionHistoryDate = (value?: string | null) => {
+  if (!value) {
+    return "Recent run";
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : executionHistoryDateFormatter.format(parsed);
+};
+
 export function TestCasesPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -97,6 +115,9 @@ export function TestCasesPage() {
   const [isCreateSuiteModalOpen, setIsCreateSuiteModalOpen] = useState(false);
   const [isCreateExecutionModalOpen, setIsCreateExecutionModalOpen] = useState(false);
   const [executionName, setExecutionName] = useState("");
+  const [selectedExecutionEnvironmentId, setSelectedExecutionEnvironmentId] = useState("");
+  const [selectedExecutionConfigurationId, setSelectedExecutionConfigurationId] = useState("");
+  const [selectedExecutionDataSetId, setSelectedExecutionDataSetId] = useState("");
   const [expandedSections, setExpandedSections] = useState<Record<TestCaseEditorSectionKey, boolean>>(createDefaultTestCaseSections);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
@@ -143,6 +164,11 @@ export function TestCasesPage() {
     queryKey: ["global-test-cases", appTypeId],
     queryFn: () => api.testCases.list({ app_type_id: appTypeId }),
     enabled: Boolean(appTypeId)
+  });
+  const executionsQuery = useQuery({
+    queryKey: ["executions", projectId],
+    queryFn: () => api.executions.list(projectId ? { project_id: projectId } : undefined),
+    enabled: Boolean(projectId)
   });
   const executionResultsQuery = useQuery({
     queryKey: ["global-test-case-results", appTypeId],
@@ -194,6 +220,7 @@ export function TestCasesPage() {
   const requirements = requirementsQuery.data || [];
   const suites = suitesQuery.data || [];
   const testCases = testCasesQuery.data || [];
+  const executions = executionsQuery.data || [];
   const executionResults = executionResultsQuery.data || [];
   const allTestSteps = allTestStepsQuery.data || [];
   const integrations = integrationsQuery.data || [];
@@ -223,6 +250,18 @@ export function TestCasesPage() {
   const showError = (error: unknown, fallback: string) => {
     setMessageTone("error");
     setMessage(error instanceof Error ? error.message : fallback);
+  };
+
+  const resetExecutionContextSelection = () => {
+    setSelectedExecutionEnvironmentId("");
+    setSelectedExecutionConfigurationId("");
+    setSelectedExecutionDataSetId("");
+  };
+
+  const closeCreateExecutionModal = () => {
+    setIsCreateExecutionModalOpen(false);
+    setExecutionName("");
+    resetExecutionContextSelection();
   };
 
   const beginCreateCase = () => {
@@ -280,6 +319,7 @@ export function TestCasesPage() {
     setIsCreateSuiteModalOpen(false);
     setIsCreateExecutionModalOpen(false);
     setExecutionName("");
+    resetExecutionContextSelection();
     setCaseDraft(EMPTY_CASE_DRAFT);
     setNewStepDraft(EMPTY_STEP_DRAFT);
     setDraftSteps([]);
@@ -349,6 +389,14 @@ export function TestCasesPage() {
     filteredCases.length > 0 && filteredCases.every((item) => selectedActionTestCaseIds.includes(item.id));
   const selectedProject = projects.find((project) => project.id === projectId) || null;
   const selectedAppType = appTypes.find((appType) => appType.id === appTypeId) || null;
+  const executionsById = useMemo(
+    () =>
+      executions.reduce<Record<string, Execution>>((map, execution) => {
+        map[execution.id] = execution;
+        return map;
+      }, {}),
+    [executions]
+  );
   const selectedActionCases = useMemo(
     () => testCases.filter((item) => selectedActionTestCaseIds.includes(item.id)),
     [selectedActionTestCaseIds, testCases]
@@ -606,12 +654,14 @@ export function TestCasesPage() {
         project_id: projectId,
         app_type_id: appTypeId,
         test_case_ids: selectedActionTestCaseIds,
+        test_environment_id: selectedExecutionEnvironmentId || undefined,
+        test_configuration_id: selectedExecutionConfigurationId || undefined,
+        test_data_set_id: selectedExecutionDataSetId || undefined,
         name: executionName.trim() || undefined,
         created_by: session.user.id
       });
 
-      setExecutionName("");
-      setIsCreateExecutionModalOpen(false);
+      closeCreateExecutionModal();
       setSelectedActionTestCaseIds([]);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["executions"] }),
@@ -621,6 +671,15 @@ export function TestCasesPage() {
     } catch (error) {
       showError(error, "Unable to create execution");
     }
+  };
+
+  const openExecutionHistoryResult = (result: ExecutionResult) => {
+    const params = new URLSearchParams({
+      execution: result.execution_id,
+      testCase: result.test_case_id
+    });
+
+    navigate(`/executions?${params.toString()}`);
   };
 
   const handleCreateStep = async (event: FormEvent<HTMLFormElement>) => {
@@ -1040,8 +1099,15 @@ export function TestCasesPage() {
       <WorkspaceScopeBar
         appTypeId={appTypeId}
         appTypes={appTypes}
-        onAppTypeChange={setAppTypeId}
-        onProjectChange={setProjectId}
+        onAppTypeChange={(value) => {
+          setAppTypeId(value);
+          resetExecutionContextSelection();
+        }}
+        onProjectChange={(value) => {
+          setProjectId(value);
+          setAppTypeId("");
+          resetExecutionContextSelection();
+        }}
         projectId={projectId}
         projects={projects}
       />
@@ -1327,13 +1393,6 @@ export function TestCasesPage() {
                     title={isCreating ? "Draft steps" : "Test steps"}
                   >
                     <div className="step-editor step-editor--embedded">
-                      <div className="panel-head">
-                        <div>
-                          <h3>{isCreating ? "Draft steps" : "Test steps"}</h3>
-                          <p>{isCreating ? "Attach the execution flow now so the new test case is created fully defined." : "Collapse or expand individual steps while editing. Execution history stays even if this live definition changes later."}</p>
-                        </div>
-                      </div>
-
                       {!isCreating && displaySteps.length ? (
                         <div className="action-row">
                           <button className="ghost-button" onClick={() => setExpandedStepIds(displaySteps.map((step) => step.id))} type="button">
@@ -1411,23 +1470,38 @@ export function TestCasesPage() {
                       title="Execution history"
                     >
                       <div className="step-editor step-history">
-                        <div className="panel-head">
-                          <div>
-                            <h3>Execution history</h3>
-                            <p>Recent recorded outcomes for this reusable test case.</p>
-                          </div>
-                        </div>
-
                         <div className="stack-list">
-                          {selectedHistory.map((result) => (
-                            <div className="stack-item" key={result.id}>
-                              <div>
-                                <strong>{result.test_case_title || selectedTestCase?.title || "Execution record"}</strong>
-                                <span>{result.error || result.logs || result.created_at || "Historical execution evidence retained."}</span>
+                          {selectedHistory.map((result) => {
+                            const execution = executionsById[result.execution_id];
+                            const executionLabel = execution?.name?.trim() || `Execution ${result.execution_id.slice(0, 8)}`;
+                            const executionSummary = [
+                              execution?.status ? `Run ${execution.status}` : null,
+                              formatExecutionHistoryDate(result.created_at)
+                            ].filter(Boolean).join(" · ");
+                            const historyDetail =
+                              result.error ||
+                              (result.status === "passed"
+                                ? "Passed in this execution snapshot."
+                                : result.status === "failed"
+                                  ? "Failed in this execution snapshot."
+                                  : "Blocked in this execution snapshot.");
+
+                            return (
+                              <div className="stack-item execution-history-item" key={result.id}>
+                                <div>
+                                  <strong>{executionLabel}</strong>
+                                  <span>{executionSummary}</span>
+                                  <span>{historyDetail}</span>
+                                </div>
+                                <div className="execution-history-item-actions">
+                                  <StatusBadge value={result.status} />
+                                  <button className="ghost-button" onClick={() => openExecutionHistoryResult(result)} type="button">
+                                    Open run
+                                  </button>
+                                </div>
                               </div>
-                              <StatusBadge value={result.status} />
-                            </div>
-                          ))}
+                            );
+                          })}
                           {!selectedHistory.length ? <div className="empty-state compact">No execution history yet for this test case.</div> : null}
                         </div>
                       </div>
@@ -1455,19 +1529,24 @@ export function TestCasesPage() {
 
       {isCreateExecutionModalOpen ? (
         <TestCaseExecutionModal
+          appTypeId={appTypeId}
           canCreateExecution={Boolean(projectId && appTypeId && selectedActionCases.length && session?.user.id)}
           executionName={executionName}
           isSubmitting={createExecution.isPending}
-          onClose={() => {
-            setIsCreateExecutionModalOpen(false);
-            setExecutionName("");
-          }}
+          onClose={closeCreateExecutionModal}
+          onConfigurationChange={setSelectedExecutionConfigurationId}
+          onDataSetChange={setSelectedExecutionDataSetId}
+          onEnvironmentChange={setSelectedExecutionEnvironmentId}
           onExecutionNameChange={setExecutionName}
           onRemoveTestCase={(testCaseId) =>
             setSelectedActionTestCaseIds((current) => current.filter((id) => id !== testCaseId))
           }
           onSubmit={handleCreateExecution}
+          projectId={projectId}
+          selectedConfigurationId={selectedExecutionConfigurationId}
           selectedAppType={selectedAppType?.name || ""}
+          selectedDataSetId={selectedExecutionDataSetId}
+          selectedEnvironmentId={selectedExecutionEnvironmentId}
           selectedProject={selectedProject?.name || ""}
           testCases={selectedActionCases}
         />
@@ -1738,9 +1817,17 @@ function TestCaseExecutionModal({
   testCases,
   selectedProject,
   selectedAppType,
+  projectId,
+  appTypeId,
   executionName,
+  selectedEnvironmentId,
+  selectedConfigurationId,
+  selectedDataSetId,
   canCreateExecution,
   isSubmitting,
+  onEnvironmentChange,
+  onConfigurationChange,
+  onDataSetChange,
   onExecutionNameChange,
   onRemoveTestCase,
   onClose,
@@ -1749,9 +1836,17 @@ function TestCaseExecutionModal({
   testCases: TestCase[];
   selectedProject: string;
   selectedAppType: string;
+  projectId: string;
+  appTypeId: string;
   executionName: string;
+  selectedEnvironmentId: string;
+  selectedConfigurationId: string;
+  selectedDataSetId: string;
   canCreateExecution: boolean;
   isSubmitting: boolean;
+  onEnvironmentChange: (value: string) => void;
+  onConfigurationChange: (value: string) => void;
+  onDataSetChange: (value: string) => void;
   onExecutionNameChange: (value: string) => void;
   onRemoveTestCase: (testCaseId: string) => void;
   onClose: () => void;
@@ -1799,6 +1894,18 @@ function TestCaseExecutionModal({
               <span>{selectedAppType ? `${selectedAppType} app type selected for this snapshot.` : "Choose an app type to load test cases."}</span>
               <span>{testCases.length ? `${testCases.length} test cases selected for this execution.` : "No test cases selected yet."}</span>
             </div>
+
+            <ExecutionContextSelector
+              appTypeId={appTypeId}
+              onConfigurationChange={onConfigurationChange}
+              onDataSetChange={onDataSetChange}
+              onEnvironmentChange={onEnvironmentChange}
+              prefillFirstAvailable={true}
+              projectId={projectId}
+              selectedConfigurationId={selectedConfigurationId}
+              selectedDataSetId={selectedDataSetId}
+              selectedEnvironmentId={selectedEnvironmentId}
+            />
 
             <FormField label="Execution scope" required>
               <div className="selection-summary-card">
