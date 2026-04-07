@@ -8,9 +8,11 @@ type AuthContextValue = {
   isLoading: boolean;
   error: string | null;
   login: (input: { email: string; password: string }) => Promise<void>;
-  signup: (input: { email: string; password: string; name?: string }) => Promise<void>;
-  forgotPassword: (input: { email: string }) => Promise<{ success: boolean }>;
-  resetPassword: (input: { email: string; newPassword: string }) => Promise<void>;
+  loginWithGoogle: (input: { idToken: string }) => Promise<void>;
+  requestSignupCode: (input: { email: string; password: string; name?: string }) => Promise<{ success: boolean; expiresAt?: string }>;
+  verifySignupCode: (input: { email: string; code: string }) => Promise<void>;
+  requestPasswordResetCode: (input: { email: string; newPassword: string }) => Promise<{ success: boolean; expiresAt?: string }>;
+  verifyPasswordResetCode: (input: { email: string; code: string }) => Promise<void>;
   logout: () => void;
   refreshSession: () => Promise<void>;
   clearError: () => void;
@@ -51,6 +53,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refreshSession();
   }, []);
 
+  const setAuthenticatedSession = (next: SessionPayload) => {
+    sessionStorage.write(next);
+    setSession(next);
+  };
+
   const value = useMemo<AuthContextValue>(() => ({
     session,
     isLoading,
@@ -59,46 +66,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         setError(null);
         const next = await api.auth.login(input);
-        sessionStorage.write(next);
-        setSession(next);
+        setAuthenticatedSession(next);
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : "Login failed";
         setError(errorMessage);
         throw err;
       }
     },
-    async signup(input) {
+    async loginWithGoogle(input) {
       try {
         setError(null);
-        // Signup should NOT automatically set session
-        // Just make the request, don't store session
-        await api.auth.signup(input);
-        // Don't set session - let user see success screen and login manually
+        const next = await api.auth.loginWithGoogle(input);
+        setAuthenticatedSession(next);
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Signup failed";
+        const errorMessage = err instanceof Error ? err.message : "Google sign-in failed";
         setError(errorMessage);
         throw err;
       }
     },
-    async forgotPassword(input) {
+    async requestSignupCode(input) {
       try {
         setError(null);
-        return await api.auth.forgotPassword(input);
+        return await api.auth.requestSignupCode(input);
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Password reset request failed";
+        const errorMessage = err instanceof Error ? err.message : "We couldn't send a signup verification code";
         setError(errorMessage);
         throw err;
       }
     },
-    async resetPassword(input) {
+    async verifySignupCode(input) {
       try {
         setError(null);
-        // Reset password should NOT automatically set session
-        // Just make the request, don't store session
-        await api.auth.resetPassword(input);
-        // Don't set session - let user see success screen and login manually
+        await api.auth.verifySignupCode(input);
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Password reset failed";
+        const errorMessage = err instanceof Error ? err.message : "Signup verification failed";
+        setError(errorMessage);
+        throw err;
+      }
+    },
+    async requestPasswordResetCode(input) {
+      try {
+        setError(null);
+        return await api.auth.requestPasswordResetCode(input);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : "We couldn't send a password reset code";
+        setError(errorMessage);
+        throw err;
+      }
+    },
+    async verifyPasswordResetCode(input) {
+      try {
+        setError(null);
+        await api.auth.verifyPasswordResetCode(input);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : "Password reset verification failed";
         setError(errorMessage);
         throw err;
       }

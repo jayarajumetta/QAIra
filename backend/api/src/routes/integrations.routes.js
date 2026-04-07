@@ -2,7 +2,8 @@ const service = require("../services/integration.service");
 
 const sanitizeIntegration = (integration) => ({
   ...integration,
-  api_key: null
+  api_key: null,
+  config: {}
 });
 
 module.exports = async function (fastify) {
@@ -10,13 +11,14 @@ module.exports = async function (fastify) {
     await fastify.requireAdmin(req);
 
     fastify.validate({
-      type: { required: true, type: "string" },
+      type: { required: true, type: "string", enum: ["llm", "jira", "email", "google_auth"] },
       name: { required: true, type: "string", minLength: 2 },
       base_url: { required: false, type: "string" },
       api_key: { required: false, type: "string" },
       model: { required: false, type: "string" },
       project_key: { required: false, type: "string" },
       username: { required: false, type: "string" },
+      config: { required: false, type: "object" },
       is_active: { required: false, type: "boolean" }
     }, req.body);
 
@@ -50,13 +52,14 @@ module.exports = async function (fastify) {
     await fastify.requireAdmin(req);
 
     fastify.validate({
-      type: { required: false, type: "string" },
+      type: { required: false, type: "string", enum: ["llm", "jira", "email", "google_auth"] },
       name: { required: false, type: "string", minLength: 2 },
       base_url: { required: false, type: "string" },
       api_key: { required: false, type: "string" },
       model: { required: false, type: "string" },
       project_key: { required: false, type: "string" },
       username: { required: false, type: "string" },
+      config: { required: false, type: "object" },
       is_active: { required: false, type: "boolean" }
     }, req.body);
 

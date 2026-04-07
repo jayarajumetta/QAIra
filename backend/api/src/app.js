@@ -18,7 +18,7 @@ const createError = (message, statusCode) => {
 
 const getCurrentUser = async (id) => {
   const user = await db.prepare(`
-    SELECT id, email, name, created_at
+    SELECT id, email, name, auth_provider, email_verified, created_at
     FROM users
     WHERE id = ?
   `).get(id);
@@ -69,6 +69,10 @@ fastify.decorate("validate", (schema, data = {}) => {
 
     if (rules.type === "array" && !Array.isArray(value)) {
       throw createError(`Field '${field}' must be an array`, 400);
+    }
+
+    if (rules.type === "object" && (typeof value !== "object" || Array.isArray(value))) {
+      throw createError(`Field '${field}' must be an object`, 400);
     }
 
     if (rules.type === "array" && rules.items === "string" && !value.every((item) => typeof item === "string")) {

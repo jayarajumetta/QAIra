@@ -11,14 +11,27 @@ const getBearerToken = (headers) => {
 };
 
 module.exports = async function (fastify) {
-  fastify.post("/auth/signup", async (req) => {
+  fastify.get("/auth/setup", async () => {
+    return service.getAuthSetup();
+  });
+
+  fastify.post("/auth/signup/request-code", async (req) => {
     fastify.validate({
       email: { required: true, type: "string", minLength: 3 },
       password: { required: true, type: "string", minLength: 6 },
       name: { required: false, type: "string" }
     }, req.body);
 
-    return service.signup(req.body);
+    return service.requestSignupCode(req.body);
+  });
+
+  fastify.post("/auth/signup/verify", async (req) => {
+    fastify.validate({
+      email: { required: true, type: "string", minLength: 3 },
+      code: { required: true, type: "string", minLength: 6 }
+    }, req.body);
+
+    return service.verifySignupCode(req.body);
   });
 
   fastify.post("/auth/login", async (req) => {
@@ -30,21 +43,30 @@ module.exports = async function (fastify) {
     return service.login(req.body);
   });
 
-  fastify.post("/auth/forgot-password", async (req) => {
+  fastify.post("/auth/login/google", async (req) => {
     fastify.validate({
-      email: { required: true, type: "string", minLength: 3 }
+      idToken: { required: true, type: "string", minLength: 10 }
     }, req.body);
 
-    return service.forgotPassword(req.body);
+    return service.loginWithGoogle(req.body);
   });
 
-  fastify.post("/auth/reset-password", async (req) => {
+  fastify.post("/auth/forgot-password/request-code", async (req) => {
     fastify.validate({
       email: { required: true, type: "string", minLength: 3 },
       newPassword: { required: true, type: "string", minLength: 6 }
     }, req.body);
 
-    return service.resetPassword(req.body);
+    return service.requestPasswordResetCode(req.body);
+  });
+
+  fastify.post("/auth/forgot-password/verify", async (req) => {
+    fastify.validate({
+      email: { required: true, type: "string", minLength: 3 },
+      code: { required: true, type: "string", minLength: 6 }
+    }, req.body);
+
+    return service.verifyPasswordResetCode(req.body);
   });
 
   fastify.get("/auth/session", async (req) => {

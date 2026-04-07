@@ -5,6 +5,7 @@ import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StatusBadge } from "../components/StatusBadge";
+import { ToastMessage } from "../components/ToastMessage";
 import { api } from "../lib/api";
 import type { Integration } from "../types";
 
@@ -17,7 +18,17 @@ type IntegrationDraft = {
   project_key: string;
   username: string;
   is_active: boolean;
+  smtp_host: string;
+  smtp_port: string;
+  smtp_secure: boolean;
+  smtp_password: string;
+  sender_email: string;
+  sender_name: string;
+  google_client_id: string;
 };
+
+const DEFAULT_EMAIL_SENDER = "support@qualipal.in";
+const DEFAULT_EMAIL_SENDER_NAME = "QAira Support";
 
 const EMPTY_DRAFT: IntegrationDraft = {
   type: "llm",
@@ -27,8 +38,154 @@ const EMPTY_DRAFT: IntegrationDraft = {
   model: "",
   project_key: "",
   username: "",
-  is_active: true
+  is_active: true,
+  smtp_host: "",
+  smtp_port: "587",
+  smtp_secure: false,
+  smtp_password: "",
+  sender_email: DEFAULT_EMAIL_SENDER,
+  sender_name: DEFAULT_EMAIL_SENDER_NAME,
+  google_client_id: ""
 };
+
+function getIntegrationTypeLabel(type: Integration["type"]) {
+  if (type === "llm") {
+    return "LLM";
+  }
+
+  if (type === "jira") {
+    return "Jira";
+  }
+
+  if (type === "email") {
+    return "Email Sender";
+  }
+
+  return "Google Sign-In";
+}
+
+function getIntegrationTypeIcon(type: Integration["type"]) {
+  if (type === "llm") {
+    return "AI";
+  }
+
+  if (type === "jira") {
+    return "JI";
+  }
+
+  if (type === "email") {
+    return "EM";
+  }
+
+  return "GO";
+}
+
+function applyDraftDefaultsForType(type: Integration["type"], current: IntegrationDraft): IntegrationDraft {
+  if (type === "llm") {
+    return {
+      ...current,
+      type,
+      base_url: current.base_url || "https://api.openai.com/v1"
+    };
+  }
+
+  if (type === "email") {
+    return {
+      ...current,
+      type,
+      smtp_port: current.smtp_port || "587",
+      sender_email: current.sender_email || DEFAULT_EMAIL_SENDER,
+      sender_name: current.sender_name || DEFAULT_EMAIL_SENDER_NAME
+    };
+  }
+
+  return {
+    ...current,
+    type
+  };
+}
+
+function getDraftFromIntegration(integration: Integration): IntegrationDraft {
+  const config: Record<string, unknown> = integration.config || {};
+
+  return applyDraftDefaultsForType(integration.type, {
+    ...EMPTY_DRAFT,
+    type: integration.type,
+    name: integration.name,
+    base_url: integration.base_url || (integration.type === "llm" ? "https://api.openai.com/v1" : ""),
+    api_key: integration.api_key || "",
+    model: integration.model || "",
+    project_key: integration.project_key || "",
+    username: integration.username || "",
+    is_active: integration.is_active,
+    smtp_host: typeof config.host === "string" ? config.host : "",
+    smtp_port:
+      typeof config.port === "number"
+        ? String(config.port)
+        : typeof config.port === "string"
+          ? config.port
+          : "587",
+    smtp_secure: Boolean(config.secure),
+    smtp_password: typeof config.password === "string" ? config.password : "",
+    sender_email: typeof config.sender_email === "string" ? config.sender_email : DEFAULT_EMAIL_SENDER,
+    sender_name: typeof config.sender_name === "string" ? config.sender_name : DEFAULT_EMAIL_SENDER_NAME,
+    google_client_id: typeof config.client_id === "string" ? config.client_id : ""
+  });
+}
+
+function buildIntegrationConfig(draft: IntegrationDraft): Record<string, unknown> {
+  if (draft.type === "email") {
+    return {
+      host: draft.smtp_host.trim(),
+      port: Number.parseInt(draft.smtp_port, 10),
+      secure: draft.smtp_secure,
+      password: draft.smtp_password,
+      sender_email: draft.sender_email.trim() || DEFAULT_EMAIL_SENDER,
+      sender_name: draft.sender_name.trim() || DEFAULT_EMAIL_SENDER_NAME
+    };
+  }
+
+  if (draft.type === "google_auth") {
+    return {
+      client_id: draft.google_client_id.trim()
+    };
+  }
+
+  return {};
+}
+
+function getIntegrationSummary(integration: Integration) {
+  const config: Record<string, unknown> = integration.config || {};
+
+  if (integration.type === "llm") {
+    return {
+      primary: integration.model || "Model not set",
+      secondary: integration.base_url || "No base URL configured"
+    };
+  }
+
+  if (integration.type === "jira") {
+    return {
+      primary: integration.project_key || "Project key not set",
+      secondary: integration.base_url || "No base URL configured"
+    };
+  }
+
+  if (integration.type === "email") {
+    const host = typeof config.host === "string" ? config.host : "";
+    const port = typeof config.port === "number" ? config.port : typeof config.port === "string" ? config.port : "";
+
+    return {
+      primary: typeof config.sender_email === "string" ? config.sender_email : DEFAULT_EMAIL_SENDER,
+      secondary: host ? `${host}${port ? `:${port}` : ""}` : "SMTP server not set"
+    };
+  }
+
+  return {
+    primary: typeof config.client_id === "string" ? config.client_id : "Client ID not set",
+    secondary: "Used on the login page for Google sign-in"
+  };
+}
 
 export function IntegrationsPage() {
   const queryClient = useQueryClient();
@@ -53,6 +210,17 @@ export function IntegrationsPage() {
   const deleteIntegration = useMutation({ mutationFn: api.integrations.delete });
 
   const integrations = integrationsQuery.data || [];
+  const selectedIntegration = useMemo(
+    () => integrations.find((item) => item.id === selectedIntegrationId) || integrations[0] || null,
+    [integrations, selectedIntegrationId]
+  );
+  const activeIntegrationCount = integrations.filter((item) => item.is_active).length;
+  const isAdmin = session?.user.role === "admin";
+  const isLlm = draft.type === "llm";
+  const isJira = draft.type === "jira";
+  const isEmail = draft.type === "email";
+  const isGoogle = draft.type === "google_auth";
+
   const showSuccess = (text: string) => {
     setMessageTone("success");
     setMessage(text);
@@ -63,12 +231,6 @@ export function IntegrationsPage() {
     setMessage(error instanceof Error ? error.message : fallback);
   };
 
-  const selectedIntegration = useMemo(
-    () => integrations.find((item) => item.id === selectedIntegrationId) || integrations[0] || null,
-    [integrations, selectedIntegrationId]
-  );
-  const activeIntegrationCount = integrations.filter((item) => item.is_active).length;
-
   useEffect(() => {
     if (isCreating) {
       return;
@@ -76,16 +238,7 @@ export function IntegrationsPage() {
 
     if (selectedIntegration) {
       setSelectedIntegrationId(selectedIntegration.id);
-      setDraft({
-        type: selectedIntegration.type,
-        name: selectedIntegration.name,
-        base_url: selectedIntegration.base_url || (selectedIntegration.type === "llm" ? "https://api.openai.com/v1" : ""),
-        api_key: selectedIntegration.api_key || "",
-        model: selectedIntegration.model || "",
-        project_key: selectedIntegration.project_key || "",
-        username: selectedIntegration.username || "",
-        is_active: selectedIntegration.is_active
-      });
+      setDraft(getDraftFromIntegration(selectedIntegration));
       return;
     }
 
@@ -101,33 +254,27 @@ export function IntegrationsPage() {
     event.preventDefault();
 
     try {
+      const input = {
+        type: draft.type,
+        name: draft.name.trim(),
+        base_url: draft.base_url.trim() || undefined,
+        api_key: draft.api_key.trim() || undefined,
+        model: draft.model.trim() || undefined,
+        project_key: draft.project_key.trim() || undefined,
+        username: draft.username.trim() || undefined,
+        config: buildIntegrationConfig(draft),
+        is_active: draft.is_active
+      };
+
       if (isCreating || !selectedIntegration) {
-        const response = await createIntegration.mutateAsync({
-          type: draft.type,
-          name: draft.name,
-          base_url: draft.base_url || undefined,
-          api_key: draft.api_key || undefined,
-          model: draft.model || undefined,
-          project_key: draft.project_key || undefined,
-          username: draft.username || undefined,
-          is_active: draft.is_active
-        });
+        const response = await createIntegration.mutateAsync(input);
         setSelectedIntegrationId(response.id);
         setIsCreating(false);
         showSuccess("Integration created.");
       } else {
         await updateIntegration.mutateAsync({
           id: selectedIntegration.id,
-          input: {
-            type: draft.type,
-            name: draft.name,
-            base_url: draft.base_url,
-            api_key: draft.api_key,
-            model: draft.model,
-            project_key: draft.project_key,
-            username: draft.username,
-            is_active: draft.is_active
-          }
+          input
         });
         showSuccess("Integration updated.");
       }
@@ -155,29 +302,30 @@ export function IntegrationsPage() {
     }
   };
 
-  const isAdmin = session?.user.role === "admin";
-  const isLlm = draft.type === "llm";
+  const openCreateForm = () => {
+    setIsCreating(true);
+    setSelectedIntegrationId("");
+    setDraft(EMPTY_DRAFT);
+  };
 
   return (
     <div className="page-content">
+      <ToastMessage message={message} onDismiss={() => setMessage("")} tone={messageTone === "error" ? "error" : "success"} />
+
       <PageHeader
         eyebrow="Administration"
         title="Integrations"
-        description="Manage the external systems that power AI generation, Jira synchronization, and other workspace automations."
+        description="Manage the external systems QAira uses for AI generation, Jira sync, Google sign-in, and email verification delivery."
         meta={[
           { label: "Configured", value: integrations.length },
           { label: "Active", value: activeIntegrationCount },
-          { label: "Selected type", value: isCreating ? draft.type : selectedIntegration?.type || "None" }
+          { label: "Selected type", value: isCreating ? getIntegrationTypeLabel(draft.type) : selectedIntegration ? getIntegrationTypeLabel(selectedIntegration.type) : "None" }
         ]}
         actions={
           isAdmin ? (
             <button
               className="primary-button"
-              onClick={() => {
-                setIsCreating(true);
-                setSelectedIntegrationId("");
-                setDraft(EMPTY_DRAFT);
-              }}
+              onClick={openCreateForm}
               type="button"
             >
               + New Integration
@@ -186,42 +334,48 @@ export function IntegrationsPage() {
         }
       />
 
-      {message ? <p className={messageTone === "error" ? "inline-message error-message" : "inline-message success-message"}>{message}</p> : null}
-
       {!isAdmin ? (
         <Panel title="Access required" subtitle="Only admins can manage integrations.">
-          <div className="empty-state compact">Ask an admin to create or update integration keys for LLM and Jira access.</div>
+          <div className="empty-state compact">Ask an admin to manage LLM, Jira, Email Sender, and Google Sign-In integrations.</div>
         </Panel>
       ) : (
         <div className="workspace-grid">
           <Panel title="Configured integrations" subtitle="Choose a connection profile to update, activate, or replace.">
             <div className="record-list">
-              {integrations.map((integration) => (
-                <button
-                  key={integration.id}
-                  className={selectedIntegrationId === integration.id ? "record-card is-active" : "record-card"}
-                  onClick={() => {
-                    setSelectedIntegrationId(integration.id);
-                    setIsCreating(false);
-                  }}
-                  type="button"
-                >
-                  <div className="record-card-body">
-                    <div className="record-card-header">
-                      <div className="record-card-icon execution">{integration.type === "llm" ? "AI" : "JI"}</div>
-                      <strong>{integration.name}</strong>
+              {integrations.map((integration) => {
+                const summary = getIntegrationSummary(integration);
+
+                return (
+                  <button
+                    key={integration.id}
+                    className={selectedIntegrationId === integration.id ? "record-card is-active" : "record-card"}
+                    onClick={() => {
+                      setSelectedIntegrationId(integration.id);
+                      setIsCreating(false);
+                    }}
+                    type="button"
+                  >
+                    <div className="record-card-body">
+                      <div className="record-card-header">
+                        <div className="record-card-icon execution">{getIntegrationTypeIcon(integration.type)}</div>
+                        <strong>{integration.name}</strong>
+                      </div>
+                      <span>{getIntegrationTypeLabel(integration.type)}</span>
+                      <span>{summary.primary}</span>
+                      <span>{summary.secondary}</span>
                     </div>
-                    <span>{integration.type === "llm" ? integration.model || "Model not set" : integration.project_key || "Project key not set"}</span>
-                    <span>{integration.base_url || "No base URL configured"}</span>
-                  </div>
-                  <StatusBadge value={integration.is_active ? "active" : "inactive"} />
-                </button>
-              ))}
+                    <StatusBadge value={integration.is_active ? "active" : "inactive"} />
+                  </button>
+                );
+              })}
             </div>
             {!integrations.length ? <div className="empty-state compact">No integrations configured yet.</div> : null}
           </Panel>
 
-          <Panel title={isCreating ? "New integration" : selectedIntegration ? "Integration details" : "Integration editor"} subtitle="Store the essentials the platform needs to call an LLM provider or connect to Jira.">
+          <Panel
+            title={isCreating ? "New integration" : selectedIntegration ? "Integration details" : "Integration editor"}
+            subtitle="Store the credentials and provider settings QAira needs to call external systems and power secure authentication flows."
+          >
             {isCreating || selectedIntegration ? (
               <form className="form-grid" onSubmit={(event) => void handleSave(event)}>
                 <div className="record-grid">
@@ -229,52 +383,156 @@ export function IntegrationsPage() {
                     <select
                       value={draft.type}
                       onChange={(event) =>
-                        setDraft((current) => ({
-                          ...current,
-                          type: event.target.value as Integration["type"],
-                          base_url: event.target.value === "llm" ? current.base_url || "https://api.openai.com/v1" : current.base_url
-                        }))
+                        setDraft((current) =>
+                          applyDraftDefaultsForType(event.target.value as Integration["type"], current)
+                        )
                       }
                     >
-                      <option value="llm">llm</option>
-                      <option value="jira">jira</option>
+                      <option value="llm">LLM</option>
+                      <option value="jira">Jira</option>
+                      <option value="email">Email Sender</option>
+                      <option value="google_auth">Google Sign-In</option>
                     </select>
                   </FormField>
 
                   <FormField label="Name">
                     <input required value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} />
                   </FormField>
-
-                  <FormField label="Base URL">
-                    <input
-                      placeholder={isLlm ? "https://api.openai.com/v1" : "https://your-company.atlassian.net"}
-                      value={draft.base_url}
-                      onChange={(event) => setDraft((current) => ({ ...current, base_url: event.target.value }))}
-                    />
-                  </FormField>
-
-                  {isLlm ? (
-                    <FormField label="Model">
-                      <input placeholder="gpt-4.1-mini" value={draft.model} onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))} />
-                    </FormField>
-                  ) : (
-                    <FormField label="Jira Project Key">
-                      <input placeholder="QA" value={draft.project_key} onChange={(event) => setDraft((current) => ({ ...current, project_key: event.target.value }))} />
-                    </FormField>
-                  )}
                 </div>
 
-                <div className="record-grid">
-                  <FormField label="API Key">
-                    <input type="password" value={draft.api_key} onChange={(event) => setDraft((current) => ({ ...current, api_key: event.target.value }))} />
-                  </FormField>
+                {(isLlm || isJira) ? (
+                  <>
+                    <div className="record-grid">
+                      <FormField label="Base URL">
+                        <input
+                          placeholder={isLlm ? "https://api.openai.com/v1" : "https://your-company.atlassian.net"}
+                          value={draft.base_url}
+                          onChange={(event) => setDraft((current) => ({ ...current, base_url: event.target.value }))}
+                        />
+                      </FormField>
 
-                  {!isLlm ? (
-                    <FormField label="Username / Email">
-                      <input value={draft.username} onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))} />
-                    </FormField>
-                  ) : null}
-                </div>
+                      {isLlm ? (
+                        <FormField label="Model">
+                          <input
+                            placeholder="gpt-5.4-mini"
+                            value={draft.model}
+                            onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))}
+                          />
+                        </FormField>
+                      ) : (
+                        <FormField label="Jira Project Key">
+                          <input
+                            placeholder="QA"
+                            value={draft.project_key}
+                            onChange={(event) => setDraft((current) => ({ ...current, project_key: event.target.value }))}
+                          />
+                        </FormField>
+                      )}
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="API Key">
+                        <input type="password" value={draft.api_key} onChange={(event) => setDraft((current) => ({ ...current, api_key: event.target.value }))} />
+                      </FormField>
+
+                      {isJira ? (
+                        <FormField label="Username / Email">
+                          <input value={draft.username} onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))} />
+                        </FormField>
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
+
+                {isEmail ? (
+                  <>
+                    <div className="empty-state compact integration-helper">
+                      QAira sends signup and forgot-password verification codes through this SMTP profile. Set the sender email to <strong>{DEFAULT_EMAIL_SENDER}</strong> when that mailbox is configured on your mail provider.
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="SMTP Host">
+                        <input
+                          placeholder="smtp.zoho.in"
+                          value={draft.smtp_host}
+                          onChange={(event) => setDraft((current) => ({ ...current, smtp_host: event.target.value }))}
+                        />
+                      </FormField>
+
+                      <FormField label="SMTP Port">
+                        <input
+                          inputMode="numeric"
+                          placeholder="587"
+                          value={draft.smtp_port}
+                          onChange={(event) => setDraft((current) => ({ ...current, smtp_port: event.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="SMTP Username / Email">
+                        <input
+                          placeholder="support@qualipal.in"
+                          value={draft.username}
+                          onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))}
+                        />
+                      </FormField>
+
+                      <FormField label="SMTP Password">
+                        <input
+                          type="password"
+                          value={draft.smtp_password}
+                          onChange={(event) => setDraft((current) => ({ ...current, smtp_password: event.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Sender Email">
+                        <input
+                          placeholder={DEFAULT_EMAIL_SENDER}
+                          value={draft.sender_email}
+                          onChange={(event) => setDraft((current) => ({ ...current, sender_email: event.target.value }))}
+                        />
+                      </FormField>
+
+                      <FormField label="Sender Name">
+                        <input
+                          placeholder={DEFAULT_EMAIL_SENDER_NAME}
+                          value={draft.sender_name}
+                          onChange={(event) => setDraft((current) => ({ ...current, sender_name: event.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+
+                    <label className="checkbox-field">
+                      <input
+                        checked={draft.smtp_secure}
+                        onChange={(event) => setDraft((current) => ({ ...current, smtp_secure: event.target.checked }))}
+                        type="checkbox"
+                      />
+                      <span>Use secure SMTP connection</span>
+                    </label>
+                  </>
+                ) : null}
+
+                {isGoogle ? (
+                  <>
+                    <div className="empty-state compact integration-helper">
+                      Add the Google OAuth web client ID that should power the sign-in button on the QAira login page.
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Google Client ID">
+                        <input
+                          placeholder="1234567890-abcdef.apps.googleusercontent.com"
+                          value={draft.google_client_id}
+                          onChange={(event) => setDraft((current) => ({ ...current, google_client_id: event.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+                  </>
+                ) : null}
 
                 <label className="checkbox-field">
                   <input

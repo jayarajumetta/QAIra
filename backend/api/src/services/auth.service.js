@@ -1,11 +1,46 @@
 const crypto = require("crypto");
 const db = require("../db");
+const integrationService = require("./integration.service");
+const { getEmailSenderProfile, sendMail } = require("./email.service");
 const { hashPassword, verifyPassword, createToken, verifyToken } = require("../utils/token");
+
+const VERIFICATION_CODE_TTL_MINUTES = 15;
+const VERIFICATION_MAX_ATTEMPTS = 5;
+const GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo";
+const VERIFICATION_SECRET =
+  process.env.VERIFICATION_CODE_SECRET ||
+  process.env.SESSION_SECRET ||
+  "qaira-verification-secret";
 
 const createError = (message, statusCode) => {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
+};
+
+const normalizeEmail = (email) => {
+  return email.toLowerCase().trim();
+};
+
+const normalizeName = (name) => {
+  if (typeof name !== "string") {
+    return null;
+  }
+
+  const normalized = name.trim();
+  return normalized ? normalized : null;
+};
+
+const hashVerificationCode = (code) => {
+  return crypto.createHmac("sha256", VERIFICATION_SECRET).update(code).digest("hex");
+};
+
+const generateVerificationCode = () => {
+  return crypto.randomInt(0, 1000000).toString().padStart(6, "0");
+};
+
+const generatePlaceholderPassword = () => {
+  return `${crypto.randomUUID()}-${crypto.randomUUID()}`;
 };
 
 const getSessionRole = async (id) => {
@@ -23,7 +58,7 @@ const getSessionRole = async (id) => {
 
 const selectUserForSession = async (id) => {
   const user = await db.prepare(`
-    SELECT id, email, name, created_at
+    SELECT id, email, name, auth_provider, email_verified, created_at
     FROM users
     WHERE id = ?
   `).get(id);
@@ -61,19 +96,17 @@ const ensureMemberRole = async () => {
 
 const assignDefaultProjectMemberships = async (userId) => {
   const memberRoleId = await ensureMemberRole();
-
-  // Get only the first project (sample project) instead of all projects
   const firstProject = await db.prepare(`
-    SELECT id FROM projects 
-    ORDER BY created_at ASC 
+    SELECT id
+    FROM projects
+    ORDER BY created_at ASC
     LIMIT 1
   `).get();
-  
+
   if (!firstProject) {
-    // If no projects exist, skip membership assignment
     return;
   }
-  
+
   const existing = db.prepare(`
     SELECT id
     FROM project_members
@@ -84,48 +117,280 @@ const assignDefaultProjectMemberships = async (userId) => {
     VALUES (?, ?, ?, ?)
   `);
 
-  // Only add to first project
   if (!await existing.get(firstProject.id, userId)) {
     await insertMembership.run(crypto.randomUUID(), firstProject.id, userId, memberRoleId);
   }
 };
 
-const normalizeEmail = (email) => {
-  return email.toLowerCase().trim();
+const getPendingVerification = async ({ email, purpose }) => {
+  return db.prepare(`
+    SELECT *
+    FROM auth_verification_codes
+    WHERE email = ? AND purpose = ? AND consumed_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).get(email, purpose);
 };
 
-exports.signup = async ({ email, password, name }) => {
+const clearPendingVerification = async ({ email, purpose }) => {
+  await db.prepare(`
+    DELETE FROM auth_verification_codes
+    WHERE email = ? AND purpose = ? AND consumed_at IS NULL
+  `).run(email, purpose);
+};
+
+const createVerificationEmail = ({ code, purpose, senderName, expiresInMinutes }) => {
+  const actionLabel = purpose === "signup" ? "finish creating your QAira account" : "reset your QAira password";
+  const subject = purpose === "signup" ? "Your QAira signup verification code" : "Your QAira password reset code";
+  const text = [
+    `Use this verification code to ${actionLabel}: ${code}`,
+    "",
+    `The code expires in ${expiresInMinutes} minutes.`,
+    "",
+    `If you did not request this, you can ignore this email.`,
+    "",
+    `${senderName}`
+  ].join("\n");
+  const html = `
+    <div style="font-family: Arial, sans-serif; color: #16324f; line-height: 1.5;">
+      <p>Use this verification code to ${actionLabel}:</p>
+      <p style="margin: 24px 0;">
+        <strong style="display: inline-block; padding: 12px 18px; font-size: 24px; letter-spacing: 6px; border-radius: 12px; background: #e9f1ff; color: #0f4aa3;">
+          ${code}
+        </strong>
+      </p>
+      <p>The code expires in ${expiresInMinutes} minutes.</p>
+      <p>If you did not request this, you can ignore this email.</p>
+      <p style="margin-top: 24px;">${senderName}</p>
+    </div>
+  `;
+
+  return { subject, text, html };
+};
+
+const sendVerificationCode = async ({ email, purpose, payload }) => {
+  const senderProfile = await getEmailSenderProfile();
+
+  if (!senderProfile.enabled) {
+    throw createError(
+      "Email verification is not configured yet. Add an active Email Sender integration in Administration > Integrations.",
+      503
+    );
+  }
+
+  const code = generateVerificationCode();
+  const expiresAt = new Date(Date.now() + VERIFICATION_CODE_TTL_MINUTES * 60 * 1000).toISOString();
+
+  await clearPendingVerification({ email, purpose });
+
+  await db.prepare(`
+    INSERT INTO auth_verification_codes (id, email, purpose, code_hash, payload, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    crypto.randomUUID(),
+    email,
+    purpose,
+    hashVerificationCode(code),
+    payload,
+    expiresAt
+  );
+
+  const emailContent = createVerificationEmail({
+    code,
+    purpose,
+    senderName: senderProfile.senderName || "QAira Support",
+    expiresInMinutes: VERIFICATION_CODE_TTL_MINUTES
+  });
+
+  await sendMail({
+    to: email,
+    subject: emailContent.subject,
+    text: emailContent.text,
+    html: emailContent.html
+  });
+
+  return {
+    success: true,
+    expiresAt
+  };
+};
+
+const consumeVerificationPayload = async ({ email, purpose, code }) => {
+  const verification = await getPendingVerification({ email, purpose });
+
+  if (!verification) {
+    throw createError("No verification code is pending. Request a new code to continue.", 400);
+  }
+
+  if (verification.expires_at && new Date(verification.expires_at) < new Date()) {
+    await clearPendingVerification({ email, purpose });
+    throw createError("This verification code has expired. Request a new code to continue.", 401);
+  }
+
+  if (verification.attempt_count >= VERIFICATION_MAX_ATTEMPTS) {
+    await clearPendingVerification({ email, purpose });
+    throw createError("Too many incorrect attempts. Request a new verification code and try again.", 429);
+  }
+
+  if (hashVerificationCode(code) !== verification.code_hash) {
+    const nextAttemptCount = verification.attempt_count + 1;
+
+    await db.prepare(`
+      UPDATE auth_verification_codes
+      SET attempt_count = ?
+      WHERE id = ?
+    `).run(nextAttemptCount, verification.id);
+
+    if (nextAttemptCount >= VERIFICATION_MAX_ATTEMPTS) {
+      throw createError("Too many incorrect attempts. Request a new verification code and try again.", 429);
+    }
+
+    throw createError("Invalid verification code. Double-check the 6-digit code and try again.", 401);
+  }
+
+  await db.prepare(`
+    UPDATE auth_verification_codes
+    SET consumed_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(verification.id);
+
+  return verification.payload || {};
+};
+
+const verifyGoogleIdentityToken = async (idToken, expectedClientId) => {
+  if (!idToken) {
+    throw createError("Google sign-in token is required", 400);
+  }
+
+  if (typeof fetch !== "function") {
+    throw createError("Google sign-in is not supported on this server runtime.", 500);
+  }
+
+  let response;
+
+  try {
+    response = await fetch(`${GOOGLE_TOKENINFO_URL}?id_token=${encodeURIComponent(idToken)}`, {
+      signal: AbortSignal.timeout(10000)
+    });
+  } catch (error) {
+    throw createError("Unable to verify Google sign-in right now. Please try again.", 502);
+  }
+
+  if (!response.ok) {
+    throw createError("Google sign-in could not be verified. Please try again.", 401);
+  }
+
+  const payload = await response.json();
+
+  if (payload.aud !== expectedClientId) {
+    throw createError("This Google sign-in request was issued for a different client.", 401);
+  }
+
+  if (!payload.email || payload.email_verified !== "true" || !payload.sub) {
+    throw createError("Google sign-in requires a verified email address.", 401);
+  }
+
+  return {
+    email: payload.email,
+    name: normalizeName(payload.name),
+    sub: payload.sub
+  };
+};
+
+const getGoogleSetup = async () => {
+  const integration = await integrationService.getActiveIntegrationByType("google_auth");
+  const clientId = integration?.config?.client_id || null;
+
+  return {
+    enabled: Boolean(clientId),
+    clientId
+  };
+};
+
+exports.getAuthSetup = async () => {
+  const [google, emailVerification] = await Promise.all([
+    getGoogleSetup(),
+    getEmailSenderProfile()
+  ]);
+
+  return {
+    google,
+    emailVerification
+  };
+};
+
+exports.requestSignupCode = async ({ email, password, name }) => {
   if (!email || !password) {
-    throw createError("Missing required fields", 400);
+    throw createError("Email and password are required", 400);
+  }
+
+  if (password.length < 6) {
+    throw createError("Password must be at least 6 characters", 400);
   }
 
   const normalizedEmail = normalizeEmail(email);
-
   const existing = await db.prepare(`
-    SELECT id FROM users WHERE LOWER(email) = ?
+    SELECT id
+    FROM users
+    WHERE LOWER(email) = ?
   `).get(normalizedEmail);
 
   if (existing) {
-    throw createError("User already exists", 409);
+    throw createError("An account already exists for that email. Sign in or use forgot password instead.", 409);
+  }
+
+  return sendVerificationCode({
+    email: normalizedEmail,
+    purpose: "signup",
+    payload: {
+      name: normalizeName(name),
+      password_hash: hashPassword(password)
+    }
+  });
+};
+
+exports.verifySignupCode = db.transaction(async ({ email, code }) => {
+  if (!email || !code) {
+    throw createError("Email and verification code are required", 400);
+  }
+
+  const normalizedEmail = normalizeEmail(email);
+  const verificationPayload = await consumeVerificationPayload({
+    email: normalizedEmail,
+    purpose: "signup",
+    code: code.trim()
+  });
+
+  const existing = await db.prepare(`
+    SELECT id
+    FROM users
+    WHERE LOWER(email) = ?
+  `).get(normalizedEmail);
+
+  if (existing) {
+    throw createError("An account already exists for that email. Sign in instead.", 409);
+  }
+
+  if (!verificationPayload.password_hash) {
+    throw createError("This signup request is incomplete. Request a new code and try again.", 400);
   }
 
   const id = crypto.randomUUID();
-  const passwordHash = hashPassword(password);
 
   await db.prepare(`
-    INSERT INTO users (id, email, password_hash, name)
-    VALUES (?, ?, ?, ?)
-  `).run(id, normalizedEmail, passwordHash, name || null);
+    INSERT INTO users (id, email, password_hash, name, auth_provider, email_verified)
+    VALUES (?, ?, ?, ?, 'local', TRUE)
+  `).run(
+    id,
+    normalizedEmail,
+    verificationPayload.password_hash,
+    normalizeName(verificationPayload.name)
+  );
 
   await assignDefaultProjectMemberships(id);
 
-  const user = await selectUserForSession(id);
-
-  return {
-    token: createToken(user),
-    user
-  };
-};
+  return { success: true };
+});
 
 exports.login = async ({ email, password }) => {
   if (!email || !password) {
@@ -144,9 +409,8 @@ exports.login = async ({ email, password }) => {
     throw createError("Invalid credentials", 401);
   }
 
-  // Use timing-safe comparison for password verification
   const isPasswordValid = verifyPassword(password, user.password_hash);
-  
+
   if (!isPasswordValid) {
     throw createError("Invalid credentials", 401);
   }
@@ -158,6 +422,136 @@ exports.login = async ({ email, password }) => {
     user: sessionUser
   };
 };
+
+exports.loginWithGoogle = db.transaction(async ({ idToken }) => {
+  const googleSetup = await getGoogleSetup();
+
+  if (!googleSetup.enabled || !googleSetup.clientId) {
+    throw createError(
+      "Google sign-in is not configured yet. Add an active Google Sign-In integration in Administration > Integrations.",
+      503
+    );
+  }
+
+  const googleProfile = await verifyGoogleIdentityToken(idToken, googleSetup.clientId);
+  const normalizedEmail = normalizeEmail(googleProfile.email);
+  const existing = await db.prepare(`
+    SELECT id, name, auth_provider, google_sub
+    FROM users
+    WHERE LOWER(email) = ?
+  `).get(normalizedEmail);
+
+  if (existing) {
+    if (existing.google_sub && existing.google_sub !== googleProfile.sub) {
+      throw createError("This email is already linked to a different Google account.", 409);
+    }
+
+    await db.prepare(`
+      UPDATE users
+      SET google_sub = ?,
+          email_verified = TRUE,
+          name = COALESCE(name, ?)
+      WHERE id = ?
+    `).run(googleProfile.sub, googleProfile.name, existing.id);
+
+    const sessionUser = await selectUserForSession(existing.id);
+
+    return {
+      token: createToken(sessionUser),
+      user: sessionUser
+    };
+  }
+
+  const id = crypto.randomUUID();
+
+  await db.prepare(`
+    INSERT INTO users (id, email, password_hash, name, auth_provider, google_sub, email_verified)
+    VALUES (?, ?, ?, ?, 'google', ?, TRUE)
+  `).run(
+    id,
+    normalizedEmail,
+    hashPassword(generatePlaceholderPassword()),
+    googleProfile.name,
+    googleProfile.sub
+  );
+
+  await assignDefaultProjectMemberships(id);
+
+  const sessionUser = await selectUserForSession(id);
+
+  return {
+    token: createToken(sessionUser),
+    user: sessionUser
+  };
+});
+
+exports.requestPasswordResetCode = async ({ email, newPassword }) => {
+  if (!email || !newPassword) {
+    throw createError("Email and new password are required", 400);
+  }
+
+  if (newPassword.length < 6) {
+    throw createError("Password must be at least 6 characters", 400);
+  }
+
+  const normalizedEmail = normalizeEmail(email);
+  const user = await db.prepare(`
+    SELECT id
+    FROM users
+    WHERE LOWER(email) = ?
+  `).get(normalizedEmail);
+
+  if (!user) {
+    return { success: true };
+  }
+
+  return sendVerificationCode({
+    email: normalizedEmail,
+    purpose: "password_reset",
+    payload: {
+      password_hash: hashPassword(newPassword)
+    }
+  });
+};
+
+exports.verifyPasswordResetCode = db.transaction(async ({ email, code }) => {
+  if (!email || !code) {
+    throw createError("Email and verification code are required", 400);
+  }
+
+  const normalizedEmail = normalizeEmail(email);
+  const verificationPayload = await consumeVerificationPayload({
+    email: normalizedEmail,
+    purpose: "password_reset",
+    code: code.trim()
+  });
+  const user = await db.prepare(`
+    SELECT id
+    FROM users
+    WHERE LOWER(email) = ?
+  `).get(normalizedEmail);
+
+  if (!user) {
+    throw createError("No account matches that email. Sign up instead.", 404);
+  }
+
+  if (!verificationPayload.password_hash) {
+    throw createError("This password reset request is incomplete. Request a new code and try again.", 400);
+  }
+
+  await db.prepare(`
+    UPDATE users
+    SET password_hash = ?, email_verified = TRUE
+    WHERE id = ?
+  `).run(verificationPayload.password_hash, user.id);
+
+  await db.prepare(`
+    DELETE FROM password_reset_tokens
+    WHERE user_id = ?
+  `).run(user.id);
+
+  return { success: true };
+});
 
 exports.getSession = async (token) => {
   let payload;
@@ -179,85 +573,3 @@ exports.getSession = async (token) => {
     user
   };
 };
-
-exports.forgotPassword = async ({ email }) => {
-  if (!email) {
-    throw createError("Email is required", 400);
-  }
-
-  const normalizedEmail = normalizeEmail(email);
-
-  const user = await db.prepare(`
-    SELECT id FROM users WHERE LOWER(email) = ?
-  `).get(normalizedEmail);
-
-  if (!user) {
-    // Don't reveal if user exists for security
-    return { success: true };
-  }
-
-  // Mark that a password reset was requested
-  await db.prepare(`
-    INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(user_id) DO UPDATE SET
-      expires_at = excluded.expires_at,
-      created_at = CURRENT_TIMESTAMP
-  `).run(crypto.randomUUID(), user.id, "pending", new Date(Date.now() + 60 * 60 * 1000).toISOString());
-
-  return { success: true };
-};
-
-exports.resetPassword = async ({ email, newPassword }) => {
-  if (!email || !newPassword) {
-    throw createError("Email and new password are required", 400);
-  }
-
-  if (newPassword.length < 6) {
-    throw createError("Password must be at least 6 characters", 400);
-  }
-
-  const normalizedEmail = normalizeEmail(email);
-
-  const user = await db.prepare(`
-    SELECT id FROM users WHERE LOWER(email) = ?
-  `).get(normalizedEmail);
-
-  if (!user) {
-    throw createError("User not found", 404);
-  }
-
-  // Check if a reset was recently requested
-  const resetRecord = await db.prepare(`
-    SELECT expires_at FROM password_reset_tokens WHERE user_id = ?
-  `).get(user.id);
-
-  if (!resetRecord) {
-    throw createError("No password reset request found. Please request a password reset first.", 400);
-  }
-
-  const expiresAt = new Date(resetRecord.expires_at);
-  if (expiresAt < new Date()) {
-    throw createError("Password reset request has expired. Please request a new one.", 401);
-  }
-
-  // Update password and remove reset token
-  const newPasswordHash = hashPassword(newPassword);
-
-  await db.prepare(`
-    UPDATE users SET password_hash = ? WHERE id = ?
-  `).run(newPasswordHash, user.id);
-
-  await db.prepare(`
-    DELETE FROM password_reset_tokens WHERE user_id = ?
-  `).run(user.id);
-
-  const sessionUser = await selectUserForSession(user.id);
-
-  return {
-    token: createToken(sessionUser),
-    user: sessionUser
-  };
-};
-
-exports.assignDefaultProjectMemberships = assignDefaultProjectMemberships;

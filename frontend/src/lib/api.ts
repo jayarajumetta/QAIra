@@ -1,6 +1,7 @@
 import type {
   AiDesignImageInput,
   AiDesignPreviewResponse,
+  AuthSetupPayload,
   ApiError,
     AppType,
     Execution,
@@ -104,9 +105,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   // Handle authentication errors
-  if (response.status === 401) {
+  if (response.status === 401 && token) {
     sessionStorage.clear();
-    window.location.href = "/auth";
+
+    if (!path.startsWith("/auth/")) {
+      window.location.href = "/auth";
+    }
   }
 
   const isJson = response.headers.get("content-type")?.includes("application/json");
@@ -123,8 +127,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   auth: {
-    signup: (input: { email: string; password: string; name?: string }) =>
-      request<SessionPayload>("/auth/signup", {
+    setup: () => request<AuthSetupPayload>("/auth/setup"),
+    requestSignupCode: (input: { email: string; password: string; name?: string }) =>
+      request<{ success: boolean; expiresAt?: string }>("/auth/signup/request-code", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
+    verifySignupCode: (input: { email: string; code: string }) =>
+      request<{ success: boolean }>("/auth/signup/verify", {
         method: "POST",
         body: JSON.stringify(input)
       }),
@@ -133,13 +143,18 @@ export const api = {
         method: "POST",
         body: JSON.stringify(input)
       }),
-    forgotPassword: (input: { email: string }) =>
-      request<{ success: boolean; resetToken?: string }>("/auth/forgot-password", {
+    loginWithGoogle: (input: { idToken: string }) =>
+      request<SessionPayload>("/auth/login/google", {
         method: "POST",
         body: JSON.stringify(input)
       }),
-    resetPassword: (input: { email: string; newPassword: string }) =>
-      request<SessionPayload>("/auth/reset-password", {
+    requestPasswordResetCode: (input: { email: string; newPassword: string }) =>
+      request<{ success: boolean; expiresAt?: string }>("/auth/forgot-password/request-code", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
+    verifyPasswordResetCode: (input: { email: string; code: string }) =>
+      request<{ success: boolean }>("/auth/forgot-password/verify", {
         method: "POST",
         body: JSON.stringify(input)
       }),
@@ -227,9 +242,9 @@ export const api = {
   integrations: {
     list: (query?: { type?: Integration["type"]; is_active?: boolean }) =>
       request<Integration[]>(`/integrations${toQueryString(query)}`),
-    create: (input: { type: Integration["type"]; name: string; base_url?: string; api_key?: string; model?: string; project_key?: string; username?: string; is_active?: boolean }) =>
+    create: (input: { type: Integration["type"]; name: string; base_url?: string; api_key?: string; model?: string; project_key?: string; username?: string; config?: Record<string, unknown>; is_active?: boolean }) =>
       request<{ id: string }>("/integrations", { method: "POST", body: JSON.stringify(input) }),
-    update: (id: string, input: Partial<{ type: Integration["type"]; name: string; base_url: string; api_key: string; model: string; project_key: string; username: string; is_active: boolean }>) =>
+    update: (id: string, input: Partial<{ type: Integration["type"]; name: string; base_url: string; api_key: string; model: string; project_key: string; username: string; config: Record<string, unknown>; is_active: boolean }>) =>
       request<{ updated: boolean }>(`/integrations/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/integrations/${id}`, { method: "DELETE" })
   },

@@ -2,45 +2,74 @@ import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useRef, useState } fr
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { FormField } from "../components/FormField";
+import { ToastMessage } from "../components/ToastMessage";
+import { api } from "../lib/api";
+import type { AuthSetupPayload } from "../types";
 
-type FormMode = "login" | "signup" | "forgot" | "signup-success" | "reset-success";
-type FieldName = "name" | "email" | "password" | "newPassword";
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (options: {
+            client_id: string;
+            callback: (response: { credential?: string }) => void;
+          }) => void;
+          renderButton: (
+            parent: HTMLElement,
+            options: {
+              theme?: "outline" | "filled_blue" | "filled_black";
+              size?: "large" | "medium" | "small";
+              text?: "signin_with" | "signup_with" | "continue_with" | "signin";
+              shape?: "rectangular" | "pill" | "circle" | "square";
+              width?: number;
+              logo_alignment?: "left" | "center";
+            }
+          ) => void;
+        };
+      };
+    };
+  }
+}
+
+type FormMode =
+  | "login"
+  | "signup"
+  | "signup-code"
+  | "forgot"
+  | "forgot-code"
+  | "signup-success"
+  | "reset-success";
+type FieldName = "name" | "email" | "password" | "newPassword" | "verificationCode";
 type FormValues = Record<FieldName, string>;
 type FieldErrors = Partial<Record<FieldName, string>>;
 type TouchedFields = Partial<Record<FieldName, boolean>>;
 type CapabilityTheme = "blue" | "amber" | "teal";
 type CapabilityVisual = "design" | "execution" | "traceability";
+type PendingVerification = {
+  type: "signup" | "forgot";
+  email: string;
+};
+
+const EMPTY_AUTH_SETUP: AuthSetupPayload = {
+  google: {
+    enabled: false,
+    clientId: null
+  },
+  emailVerification: {
+    enabled: false,
+    senderEmail: null,
+    senderName: null
+  }
+};
 
 const INITIAL_FORM_VALUES: FormValues = {
   name: "",
   email: "",
   password: "",
-  newPassword: ""
+  newPassword: "",
+  verificationCode: ""
 };
-
-const FORM_COPY = {
-  login: {
-    eyebrow: "Secure login",
-    title: "Welcome back",
-    description: "Sign in to continue managing test design, execution, and traceability in one place.",
-    submitLabel: "Sign in to QAira",
-    loadingLabel: "Signing in…"
-  },
-  signup: {
-    eyebrow: "Create account",
-    title: "Set up your QAira access",
-    description: "Create an account for secure access to the workspace.",
-    submitLabel: "Create account",
-    loadingLabel: "Creating account…"
-  },
-  forgot: {
-    eyebrow: "Reset password",
-    title: "Reset your password",
-    description: "Enter your work email and a new password to regain access quickly.",
-    submitLabel: "Reset password",
-    loadingLabel: "Resetting password…"
-  }
-} as const;
 
 const AUTH_CAPABILITY_SLIDES: Array<{
   id: string;
@@ -100,6 +129,8 @@ const AUTH_CAPABILITY_SLIDES: Array<{
   }
 ];
 
+let googleScriptPromise: Promise<void> | null = null;
+
 function mergeIds(...values: Array<string | undefined>) {
   return values.filter(Boolean).join(" ") || undefined;
 }
@@ -111,6 +142,10 @@ function getFieldsForMode(mode: FormMode): FieldName[] {
 
   if (mode === "signup") {
     return ["email", "password"];
+  }
+
+  if (mode === "signup-code" || mode === "forgot-code") {
+    return ["verificationCode"];
   }
 
   return ["email", "password"];
@@ -158,6 +193,18 @@ function getFieldError(fieldName: FieldName, value: string, mode: FormMode) {
     return validatePassword(trimmedValue);
   }
 
+  if (fieldName === "verificationCode" && (mode === "signup-code" || mode === "forgot-code")) {
+    const normalizedCode = value.replace(/\s+/g, "");
+
+    if (!normalizedCode) {
+      return "Verification code is required.";
+    }
+
+    if (!/^\d{6}$/.test(normalizedCode)) {
+      return "Enter the 6-digit verification code from your email.";
+    }
+  }
+
   return "";
 }
 
@@ -182,23 +229,169 @@ function getTouchedState(mode: FormMode) {
   }, {});
 }
 
+function loadGoogleIdentityScript() {
+  if (typeof window === "undefined") {
+    return Promise.resolve();
+  }
+
+  if (window.google?.accounts?.id) {
+    return Promise.resolve();
+  }
+
+  if (googleScriptPromise) {
+    return googleScriptPromise;
+  }
+
+  googleScriptPromise = new Promise((resolve, reject) => {
+    const existingScript = document.querySelector<HTMLScriptElement>("script[data-google-identity='true']");
+
+    if (existingScript) {
+      existingScript.addEventListener("load", () => resolve(), { once: true });
+      existingScript.addEventListener("error", () => reject(new Error("Google sign-in could not be loaded.")), { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.dataset.googleIdentity = "true";
+    script.onload = () => resolve();
+    script.onerror = () => {
+      googleScriptPromise = null;
+      reject(new Error("Google sign-in could not be loaded."));
+    };
+    document.head.appendChild(script);
+  });
+
+  return googleScriptPromise;
+}
+
+function getCurrentCopy(
+  mode: FormMode,
+  pendingVerification: PendingVerification | null,
+  authSetup: AuthSetupPayload
+) {
+  const senderEmail = authSetup.emailVerification.senderEmail || "support@qualipal.in";
+  const emailReady = authSetup.emailVerification.enabled;
+
+  if (mode === "signup") {
+    return {
+      eyebrow: "Create account",
+      title: "Set up your QAira access",
+      description: emailReady
+        ? `Create an account for secure access to the workspace. We'll send a 6-digit verification code from ${senderEmail} before the account goes live.`
+        : "Create an account for secure access to the workspace. An admin needs to finish the Email Sender integration before signup can be completed.",
+      submitLabel: "Send verification code",
+      loadingLabel: "Sending code…"
+    };
+  }
+
+  if (mode === "forgot") {
+    return {
+      eyebrow: "Reset password",
+      title: "Reset your password",
+      description: emailReady
+        ? `Enter your work email and a new password. We'll send a 6-digit verification code from ${senderEmail} to confirm the reset.`
+        : "Enter your work email and a new password. An admin needs to finish the Email Sender integration before password reset can be completed.",
+      submitLabel: "Send reset code",
+      loadingLabel: "Sending code…"
+    };
+  }
+
+  if (mode === "signup-code") {
+    return {
+      eyebrow: "Verify email",
+      title: "Enter your signup code",
+      description: `We sent a 6-digit verification code to ${pendingVerification?.email || "your email"}. Enter it below to finish creating the account.`,
+      submitLabel: "Verify and create account",
+      loadingLabel: "Verifying code…"
+    };
+  }
+
+  if (mode === "forgot-code") {
+    return {
+      eyebrow: "Verify reset",
+      title: "Enter your reset code",
+      description: `Enter the 6-digit code sent to ${pendingVerification?.email || "your email"} to confirm the password reset.`,
+      submitLabel: "Verify and reset password",
+      loadingLabel: "Verifying code…"
+    };
+  }
+
+  return {
+    eyebrow: "Secure login",
+    title: "Welcome back",
+    description: "Sign in to continue managing test design, execution, and traceability in one place.",
+    submitLabel: "Sign in to QAira",
+    loadingLabel: "Signing in…"
+  };
+}
+
 export function AuthPage() {
   const navigate = useNavigate();
   const emailInputRef = useRef<HTMLInputElement>(null);
-  const { login, signup, forgotPassword, resetPassword } = useAuth();
+  const googleButtonRef = useRef<HTMLDivElement>(null);
+  const {
+    login,
+    loginWithGoogle,
+    requestSignupCode,
+    verifySignupCode,
+    requestPasswordResetCode,
+    verifyPasswordResetCode
+  } = useAuth();
   const [mode, setMode] = useState<FormMode>("login");
   const [formValues, setFormValues] = useState<FormValues>(INITIAL_FORM_VALUES);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [touchedFields, setTouchedFields] = useState<TouchedFields>({});
   const [error, setError] = useState("");
+  const [infoMessage, setInfoMessage] = useState("");
+  const [authSetup, setAuthSetup] = useState<AuthSetupPayload>(EMPTY_AUTH_SETUP);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
+  const [isResendingCode, setIsResendingCode] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [activeCapabilityIndex, setActiveCapabilityIndex] = useState(0);
+  const [pendingVerification, setPendingVerification] = useState<PendingVerification | null>(null);
 
   const isSuccessMode = mode === "signup-success" || mode === "reset-success";
-  const currentCopy = mode === "signup" || mode === "forgot" ? FORM_COPY[mode] : FORM_COPY.login;
+  const isCodeMode = mode === "signup-code" || mode === "forgot-code";
+  const isEmailVerificationReady = authSetup.emailVerification.enabled;
+  const isGoogleReady = authSetup.google.enabled && Boolean(authSetup.google.clientId);
+  const currentCopy = getCurrentCopy(mode, pendingVerification, authSetup);
   const activeCapability = AUTH_CAPABILITY_SLIDES[activeCapabilityIndex];
+  const isBusy = isSubmitting || isGoogleSubmitting || isResendingCode;
+
+  useEffect(() => {
+    let isMounted = true;
+
+    void (async () => {
+      try {
+        const nextSetup = await api.auth.setup();
+
+        if (!isMounted) {
+          return;
+        }
+
+        setAuthSetup(nextSetup);
+      } catch (nextError) {
+        if (!isMounted) {
+          return;
+        }
+
+        setError(
+          nextError instanceof Error
+            ? nextError.message
+            : "Authentication setup could not be loaded. Please refresh and try again."
+        );
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (isSuccessMode) {
@@ -220,15 +413,110 @@ export function AuthPage() {
     return () => window.clearInterval(intervalId);
   }, []);
 
+  useEffect(() => {
+    if (mode !== "login" || !isGoogleReady || !authSetup.google.clientId || !googleButtonRef.current) {
+      if (googleButtonRef.current) {
+        googleButtonRef.current.innerHTML = "";
+      }
+
+      return;
+    }
+
+    const googleClientId = authSetup.google.clientId;
+    let isActive = true;
+
+    void loadGoogleIdentityScript()
+      .then(() => {
+        if (!isActive || !googleButtonRef.current || !window.google?.accounts?.id) {
+          return;
+        }
+
+        googleButtonRef.current.innerHTML = "";
+        window.google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: ({ credential }) => {
+            if (!credential) {
+              setError("Google sign-in did not return a credential. Please try again.");
+              return;
+            }
+
+            void (async () => {
+              setIsGoogleSubmitting(true);
+              setError("");
+
+              try {
+                await loginWithGoogle({ idToken: credential });
+                navigate("/", { replace: true });
+              } catch (nextError) {
+                setError(
+                  nextError instanceof Error
+                    ? nextError.message
+                    : "Google sign-in could not be completed."
+                );
+              } finally {
+                setIsGoogleSubmitting(false);
+              }
+            })();
+          }
+        });
+        window.google.accounts.id.renderButton(googleButtonRef.current, {
+          theme: "outline",
+          size: "large",
+          text: "continue_with",
+          shape: "pill",
+          width: 360,
+          logo_alignment: "left"
+        });
+      })
+      .catch((nextError) => {
+        if (!isActive) {
+          return;
+        }
+
+        setError(
+          nextError instanceof Error
+            ? nextError.message
+            : "Google sign-in could not be loaded."
+        );
+      });
+
+    return () => {
+      isActive = false;
+
+      if (googleButtonRef.current) {
+        googleButtonRef.current.innerHTML = "";
+      }
+    };
+  }, [authSetup.google.clientId, isGoogleReady, loginWithGoogle, mode, navigate]);
+
   const resetFormState = (nextMode: FormMode) => {
     setMode(nextMode);
     setFormValues(INITIAL_FORM_VALUES);
     setFieldErrors({});
     setTouchedFields({});
     setError("");
+    setInfoMessage("");
+    setPendingVerification(null);
     setIsSubmitting(false);
+    setIsResendingCode(false);
     setShowPassword(false);
     setShowNewPassword(false);
+  };
+
+  const moveToVerificationMode = (nextMode: "signup-code" | "forgot-code", email: string) => {
+    setMode(nextMode);
+    setPendingVerification({
+      type: nextMode === "signup-code" ? "signup" : "forgot",
+      email
+    });
+    setFieldErrors({});
+    setTouchedFields({});
+    setError("");
+    setFormValues((current) => ({
+      ...current,
+      email,
+      verificationCode: ""
+    }));
   };
 
   const updateFieldError = (fieldName: FieldName, value: string) => {
@@ -248,7 +536,11 @@ export function AuthPage() {
   };
 
   const handleFieldChange = (fieldName: FieldName) => (event: ChangeEvent<HTMLInputElement>) => {
-    const { value } = event.currentTarget;
+    let { value } = event.currentTarget;
+
+    if (fieldName === "verificationCode") {
+      value = value.replace(/\D+/g, "").slice(0, 6);
+    }
 
     setFormValues((current) => ({
       ...current,
@@ -257,6 +549,10 @@ export function AuthPage() {
 
     if (error) {
       setError("");
+    }
+
+    if (infoMessage) {
+      setInfoMessage("");
     }
 
     if (touchedFields[fieldName] || fieldErrors[fieldName]) {
@@ -291,14 +587,15 @@ export function AuthPage() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (isSubmitting || isSuccessMode) {
+    if (isBusy || isSuccessMode) {
       return;
     }
 
     const normalizedValues: FormValues = {
       ...formValues,
       email: formValues.email.trim().toLowerCase(),
-      name: formValues.name.trim()
+      name: formValues.name.trim(),
+      verificationCode: formValues.verificationCode.replace(/\s+/g, "")
     };
     const nextErrors = getModeErrors(mode, normalizedValues);
 
@@ -308,6 +605,11 @@ export function AuthPage() {
     setError("");
 
     if (Object.keys(nextErrors).length > 0) {
+      return;
+    }
+
+    if ((mode === "signup" || mode === "forgot") && !isEmailVerificationReady) {
+      setError("Email verification is not configured yet. Ask an admin to finish the Email Sender integration.");
       return;
     }
 
@@ -321,17 +623,34 @@ export function AuthPage() {
         });
         navigate("/", { replace: true });
       } else if (mode === "signup") {
-        await signup({
+        await requestSignupCode({
           email: normalizedValues.email,
           password: normalizedValues.password,
           name: normalizedValues.name || undefined
         });
+        moveToVerificationMode("signup-code", normalizedValues.email);
+        setInfoMessage(`A 6-digit verification code has been sent to ${normalizedValues.email}.`);
+      } else if (mode === "signup-code") {
+        const verificationEmail = pendingVerification?.email || normalizedValues.email;
+
+        await verifySignupCode({
+          email: verificationEmail,
+          code: normalizedValues.verificationCode
+        });
         resetFormState("signup-success");
       } else if (mode === "forgot") {
-        await forgotPassword({ email: normalizedValues.email });
-        await resetPassword({
+        await requestPasswordResetCode({
           email: normalizedValues.email,
           newPassword: normalizedValues.newPassword
+        });
+        moveToVerificationMode("forgot-code", normalizedValues.email);
+        setInfoMessage(`If ${normalizedValues.email} is registered, a 6-digit verification code is on its way.`);
+      } else if (mode === "forgot-code") {
+        const verificationEmail = pendingVerification?.email || normalizedValues.email;
+
+        await verifyPasswordResetCode({
+          email: verificationEmail,
+          code: normalizedValues.verificationCode
         });
         resetFormState("reset-success");
       }
@@ -346,6 +665,60 @@ export function AuthPage() {
     }
   };
 
+  const handleResendCode = async () => {
+    if (!pendingVerification || isBusy) {
+      return;
+    }
+
+    setIsResendingCode(true);
+    setError("");
+
+    try {
+      if (pendingVerification.type === "signup") {
+        await requestSignupCode({
+          email: pendingVerification.email,
+          password: formValues.password,
+          name: formValues.name.trim() || undefined
+        });
+        setInfoMessage(`A fresh signup code has been sent to ${pendingVerification.email}.`);
+      } else {
+        await requestPasswordResetCode({
+          email: pendingVerification.email,
+          newPassword: formValues.newPassword
+        });
+        setInfoMessage(`If ${pendingVerification.email} is registered, a fresh reset code is on its way.`);
+      }
+
+      setFormValues((current) => ({
+        ...current,
+        verificationCode: ""
+      }));
+    } catch (nextError) {
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "We couldn't resend the verification code."
+      );
+    } finally {
+      setIsResendingCode(false);
+    }
+  };
+
+  const handleBackFromVerification = () => {
+    const nextMode = pendingVerification?.type === "signup" ? "signup" : "forgot";
+
+    setMode(nextMode);
+    setPendingVerification(null);
+    setFieldErrors({});
+    setTouchedFields({});
+    setError("");
+    setInfoMessage("");
+    setFormValues((current) => ({
+      ...current,
+      verificationCode: ""
+    }));
+  };
+
   const loginPasswordDescribedBy = mergeIds(
     fieldErrors.password ? "password-input-error" : undefined,
     "password-input-hint"
@@ -354,9 +727,15 @@ export function AuthPage() {
     fieldErrors.newPassword ? "new-password-input-error" : undefined,
     "new-password-input-hint"
   );
+  const verificationCodeDescribedBy = mergeIds(
+    fieldErrors.verificationCode ? "verification-code-error" : undefined,
+    pendingVerification ? "verification-code-hint" : undefined
+  );
 
   return (
     <div className="page auth-page">
+      <ToastMessage message={infoMessage} onDismiss={() => setInfoMessage("")} tone="info" />
+
       <div className="container auth-shell">
         <section className="left auth-aside" aria-label="QAira product overview">
           <div className={`auth-aside-panel auth-carousel-panel theme-${activeCapability.theme}`}>
@@ -445,7 +824,7 @@ export function AuthPage() {
                       type="button"
                       role="tab"
                       aria-selected={mode === "login"}
-                      disabled={isSubmitting}
+                      disabled={isBusy}
                     >
                       Login
                     </button>
@@ -455,7 +834,7 @@ export function AuthPage() {
                       type="button"
                       role="tab"
                       aria-selected={mode === "signup"}
-                      disabled={isSubmitting}
+                      disabled={isBusy}
                     >
                       Sign up
                     </button>
@@ -472,8 +851,8 @@ export function AuthPage() {
                 </div>
                 <p className="success-message">
                   {mode === "signup-success"
-                    ? "Your account is ready. Sign in with your new credentials to enter the workspace."
-                    : "Your password has been reset. Sign in with the updated password to continue."}
+                    ? "Your email has been verified and your account is ready. Sign in with your new credentials to enter the workspace."
+                    : "Your verification code checked out and the new password is now active. Sign in with the updated password to continue."}
                 </p>
                 <button
                   className="primary-button auth-submit"
@@ -489,7 +868,7 @@ export function AuthPage() {
                   <FormField label="Full name" inputId="name-input">
                     <input
                       autoComplete="name"
-                      disabled={isSubmitting}
+                      disabled={isBusy}
                       id="name-input"
                       name="name"
                       onBlur={handleFieldBlur("name")}
@@ -500,25 +879,35 @@ export function AuthPage() {
                   </FormField>
                 )}
 
-                <FormField
-                  error={fieldErrors.email}
-                  inputId="email-input"
-                  label="Email"
-                  required
-                >
-                  <input
-                    autoComplete="email"
-                    autoFocus
-                    disabled={isSubmitting}
-                    inputMode="email"
-                    name="email"
-                    onBlur={handleFieldBlur("email")}
-                    onChange={handleFieldChange("email")}
-                    ref={emailInputRef}
-                    type="email"
-                    value={formValues.email}
-                  />
-                </FormField>
+                {!isCodeMode ? (
+                  <FormField
+                    error={fieldErrors.email}
+                    inputId="email-input"
+                    label="Email"
+                    required
+                  >
+                    <input
+                      autoComplete="email"
+                      autoFocus
+                      disabled={isBusy}
+                      inputMode="email"
+                      name="email"
+                      onBlur={handleFieldBlur("email")}
+                      onChange={handleFieldChange("email")}
+                      ref={emailInputRef}
+                      type="email"
+                      value={formValues.email}
+                    />
+                  </FormField>
+                ) : (
+                  <div className="auth-verification-panel">
+                    <span className="auth-verification-label">Verification target</span>
+                    <strong className="auth-verification-target">{pendingVerification?.email || formValues.email}</strong>
+                    <p className="auth-verification-caption">
+                      Check that inbox for the latest 6-digit code before continuing.
+                    </p>
+                  </div>
+                )}
 
                 {(mode === "login" || mode === "signup") && (
                   <FormField
@@ -533,7 +922,7 @@ export function AuthPage() {
                         aria-describedby={loginPasswordDescribedBy}
                         aria-invalid={Boolean(fieldErrors.password)}
                         autoComplete={mode === "login" ? "current-password" : "new-password"}
-                        disabled={isSubmitting}
+                        disabled={isBusy}
                         id="password-input"
                         name="password"
                         onBlur={handleFieldBlur("password")}
@@ -546,7 +935,7 @@ export function AuthPage() {
                       <button
                         aria-label={showPassword ? "Hide password" : "Show password"}
                         className="password-toggle"
-                        disabled={isSubmitting}
+                        disabled={isBusy}
                         onClick={() => setShowPassword((current) => !current)}
                         tabIndex={-1}
                         type="button"
@@ -570,7 +959,7 @@ export function AuthPage() {
                         aria-describedby={resetPasswordDescribedBy}
                         aria-invalid={Boolean(fieldErrors.newPassword)}
                         autoComplete="new-password"
-                        disabled={isSubmitting}
+                        disabled={isBusy}
                         id="new-password-input"
                         name="newPassword"
                         onBlur={handleFieldBlur("newPassword")}
@@ -583,7 +972,7 @@ export function AuthPage() {
                       <button
                         aria-label={showNewPassword ? "Hide new password" : "Show new password"}
                         className="password-toggle"
-                        disabled={isSubmitting}
+                        disabled={isBusy}
                         onClick={() => setShowNewPassword((current) => !current)}
                         tabIndex={-1}
                         type="button"
@@ -593,6 +982,37 @@ export function AuthPage() {
                     </div>
                   </FormField>
                 )}
+
+                {isCodeMode && (
+                  <FormField
+                    error={fieldErrors.verificationCode}
+                    hint="Enter the 6-digit code from your email."
+                    inputId="verification-code-input"
+                    label="Verification code"
+                    required
+                  >
+                    <input
+                      aria-describedby={verificationCodeDescribedBy}
+                      aria-invalid={Boolean(fieldErrors.verificationCode)}
+                      autoComplete="one-time-code"
+                      disabled={isBusy}
+                      id="verification-code-input"
+                      inputMode="numeric"
+                      name="verificationCode"
+                      onBlur={handleFieldBlur("verificationCode")}
+                      onChange={handleFieldChange("verificationCode")}
+                      pattern="[0-9]*"
+                      type="text"
+                      value={formValues.verificationCode}
+                    />
+                  </FormField>
+                )}
+
+                {(mode === "signup" || mode === "forgot") && !isEmailVerificationReady ? (
+                  <div className="auth-note-box" role="status">
+                    Email verification is not configured yet. Ask an admin to finish the Email Sender integration in Integrations.
+                  </div>
+                ) : null}
 
                 {error ? (
                   <div className="form-error-box" role="alert">
@@ -608,21 +1028,38 @@ export function AuthPage() {
                   </div>
                 ) : null}
 
+                {mode === "login" && isGoogleReady ? (
+                  <>
+                    <div className="auth-google-section">
+                      <div className="auth-google-button-shell">
+                        <div aria-label="Continue with Google" ref={googleButtonRef} />
+                      </div>
+                    </div>
+
+                    <div className="auth-provider-divider" aria-hidden="true">
+                      <span>or continue with email</span>
+                    </div>
+                  </>
+                ) : null}
+
                 <button
                   className="primary-button auth-submit"
-                  disabled={isSubmitting}
+                  disabled={
+                    isBusy ||
+                    ((mode === "signup" || mode === "forgot") && !isEmailVerificationReady)
+                  }
                   type="submit"
                 >
                   {isSubmitting ? <span className="button-spinner" aria-hidden="true" /> : null}
                   <span>{isSubmitting ? currentCopy.loadingLabel : currentCopy.submitLabel}</span>
                 </button>
 
-                {mode === "login" || mode === "forgot" ? (
+                {mode === "login" || mode === "forgot" || isCodeMode ? (
                   <div className="auth-secondary-actions">
                     {mode === "login" ? (
                       <button
                         className="link-button"
-                        disabled={isSubmitting}
+                        disabled={isBusy}
                         onClick={() => resetFormState("forgot")}
                         type="button"
                       >
@@ -633,12 +1070,33 @@ export function AuthPage() {
                     {mode === "forgot" ? (
                       <button
                         className="link-button"
-                        disabled={isSubmitting}
+                        disabled={isBusy}
                         onClick={() => resetFormState("login")}
                         type="button"
                       >
                         Back to login
                       </button>
+                    ) : null}
+
+                    {isCodeMode ? (
+                      <>
+                        <button
+                          className="link-button"
+                          disabled={isBusy || !isEmailVerificationReady}
+                          onClick={() => void handleResendCode()}
+                          type="button"
+                        >
+                          {isResendingCode ? "Resending…" : "Resend code"}
+                        </button>
+                        <button
+                          className="link-button"
+                          disabled={isBusy}
+                          onClick={handleBackFromVerification}
+                          type="button"
+                        >
+                          Change details
+                        </button>
+                      </>
                     ) : null}
                   </div>
                 ) : null}
@@ -759,8 +1217,8 @@ function AuthCapabilityGraphic({ visual }: { visual: CapabilityVisual }) {
             <strong>0</strong>
           </div>
           <div className="auth-risk-row">
-            <span>Ready for sign-off</span>
-            <strong>86%</strong>
+            <span>Ready for release</span>
+            <strong>Yes</strong>
           </div>
         </div>
       </div>

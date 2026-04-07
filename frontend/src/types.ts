@@ -3,6 +3,8 @@ export type User = {
   email: string;
   name: string | null;
   role?: "admin" | "member";
+  auth_provider?: "local" | "google";
+  email_verified?: boolean;
   created_at?: string;
 };
 
@@ -60,13 +62,14 @@ export type Feedback = {
 
 export type Integration = {
   id: string;
-  type: "llm" | "jira";
+  type: "llm" | "jira" | "email" | "google_auth";
   name: string;
   base_url: string | null;
   api_key: string | null;
   model: string | null;
   project_key: string | null;
   username: string | null;
+  config: Record<string, unknown> | null;
   is_active: boolean;
   created_at?: string;
   updated_at?: string;
@@ -293,6 +296,18 @@ export type ExecutionResult = {
 export type SessionPayload = {
   token: string;
   user: User;
+};
+
+export type AuthSetupPayload = {
+  google: {
+    enabled: boolean;
+    clientId: string | null;
+  };
+  emailVerification: {
+    enabled: boolean;
+    senderEmail: string | null;
+    senderName: string | null;
+  };
 };
 
 export type ApiError = {
