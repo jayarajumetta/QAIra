@@ -231,3 +231,37 @@ export function TileCardHierarchyIcon() {
     </TileCardIconShell>
   );
 }
+
+export function TileCardProjectIcon() {
+  return (
+    <TileCardIconShell>
+      <path d="M3 8.5A2.5 2.5 0 0 1 5.5 6H10l2 2h6.5A2.5 2.5 0 0 1 21 10.5v8A2.5 2.5 0 0 1 18.5 21h-13A2.5 2.5 0 0 1 3 18.5z" />
+      <path d="M9 12h6" />
+      <path d="M9 16h4" />
+    </TileCardIconShell>
+  );
+}
+
+export function TileCardUsersIcon() {
+  return (
+    <TileCardIconShell>
+      <path d="M16 20v-1.4a3.6 3.6 0 0 0-3.6-3.6H8.6A3.6 3.6 0 0 0 5 18.6V20" />
+      <circle cx="10.5" cy="9" r="3" />
+      <path d="M17 11a2.6 2.6 0 0 1 0 5" />
+      <path d="M20 20v-1.1a3.2 3.2 0 0 0-2.4-3.1" />
+    </TileCardIconShell>
+  );
+}
+
+export function TileCardAppTypesIcon() {
+  return (
+    <TileCardIconShell>
+      <rect height="5" rx="1.1" width="16" x="4" y="5" />
+      <rect height="5" rx="1.1" width="16" x="4" y="14" />
+      <path d="M8 7.5h.01" />
+      <path d="M8 16.5h.01" />
+      <path d="M14 7.5h4" />
+      <path d="M14 16.5h4" />
+    </TileCardIconShell>
+  );
+}

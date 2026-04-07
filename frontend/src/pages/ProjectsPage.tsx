@@ -4,6 +4,16 @@ import { api } from "../lib/api";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import {
+  TileCardAppTypesIcon,
+  TileCardCaseIcon,
+  TileCardFact,
+  TileCardIconFrame,
+  TileCardProjectIcon,
+  TileCardRequirementIcon,
+  TileCardStatusIndicator,
+  TileCardUsersIcon
+} from "../components/TileCardPrimitives";
 import { SubnavTabs } from "../components/SubnavTabs";
 import { ToastMessage } from "../components/ToastMessage";
 import { useCurrentProject } from "../hooks/useCurrentProject";
@@ -376,6 +386,10 @@ export function ProjectsPage() {
           <div className="catalog-grid compact">
             {projectItems.map((project) => {
               const isSelected = selectedProject?.id === project.id;
+              const memberCount = memberCountByProjectId[project.id] || 0;
+              const appTypeCount = appTypeCountByProjectId[project.id] || 0;
+              const requirementCount = requirementCountByProjectId[project.id] || 0;
+              const testCaseCount = testCaseCountByProjectId[project.id] || 0;
 
               return (
                 <button
@@ -387,20 +401,30 @@ export function ProjectsPage() {
                 >
                   <div className="tile-card-main">
                     <div className="tile-card-header">
-                      <div className="record-card-icon project-card-icon">PR</div>
+                      <TileCardIconFrame className="project-card-icon" tone={isSelected ? "success" : "info"}>
+                        <TileCardProjectIcon />
+                      </TileCardIconFrame>
                       <div className="tile-card-title-group">
                         <strong>{project.name}</strong>
-                        <span className="tile-card-kicker">Created workspace scope</span>
+                        <span className="tile-card-kicker">{appTypeCount} app type{appTypeCount === 1 ? "" : "s"} in scope</span>
                       </div>
-                      <span className="object-type-badge">PROJECT</span>
+                      <TileCardStatusIndicator title={isSelected ? "Current project" : "Available project"} tone={isSelected ? "success" : "neutral"} />
                     </div>
                     <p className="tile-card-description">{project.description || "No description yet."}</p>
-                    <div className="tile-card-metrics">
-                      <span className="tile-metric">{memberCountByProjectId[project.id] || 0} members</span>
-                      <span className="tile-metric">{requirementCountByProjectId[project.id] || 0} requirements</span>
-                      <span className="tile-metric">{testCaseCountByProjectId[project.id] || 0} test cases</span>
+                    <div className="tile-card-facts" aria-label={`${project.name} facts`}>
+                      <TileCardFact label={String(memberCount)} title={`${memberCount} member${memberCount === 1 ? "" : "s"}`} tone={memberCount ? "info" : "neutral"}>
+                        <TileCardUsersIcon />
+                      </TileCardFact>
+                      <TileCardFact label={String(appTypeCount)} title={`${appTypeCount} app type${appTypeCount === 1 ? "" : "s"}`} tone={appTypeCount ? "success" : "neutral"}>
+                        <TileCardAppTypesIcon />
+                      </TileCardFact>
+                      <TileCardFact label={String(requirementCount)} title={`${requirementCount} requirement${requirementCount === 1 ? "" : "s"}`} tone={requirementCount ? "warning" : "neutral"}>
+                        <TileCardRequirementIcon />
+                      </TileCardFact>
+                      <TileCardFact label={String(testCaseCount)} title={`${testCaseCount} test case${testCaseCount === 1 ? "" : "s"}`} tone={testCaseCount ? "success" : "neutral"}>
+                        <TileCardCaseIcon />
+                      </TileCardFact>
                     </div>
-                    {isSelected ? <span className="status-pill tone-info project-selection-indicator">Current Project</span> : null}
                   </div>
                 </button>
               );

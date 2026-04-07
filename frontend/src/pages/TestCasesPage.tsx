@@ -1405,13 +1405,23 @@ export function TestCasesPage() {
                   >
                     <div className="step-editor step-editor--embedded">
                       {!isCreating && displaySteps.length ? (
-                        <div className="action-row">
-                          <button className="ghost-button" onClick={() => setExpandedStepIds(displaySteps.map((step) => step.id))} type="button">
-                            Expand all
-                          </button>
-                          <button className="ghost-button" onClick={() => setExpandedStepIds([])} type="button">
-                            Collapse all
-                          </button>
+                        <div className="action-row step-editor-toolbar">
+                          <StepIconButton
+                            ariaLabel="Expand all steps"
+                            onClick={() => setExpandedStepIds(displaySteps.map((step) => step.id))}
+                            title="Expand all steps"
+                            type="button"
+                          >
+                            <StepExpandAllIcon />
+                          </StepIconButton>
+                          <StepIconButton
+                            ariaLabel="Collapse all steps"
+                            onClick={() => setExpandedStepIds([])}
+                            title="Collapse all steps"
+                            type="button"
+                          >
+                            <StepCollapseAllIcon />
+                          </StepIconButton>
                         </div>
                       ) : null}
 
@@ -2024,6 +2034,92 @@ function EditorAccordionChevronIcon() {
   );
 }
 
+function StepIconButton({
+  children,
+  ariaLabel,
+  title,
+  onClick,
+  disabled = false,
+  tone = "ghost",
+  type = "button"
+}: {
+  children: ReactNode;
+  ariaLabel: string;
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  tone?: "ghost" | "primary";
+  type?: "button" | "submit" | "reset";
+}) {
+  const className = tone === "primary" ? "step-action-button step-action-button--primary" : "step-action-button";
+
+  return (
+    <button aria-label={ariaLabel} className={className} disabled={disabled} onClick={onClick} title={title} type={type}>
+      {children}
+    </button>
+  );
+}
+
+function StepIconShell({ children }: { children: ReactNode }) {
+  return (
+    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
+      {children}
+    </svg>
+  );
+}
+
+function StepMoveUpIcon() {
+  return (
+    <StepIconShell>
+      <path d="m12 6-4 4" />
+      <path d="m12 6 4 4" />
+      <path d="M12 6v12" />
+    </StepIconShell>
+  );
+}
+
+function StepMoveDownIcon() {
+  return (
+    <StepIconShell>
+      <path d="m12 18-4-4" />
+      <path d="m12 18 4-4" />
+      <path d="M12 6v12" />
+    </StepIconShell>
+  );
+}
+
+function StepSaveIcon() {
+  return (
+    <StepIconShell>
+      <path d="M5 6.5A1.5 1.5 0 0 1 6.5 5h9l3.5 3.5V17.5A1.5 1.5 0 0 1 17.5 19h-11A1.5 1.5 0 0 1 5 17.5z" />
+      <path d="M9 5v5h6V6" />
+      <path d="M9 15h6" />
+    </StepIconShell>
+  );
+}
+
+function StepExpandAllIcon() {
+  return (
+    <StepIconShell>
+      <path d="M12 12V4" />
+      <path d="m8.5 7.5 3.5-3.5 3.5 3.5" />
+      <path d="M12 12v8" />
+      <path d="m8.5 16.5 3.5 3.5 3.5-3.5" />
+    </StepIconShell>
+  );
+}
+
+function StepCollapseAllIcon() {
+  return (
+    <StepIconShell>
+      <path d="M12 4v8" />
+      <path d="m8.5 8.5 3.5 3.5 3.5-3.5" />
+      <path d="M12 20v-8" />
+      <path d="m8.5 15.5 3.5-3.5 3.5 3.5" />
+    </StepIconShell>
+  );
+}
+
 function EditableStepCard({
   step,
   isExpanded,
@@ -2075,10 +2171,34 @@ function EditableStepCard({
           <FormField label="Expected result">
             <textarea rows={3} value={draft.expected_result} onChange={(event) => setDraft((current) => ({ ...current, expected_result: event.target.value }))} />
           </FormField>
-          <div className="action-row">
-            <button className="ghost-button" disabled={!canMoveUp} onClick={onMoveUp} type="button">Move up</button>
-            <button className="ghost-button" disabled={!canMoveDown} onClick={onMoveDown} type="button">Move down</button>
-            <button className="primary-button" onClick={() => onSave(draft)} type="button">Save step</button>
+          <div className="action-row step-card-actions">
+            <StepIconButton
+              ariaLabel={`Move step ${step.step_order} up`}
+              disabled={!canMoveUp}
+              onClick={onMoveUp}
+              title="Move up"
+              type="button"
+            >
+              <StepMoveUpIcon />
+            </StepIconButton>
+            <StepIconButton
+              ariaLabel={`Move step ${step.step_order} down`}
+              disabled={!canMoveDown}
+              onClick={onMoveDown}
+              title="Move down"
+              type="button"
+            >
+              <StepMoveDownIcon />
+            </StepIconButton>
+            <StepIconButton
+              ariaLabel={`Save step ${step.step_order}`}
+              onClick={() => onSave(draft)}
+              title="Save step"
+              tone="primary"
+              type="button"
+            >
+              <StepSaveIcon />
+            </StepIconButton>
             <button className="ghost-button danger" onClick={onDelete} type="button">Delete step</button>
           </div>
         </div>
@@ -2126,9 +2246,25 @@ function DraftStepCard({
             onChange={(event) => onChange({ action: step.action, expected_result: event.target.value })}
           />
         </FormField>
-        <div className="action-row">
-          <button className="ghost-button" disabled={!canMoveUp} onClick={onMoveUp} type="button">Move up</button>
-          <button className="ghost-button" disabled={!canMoveDown} onClick={onMoveDown} type="button">Move down</button>
+        <div className="action-row step-card-actions">
+          <StepIconButton
+            ariaLabel={`Move draft step ${step.step_order} up`}
+            disabled={!canMoveUp}
+            onClick={onMoveUp}
+            title="Move up"
+            type="button"
+          >
+            <StepMoveUpIcon />
+          </StepIconButton>
+          <StepIconButton
+            ariaLabel={`Move draft step ${step.step_order} down`}
+            disabled={!canMoveDown}
+            onClick={onMoveDown}
+            title="Move down"
+            type="button"
+          >
+            <StepMoveDownIcon />
+          </StepIconButton>
           <button className="ghost-button danger" onClick={onDelete} type="button">Delete step</button>
         </div>
       </div>
