@@ -220,6 +220,8 @@ export type ExecutionDataSetSnapshot = {
   rows: TestDataSetRow[];
 };
 
+export type ExecutionStatus = "queued" | "running" | "completed" | "failed" | "aborted";
+
 export type Execution = {
   id: string;
   project_id: string;
@@ -230,7 +232,7 @@ export type Execution = {
   step_snapshots?: ExecutionStepSnapshot[];
   name: string | null;
   trigger: "manual" | "ci" | null;
-  status: "queued" | "running" | "completed" | "failed" | null;
+  status: ExecutionStatus | null;
   test_environment?: {
     id: string | null;
     name: string;

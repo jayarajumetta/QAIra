@@ -90,6 +90,7 @@ export function AppShell() {
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
   const [isCollapsed, setIsCollapsed] = useState(() => window.localStorage.getItem(SIDEBAR_KEY) === "true");
+  const [isAutoCollapsed, setIsAutoCollapsed] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(() => window.matchMedia(MOBILE_SIDEBAR_BREAKPOINT).matches);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [sidebarProjectId, setSidebarProjectId] = useCurrentProject();
@@ -114,7 +115,6 @@ export function AppShell() {
   }, [theme]);
 
   useEffect(() => {
-    document.documentElement.dataset.sidebar = isCollapsed ? "collapsed" : "expanded";
     window.localStorage.setItem(SIDEBAR_KEY, String(isCollapsed));
   }, [isCollapsed]);
 
@@ -134,6 +134,7 @@ export function AppShell() {
       }
 
       setIsCollapsed(nextSidebarMode === "collapsed");
+      setIsAutoCollapsed(false);
     };
 
     window.addEventListener(PREFERENCES_UPDATED_EVENT, syncPreferences as EventListener);
@@ -172,6 +173,12 @@ export function AppShell() {
       setIsMobileSidebarOpen(false);
     }
   }, [isMobileViewport]);
+
+  useEffect(() => {
+    if (isMobileViewport || isCollapsed) {
+      setIsAutoCollapsed(false);
+    }
+  }, [isCollapsed, isMobileViewport]);
 
   useEffect(() => {
     if (!isMobileSidebarOpen) {
@@ -255,8 +262,35 @@ export function AppShell() {
     return "Workspace";
   }, [location.pathname]);
 
-  const shouldCollapseSidebar = isCollapsed && !isMobileViewport;
+  const shouldCollapseSidebar = !isMobileViewport && (isCollapsed || isAutoCollapsed);
   const sidebarClassName = `${shouldCollapseSidebar ? "sidebar is-collapsed" : "sidebar"}${isMobileSidebarOpen ? " is-mobile-open" : ""}`;
+
+  useEffect(() => {
+    document.documentElement.dataset.sidebar = shouldCollapseSidebar ? "collapsed" : "expanded";
+  }, [shouldCollapseSidebar]);
+
+  const expandSidebar = () => {
+    setIsCollapsed(false);
+    setIsAutoCollapsed(false);
+  };
+
+  const toggleSidebarCollapse = () => {
+    if (shouldCollapseSidebar) {
+      expandSidebar();
+      return;
+    }
+
+    setIsCollapsed(true);
+    setIsAutoCollapsed(false);
+  };
+
+  const handleMainInteraction = () => {
+    if (isMobileViewport || isCollapsed || isAutoCollapsed) {
+      return;
+    }
+
+    setIsAutoCollapsed(true);
+  };
 
   return (
     <div className={`app-shell app-layout${isWorkspaceWideLibrary ? " app-layout--workspace-wide" : ""}`}>
@@ -305,7 +339,7 @@ export function AppShell() {
               <button
                 aria-label={shouldCollapseSidebar ? "Expand sidebar" : "Collapse sidebar"}
                 className="sidebar-collapse-button ghost-button"
-                onClick={() => setIsCollapsed((current) => !current)}
+                onClick={toggleSidebarCollapse}
                 type="button"
               >
                 <MenuIcon />
@@ -317,7 +351,7 @@ export function AppShell() {
             <button
               aria-label="Expand sidebar"
               className="sidebar-collapse-button sidebar-collapse-button-compact ghost-button"
-              onClick={() => setIsCollapsed((current) => !current)}
+              onClick={toggleSidebarCollapse}
               title="Expand sidebar"
               type="button"
             >
@@ -372,7 +406,7 @@ export function AppShell() {
                               }
 
                               if (shouldCollapseSidebar) {
-                                setIsCollapsed(false);
+                                expandSidebar();
                               }
 
                               setExpandedGroups((current) => ({ ...current, [item.id]: true }));
@@ -524,6 +558,8 @@ export function AppShell() {
       <main
         className={`workspace-main main${isWorkspaceWideLibrary ? " main--library-fill" : ""}`}
         data-section={currentSection}
+        onFocusCapture={handleMainInteraction}
+        onPointerDownCapture={handleMainInteraction}
       >
         {isMobileViewport ? (
           <div className="mobile-sidebar-bar">

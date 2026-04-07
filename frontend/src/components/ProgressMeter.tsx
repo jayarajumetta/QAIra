@@ -3,7 +3,8 @@ export function ProgressMeter({
   label,
   detail,
   tone = "info",
-  segments
+  segments,
+  hideCopy = false
 }: {
   value: number;
   label?: string;
@@ -13,6 +14,7 @@ export function ProgressMeter({
     value: number;
     tone: "success" | "danger" | "neutral" | "info";
   }>;
+  hideCopy?: boolean;
 }) {
   const safeValue = Math.max(0, Math.min(100, Math.round(value)));
   const normalizedSegments = (segments || [])
@@ -37,11 +39,13 @@ export function ProgressMeter({
           <div className={`progress-meter-fill is-${tone}`} style={{ width: `${safeValue}%` }} />
         )}
       </div>
-      <div className="progress-meter-copy">
-        <strong>{safeValue}%</strong>
-        {label ? <span>{label}</span> : null}
-        {detail ? <small>{detail}</small> : null}
-      </div>
+      {!hideCopy ? (
+        <div className="progress-meter-copy">
+          <strong>{safeValue}%</strong>
+          {label ? <span>{label}</span> : null}
+          {detail ? <small>{detail}</small> : null}
+        </div>
+      ) : null}
     </div>
   );
 }

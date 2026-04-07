@@ -180,7 +180,7 @@ export function OverviewPage() {
         counts[key] = (counts[key] || 0) + 1;
         return counts;
       },
-      { queued: 0, running: 0, completed: 0, failed: 0 } as Record<string, number>
+      { queued: 0, running: 0, completed: 0, failed: 0, aborted: 0 } as Record<string, number>
     );
   }, [executionsList]);
 

@@ -338,7 +338,7 @@ export const api = {
     create: (input: { project_id: string; app_type_id?: string; suite_ids?: string[]; test_case_ids?: string[]; test_environment_id?: string; test_configuration_id?: string; test_data_set_id?: string; name?: string; created_by: string }) =>
       request<{ id: string }>("/executions", { method: "POST", body: JSON.stringify(input) }),
     start: (id: string) => request<{ started: boolean }>(`/executions/${id}/start`, { method: "POST" }),
-    complete: (id: string, input: { status: "completed" | "failed" }) =>
+    complete: (id: string, input: { status: "completed" | "failed" | "aborted" }) =>
       request<{ completed: boolean }>(`/executions/${id}/complete`, { method: "POST", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/executions/${id}`, { method: "DELETE" })
   },
