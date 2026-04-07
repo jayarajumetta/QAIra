@@ -287,6 +287,11 @@ textarea {
   color: var(--danger);
 }
 
+.ghost-button.warning {
+  background: rgba(216, 133, 39, 0.12);
+  color: #b96b00;
+}
+
 .link-button {
   background: transparent;
   color: var(--primary-strong);
@@ -2902,13 +2907,55 @@ body {
   color: #1a9d67;
 }
 
+.execution-card-status.status-passed {
+  background: rgba(30, 168, 110, 0.1);
+  color: #1a9d67;
+}
+
 .execution-card-status.status-failed {
   background: rgba(210, 61, 93, 0.1);
   color: #d23d5d;
 }
 
+.execution-card-status.status-blocked,
 .execution-card-status.status-aborted {
   background: rgba(216, 133, 39, 0.12);
+  color: #b96b00;
+}
+
+.record-card-icon.execution-board-icon {
+  padding: 0.42rem;
+}
+
+.record-card-icon.execution-board-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.record-card-icon.execution-board-icon.status-queued {
+  background: linear-gradient(135deg, rgba(123, 141, 168, 0.16), rgba(181, 194, 214, 0.32));
+  color: #5d6c84;
+}
+
+.record-card-icon.execution-board-icon.status-running {
+  background: linear-gradient(135deg, rgba(33, 104, 243, 0.16), rgba(99, 179, 255, 0.3));
+  color: #2168f3;
+}
+
+.record-card-icon.execution-board-icon.status-completed,
+.record-card-icon.execution-board-icon.status-passed {
+  background: linear-gradient(135deg, rgba(30, 168, 110, 0.16), rgba(87, 214, 157, 0.3));
+  color: #1a9d67;
+}
+
+.record-card-icon.execution-board-icon.status-failed {
+  background: linear-gradient(135deg, rgba(210, 61, 93, 0.16), rgba(240, 106, 135, 0.3));
+  color: #d23d5d;
+}
+
+.record-card-icon.execution-board-icon.status-blocked,
+.record-card-icon.execution-board-icon.status-aborted {
+  background: linear-gradient(135deg, rgba(216, 133, 39, 0.16), rgba(245, 190, 97, 0.32));
   color: #b96b00;
 }
 
@@ -3024,6 +3071,7 @@ body {
 }
 
 :root[data-theme="dark"] .execution-card .record-card-icon.execution.status-completed,
+:root[data-theme="dark"] .execution-card-status.status-passed,
 :root[data-theme="dark"] .execution-card-status.status-completed {
   color: #8ff0c7;
 }
@@ -3033,8 +3081,31 @@ body {
   color: #ff9db2;
 }
 
+:root[data-theme="dark"] .execution-card-status.status-blocked,
 :root[data-theme="dark"] .execution-card .record-card-icon.execution.status-aborted,
 :root[data-theme="dark"] .execution-card-status.status-aborted {
+  color: #ffcb78;
+}
+
+:root[data-theme="dark"] .record-card-icon.execution-board-icon.status-queued {
+  color: #c6d0df;
+}
+
+:root[data-theme="dark"] .record-card-icon.execution-board-icon.status-running {
+  color: #8ab5ff;
+}
+
+:root[data-theme="dark"] .record-card-icon.execution-board-icon.status-completed,
+:root[data-theme="dark"] .record-card-icon.execution-board-icon.status-passed {
+  color: #8ff0c7;
+}
+
+:root[data-theme="dark"] .record-card-icon.execution-board-icon.status-failed {
+  color: #ff9db2;
+}
+
+:root[data-theme="dark"] .record-card-icon.execution-board-icon.status-blocked,
+:root[data-theme="dark"] .record-card-icon.execution-board-icon.status-aborted {
   color: #ffcb78;
 }
 
@@ -6218,17 +6289,17 @@ textarea:disabled,
 
 .execution-workspace {
   display: grid;
-  grid-template-columns: minmax(18rem, 2.8fr) minmax(24rem, 5.2fr) minmax(24rem, 6fr);
+  grid-template-columns: minmax(16rem, 2.3fr) minmax(19rem, 3.2fr) minmax(30rem, 8.5fr);
   gap: var(--space-md);
   align-items: stretch;
 }
 
 .execution-workspace--list-minimized {
-  grid-template-columns: 3.75rem minmax(22rem, 4.8fr) minmax(28rem, 7.2fr);
+  grid-template-columns: 3.75rem minmax(19rem, 3.3fr) minmax(30rem, 8.7fr);
 }
 
 .execution-workspace--tree-minimized {
-  grid-template-columns: minmax(18rem, 2.8fr) 3.75rem minmax(28rem, 7.2fr);
+  grid-template-columns: minmax(16rem, 2.3fr) 3.75rem minmax(30rem, 8.7fr);
 }
 
 .execution-workspace--detail-minimized {
@@ -6802,6 +6873,10 @@ textarea:disabled,
   box-shadow: inset 0 0 0 1px rgba(33, 104, 243, 0.12);
 }
 
+.execution-board-case-card.is-next .tile-card-kicker {
+  color: var(--primary-strong);
+}
+
 .execution-detail-hero {
   display: grid;
   gap: 0.95rem;
@@ -7357,20 +7432,24 @@ textarea:disabled,
 
 /* Executions: suite bulk + compact step grid */
 .tree-suite-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
+  display: grid;
   gap: 0.75rem;
-  padding: 1rem 1.1rem;
+  padding: 0.95rem 1rem;
+}
+
+.execution-suite-card {
+  gap: 0;
+}
+
+.execution-suite-card.is-expanded {
+  border-color: rgba(33, 104, 243, 0.22);
+  box-shadow: 0 18px 32px rgba(33, 104, 243, 0.08);
 }
 
 .tree-suite-expand {
-  flex: 1 1 16rem;
+  width: 100%;
   min-width: 0;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
+  display: block;
   text-align: left;
   background: transparent;
   border: none;
@@ -7380,13 +7459,49 @@ textarea:disabled,
   font: inherit;
 }
 
+.execution-suite-card .tile-card-main,
+.execution-board-case-card .tile-card-main {
+  gap: 0.65rem;
+}
+
+.execution-suite-card .tile-card-header,
+.execution-board-case-card .tile-card-header {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.execution-suite-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.tree-suite-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 999px;
+  background: rgba(33, 104, 243, 0.08);
+  color: var(--primary);
+  transition: transform 180ms ease;
+}
+
+.tree-suite-chevron.is-expanded {
+  transform: rotate(90deg);
+}
+
+.tree-suite-body {
+  display: grid;
+  gap: 0.75rem;
+}
+
 .tree-suite-bulk-actions {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 0.4rem;
-  flex-shrink: 0;
-  justify-content: center;
-  align-self: center;
+  justify-content: flex-end;
 }
 
 .suite-bulk-pass,
@@ -7394,6 +7509,14 @@ textarea:disabled,
   white-space: nowrap;
   padding: 0.35rem 0.65rem;
   font-size: 0.82rem;
+}
+
+.execution-board-case-card {
+  width: 100%;
+}
+
+.execution-board-case-card .execution-card-facts {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 5.1rem), 1fr));
 }
 
 .execution-steps-toolbar {
@@ -8129,6 +8252,11 @@ textarea:focus-visible,
 :root[data-theme="dark"] .ghost-button {
   background: rgba(108, 167, 255, 0.12);
   color: var(--text-primary);
+}
+
+:root[data-theme="dark"] .ghost-button.warning {
+  background: rgba(216, 133, 39, 0.18);
+  color: #ffd08a;
 }
 
 @media (max-width: 1180px) {

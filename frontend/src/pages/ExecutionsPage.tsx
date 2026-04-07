@@ -67,7 +67,11 @@ const EMPTY_EXECUTION_RUN_SUMMARY: ExecutionRunSummary = {
   totalDurationMs: 0
 };
 
-const EXECUTION_STATUS_META: Record<ExecutionStatus, { label: string; description: string }> = {
+const DEFAULT_DURATION_LABEL = "0s";
+
+type BoardStatusTone = ExecutionStatus | ExecutionResult["status"];
+
+const BOARD_STATUS_META: Record<BoardStatusTone, { label: string; description: string }> = {
   queued: {
     label: "Queued",
     description: "Run is ready to start."
@@ -87,6 +91,14 @@ const EXECUTION_STATUS_META: Record<ExecutionStatus, { label: string; descriptio
   aborted: {
     label: "Aborted",
     description: "Run stopped before normal completion."
+  },
+  passed: {
+    label: "Passed",
+    description: "Case finished successfully."
+  },
+  blocked: {
+    label: "Blocked",
+    description: "Case is blocked and needs attention."
   }
 };
 
@@ -99,12 +111,46 @@ function normalizeExecutionStatus(status: Execution["status"] | null | undefined
 }
 
 function executionStatusLabel(status: Execution["status"] | null | undefined) {
-  return EXECUTION_STATUS_META[normalizeExecutionStatus(status)].label;
+  return BOARD_STATUS_META[normalizeExecutionStatus(status)].label;
 }
 
 function executionStatusTooltip(status: Execution["status"] | null | undefined) {
-  const { label, description } = EXECUTION_STATUS_META[normalizeExecutionStatus(status)];
+  const { label, description } = BOARD_STATUS_META[normalizeExecutionStatus(status)];
   return `${label}: ${description}`;
+}
+
+function boardStatusTooltip(status: BoardStatusTone) {
+  const { label, description } = BOARD_STATUS_META[status];
+  return `${label}: ${description}`;
+}
+
+function suiteBoardStatus(metric: {
+  count: number;
+  passedCount: number;
+  failedCount: number;
+  blockedCount: number;
+}): BoardStatusTone {
+  if (metric.failedCount) {
+    return "failed";
+  }
+
+  if (metric.blockedCount) {
+    return "blocked";
+  }
+
+  if (!metric.count) {
+    return "queued";
+  }
+
+  if (metric.passedCount >= metric.count) {
+    return "completed";
+  }
+
+  if (metric.passedCount > 0) {
+    return "running";
+  }
+
+  return "queued";
 }
 
 function toCaseView(snapshot: ExecutionCaseSnapshot): ExecutionCaseView {
@@ -188,7 +234,7 @@ function computeExecutionDurationMs(
   return Math.max(end - start, 0);
 }
 
-function formatDuration(ms?: number | null, fallback = "No duration") {
+function formatDuration(ms?: number | null, fallback = DEFAULT_DURATION_LABEL) {
   if (ms == null || Number.isNaN(ms)) {
     return fallback;
   }
@@ -247,6 +293,7 @@ export function ExecutionsPage() {
   const [liveNow, setLiveNow] = useState(() => Date.now());
   const [executionListItemHeight, setExecutionListItemHeight] = useState(236);
   const [caseTimerStartedAtById, setCaseTimerStartedAtById] = useState<Record<string, number>>({});
+  const [executionFinalizeAction, setExecutionFinalizeAction] = useState<"complete" | "abort" | null>(null);
   const executionCardMeasureRef = useRef<HTMLDivElement | null>(null);
   const deferredExecutionSearch = useDeferredValue(executionSearch);
 
@@ -496,7 +543,7 @@ export function ExecutionsPage() {
       const requestedSuiteId = executionCaseOrder.find((testCase) => testCase.id === requestedTestCaseId)?.suite_id;
 
       if (requestedSuiteId) {
-        setExpandedSuiteIds((current) => (current.includes(requestedSuiteId) ? current : [...current, requestedSuiteId]));
+        setExpandedSuiteIds([requestedSuiteId]);
       }
 
       if (selectedTestCaseId !== requestedTestCaseId) {
@@ -518,9 +565,15 @@ export function ExecutionsPage() {
       return;
     }
 
-    setExpandedSuiteIds((current) =>
-      current.length ? current.filter((id) => executionSuites.some((suite) => suite.id === id)) : [executionSuites[0].id]
-    );
+    setExpandedSuiteIds((current) => {
+      const currentSuiteId = current[0];
+
+      if (currentSuiteId && executionSuites.some((suite) => suite.id === currentSuiteId)) {
+        return [currentSuiteId];
+      }
+
+      return [executionSuites[0].id];
+    });
   }, [executionSuites]);
 
   useEffect(() => {
@@ -668,6 +721,26 @@ export function ExecutionsPage() {
       queryClient.invalidateQueries({ queryKey: ["execution", executionId] }),
       queryClient.invalidateQueries({ queryKey: ["execution-results"] })
     ]);
+  };
+
+  const handleFinalizeExecution = async (mode: "complete" | "abort") => {
+    if (!selectedExecution) {
+      return;
+    }
+
+    const status = mode === "abort" ? "aborted" : executionProgress.failedCount ? "failed" : "completed";
+    const failureMessage = mode === "abort" ? "Unable to abort execution" : "Unable to complete execution";
+
+    setExecutionFinalizeAction(mode);
+
+    try {
+      await completeExecution.mutateAsync({ id: selectedExecution.id, status });
+      await refreshExecutionScope();
+    } catch (error) {
+      showError(error, failureMessage);
+    } finally {
+      setExecutionFinalizeAction(null);
+    }
   };
 
   const handleCreateExecution = async (event: FormEvent<HTMLFormElement>) => {
@@ -865,7 +938,7 @@ export function ExecutionsPage() {
     const scopedCase = executionCaseOrder.find((testCase) => testCase.id === testCaseId);
 
     if (scopedCase?.suite_id) {
-      setExpandedSuiteIds((current) => (current.includes(scopedCase.suite_id!) ? current : [...current, scopedCase.suite_id!]));
+      setExpandedSuiteIds([scopedCase.suite_id]);
     }
 
     setSelectedTestCaseId(testCaseId);
@@ -1215,12 +1288,12 @@ export function ExecutionsPage() {
               <div className="execution-health-glance">
                 <div className="execution-glance-card">
                   <span>{currentExecutionStatus === "running" ? "Elapsed run time" : "Run duration"}</span>
-                  <strong>{formatDuration(selectedExecutionDurationMs, currentExecutionStatus === "queued" ? "Not started" : currentExecutionStatus === "aborted" ? "Stopped early" : "Awaiting timing")}</strong>
+                  <strong>{formatDuration(selectedExecutionDurationMs, DEFAULT_DURATION_LABEL)}</strong>
                   <small>{selectedExecutionDurationMs ? `${executionProgress.completedCases} cases touched so far` : currentExecutionStatus === "aborted" ? "Timing stopped when the run was aborted" : "Timing begins when the run starts"}</small>
                 </div>
                 <div className="execution-glance-card">
                   <span>Average case duration</span>
-                  <strong>{formatDuration(averageCaseDurationMs, executionResultsWithTiming ? "Awaiting timing" : "No case timing yet")}</strong>
+                  <strong>{formatDuration(averageCaseDurationMs, DEFAULT_DURATION_LABEL)}</strong>
                   <small>{executionResultsWithTiming ? `${executionResultsWithTiming} cases already have stored duration` : "Capture evidence to unlock trend timing"}</small>
                 </div>
                 <div className="execution-glance-card">
@@ -1282,7 +1355,6 @@ export function ExecutionsPage() {
                 {executionCardMeasureTarget ? (
                   <div aria-hidden="true" className="execution-card-measure" ref={executionCardMeasureRef}>
                     <ExecutionListCard
-                      appTypeName={appTypeNameById[executionCardMeasureTarget.app_type_id || ""] || "No app type scoped"}
                       execution={executionCardMeasureTarget}
                       isActive={false}
                       liveNow={liveNow}
@@ -1320,7 +1392,6 @@ export function ExecutionsPage() {
                     items={filteredExecutions}
                     renderItem={(execution: Execution) => (
                       <ExecutionListCard
-                        appTypeName={appTypeNameById[execution.app_type_id || ""] || "No app type scoped"}
                         execution={execution}
                         isActive={selectedExecution?.id === execution.id}
                         liveNow={liveNow}
@@ -1384,7 +1455,7 @@ export function ExecutionsPage() {
                           </div>
                           <div className="execution-board-kpi">
                             <span>Elapsed</span>
-                            <strong>{formatDuration(selectedExecutionDurationMs, currentExecutionStatus === "queued" ? "Not started" : currentExecutionStatus === "aborted" ? "Stopped early" : "Awaiting timing")}</strong>
+                            <strong>{formatDuration(selectedExecutionDurationMs, DEFAULT_DURATION_LABEL)}</strong>
                           </div>
                         </div>
                       </div>
@@ -1396,36 +1467,84 @@ export function ExecutionsPage() {
                       const suiteCases = displayCasesBySuiteId[suite.id] || [];
                       const suiteMetric = suiteMetrics.find((item) => item.suiteId === suite.id);
                       const isExpanded = expandedSuiteIds.includes(suite.id);
+                      const suiteStatus = suiteMetric ? suiteBoardStatus(suiteMetric) : "queued";
+                      const suiteResolvedCount =
+                        (suiteMetric?.passedCount || 0) +
+                        (suiteMetric?.failedCount || 0) +
+                        (suiteMetric?.blockedCount || 0);
 
                       return (
                         <div className="tree-suite" key={suite.id}>
-                          <div className={isExpanded ? "tree-suite-row record-card tile-card is-active" : "tree-suite-row record-card tile-card"}>
+                          <div className={isExpanded ? "tree-suite-row record-card tile-card execution-suite-card is-active is-expanded" : "tree-suite-row record-card tile-card execution-suite-card is-collapsed"}>
                             <button
                               className="tree-suite-expand"
                               onClick={() => {
-                                setExpandedSuiteIds((current) =>
-                                  current.includes(suite.id) ? current.filter((id) => id !== suite.id) : [...current, suite.id]
-                                );
+                                setExpandedSuiteIds((current) => (current[0] === suite.id ? [] : [suite.id]));
                               }}
                               type="button"
                             >
                               <div className="tile-card-main">
                                 <div className="tile-card-header">
-                                  <div className="record-card-icon test-suite">SU</div>
+                                  <div
+                                    aria-hidden="true"
+                                    className={`record-card-icon execution-board-icon status-${suiteStatus}`}
+                                    title={boardStatusTooltip(suiteStatus)}
+                                  >
+                                    <SuiteBoardIcon />
+                                  </div>
                                   <div className="tile-card-title-group">
                                     <strong>{suite.name}</strong>
-                                    <span className="tile-card-kicker">{suite.isHistorical ? "Historical suite snapshot" : "Execution snapshot scope"}</span>
+                                    <span className="tile-card-kicker">
+                                      {isExpanded
+                                        ? suite.isHistorical
+                                          ? "Historical suite snapshot"
+                                          : "Execution snapshot scope"
+                                        : `${suiteResolvedCount}/${suiteMetric?.count || 0} resolved`}
+                                    </span>
+                                  </div>
+                                  <div className="execution-suite-card-actions">
+                                    <ExecutionStatusIndicator status={suiteStatus} />
+                                    <span aria-hidden="true" className={isExpanded ? "tree-suite-chevron is-expanded" : "tree-suite-chevron"}>
+                                      <ExecutionAccordionChevronIcon />
+                                    </span>
                                   </div>
                                 </div>
-                                <p className="tile-card-description">Expand the suite to inspect cases. Use suite pass/fail to set every case in this suite at once.</p>
-                                <div className="tile-card-metrics">
-                                  <span className="tile-metric">{suiteMetric?.count || 0} cases</span>
-                                  <span className="tile-metric">{suiteMetric?.failedCount || 0} failed</span>
-                                  <span className="tile-metric">{suiteMetric?.blockedCount || 0} blocked</span>
-                                  <span className="tile-metric">{formatDuration(suiteDurationById[suite.id], "No timing yet")}</span>
+
+                                <div className="execution-card-facts" aria-label={`${suite.name} facts`}>
+                                  <ExecutionCardFact
+                                    ariaLabel={`${suiteMetric?.count || 0} cases in suite`}
+                                    label={String(suiteMetric?.count || 0)}
+                                    title={`${suiteMetric?.count || 0} cases in suite`}
+                                  >
+                                    <ExecutionScopeIcon />
+                                  </ExecutionCardFact>
+                                  <ExecutionCardFact
+                                    ariaLabel={`${suiteResolvedCount} of ${suiteMetric?.count || 0} cases resolved`}
+                                    label={`${suiteResolvedCount}/${suiteMetric?.count || 0}`}
+                                    title={`${suiteResolvedCount}/${suiteMetric?.count || 0} cases resolved`}
+                                  >
+                                    <ExecutionProgressFactsIcon />
+                                  </ExecutionCardFact>
+                                  <ExecutionCardFact
+                                    ariaLabel={`${(suiteMetric?.failedCount || 0) + (suiteMetric?.blockedCount || 0)} failing or blocked cases`}
+                                    label={String((suiteMetric?.failedCount || 0) + (suiteMetric?.blockedCount || 0))}
+                                    title={`${suiteMetric?.failedCount || 0} failed · ${suiteMetric?.blockedCount || 0} blocked`}
+                                    tone={suiteMetric?.failedCount ? "danger" : suiteMetric?.blockedCount ? "warning" : "success"}
+                                  >
+                                    <ExecutionRiskIcon />
+                                  </ExecutionCardFact>
+                                  <ExecutionCardFact
+                                    ariaLabel={`Suite duration ${formatDuration(suiteDurationById[suite.id], DEFAULT_DURATION_LABEL)}`}
+                                    label={formatDuration(suiteDurationById[suite.id], DEFAULT_DURATION_LABEL)}
+                                    title={`Total recorded suite duration ${formatDuration(suiteDurationById[suite.id], DEFAULT_DURATION_LABEL)}`}
+                                    tone={suiteStatus === "blocked" ? "warning" : "neutral"}
+                                  >
+                                    <ExecutionTimeIcon />
+                                  </ExecutionCardFact>
                                 </div>
                                 <ProgressMeter
                                   detail={`${suiteMetric?.passedCount || 0} passed · ${suiteMetric?.failedCount || 0} failed · ${suiteMetric?.blockedCount || 0} blocked`}
+                                  hideCopy
                                   label="Suite completion"
                                   segments={buildProgressSegments(
                                     suiteMetric?.passedCount || 0,
@@ -1437,60 +1556,93 @@ export function ExecutionsPage() {
                                 />
                               </div>
                             </button>
-                            <div className="tree-suite-bulk-actions" role="group" aria-label={`${suite.name} suite-level results`}>
-                              <button
-                                className="ghost-button suite-bulk-pass"
-                                disabled={!isExecutionStarted || isExecutionLocked}
-                                onClick={() => void handleSuiteBulkStatus(suite.id, "passed")}
-                                type="button"
-                              >
-                                Suite pass
-                              </button>
-                              <button
-                                className="ghost-button danger suite-bulk-fail"
-                                disabled={!isExecutionStarted || isExecutionLocked}
-                                onClick={() => void handleSuiteBulkStatus(suite.id, "failed")}
-                                type="button"
-                              >
-                                Suite fail
-                              </button>
-                            </div>
                           </div>
 
                           {isExpanded ? (
-                            <div className="tree-children">
-                              {!suiteCases.length ? <div className="empty-state compact">No test cases in this suite.</div> : null}
-                              {suiteCases.map((testCase) => (
+                            <div className="tree-suite-body">
+                              <div className="tree-suite-bulk-actions" role="group" aria-label={`${suite.name} suite-level results`}>
                                 <button
-                                  key={testCase.id}
-                                  className={
-                                    selectedTestCaseId === testCase.id
-                                      ? "record-card tile-card test-case-card execution-case-card is-active"
-                                      : nextFocusCase?.id === testCase.id
-                                        ? "record-card tile-card test-case-card execution-case-card is-next"
-                                        : "record-card tile-card test-case-card execution-case-card"
-                                  }
-                                  onClick={() => focusExecutionCase(testCase.id)}
+                                  className="ghost-button suite-bulk-pass"
+                                  disabled={!isExecutionStarted || isExecutionLocked}
+                                  onClick={() => void handleSuiteBulkStatus(suite.id, "passed")}
                                   type="button"
                                 >
-                                  <div className="tile-card-main">
-                                    <div className="tile-card-header">
-                                      <div className="record-card-icon test-case">TC</div>
-                                      <div className="tile-card-title-group">
-                                        <strong>{testCase.title}</strong>
-                                        <span className="tile-card-kicker">{suite.name}</span>
-                                      </div>
-                                    </div>
-                                    <p className="tile-card-description">{testCase.description || "No description recorded for this test case."}</p>
-                                    <div className="tile-card-metrics">
-                                      <span className="tile-metric">Priority P{testCase.priority || 3}</span>
-                                      <span className="tile-metric">{(stepsByCaseId[testCase.id] || []).length} steps</span>
-                                      <span className="tile-metric">{formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), "No timing yet")}</span>
-                                    </div>
-                                  </div>
-                                  <StatusBadge value={caseDerivedStatus(testCase)} />
+                                  <SuiteBoardIcon />
+                                  <span>Suite Pass</span>
                                 </button>
-                              ))}
+                                <button
+                                  className="ghost-button danger suite-bulk-fail"
+                                  disabled={!isExecutionStarted || isExecutionLocked}
+                                  onClick={() => void handleSuiteBulkStatus(suite.id, "failed")}
+                                  type="button"
+                                >
+                                  <SuiteBoardIcon />
+                                  <span>Suite Fail</span>
+                                </button>
+                              </div>
+
+                              <div className="tree-children">
+                                {!suiteCases.length ? <div className="empty-state compact">No test cases in this suite.</div> : null}
+                                {suiteCases.map((testCase) => {
+                                  const caseStatus = caseDerivedStatus(testCase);
+
+                                  return (
+                                    <button
+                                      key={testCase.id}
+                                      className={
+                                        selectedTestCaseId === testCase.id
+                                          ? "record-card tile-card test-case-card execution-case-card execution-board-case-card is-active"
+                                          : nextFocusCase?.id === testCase.id
+                                            ? "record-card tile-card test-case-card execution-case-card execution-board-case-card is-next"
+                                            : "record-card tile-card test-case-card execution-case-card execution-board-case-card"
+                                      }
+                                      onClick={() => focusExecutionCase(testCase.id)}
+                                      type="button"
+                                    >
+                                      <div className="tile-card-main">
+                                        <div className="tile-card-header">
+                                          <div
+                                            aria-hidden="true"
+                                            className={`record-card-icon execution-board-icon status-${caseStatus}`}
+                                            title={boardStatusTooltip(caseStatus)}
+                                          >
+                                            <TestCaseBoardIcon />
+                                          </div>
+                                          <div className="tile-card-title-group">
+                                            <strong>{testCase.title}</strong>
+                                            <span className="tile-card-kicker">{nextFocusCase?.id === testCase.id ? "Next recommended case" : suite.name}</span>
+                                          </div>
+                                          <ExecutionStatusIndicator status={caseStatus} />
+                                        </div>
+                                        <div className="execution-card-facts" aria-label={`${testCase.title} facts`}>
+                                          <ExecutionCardFact
+                                            ariaLabel={`Priority P${testCase.priority || 3}`}
+                                            label={`P${testCase.priority || 3}`}
+                                            title={`Priority P${testCase.priority || 3}`}
+                                          >
+                                            <ExecutionPriorityIcon />
+                                          </ExecutionCardFact>
+                                          <ExecutionCardFact
+                                            ariaLabel={`${(stepsByCaseId[testCase.id] || []).length} steps`}
+                                            label={String((stepsByCaseId[testCase.id] || []).length)}
+                                            title={`${(stepsByCaseId[testCase.id] || []).length} steps`}
+                                          >
+                                            <ExecutionStepsIcon />
+                                          </ExecutionCardFact>
+                                          <ExecutionCardFact
+                                            ariaLabel={`Case duration ${formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}`}
+                                            label={formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}
+                                            title={`Case duration ${formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}`}
+                                            tone={caseStatus === "blocked" ? "warning" : "neutral"}
+                                          >
+                                            <ExecutionTimeIcon />
+                                          </ExecutionCardFact>
+                                        </div>
+                                      </div>
+                                    </button>
+                                  );
+                                })}
+                              </div>
                             </div>
                           ) : null}
                         </div>
@@ -1530,7 +1682,7 @@ export function ExecutionsPage() {
                     <div className="execution-detail-glance">
                       <div className="execution-detail-card">
                         <span>Case duration</span>
-                        <strong>{formatDuration(selectedCaseDurationMs, selectedExecutionCase ? "No timing yet" : "Select a case")}</strong>
+                        <strong>{formatDuration(selectedCaseDurationMs, DEFAULT_DURATION_LABEL)}</strong>
                         <small>{selectedExecutionResult?.created_at ? `Last evidence ${formatExecutionTimestamp(selectedExecutionResult.created_at)}` : "Duration appears as the case is executed"}</small>
                       </div>
                       <div className="execution-detail-card">
@@ -1549,24 +1701,35 @@ export function ExecutionsPage() {
                   <div className="execution-control-strip">
                     <div className="execution-control-copy">
                       <strong>{currentExecutionStatus === "running" ? "Execution is live" : currentExecutionStatus === "queued" ? "Execution ready to start" : currentExecutionStatus === "aborted" ? "Execution was aborted" : "Execution locked"}</strong>
-                      <span>{currentExecutionStatus === "running" ? `${formatDuration(selectedExecutionDurationMs, "Live")} elapsed across the run.` : currentExecutionStatus === "queued" ? "Start the run before step-level result capture." : currentExecutionStatus === "aborted" ? "This execution was stopped early. Captured evidence remains available for review." : "This execution has been completed. Evidence remains available for review."}</span>
+                      <span>{currentExecutionStatus === "running" ? `${formatDuration(selectedExecutionDurationMs, DEFAULT_DURATION_LABEL)} elapsed across the run.` : currentExecutionStatus === "queued" ? "Start the run before step-level result capture." : currentExecutionStatus === "aborted" ? "This execution was stopped early. Captured evidence remains available for review." : "This execution has been completed. Evidence remains available for review."}</span>
                     </div>
                     <div className="action-row">
                       <button
                         className="ghost-button"
-                        disabled={currentExecutionStatus !== "queued" || startExecution.isPending}
+                        disabled={currentExecutionStatus !== "queued" || startExecution.isPending || completeExecution.isPending}
                         onClick={() => void startExecution.mutateAsync(selectedExecution.id).then(() => refreshExecutionScope()).catch((error: Error) => showError(error, "Unable to start execution"))}
                         type="button"
                       >
-                        {startExecution.isPending ? "Starting…" : "Start execution"}
+                        <ExecutionStartIcon />
+                        <span>{startExecution.isPending ? "Starting…" : "Start execution"}</span>
+                      </button>
+                      <button
+                        className="ghost-button warning"
+                        disabled={currentExecutionStatus !== "running" || completeExecution.isPending || startExecution.isPending}
+                        onClick={() => void handleFinalizeExecution("abort")}
+                        type="button"
+                      >
+                        <ExecutionAbortIcon />
+                        <span>{completeExecution.isPending && executionFinalizeAction === "abort" ? "Aborting…" : "Abort execution"}</span>
                       </button>
                       <button
                         className="ghost-button"
-                        disabled={currentExecutionStatus !== "running" || completeExecution.isPending}
-                        onClick={() => void completeExecution.mutateAsync({ id: selectedExecution.id, status: executionProgress.failedCount ? "failed" : "completed" }).then(() => refreshExecutionScope()).catch((error: Error) => showError(error, "Unable to complete execution"))}
+                        disabled={currentExecutionStatus !== "running" || completeExecution.isPending || startExecution.isPending}
+                        onClick={() => void handleFinalizeExecution("complete")}
                         type="button"
                       >
-                        {completeExecution.isPending ? "Completing…" : "Complete execution"}
+                        <ExecutionCompleteIcon />
+                        <span>{completeExecution.isPending && executionFinalizeAction === "complete" ? "Completing…" : "Complete execution"}</span>
                       </button>
                     </div>
                   </div>
@@ -1642,7 +1805,8 @@ export function ExecutionsPage() {
                               onClick={() => void handleBulkStepStatus("passed", "all")}
                               type="button"
                             >
-                              Pass all steps
+                              <TestCaseBoardIcon />
+                              <span>TC Pass</span>
                             </button>
                             <button
                               className="ghost-button danger"
@@ -1650,7 +1814,8 @@ export function ExecutionsPage() {
                               onClick={() => void handleBulkStepStatus("failed", "all")}
                               type="button"
                             >
-                              Fail all steps
+                              <TestCaseBoardIcon />
+                              <span>TC Fail</span>
                             </button>
                           </div>
                         </div>
@@ -1729,7 +1894,7 @@ export function ExecutionsPage() {
                             <div>
                               <strong>{result.test_case_title || result.test_case_id}</strong>
                               <ExecutionStructuredLogSummary logsJson={result.logs} />
-                              <span>{formatExecutionTimestamp(result.created_at, "Timestamp unavailable")} · {formatDuration(result.duration_ms, "No duration yet")}</span>
+                              <span>{formatExecutionTimestamp(result.created_at, "Timestamp unavailable")} · {formatDuration(result.duration_ms, DEFAULT_DURATION_LABEL)}</span>
                               {result.error ? <span className="execution-log-error">{result.error}</span> : null}
                             </div>
                             <StatusBadge value={result.status} />
@@ -1746,7 +1911,7 @@ export function ExecutionsPage() {
                           <div>
                             <strong>{testCase.title}</strong>
                             <span>{testCase.description || "Blocked or failed case."}</span>
-                            <small>{formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), "No timing yet")}</small>
+                            <small>{formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}</small>
                           </div>
                           <StatusBadge value={caseDerivedStatus(testCase)} />
                         </button>
@@ -1771,7 +1936,7 @@ export function ExecutionsPage() {
                             <div>
                               <strong>{linkedExecution?.name || result.test_case_title || "Execution record"}</strong>
                               <span>{result.suite_name || "Recorded case evidence"} · {formatExecutionTimestamp(result.created_at, "Timestamp unavailable")}</span>
-                              <small>{formatDuration(result.duration_ms, "No duration yet")} · {isCurrentExecution ? "Current run" : "Open this execution"}</small>
+                              <small>{formatDuration(result.duration_ms, DEFAULT_DURATION_LABEL)} · {isCurrentExecution ? "Current run" : "Open this execution"}</small>
                             </div>
                             <StatusBadge value={result.status} />
                           </button>
@@ -1941,14 +2106,12 @@ function ExecutionAccordionChevronIcon() {
 function ExecutionListCard({
   execution,
   summary,
-  appTypeName,
   liveNow,
   isActive,
   onSelect
 }: {
   execution: Execution;
   summary: ExecutionRunSummary;
-  appTypeName: string;
   liveNow: number;
   isActive: boolean;
   onSelect: () => void;
@@ -1959,7 +2122,7 @@ function ExecutionListCard({
   const issueCount = summary.failed + summary.blocked;
   const durationLabel = formatDuration(
     computeExecutionDurationMs(execution.started_at, execution.ended_at, liveNow),
-    executionStatus === "queued" ? "Queued" : executionStatus === "aborted" ? "Stopped early" : "No timing"
+    DEFAULT_DURATION_LABEL
   );
   const startedLabel = formatExecutionTimestamp(
     execution.started_at,
@@ -1990,7 +2153,6 @@ function ExecutionListCard({
           </div>
           <div className="tile-card-title-group">
             <strong>{execution.name || "Unnamed execution"}</strong>
-            <span className="tile-card-kicker">{appTypeName}</span>
           </div>
           <ExecutionStatusIndicator status={executionStatus} />
         </div>
@@ -2072,8 +2234,8 @@ function ExecutionCardFact({
   );
 }
 
-function ExecutionStatusIndicator({ status }: { status: ExecutionStatus }) {
-  const tooltip = executionStatusTooltip(status);
+function ExecutionStatusIndicator({ status }: { status: BoardStatusTone }) {
+  const tooltip = boardStatusTooltip(status);
 
   return (
     <span aria-label={tooltip} className={`execution-card-status status-${status}`} title={tooltip}>
@@ -2082,7 +2244,7 @@ function ExecutionStatusIndicator({ status }: { status: ExecutionStatus }) {
   );
 }
 
-function ExecutionStatusIcon({ status }: { status: ExecutionStatus }) {
+function ExecutionStatusIcon({ status }: { status: BoardStatusTone }) {
   if (status === "queued") {
     return (
       <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
@@ -2103,10 +2265,19 @@ function ExecutionStatusIcon({ status }: { status: ExecutionStatus }) {
     );
   }
 
-  if (status === "completed") {
+  if (status === "completed" || status === "passed") {
     return (
       <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="16">
         <path d="M6 12.5 10 16l8-8" />
+      </svg>
+    );
+  }
+
+  if (status === "blocked") {
+    return (
+      <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
+        <circle cx="12" cy="12" r="8" />
+        <path d="M8 12h8" />
       </svg>
     );
   }
@@ -2138,11 +2309,36 @@ function ExecutionRunIcon() {
   );
 }
 
+function ExecutionStartIcon() {
+  return (
+    <ExecutionIconShell>
+      <path d="m9 7 8 5-8 5z" />
+    </ExecutionIconShell>
+  );
+}
+
+function ExecutionCompleteIcon() {
+  return (
+    <ExecutionIconShell>
+      <path d="M6 12.5 10 16l8-8" />
+    </ExecutionIconShell>
+  );
+}
+
+function ExecutionAbortIcon() {
+  return (
+    <ExecutionIconShell>
+      <circle cx="12" cy="12" r="8" />
+      <rect height="5" rx="0.8" width="5" x="9.5" y="9.5" />
+    </ExecutionIconShell>
+  );
+}
+
 function ExecutionIconShell({ children }: { children: ReactNode }) {
   return <svg aria-hidden="true" fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width="14">{children}</svg>;
 }
 
-function ExecutionSuiteIcon() {
+function SuiteBoardIcon() {
   return (
     <ExecutionIconShell>
       <rect height="6" rx="1.2" width="7" x="3" y="4" />
@@ -2152,12 +2348,33 @@ function ExecutionSuiteIcon() {
   );
 }
 
-function ExecutionScopeIcon() {
+function TestCaseBoardIcon() {
   return (
     <ExecutionIconShell>
       <rect height="14" rx="2" width="14" x="5" y="5" />
       <path d="M9 10h6" />
       <path d="M9 14h6" />
+    </ExecutionIconShell>
+  );
+}
+
+function ExecutionSuiteIcon() {
+  return (
+    <SuiteBoardIcon />
+  );
+}
+
+function ExecutionScopeIcon() {
+  return (
+    <TestCaseBoardIcon />
+  );
+}
+
+function ExecutionProgressFactsIcon() {
+  return (
+    <ExecutionIconShell>
+      <path d="M4 16h16" />
+      <path d="M7 13 10 10l3 2 4-5" />
     </ExecutionIconShell>
   );
 }
@@ -2177,6 +2394,28 @@ function ExecutionTimeIcon() {
     <ExecutionIconShell>
       <circle cx="12" cy="12" r="8" />
       <path d="M12 8v5l3 2" />
+    </ExecutionIconShell>
+  );
+}
+
+function ExecutionPriorityIcon() {
+  return (
+    <ExecutionIconShell>
+      <path d="M7 20V5" />
+      <path d="M7 5h10l-2 4 2 4H7" />
+    </ExecutionIconShell>
+  );
+}
+
+function ExecutionStepsIcon() {
+  return (
+    <ExecutionIconShell>
+      <path d="M8 7h10" />
+      <path d="M8 12h10" />
+      <path d="M8 17h10" />
+      <circle cx="5" cy="7" r="1" fill="currentColor" stroke="none" />
+      <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
+      <circle cx="5" cy="17" r="1" fill="currentColor" stroke="none" />
     </ExecutionIconShell>
   );
 }
