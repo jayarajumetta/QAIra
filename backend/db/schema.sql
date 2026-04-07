@@ -12,6 +12,9 @@ CREATE TABLE users (
   email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   name TEXT,
+  auth_provider TEXT NOT NULL DEFAULT 'local',
+  google_sub TEXT UNIQUE,
+  email_verified BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -91,17 +94,33 @@ CREATE TABLE feedback (
 
 CREATE TABLE integrations (
   id TEXT PRIMARY KEY,
-  type TEXT NOT NULL CHECK(type IN ('llm','jira')),
+  type TEXT NOT NULL CHECK(type IN ('llm','jira','email','google_auth')),
   name TEXT NOT NULL,
   base_url TEXT,
   api_key TEXT,
   model TEXT,
   project_key TEXT,
   username TEXT,
+  config JSONB NOT NULL DEFAULT '{}'::jsonb,
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE auth_verification_codes (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  purpose TEXT NOT NULL CHECK(purpose IN ('signup','password_reset')),
+  code_hash TEXT NOT NULL,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_auth_verification_codes_lookup
+  ON auth_verification_codes (email, purpose, created_at DESC);
 
 -- =========================
 -- TEST DESIGN
