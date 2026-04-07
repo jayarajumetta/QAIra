@@ -8,6 +8,18 @@ import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StatusBadge } from "../components/StatusBadge";
+import {
+  TileCardCaseIcon,
+  TileCardFact,
+  TileCardIconFrame,
+  TileCardLinkIcon,
+  TileCardPriorityIcon,
+  TileCardRunsIcon,
+  TileCardStatusIndicator,
+  TileCardStepsIcon,
+  formatTileCardLabel,
+  getTileCardTone
+} from "../components/TileCardPrimitives";
 import { SuiteCasePicker } from "../components/SuiteCasePicker";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
@@ -1200,6 +1212,10 @@ export function TestCasesPage() {
                   const latest = history[0];
                   const requirement = requirements.find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id));
                   const stepCount = stepCountByCaseId[testCase.id] || 0;
+                  const caseStatusValue = latest?.status || testCase.status || "active";
+                  const caseStatusLabel = formatTileCardLabel(caseStatusValue, "Active");
+                  const caseStatusTone = getTileCardTone(caseStatusValue);
+                  const suiteCount = (testCase.suite_ids || []).length || 0;
 
                   return (
                     <button
@@ -1218,19 +1234,45 @@ export function TestCasesPage() {
                     >
                       <div className="tile-card-main">
                         <div className="tile-card-header">
-                          <div className="record-card-icon test-case">TC</div>
+                          <TileCardIconFrame tone={caseStatusTone}>
+                            <TileCardCaseIcon />
+                          </TileCardIconFrame>
                           <div className="tile-card-title-group">
                             <strong>{testCase.title}</strong>
                             <span className="tile-card-kicker">{requirement?.title || "No requirement linked"}</span>
                           </div>
-                          <span className="object-type-badge test-case">Reusable</span>
+                          <TileCardStatusIndicator title={caseStatusLabel} tone={caseStatusTone} />
                         </div>
                         <p className="tile-card-description">{testCase.description || "No description yet for this test case."}</p>
-                        <div className="tile-card-metrics">
-                          <span className="tile-metric">Priority P{testCase.priority || 3}</span>
-                          <span className="tile-metric">{stepCount} steps</span>
-                          <span className="tile-metric">{(testCase.suite_ids || []).length || 0} suites</span>
-                          <span className="tile-metric">{history.length} runs</span>
+                        <div className="tile-card-facts" aria-label={`${testCase.title} facts`}>
+                          <TileCardFact
+                            label={`P${testCase.priority || 3}`}
+                            title={`Priority P${testCase.priority || 3}`}
+                            tone={(testCase.priority || 3) <= 2 ? "danger" : "info"}
+                          >
+                            <TileCardPriorityIcon />
+                          </TileCardFact>
+                          <TileCardFact
+                            label={String(stepCount)}
+                            title={`${stepCount} step${stepCount === 1 ? "" : "s"}`}
+                            tone={stepCount ? "info" : "neutral"}
+                          >
+                            <TileCardStepsIcon />
+                          </TileCardFact>
+                          <TileCardFact
+                            label={String(suiteCount)}
+                            title={`${suiteCount} linked suite${suiteCount === 1 ? "" : "s"}`}
+                            tone={suiteCount ? "success" : "neutral"}
+                          >
+                            <TileCardLinkIcon />
+                          </TileCardFact>
+                          <TileCardFact
+                            label={String(history.length)}
+                            title={`${history.length} recent run${history.length === 1 ? "" : "s"}`}
+                            tone={history.length ? getTileCardTone(latest?.status || caseStatusValue) : "neutral"}
+                          >
+                            <TileCardRunsIcon />
+                          </TileCardFact>
                         </div>
                         <div className="tile-card-footer">
                           <div className="history-bars" aria-label="Execution history">
@@ -1256,7 +1298,6 @@ export function TestCasesPage() {
                           Select case
                         </label>
                       </div>
-                      <StatusBadge value={latest?.status || testCase.status || "active"} />
                     </button>
                   );
                 })}

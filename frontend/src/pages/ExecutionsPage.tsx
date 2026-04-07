@@ -1746,7 +1746,7 @@ export function ExecutionsPage() {
                   />
 
                   {activeTab === "overview" ? (
-                    <div className="detail-stack">
+                    <div className="detail-stack execution-overview-tab">
                       {selectedExecutionCase ? (
                         <div className="execution-step-progress-card">
                           <ProgressMeter
@@ -1784,20 +1784,22 @@ export function ExecutionsPage() {
                               <span>Select all steps</span>
                             </label>
                             <button
-                              className="ghost-button"
+                              className="ghost-button execution-steps-bulk-action"
                               disabled={!isExecutionStarted || isExecutionLocked || !bulkSelectedStepIds.length}
                               onClick={() => void handleBulkStepStatus("passed", "selected")}
                               type="button"
                             >
-                              Pass selected
+                              <ExecutionStepsIcon />
+                              <span>Pass selected</span>
                             </button>
                             <button
-                              className="ghost-button danger"
+                              className="ghost-button danger execution-steps-bulk-action"
                               disabled={!isExecutionStarted || isExecutionLocked || !bulkSelectedStepIds.length}
                               onClick={() => void handleBulkStepStatus("failed", "selected")}
                               type="button"
                             >
-                              Fail selected
+                              <ExecutionStepsIcon />
+                              <span>Fail selected</span>
                             </button>
                             <button
                               className="ghost-button"
@@ -2420,6 +2422,23 @@ function ExecutionStepsIcon() {
   );
 }
 
+function ExecutionStepPassIcon() {
+  return (
+    <ExecutionIconShell>
+      <path d="m7.5 12.5 3 3 6-7" />
+    </ExecutionIconShell>
+  );
+}
+
+function ExecutionStepFailIcon() {
+  return (
+    <ExecutionIconShell>
+      <path d="m8 8 8 8" />
+      <path d="m16 8-8 8" />
+    </ExecutionIconShell>
+  );
+}
+
 function ExecutionOverviewOrb({
   passedCount,
   failedCount,
@@ -2512,11 +2531,25 @@ function ExecutionCompactStepRow({
       </span>
       <span className="execution-step-col-actions" role="cell">
         <div className="execution-step-mark-buttons">
-          <button className="primary-button execution-step-pass" disabled={isLocked} onClick={onPass} type="button">
-            Pass
+          <button
+            aria-label={`Mark step ${step.step_order} as passed`}
+            className="execution-step-action-button execution-step-pass"
+            disabled={isLocked}
+            onClick={onPass}
+            title="Mark passed"
+            type="button"
+          >
+            <ExecutionStepPassIcon />
           </button>
-          <button className="ghost-button danger execution-step-fail" disabled={isLocked} onClick={onFail} type="button">
-            Fail
+          <button
+            aria-label={`Mark step ${step.step_order} as failed`}
+            className="execution-step-action-button execution-step-fail"
+            disabled={isLocked}
+            onClick={onFail}
+            title="Mark failed"
+            type="button"
+          >
+            <ExecutionStepFailIcon />
           </button>
         </div>
       </span>

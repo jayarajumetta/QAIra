@@ -6,6 +6,16 @@ import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import {
+  TileCardFact,
+  TileCardIconFrame,
+  TileCardLinkIcon,
+  TileCardPriorityIcon,
+  TileCardRequirementIcon,
+  TileCardStatusIndicator,
+  formatTileCardLabel,
+  getTileCardTone
+} from "../components/TileCardPrimitives";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
@@ -730,6 +740,9 @@ export function RequirementsPage() {
               {filteredRequirements.map((item) => {
                 const isSelectedForDelete = deleteSelectedRequirementIds.includes(item.id);
                 const isActive = selectedRequirement?.id === item.id;
+                const requirementStatusLabel = formatTileCardLabel(item.status, "Open");
+                const requirementStatusTone = getTileCardTone(item.status);
+                const linkedCaseCount = (item.test_case_ids || []).length;
 
                 return (
                   <button
@@ -744,17 +757,34 @@ export function RequirementsPage() {
                   >
                     <div className="tile-card-main">
                       <div className="tile-card-header">
-                        <div className="record-card-icon requirement-card-icon">RQ</div>
+                        <TileCardIconFrame tone={requirementStatusTone}>
+                          <TileCardRequirementIcon />
+                        </TileCardIconFrame>
                         <div className="tile-card-title-group">
                           <strong>{item.title}</strong>
-                          <span className="tile-card-kicker">{item.status || "open"} · Priority P{item.priority ?? 3}</span>
+                          <span className="tile-card-kicker">{currentAppTypeName}</span>
                         </div>
-                        <span className="object-type-badge">REQUIREMENT</span>
+                        <TileCardStatusIndicator title={requirementStatusLabel} tone={requirementStatusTone} />
                       </div>
                       <p className="tile-card-description">{item.description || "No description yet."}</p>
-                      <div className="tile-card-metrics">
-                        <span className="tile-metric">{(item.test_case_ids || []).length} linked cases</span>
-                        <span className="tile-metric">{currentAppTypeName}</span>
+                      <div className="tile-card-facts" aria-label={`${item.title} facts`}>
+                        <TileCardFact label={requirementStatusLabel} title={`Requirement status ${requirementStatusLabel}`} tone={requirementStatusTone}>
+                          <TileCardRequirementIcon />
+                        </TileCardFact>
+                        <TileCardFact
+                          label={`P${item.priority ?? 3}`}
+                          title={`Priority P${item.priority ?? 3}`}
+                          tone={(item.priority ?? 3) <= 2 ? "danger" : "info"}
+                        >
+                          <TileCardPriorityIcon />
+                        </TileCardFact>
+                        <TileCardFact
+                          label={String(linkedCaseCount)}
+                          title={`${linkedCaseCount} linked test case${linkedCaseCount === 1 ? "" : "s"}`}
+                          tone={linkedCaseCount ? "success" : "neutral"}
+                        >
+                          <TileCardLinkIcon />
+                        </TileCardFact>
                       </div>
                       <label className="checkbox-field requirement-delete-checkbox" onClick={(event) => event.stopPropagation()}>
                         <input
