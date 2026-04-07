@@ -1161,6 +1161,24 @@ textarea {
   border-top: 1px solid var(--line);
 }
 
+.step-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.step-editor-toolbar-actions {
+  align-items: center;
+}
+
+.step-editor-toolbar-note {
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
 .editor-accordion {
   display: grid;
   gap: 1rem;
@@ -1361,6 +1379,32 @@ textarea {
   padding: 1rem;
 }
 
+.step-create {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.step-create-header {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.step-create-header span {
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.step-create-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.step-create-actions {
+  justify-content: flex-end;
+}
+
 .step-card {
   display: grid;
   gap: 0.8rem;
@@ -1451,6 +1495,20 @@ textarea {
   margin: 0;
   color: var(--muted);
   line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .step-editor-toolbar {
+    align-items: stretch;
+  }
+
+  .step-editor-toolbar-actions {
+    width: 100%;
+  }
+
+  .step-create-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .modal-backdrop {
@@ -7373,4 +7431,31 @@ textarea:focus-visible,
   .subnav-tab {
     min-width: 0;
   }
+}
+
+/* 2026 usability follow-up */
+.project-dropdown-menu {
+  scrollbar-gutter: stable;
+}
+
+.project-dropdown-option.is-highlighted {
+  background: rgba(33, 104, 243, 0.08);
+  border-color: rgba(33, 104, 243, 0.14);
+}
+
+.selectable-table tbody tr[tabindex="0"] {
+  outline: none;
+}
+
+.selectable-table tbody tr[tabindex="0"]:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+.checkbox-field input[type="radio"] {
+  accent-color: var(--primary);
+}
+
+:root[data-theme="dark"] .project-dropdown-option.is-highlighted {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(180, 199, 231, 0.14);
 }

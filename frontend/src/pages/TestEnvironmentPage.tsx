@@ -8,6 +8,7 @@ import { SubnavTabs } from "../components/SubnavTabs";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
+import { useDialogFocus } from "../hooks/useDialogFocus";
 import { api } from "../lib/api";
 import { parseSpreadsheetFile, toKeyValueRows } from "../lib/testDataImport";
 import type { KeyValueEntry, TestConfiguration, TestDataSet, TestDataSetMode, TestDataSetRow, TestEnvironment } from "../types";
@@ -817,9 +818,19 @@ function ResourceModalShell({
   children: ReactNode;
   onClose: () => void;
 }) {
+  const dialogRef = useDialogFocus<HTMLDivElement>();
+
   return (
     <div className="modal-backdrop" onClick={onClose} role="presentation">
-      <div className="modal-card resource-modal-card" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}>
+      <div
+        aria-label={title}
+        aria-modal="true"
+        className="modal-card resource-modal-card"
+        onClick={(event) => event.stopPropagation()}
+        ref={dialogRef}
+        role="dialog"
+        tabIndex={-1}
+      >
         <div className="resource-modal-header">
           <div className="resource-modal-title">
             <p className="eyebrow">Test Environment</p>
@@ -853,7 +864,7 @@ function EnvironmentForm({
       <div className="resource-form-body">
         <div className="record-grid">
           <FormField label="Environment name" required>
-            <input required value={draft.name} onChange={(event) => onChange({ ...draft, name: event.target.value })} />
+            <input data-autofocus="true" required value={draft.name} onChange={(event) => onChange({ ...draft, name: event.target.value })} />
           </FormField>
           <FormField label="Base URL">
             <input placeholder="https://staging.example.com" value={draft.base_url} onChange={(event) => onChange({ ...draft, base_url: event.target.value })} />
@@ -901,7 +912,7 @@ function ConfigurationForm({
       <div className="resource-form-body">
         <div className="record-grid">
           <FormField label="Configuration name" required>
-            <input required value={draft.name} onChange={(event) => onChange({ ...draft, name: event.target.value })} />
+            <input data-autofocus="true" required value={draft.name} onChange={(event) => onChange({ ...draft, name: event.target.value })} />
           </FormField>
           <FormField label="Browser">
             <select value={draft.browser} onChange={(event) => onChange({ ...draft, browser: event.target.value })}>
@@ -1011,7 +1022,7 @@ function DataSetForm({
       <div className="resource-form-body">
         <div className="record-grid">
           <FormField label="Data set name" required>
-            <input required value={draft.name} onChange={(event) => onChange({ ...draft, name: event.target.value })} />
+            <input data-autofocus="true" required value={draft.name} onChange={(event) => onChange({ ...draft, name: event.target.value })} />
           </FormField>
           <FormField label="Data format">
             <select

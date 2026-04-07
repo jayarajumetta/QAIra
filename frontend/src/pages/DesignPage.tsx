@@ -1118,25 +1118,6 @@ export function DesignPage() {
         projects={projects}
       />
 
-      <div className="metric-strip">
-        <div className="mini-card">
-          <strong>{designMetrics.totalSuites}</strong>
-          <span>Suites in this app type</span>
-        </div>
-        <div className="mini-card">
-          <strong>{designMetrics.totalCases}</strong>
-          <span>Reusable cases in scope</span>
-        </div>
-        <div className="mini-card">
-          <strong>{designMetrics.totalSteps}</strong>
-          <span>Defined steps across cases</span>
-        </div>
-        <div className="mini-card">
-          <strong>{designMetrics.casesWithHistory}</strong>
-          <span>Cases with execution history</span>
-        </div>
-      </div>
-
       <div className="test-case-workspace suite-design-workspace">
         <div className="test-case-sidebar suite-design-sidebar">
           <SuiteSidebar

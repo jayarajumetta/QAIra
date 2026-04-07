@@ -123,6 +123,7 @@ export function TestCasesPage() {
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const [caseDraft, setCaseDraft] = useState<TestCaseDraft>(EMPTY_CASE_DRAFT);
   const [newStepDraft, setNewStepDraft] = useState<StepDraft>(EMPTY_STEP_DRAFT);
+  const [isStepCreateVisible, setIsStepCreateVisible] = useState(false);
   const [draftSteps, setDraftSteps] = useState<DraftTestStep[]>([]);
   const [expandedStepIds, setExpandedStepIds] = useState<string[]>([]);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -270,6 +271,7 @@ export function TestCasesPage() {
     setCaseDraft(EMPTY_CASE_DRAFT);
     setDraftSteps([]);
     setNewStepDraft(EMPTY_STEP_DRAFT);
+    setIsStepCreateVisible(false);
     setExpandedStepIds([]);
   };
 
@@ -322,6 +324,7 @@ export function TestCasesPage() {
     resetExecutionContextSelection();
     setCaseDraft(EMPTY_CASE_DRAFT);
     setNewStepDraft(EMPTY_STEP_DRAFT);
+    setIsStepCreateVisible(false);
     setDraftSteps([]);
     setExpandedStepIds([]);
     setSelectedActionTestCaseIds([]);
@@ -435,6 +438,7 @@ export function TestCasesPage() {
 
   useEffect(() => {
     setNewStepDraft(EMPTY_STEP_DRAFT);
+    setIsStepCreateVisible(false);
     setExpandedStepIds([]);
     setExpandedSections(createDefaultTestCaseSections());
   }, [isCreating, selectedTestCaseId]);
@@ -718,11 +722,30 @@ export function TestCasesPage() {
         expected_result: normalizedDraft.expected_result || undefined
       });
       setNewStepDraft(EMPTY_STEP_DRAFT);
+      setIsStepCreateVisible(false);
       setExpandedStepIds((current) => [...new Set([...current, response.id])]);
       showSuccess("Step added.");
       await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
     } catch (error) {
       showError(error, "Unable to add step");
+    }
+  };
+
+  const handleCloseStepCreate = () => {
+    setIsStepCreateVisible(false);
+    setNewStepDraft(EMPTY_STEP_DRAFT);
+  };
+
+  const handleOpenStepCreate = () => {
+    setIsStepCreateVisible(true);
+  };
+
+  const handleToggleStepsSection = () => {
+    const willExpand = !expandedSections.steps;
+    setExpandedSections((current) => ({ ...current, steps: willExpand }));
+
+    if (!willExpand) {
+      handleCloseStepCreate();
     }
   };
 
@@ -1118,25 +1141,6 @@ export function TestCasesPage() {
         projects={projects}
       />
 
-      <div className="metric-strip">
-        <div className="mini-card">
-          <strong>{coverageMetrics.total}</strong>
-          <span>Library cases</span>
-        </div>
-        <div className="mini-card">
-          <strong>{coverageMetrics.covered}</strong>
-          <span>Linked to requirements</span>
-        </div>
-        <div className="mini-card">
-          <strong>{coverageMetrics.withSuites}</strong>
-          <span>Assigned to one or more suites</span>
-        </div>
-        <div className="mini-card">
-          <strong>{coverageMetrics.withHistory}</strong>
-          <span>Have execution history</span>
-        </div>
-      </div>
-
       <div className="test-case-workspace">
         <div className="test-case-sidebar">
           <Panel title="Test case library" subtitle={appTypeId ? "Search the library, scan quick quality signals, and jump into a case without the list taking over the page." : "Choose an app type to begin."}>
@@ -1284,25 +1288,6 @@ export function TestCasesPage() {
           <Panel title="Test case workspace" subtitle={selectedTestCaseId || isCreating ? "Switch between case details and step editing without losing the selected context." : "Select a test case or create a new one."}>
             {selectedTestCaseId || isCreating ? (
               <div className="detail-stack">
-                <div className="metric-strip">
-                  <div className="mini-card">
-                    <strong>{selectedTestCase?.suite_ids?.length || 0}</strong>
-                    <span>Linked suites</span>
-                  </div>
-                  <div className="mini-card">
-                    <strong>{selectedHistory.length}</strong>
-                    <span>Execution records</span>
-                  </div>
-                  <div className="mini-card">
-                    <strong>{displaySteps.length}</strong>
-                    <span>{isCreating ? "Draft steps" : "Defined steps"}</span>
-                  </div>
-                  <div className="mini-card">
-                    <strong>{selectedRequirement ? "Linked" : "Open"}</strong>
-                    <span>{selectedRequirement?.title || "Requirement not linked yet"}</span>
-                  </div>
-                </div>
-
                 <div className="editor-accordion">
                   <EditorAccordionSection
                     countLabel={isCreating ? "Draft" : caseDraft.status || "active"}
@@ -1360,11 +1345,6 @@ export function TestCasesPage() {
                         />
                       </FormField>
 
-                      <div className="detail-summary">
-                        <strong>{isCreating ? "Create with steps attached" : "Live case definition"}</strong>
-                        <span>{isCreating ? `This test case will be saved with ${displaySteps.length} draft step${displaySteps.length === 1 ? "" : "s"} attached.` : "Edits here update the reusable test case while execution history remains preserved."}</span>
-                      </div>
-
                       <div className="action-row">
                         <button className="primary-button" disabled={createTestCase.isPending || updateTestCase.isPending} type="submit">
                           {isCreating ? (createTestCase.isPending ? "Creating…" : "Create test case") : (updateTestCase.isPending ? "Saving…" : "Save test case")}
@@ -1394,24 +1374,44 @@ export function TestCasesPage() {
                   <EditorAccordionSection
                     countLabel={stepCountLabel}
                     isExpanded={expandedSections.steps}
-                    onToggle={() => setExpandedSections((current) => ({ ...current, steps: !current.steps }))}
+                    onToggle={handleToggleStepsSection}
                     summary={stepSectionSummary}
                     title={isCreating ? "Draft steps" : "Test steps"}
                   >
                     <div className="step-editor step-editor--embedded">
-                      {!isCreating && displaySteps.length ? (
-                        <div className="action-row">
-                          <button className="ghost-button" onClick={() => setExpandedStepIds(displaySteps.map((step) => step.id))} type="button">
-                            Expand all
-                          </button>
-                          <button className="ghost-button" onClick={() => setExpandedStepIds([])} type="button">
-                            Collapse all
-                          </button>
+                      <div className="step-editor-toolbar">
+                        <div className="action-row step-editor-toolbar-actions">
+                          {!isStepCreateVisible ? (
+                            <button
+                              aria-controls="test-case-step-create"
+                              aria-expanded={false}
+                              className="primary-button"
+                              onClick={handleOpenStepCreate}
+                              type="button"
+                            >
+                              {isCreating ? "Add draft step" : "Add step"}
+                            </button>
+                          ) : (
+                            <span className="step-editor-toolbar-note">
+                              {isCreating ? "Draft steps stay local until you save this test case." : "The add-step composer is open. Save or cancel it when you are done."}
+                            </span>
+                          )}
                         </div>
-                      ) : null}
+
+                        {!isCreating && displaySteps.length ? (
+                          <div className="action-row step-editor-toolbar-actions">
+                            <button className="ghost-button" onClick={() => setExpandedStepIds(displaySteps.map((step) => step.id))} type="button">
+                              Expand all
+                            </button>
+                            <button className="ghost-button" onClick={() => setExpandedStepIds([])} type="button">
+                              Collapse all
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
 
                       {!isCreating && stepsQuery.isLoading ? <div className="empty-state compact">Loading steps…</div> : null}
-                      {!displaySteps.length ? <div className="empty-state compact">{isCreating ? "No draft steps yet. Add steps below before you save if this case needs guided execution." : "No steps yet for this test case."}</div> : null}
+                      {!displaySteps.length ? <div className="empty-state compact">{isCreating ? "No draft steps yet. Use Add draft step when this case needs guided execution." : "No steps yet for this test case. Use Add step to create the first one."}</div> : null}
 
                       <div className="step-list">
                         {isCreating
@@ -1447,23 +1447,42 @@ export function TestCasesPage() {
                             ))}
                       </div>
 
-                      <form className="step-create" onSubmit={(event) => void handleCreateStep(event)}>
-                        <strong>{isCreating ? "+ Add Draft Step" : "+ Add Step"}</strong>
-                        <FormField label="Action">
-                          <input
-                            value={newStepDraft.action}
-                            onChange={(event) => setNewStepDraft((current) => ({ ...current, action: event.target.value }))}
-                          />
-                        </FormField>
-                        <FormField label="Expected result">
-                          <textarea
-                            rows={3}
-                            value={newStepDraft.expected_result}
-                            onChange={(event) => setNewStepDraft((current) => ({ ...current, expected_result: event.target.value }))}
-                          />
-                        </FormField>
-                        <button className="primary-button" type="submit">{isCreating ? "Attach draft step" : "Add step"}</button>
-                      </form>
+                      {isStepCreateVisible ? (
+                        <form className="step-create" id="test-case-step-create" onSubmit={(event) => void handleCreateStep(event)}>
+                          <div className="step-create-header">
+                            <strong>{isCreating ? "Add draft step" : "Add step"}</strong>
+                            <span>
+                              {isCreating
+                                ? "Capture the next draft instruction now. You can keep adding more before saving the test case."
+                                : "Create the next reusable step, then return to the list with less screen space occupied."}
+                            </span>
+                          </div>
+
+                          <div className="step-create-grid">
+                            <FormField label="Action">
+                              <input
+                                autoFocus
+                                value={newStepDraft.action}
+                                onChange={(event) => setNewStepDraft((current) => ({ ...current, action: event.target.value }))}
+                              />
+                            </FormField>
+                            <FormField label="Expected result">
+                              <textarea
+                                rows={3}
+                                value={newStepDraft.expected_result}
+                                onChange={(event) => setNewStepDraft((current) => ({ ...current, expected_result: event.target.value }))}
+                              />
+                            </FormField>
+                          </div>
+
+                          <div className="action-row step-create-actions">
+                            <button className="primary-button" type="submit">{isCreating ? "Attach draft step" : "Add step"}</button>
+                            <button className="ghost-button" onClick={handleCloseStepCreate} type="button">
+                              Cancel
+                            </button>
+                          </div>
+                        </form>
+                      ) : null}
                     </div>
                   </EditorAccordionSection>
 
@@ -1561,7 +1580,7 @@ export function TestCasesPage() {
       {isImportModalOpen ? (
         <div
           className="modal-backdrop"
-          onClick={() => setIsImportModalOpen(false)}
+          onClick={() => !importTestCases.isPending && setIsImportModalOpen(false)}
         >
           <div
             aria-labelledby="bulk-import-title"
@@ -1576,7 +1595,7 @@ export function TestCasesPage() {
                 <h3 id="bulk-import-title">Import test cases from CSV</h3>
                 <p>Upload reusable cases in bulk. Action and Expected Result columns are converted into attached test steps automatically.</p>
               </div>
-              <button aria-label="Close bulk import dialog" className="ghost-button" onClick={() => setIsImportModalOpen(false)} type="button">
+              <button aria-label="Close bulk import dialog" className="ghost-button" disabled={importTestCases.isPending} onClick={() => setIsImportModalOpen(false)} type="button">
                 Close
               </button>
             </div>
@@ -1651,7 +1670,7 @@ export function TestCasesPage() {
               </button>
               <button
                 className="ghost-button"
-                disabled={!importRows.length}
+                disabled={!importRows.length || importTestCases.isPending}
                 onClick={() => {
                   setImportRows([]);
                   setImportWarnings([]);

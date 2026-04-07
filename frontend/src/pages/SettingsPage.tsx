@@ -58,19 +58,19 @@ export function SettingsPage() {
         <Panel title="Appearance" subtitle="Keep the interface comfortable for long QA sessions.">
           <div className="detail-stack">
             <label className="checkbox-field">
-              <input checked={theme === "light"} onChange={() => setTheme("light")} type="radio" />
+              <input checked={theme === "light"} name="theme-preference" onChange={() => setTheme("light")} type="radio" />
               <span>Light theme</span>
             </label>
             <label className="checkbox-field">
-              <input checked={theme === "dark"} onChange={() => setTheme("dark")} type="radio" />
+              <input checked={theme === "dark"} name="theme-preference" onChange={() => setTheme("dark")} type="radio" />
               <span>Dark theme</span>
             </label>
             <label className="checkbox-field">
-              <input checked={sidebarMode === "expanded"} onChange={() => setSidebarMode("expanded")} type="radio" />
+              <input checked={sidebarMode === "expanded"} name="sidebar-preference" onChange={() => setSidebarMode("expanded")} type="radio" />
               <span>Expanded sidebar by default</span>
             </label>
             <label className="checkbox-field">
-              <input checked={sidebarMode === "collapsed"} onChange={() => setSidebarMode("collapsed")} type="radio" />
+              <input checked={sidebarMode === "collapsed"} name="sidebar-preference" onChange={() => setSidebarMode("collapsed")} type="radio" />
               <span>Collapsed sidebar by default</span>
             </label>
           </div>

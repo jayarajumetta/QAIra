@@ -682,25 +682,6 @@ export function RequirementsPage() {
         projects={projects}
       />
 
-      <div className="metric-strip">
-        <div className="mini-card">
-          <strong>{metrics.total}</strong>
-          <span>Total requirements</span>
-        </div>
-        <div className="mini-card">
-          <strong>{metrics.mapped}</strong>
-          <span>Mapped to test cases</span>
-        </div>
-        <div className="mini-card">
-          <strong>{metrics.highPriority}</strong>
-          <span>Priority 1-2 items</span>
-        </div>
-        <div className="mini-card">
-          <strong>{metrics.open}</strong>
-          <span>Still open or in progress</span>
-        </div>
-      </div>
-
       <div className="requirement-workspace">
         <div className="requirement-sidebar">
           <Panel title="Requirement catalog" subtitle="Select a requirement card to review its details, adjust coverage links, or send it into the AI design studio.">
@@ -809,31 +790,6 @@ export function RequirementsPage() {
                     summary="Review the requirement header details, update the draft, then save or delete from one focused section."
                     title="Requirement header details"
                   >
-                    <div className="detail-summary">
-                      <strong>{selectedRequirement.title}</strong>
-                      <span>{selectedRequirement.description || "No description yet for this requirement."}</span>
-                      <span>{currentAppTypeName} · {selectedTestCaseIds.length} linked case{selectedTestCaseIds.length === 1 ? "" : "s"} across the workspace</span>
-                    </div>
-
-                    <div className="metric-strip">
-                      <div className="mini-card">
-                        <strong>P{draft.priority || 3}</strong>
-                        <span>Priority</span>
-                      </div>
-                      <div className="mini-card">
-                        <strong>{draft.status || "open"}</strong>
-                        <span>Status</span>
-                      </div>
-                      <div className="mini-card">
-                        <strong>{selectedTestCaseIds.length}</strong>
-                        <span>Total linked cases</span>
-                      </div>
-                      <div className="mini-card">
-                        <strong>{selectedVisibleCases.length}</strong>
-                        <span>Visible in current app type</span>
-                      </div>
-                    </div>
-
                     <form className="form-grid" onSubmit={(event) => void handleSaveRequirement(event)}>
                       <div className="record-grid">
                         <FormField label="Title" required>
@@ -868,11 +824,6 @@ export function RequirementsPage() {
                     summary="Review the linked reusable cases currently staged for this requirement in the active app type."
                     title="Linked test cases"
                   >
-                    <div className="detail-summary">
-                      <strong>{selectedTestCaseIds.length} linked case{selectedTestCaseIds.length === 1 ? "" : "s"}</strong>
-                      <span>{appTypeId ? `Currently browsing reusable cases for ${currentAppTypeName}. Hidden links from other app types stay intact unless you change them elsewhere.` : "Select an app type first to manage linked coverage."}</span>
-                    </div>
-
                     <div className="stack-list">
                       {selectedVisibleCases.map((testCase) => (
                         <div className="stack-item" key={testCase.id}>
@@ -892,13 +843,8 @@ export function RequirementsPage() {
                     isExpanded={expandedSections.library}
                     onToggle={() => setExpandedSections((current) => ({ ...current, library: !current.library }))}
                     summary="Browse all reusable cases in the active app type and choose what should stay linked to this requirement."
-                    title="All existing test cases"
+                    title="Link or unlink existing test cases"
                   >
-                    <div className="detail-summary">
-                      <strong>Link or unlink existing test cases</strong>
-                      <span>{appTypeId ? `Select reusable cases from ${currentAppTypeName} to update this requirement's coverage.` : "Select an app type first to link reusable test cases."}</span>
-                    </div>
-
                     <RequirementTestCasePicker
                       emptyText={appTypeId ? "No reusable test cases are available for this app type." : "Select an app type first to link reusable test cases."}
                       pickerClassName="requirement-link-picker--workspace"

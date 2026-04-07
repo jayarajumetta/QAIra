@@ -24,7 +24,8 @@ export function ToastMessage({
 
   return (
     <div
-      aria-live="polite"
+      aria-atomic="true"
+      aria-live={tone === "error" ? "assertive" : "polite"}
       className={`toast-message is-${tone}`}
       role={tone === "error" ? "alert" : "status"}
     >

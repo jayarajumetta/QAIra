@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties } from "react";
 import type { Project } from "../types";
@@ -33,12 +33,18 @@ export function ProjectDropdown({
   const listboxId = useId();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [isOpen, setIsOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === value) || projects[0] || null,
     [projects, value]
+  );
+  const selectedIndex = useMemo(
+    () => projects.findIndex((project) => project.id === selectedProject?.id),
+    [projects, selectedProject?.id]
   );
 
   const updateMenuPosition = () => {
@@ -108,6 +114,80 @@ export function ProjectDropdown({
     }
   }, [disabled, projects.length]);
 
+  useEffect(() => {
+    if (!isOpen) {
+      setHighlightedIndex(-1);
+      return;
+    }
+
+    setHighlightedIndex(selectedIndex >= 0 ? selectedIndex : 0);
+  }, [isOpen, selectedIndex]);
+
+  useEffect(() => {
+    if (!isOpen || highlightedIndex < 0) {
+      return;
+    }
+
+    optionRefs.current[highlightedIndex]?.focus();
+  }, [highlightedIndex, isOpen]);
+
+  const selectProject = (projectId: string) => {
+    onChange(projectId);
+    setIsOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  const handleTriggerKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (disabled || !projects.length) {
+      return;
+    }
+
+    if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setIsOpen(true);
+      setHighlightedIndex(selectedIndex >= 0 ? selectedIndex : 0);
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setIsOpen(true);
+      setHighlightedIndex(selectedIndex >= 0 ? selectedIndex : projects.length - 1);
+    }
+  };
+
+  const handleOptionKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setHighlightedIndex((index + 1) % projects.length);
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setHighlightedIndex((index - 1 + projects.length) % projects.length);
+      return;
+    }
+
+    if (event.key === "Home") {
+      event.preventDefault();
+      setHighlightedIndex(0);
+      return;
+    }
+
+    if (event.key === "End") {
+      event.preventDefault();
+      setHighlightedIndex(projects.length - 1);
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setIsOpen(false);
+      triggerRef.current?.focus();
+    }
+  };
+
   const menuStyle: CSSProperties | undefined = menuPosition
     ? {
         top: `${menuPosition.top}px`,
@@ -128,6 +208,7 @@ export function ProjectDropdown({
         className="project-dropdown-trigger"
         disabled={disabled || !projects.length}
         onClick={() => setIsOpen((current) => !current)}
+        onKeyDown={handleTriggerKeyDown}
         type="button"
       >
         <span className="project-dropdown-value">{selectedProject?.name || emptyLabel}</span>
@@ -146,19 +227,28 @@ export function ProjectDropdown({
               role="listbox"
               style={menuStyle}
             >
-              {projects.map((project) => {
+              {projects.map((project, optionIndex) => {
                 const isSelected = project.id === selectedProject?.id;
+                const isHighlighted = optionIndex === highlightedIndex;
 
                 return (
                   <button
                     aria-selected={isSelected}
-                    className={isSelected ? "project-dropdown-option is-selected" : "project-dropdown-option"}
+                    className={[
+                      "project-dropdown-option",
+                      isSelected ? "is-selected" : "",
+                      isHighlighted ? "is-highlighted" : ""
+                    ].filter(Boolean).join(" ")}
                     key={project.id}
-                    onClick={() => {
-                      onChange(project.id);
-                      setIsOpen(false);
+                    onClick={() => selectProject(project.id)}
+                    onFocus={() => setHighlightedIndex(optionIndex)}
+                    onKeyDown={(event) => handleOptionKeyDown(event, optionIndex)}
+                    onMouseEnter={() => setHighlightedIndex(optionIndex)}
+                    ref={(node) => {
+                      optionRefs.current[optionIndex] = node;
                     }}
                     role="option"
+                    tabIndex={isHighlighted ? 0 : -1}
                     type="button"
                   >
                     <span>{project.name}</span>

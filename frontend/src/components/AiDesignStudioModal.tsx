@@ -1,4 +1,5 @@
 import type { AiDesignImageInput, AiDesignedTestCaseCandidate, Integration, Requirement, TestCase } from "../types";
+import { useDialogFocus } from "../hooks/useDialogFocus";
 import { FormField } from "./FormField";
 
 export function AiDesignStudioModal({
@@ -80,6 +81,7 @@ export function AiDesignStudioModal({
   acceptLabel: string;
   dialogClassName?: string;
 }) {
+  const dialogRef = useDialogFocus<HTMLDivElement>();
   const selectedRequirements = requirements.filter((requirement) => selectedRequirementIds.includes(requirement.id));
 
   const handleRequirementToggle = (requirementId: string, checked: boolean) => {
@@ -102,7 +104,9 @@ export function AiDesignStudioModal({
         aria-modal="true"
         className={dialogClassName ? `modal-card ai-modal-card ai-design-modal ${dialogClassName}` : "modal-card ai-modal-card ai-design-modal"}
         onClick={(event) => event.stopPropagation()}
+        ref={dialogRef}
         role="dialog"
+        tabIndex={-1}
       >
         <div className="ai-studio-header">
           <div className="ai-studio-header-copy">
@@ -131,6 +135,7 @@ export function AiDesignStudioModal({
                     <label className="modal-case-option requirement-link-option" key={requirement.id}>
                       <input
                         checked={selectedRequirementIds.includes(requirement.id)}
+                        data-autofocus={requirements[0]?.id === requirement.id ? "true" : undefined}
                         onChange={(event) => handleRequirementToggle(requirement.id, event.target.checked)}
                         type="checkbox"
                       />
@@ -145,6 +150,7 @@ export function AiDesignStudioModal({
               ) : (
                 <FormField label={requirementLabel}>
                   <select
+                    data-autofocus="true"
                     value={selectedRequirementIds[0] || ""}
                     onChange={(event) => onRequirementSelectionChange(event.target.value ? [event.target.value] : [])}
                   >

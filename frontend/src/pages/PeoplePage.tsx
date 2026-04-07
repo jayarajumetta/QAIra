@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { FormField } from "../components/FormField";
@@ -183,6 +183,36 @@ export function PeoplePage() {
     createRole.mutate({ name: createRoleDraft.name });
   };
 
+  const handleSelectableRowKeyDown = (event: ReactKeyboardEvent<HTMLTableRowElement>, userId: string) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    setSelectedUserId(userId);
+  };
+
+  const confirmDeleteUser = (user: User) => {
+    const warning =
+      user.id === session?.user.id
+        ? "This will remove your own workspace access."
+        : "This removes the user from the workspace directory.";
+
+    if (!window.confirm(`Delete user "${user.name || user.email}"?\n\n${warning}`)) {
+      return;
+    }
+
+    deleteUser.mutate(user.id);
+  };
+
+  const confirmDeleteRole = (role: Role) => {
+    if (!window.confirm(`Delete role "${role.name}"?\n\nUsers currently assigned to this role may need reassignment first.`)) {
+      return;
+    }
+
+    deleteRole.mutate(role.id);
+  };
+
   useEffect(() => {
     if (!isCreateUserModalOpen) {
       return;
@@ -266,9 +296,12 @@ export function PeoplePage() {
                 <tbody>
                   {userItems.map((user) => (
                     <tr
+                      aria-selected={selectedUser?.id === user.id}
                       className={selectedUser?.id === user.id ? "is-selected" : undefined}
                       key={user.id}
                       onClick={() => setSelectedUserId(user.id)}
+                      onKeyDown={(event) => handleSelectableRowKeyDown(event, user.id)}
+                      tabIndex={0}
                     >
                       <td><strong>{user.name || "Unnamed user"}</strong></td>
                       <td>{user.email}</td>
@@ -344,8 +377,10 @@ export function PeoplePage() {
                         />
                       </FormField>
                       <div className="action-row">
-                        <button className="primary-button" type="submit">Save user</button>
-                        <button className="ghost-button danger" onClick={() => deleteUser.mutate(selectedUser.id)} type="button">
+                        <button className="primary-button" disabled={updateUser.isPending} type="submit">
+                          {updateUser.isPending ? "Saving…" : "Save user"}
+                        </button>
+                        <button className="ghost-button danger" disabled={deleteUser.isPending || updateUser.isPending} onClick={() => confirmDeleteUser(selectedUser)} type="button">
                           Delete user
                         </button>
                       </div>
@@ -404,8 +439,10 @@ export function PeoplePage() {
                         />
                       </FormField>
                       <div className="action-row">
-                        <button className="primary-button" type="submit">Save role</button>
-                        <button className="ghost-button danger" onClick={() => deleteRole.mutate(selectedRole.id)} type="button">
+                        <button className="primary-button" disabled={updateRole.isPending} type="submit">
+                          {updateRole.isPending ? "Saving…" : "Save role"}
+                        </button>
+                        <button className="ghost-button danger" disabled={deleteRole.isPending || updateRole.isPending} onClick={() => confirmDeleteRole(selectedRole)} type="button">
                           Delete role
                         </button>
                       </div>
@@ -453,6 +490,7 @@ export function PeoplePage() {
                 <div className="record-grid">
                   <FormField label="Name">
                     <input
+                      autoFocus
                       name="name"
                       placeholder="Quality lead"
                       value={createUserDraft.name}
@@ -534,6 +572,7 @@ export function PeoplePage() {
               <div className="people-modal-body">
                 <FormField label="Role name" required>
                   <input
+                    autoFocus
                     name="name"
                     placeholder="qa-manager"
                     value={createRoleDraft.name}

@@ -35,7 +35,9 @@ export function WorkspaceScopeBar({
       <label className="context-field">
         <span>{appTypeLabel}</span>
         <select disabled={!projectId} value={appTypeId} onChange={(event) => onAppTypeChange(event.target.value)}>
-          {appTypes.length ? null : <option value="">No app types</option>}
+          <option value="">
+            {!projectId ? `Select ${projectLabel.toLowerCase()} first` : appTypes.length ? `Select ${appTypeLabel.toLowerCase()}` : "No app types available"}
+          </option>
           {appTypes.map((appType) => (
             <option key={appType.id} value={appType.id}>{appType.name}</option>
           ))}

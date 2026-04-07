@@ -94,7 +94,7 @@ export function SupportPage() {
             <article className="catalog-card" key={playbook}>
               <strong>{playbook}</strong>
               <p>Open the operational checklist, ownership guidance, and recommended escalation path.</p>
-              <button className="ghost-button" type="button">Open guide</button>
+              <button className="ghost-button" disabled type="button">Guide coming soon</button>
             </article>
           ))}
         </div>
