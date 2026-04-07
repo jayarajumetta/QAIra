@@ -271,7 +271,6 @@ export function TestCasesPage() {
     setCaseDraft(EMPTY_CASE_DRAFT);
     setDraftSteps([]);
     setNewStepDraft(EMPTY_STEP_DRAFT);
-    setIsStepCreateVisible(false);
     setExpandedStepIds([]);
   };
 
@@ -324,7 +323,6 @@ export function TestCasesPage() {
     resetExecutionContextSelection();
     setCaseDraft(EMPTY_CASE_DRAFT);
     setNewStepDraft(EMPTY_STEP_DRAFT);
-    setIsStepCreateVisible(false);
     setDraftSteps([]);
     setExpandedStepIds([]);
     setSelectedActionTestCaseIds([]);
@@ -438,7 +436,6 @@ export function TestCasesPage() {
 
   useEffect(() => {
     setNewStepDraft(EMPTY_STEP_DRAFT);
-    setIsStepCreateVisible(false);
     setExpandedStepIds([]);
     setExpandedSections(createDefaultTestCaseSections());
   }, [isCreating, selectedTestCaseId]);
@@ -705,6 +702,7 @@ export function TestCasesPage() {
       setDraftSteps((current) => [...current, { id: draftId, ...normalizedDraft }]);
       setExpandedStepIds((current) => [...new Set([...current, draftId])]);
       setNewStepDraft(EMPTY_STEP_DRAFT);
+      setIsStepCreateVisible(false);
       showSuccess("Draft step added to the new test case.");
       return;
     }
@@ -731,23 +729,9 @@ export function TestCasesPage() {
     }
   };
 
-  const handleCloseStepCreate = () => {
+  useEffect(() => {
     setIsStepCreateVisible(false);
-    setNewStepDraft(EMPTY_STEP_DRAFT);
-  };
-
-  const handleOpenStepCreate = () => {
-    setIsStepCreateVisible(true);
-  };
-
-  const handleToggleStepsSection = () => {
-    const willExpand = !expandedSections.steps;
-    setExpandedSections((current) => ({ ...current, steps: willExpand }));
-
-    if (!willExpand) {
-      handleCloseStepCreate();
-    }
-  };
+  }, [isCreating, selectedTestCaseId]);
 
   const handleUpdateStep = async (step: TestStep, input: StepDraft) => {
     try {
@@ -1374,44 +1358,24 @@ export function TestCasesPage() {
                   <EditorAccordionSection
                     countLabel={stepCountLabel}
                     isExpanded={expandedSections.steps}
-                    onToggle={handleToggleStepsSection}
+                    onToggle={() => setExpandedSections((current) => ({ ...current, steps: !current.steps }))}
                     summary={stepSectionSummary}
                     title={isCreating ? "Draft steps" : "Test steps"}
                   >
                     <div className="step-editor step-editor--embedded">
-                      <div className="step-editor-toolbar">
-                        <div className="action-row step-editor-toolbar-actions">
-                          {!isStepCreateVisible ? (
-                            <button
-                              aria-controls="test-case-step-create"
-                              aria-expanded={false}
-                              className="primary-button"
-                              onClick={handleOpenStepCreate}
-                              type="button"
-                            >
-                              {isCreating ? "Add draft step" : "Add step"}
-                            </button>
-                          ) : (
-                            <span className="step-editor-toolbar-note">
-                              {isCreating ? "Draft steps stay local until you save this test case." : "The add-step composer is open. Save or cancel it when you are done."}
-                            </span>
-                          )}
+                      {!isCreating && displaySteps.length ? (
+                        <div className="action-row">
+                          <button className="ghost-button" onClick={() => setExpandedStepIds(displaySteps.map((step) => step.id))} type="button">
+                            Expand all
+                          </button>
+                          <button className="ghost-button" onClick={() => setExpandedStepIds([])} type="button">
+                            Collapse all
+                          </button>
                         </div>
-
-                        {!isCreating && displaySteps.length ? (
-                          <div className="action-row step-editor-toolbar-actions">
-                            <button className="ghost-button" onClick={() => setExpandedStepIds(displaySteps.map((step) => step.id))} type="button">
-                              Expand all
-                            </button>
-                            <button className="ghost-button" onClick={() => setExpandedStepIds([])} type="button">
-                              Collapse all
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
+                      ) : null}
 
                       {!isCreating && stepsQuery.isLoading ? <div className="empty-state compact">Loading steps…</div> : null}
-                      {!displaySteps.length ? <div className="empty-state compact">{isCreating ? "No draft steps yet. Use Add draft step when this case needs guided execution." : "No steps yet for this test case. Use Add step to create the first one."}</div> : null}
+                      {!displaySteps.length ? <div className="empty-state compact">{isCreating ? "No draft steps yet. Add steps below before you save if this case needs guided execution." : "No steps yet for this test case."}</div> : null}
 
                       <div className="step-list">
                         {isCreating
@@ -1447,42 +1411,43 @@ export function TestCasesPage() {
                             ))}
                       </div>
 
-                      {isStepCreateVisible ? (
-                        <form className="step-create" id="test-case-step-create" onSubmit={(event) => void handleCreateStep(event)}>
-                          <div className="step-create-header">
-                            <strong>{isCreating ? "Add draft step" : "Add step"}</strong>
-                            <span>
-                              {isCreating
-                                ? "Capture the next draft instruction now. You can keep adding more before saving the test case."
-                                : "Create the next reusable step, then return to the list with less screen space occupied."}
-                            </span>
-                          </div>
-
-                          <div className="step-create-grid">
-                            <FormField label="Action">
-                              <input
-                                autoFocus
-                                value={newStepDraft.action}
-                                onChange={(event) => setNewStepDraft((current) => ({ ...current, action: event.target.value }))}
-                              />
-                            </FormField>
-                            <FormField label="Expected result">
-                              <textarea
-                                rows={3}
-                                value={newStepDraft.expected_result}
-                                onChange={(event) => setNewStepDraft((current) => ({ ...current, expected_result: event.target.value }))}
-                              />
-                            </FormField>
-                          </div>
-
-                          <div className="action-row step-create-actions">
-                            <button className="primary-button" type="submit">{isCreating ? "Attach draft step" : "Add step"}</button>
-                            <button className="ghost-button" onClick={handleCloseStepCreate} type="button">
+                      {!isStepCreateVisible ? (
+                        <div className="action-row">
+                          <button className="ghost-button" onClick={() => setIsStepCreateVisible(true)} type="button">
+                            + Add Step
+                          </button>
+                        </div>
+                      ) : (
+                        <form className="step-create" onSubmit={(event) => void handleCreateStep(event)}>
+                          <strong>+ Add Step</strong>
+                          <FormField label="Action">
+                            <input
+                              value={newStepDraft.action}
+                              onChange={(event) => setNewStepDraft((current) => ({ ...current, action: event.target.value }))}
+                            />
+                          </FormField>
+                          <FormField label="Expected result">
+                            <textarea
+                              rows={3}
+                              value={newStepDraft.expected_result}
+                              onChange={(event) => setNewStepDraft((current) => ({ ...current, expected_result: event.target.value }))}
+                            />
+                          </FormField>
+                          <div className="action-row">
+                            <button className="primary-button" type="submit">Add step</button>
+                            <button
+                              className="ghost-button"
+                              onClick={() => {
+                                setIsStepCreateVisible(false);
+                                setNewStepDraft(EMPTY_STEP_DRAFT);
+                              }}
+                              type="button"
+                            >
                               Cancel
                             </button>
                           </div>
                         </form>
-                      ) : null}
+                      )}
                     </div>
                   </EditorAccordionSection>
 

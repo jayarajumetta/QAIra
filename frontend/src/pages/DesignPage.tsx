@@ -211,6 +211,7 @@ export function DesignPage() {
 
   const [caseDraft, setCaseDraft] = useState<CaseDraft>(EMPTY_CASE_DRAFT);
   const [newStepDraft, setNewStepDraft] = useState(EMPTY_STEP_DRAFT);
+  const [isStepCreateVisible, setIsStepCreateVisible] = useState(false);
   const [draftSteps, setDraftSteps] = useState<DraftTestStep[]>([]);
   const [stepDrafts, setStepDrafts] = useState<Record<string, StepDraft>>({});
 
@@ -467,6 +468,10 @@ export function DesignPage() {
       setSelectedTestCaseId(filteredCases[0].id);
     }
   }, [filteredCases, isCreatingCase, selectedTestCaseId]);
+
+  useEffect(() => {
+    setIsStepCreateVisible(false);
+  }, [isCreatingCase, selectedTestCaseId]);
 
   useEffect(() => {
     if (isCreatingCase || !selectedTestCase) {
@@ -856,6 +861,7 @@ export function DesignPage() {
       setDraftSteps((current) => [...current, { id: draftId, ...normalizedDraft }]);
       setExpandedStepIds((current) => [...new Set([...current, draftId])]);
       setNewStepDraft(EMPTY_STEP_DRAFT);
+      setIsStepCreateVisible(false);
       showSuccess("Draft step added to the new test case.");
       return;
     }
@@ -885,6 +891,7 @@ export function DesignPage() {
 
       updateStepsCache(selectedTestCase.id, (current) => [...current, optimisticStep]);
       setNewStepDraft(EMPTY_STEP_DRAFT);
+      setIsStepCreateVisible(false);
       setExpandedStepIds((current) => [...new Set([...current, response.id])]);
       showSuccess("Step added.");
       await queryClient.invalidateQueries({ queryKey: ["design-all-test-steps", appTypeId] });
@@ -1195,10 +1202,15 @@ export function DesignPage() {
           history={selectedHistory}
           isCreatingCase={isCreatingCase}
           isLoadingSteps={stepsQuery.isLoading}
+          isStepCreateVisible={isStepCreateVisible}
           newStepDraft={newStepDraft}
           onCaseDraftChange={setCaseDraft}
           onClose={closeTestCaseEditorModal}
           onCreateStep={() => void handleCreateStep()}
+          onCloseStepCreate={() => {
+            setIsStepCreateVisible(false);
+            setNewStepDraft(EMPTY_STEP_DRAFT);
+          }}
           onDeleteStep={(stepId) => void handleDeleteStep(stepId)}
           onDeleteTestCase={() => void handleDeleteTestCase()}
           onDraftStepChange={handleUpdateDraftStep}
@@ -1206,6 +1218,7 @@ export function DesignPage() {
           onExpandAllSteps={() => setExpandedStepIds(displaySteps.map((step) => step.id))}
           onCollapseAllSteps={() => setExpandedStepIds([])}
           onNewStepDraftChange={setNewStepDraft}
+          onOpenStepCreate={() => setIsStepCreateVisible(true)}
           onSaveTestCase={() => void handleSaveTestCase()}
           onStepMove={(stepId, direction) => void handleReorderStep(stepId, direction)}
           onStepSave={(stepId, draft) => void handleUpdateStep(stepId, draft)}
@@ -1591,6 +1604,7 @@ function SuiteCaseEditorModal({
   displaySteps,
   stepDrafts,
   caseDraft,
+  isStepCreateVisible,
   newStepDraft,
   draftSteps,
   expandedSections,
@@ -1603,6 +1617,7 @@ function SuiteCaseEditorModal({
   onCaseDraftChange,
   onClose,
   onCreateStep,
+  onCloseStepCreate,
   onDeleteStep,
   onDeleteTestCase,
   onDraftStepChange,
@@ -1610,6 +1625,7 @@ function SuiteCaseEditorModal({
   onExpandAllSteps,
   onCollapseAllSteps,
   onNewStepDraftChange,
+  onOpenStepCreate,
   onSaveTestCase,
   onStepMove,
   onStepSave,
@@ -1626,6 +1642,7 @@ function SuiteCaseEditorModal({
   displaySteps: TestStep[];
   stepDrafts: Record<string, StepDraft>;
   caseDraft: CaseDraft;
+  isStepCreateVisible: boolean;
   newStepDraft: { action: string; expected_result: string };
   draftSteps: DraftTestStep[];
   expandedSections: Record<SuiteCaseEditorSectionKey, boolean>;
@@ -1638,6 +1655,7 @@ function SuiteCaseEditorModal({
   onCaseDraftChange: (value: CaseDraft) => void;
   onClose: () => void;
   onCreateStep: () => void;
+  onCloseStepCreate: () => void;
   onDeleteStep: (stepId: string) => void;
   onDeleteTestCase: () => void;
   onDraftStepChange: (stepId: string, input: StepDraft) => void;
@@ -1645,6 +1663,7 @@ function SuiteCaseEditorModal({
   onExpandAllSteps: () => void;
   onCollapseAllSteps: () => void;
   onNewStepDraftChange: (value: { action: string; expected_result: string }) => void;
+  onOpenStepCreate: () => void;
   onSaveTestCase: () => void;
   onStepMove: (stepId: string, direction: "up" | "down") => void;
   onStepSave: (stepId: string, draft: StepDraft) => void;
@@ -1843,29 +1862,42 @@ function SuiteCaseEditorModal({
                       ))}
                 </div>
 
-                <form
-                  className="step-create"
-                  onSubmit={(event: FormEvent<HTMLFormElement>) => {
-                    event.preventDefault();
-                    onCreateStep();
-                  }}
-                >
-                  <strong>{isCreatingCase ? "+ Add Draft Step" : "+ Add Step"}</strong>
-                  <FormField label="Action">
-                    <input
-                      value={newStepDraft.action}
-                      onChange={(event) => onNewStepDraftChange({ ...newStepDraft, action: event.target.value })}
-                    />
-                  </FormField>
-                  <FormField label="Expected result">
-                    <textarea
-                      rows={3}
-                      value={newStepDraft.expected_result}
-                      onChange={(event) => onNewStepDraftChange({ ...newStepDraft, expected_result: event.target.value })}
-                    />
-                  </FormField>
-                  <button className="primary-button" type="submit">{isCreatingCase ? "Attach draft step" : "Add step"}</button>
-                </form>
+                {!isStepCreateVisible ? (
+                  <div className="action-row">
+                    <button className="ghost-button" onClick={onOpenStepCreate} type="button">
+                      + Add Step
+                    </button>
+                  </div>
+                ) : (
+                  <form
+                    className="step-create"
+                    onSubmit={(event: FormEvent<HTMLFormElement>) => {
+                      event.preventDefault();
+                      onCreateStep();
+                    }}
+                  >
+                    <strong>+ Add Step</strong>
+                    <FormField label="Action">
+                      <input
+                        value={newStepDraft.action}
+                        onChange={(event) => onNewStepDraftChange({ ...newStepDraft, action: event.target.value })}
+                      />
+                    </FormField>
+                    <FormField label="Expected result">
+                      <textarea
+                        rows={3}
+                        value={newStepDraft.expected_result}
+                        onChange={(event) => onNewStepDraftChange({ ...newStepDraft, expected_result: event.target.value })}
+                      />
+                    </FormField>
+                    <div className="action-row">
+                      <button className="primary-button" type="submit">Add step</button>
+                      <button className="ghost-button" onClick={onCloseStepCreate} type="button">
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
               </div>
             </EditorAccordionSection>
 

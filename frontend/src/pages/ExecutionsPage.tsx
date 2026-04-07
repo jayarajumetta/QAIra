@@ -1,4 +1,4 @@
-import { FormEvent, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { FormEvent, useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
@@ -23,7 +23,7 @@ import {
 } from "../lib/executionLogs";
 import type { AppType, Execution, ExecutionCaseSnapshot, ExecutionResult, ExecutionStepSnapshot, Project, TestStep, TestSuite } from "../types";
 
-type ExecutionTab = "overview" | "logs" | "failures";
+type ExecutionTab = "overview" | "logs" | "failures" | "history";
 
 type ExecutionSuiteNode = {
   id: string;
@@ -38,6 +38,7 @@ type ExecutionCaseView = {
   priority: number | null;
   status: string | null;
   suite_id: string | null;
+  suite_name: string | null;
   suite_ids: string[];
   sort_order: number;
 };
@@ -50,6 +51,7 @@ function toCaseView(snapshot: ExecutionCaseSnapshot): ExecutionCaseView {
     priority: snapshot.priority,
     status: snapshot.status,
     suite_id: snapshot.suite_id,
+    suite_name: snapshot.suite_name,
     suite_ids: snapshot.suite_id ? [snapshot.suite_id] : [],
     sort_order: snapshot.sort_order
   };
@@ -86,6 +88,73 @@ function buildProgressSegments(
   return segments.filter((segment) => segment.value > 0);
 }
 
+const executionDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit"
+});
+
+function toTimestamp(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function formatExecutionTimestamp(value?: string | null, fallback = "Not recorded") {
+  const timestamp = toTimestamp(value);
+  return timestamp ? executionDateTimeFormatter.format(timestamp) : fallback;
+}
+
+function computeExecutionDurationMs(
+  startedAt?: string | null,
+  endedAt?: string | null,
+  now = Date.now()
+) {
+  const start = toTimestamp(startedAt);
+
+  if (!start) {
+    return null;
+  }
+
+  const end = toTimestamp(endedAt) || now;
+  return Math.max(end - start, 0);
+}
+
+function formatDuration(ms?: number | null, fallback = "No duration") {
+  if (ms == null || Number.isNaN(ms)) {
+    return fallback;
+  }
+
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  if (minutes) {
+    return `${minutes}m ${seconds}s`;
+  }
+
+  return `${seconds}s`;
+}
+
+function averageDuration(values: Array<number | null | undefined>) {
+  const scoped = values.filter((value): value is number => typeof value === "number" && !Number.isNaN(value));
+
+  if (!scoped.length) {
+    return null;
+  }
+
+  return Math.round(scoped.reduce((sum, value) => sum + value, 0) / scoped.length);
+}
+
 export function ExecutionsPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -109,6 +178,10 @@ export function ExecutionsPage() {
   const [executionSearch, setExecutionSearch] = useState("");
   const [isExecutionListMinimized, setIsExecutionListMinimized] = useState(false);
   const [isSuiteTreeMinimized, setIsSuiteTreeMinimized] = useState(false);
+  const [isExecutionHealthExpanded, setIsExecutionHealthExpanded] = useState(true);
+  const [isExecutionSupportExpanded, setIsExecutionSupportExpanded] = useState(true);
+  const [liveNow, setLiveNow] = useState(() => Date.now());
+  const [caseTimerStartedAtById, setCaseTimerStartedAtById] = useState<Record<string, number>>({});
   const deferredExecutionSearch = useDeferredValue(executionSearch);
 
   const projectsQuery = useQuery({
@@ -278,11 +351,28 @@ export function ExecutionsPage() {
   const selectedExecution = selectedExecutionQuery.data || executions.find((execution) => execution.id === selectedExecutionId) || null;
   const selectedExecutionSuiteIds = selectedExecution?.suite_ids || [];
   const selectedExecutionSuites = selectedExecution?.suite_snapshots || [];
+  const currentExecutionStatus = selectedExecution?.status || "queued";
+  const isExecutionStarted = currentExecutionStatus === "running";
+  const isExecutionLocked = currentExecutionStatus === "completed" || currentExecutionStatus === "failed";
   const snapshotCases = useMemo(
     () => ((selectedExecution?.case_snapshots || []).slice().sort((left, right) => left.sort_order - right.sort_order)),
     [selectedExecution?.case_snapshots]
   );
   const snapshotSteps = selectedExecution?.step_snapshots || [];
+
+  useEffect(() => {
+    if (currentExecutionStatus !== "running") {
+      setLiveNow(Date.now());
+      return;
+    }
+
+    const timer = window.setInterval(() => setLiveNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [currentExecutionStatus, selectedExecutionId]);
+
+  useEffect(() => {
+    setCaseTimerStartedAtById({});
+  }, [selectedExecutionId]);
 
   const executionSuites = useMemo<ExecutionSuiteNode[]>(
     () => selectedExecutionSuites.map((suite) => ({ id: suite.id, name: suite.name })),
@@ -371,7 +461,7 @@ export function ExecutionsPage() {
   const stepStatuses = selectedCaseLogs.stepStatuses || {};
   const stepNotes = selectedCaseLogs.stepNotes || {};
 
-  const caseDerivedStatus = (testCase: ExecutionCaseView) => {
+  const caseDerivedStatus = (testCase: ExecutionCaseView): ExecutionResult["status"] | "queued" => {
     const result = resultByCaseId[testCase.id];
     return result?.status || "queued";
   };
@@ -433,10 +523,30 @@ export function ExecutionsPage() {
   );
 
   const executionSummaryById = useMemo(() => {
-    const summary: Record<string, { passed: number; failed: number; blocked: number; total: number; passRate: number }> = {};
+    const summary: Record<string, {
+      passed: number;
+      failed: number;
+      blocked: number;
+      total: number;
+      passRate: number;
+      avgDurationMs: number | null;
+      timedCount: number;
+      latestActivityAt: string | null;
+      totalDurationMs: number;
+    }> = {};
 
     allExecutionResults.forEach((result) => {
-      summary[result.execution_id] = summary[result.execution_id] || { passed: 0, failed: 0, blocked: 0, total: 0, passRate: 0 };
+      summary[result.execution_id] = summary[result.execution_id] || {
+        passed: 0,
+        failed: 0,
+        blocked: 0,
+        total: 0,
+        passRate: 0,
+        avgDurationMs: null,
+        timedCount: 0,
+        latestActivityAt: null,
+        totalDurationMs: 0
+      };
       summary[result.execution_id].total += 1;
       if (result.status === "passed") {
         summary[result.execution_id].passed += 1;
@@ -445,14 +555,47 @@ export function ExecutionsPage() {
       } else if (result.status === "blocked") {
         summary[result.execution_id].blocked += 1;
       }
+
+      if (typeof result.duration_ms === "number") {
+        summary[result.execution_id].timedCount += 1;
+        summary[result.execution_id].totalDurationMs += result.duration_ms;
+      }
+
+      if (result.created_at && (!summary[result.execution_id].latestActivityAt || result.created_at > summary[result.execution_id].latestActivityAt!)) {
+        summary[result.execution_id].latestActivityAt = result.created_at;
+      }
     });
 
     Object.values(summary).forEach((item) => {
       item.passRate = item.total ? Math.round((item.passed / item.total) * 100) : 0;
+      item.avgDurationMs = item.timedCount ? Math.round(item.totalDurationMs / item.timedCount) : null;
     });
 
     return summary;
   }, [allExecutionResults]);
+
+  const executionById = useMemo(
+    () =>
+      executions.reduce<Record<string, Execution>>((accumulator, execution) => {
+        accumulator[execution.id] = execution;
+        return accumulator;
+      }, {}),
+    [executions]
+  );
+
+  const resolvePersistedCaseDurationMs = (testCaseId: string, existing?: ExecutionResult) => {
+    const startedAt =
+      caseTimerStartedAtById[testCaseId] ||
+      toTimestamp(existing?.created_at) ||
+      toTimestamp(selectedExecution?.started_at);
+
+    if (!startedAt) {
+      return existing?.duration_ms ?? null;
+    }
+
+    const computed = Math.max(Date.now() - startedAt, 0);
+    return typeof existing?.duration_ms === "number" ? Math.max(existing.duration_ms, computed) : computed;
+  };
 
   const refreshExecutionScope = async (executionId = selectedExecutionId) => {
     await Promise.all([
@@ -519,12 +662,14 @@ export function ExecutionsPage() {
       .map((step) => step.id);
     const aggregateStatus = deriveCaseStatusFromSteps(caseStepIds, mergedStatuses);
     const logs = stringifyExecutionLogs({ stepStatuses: mergedStatuses, stepNotes: mergedNotes });
+    const durationMs = resolvePersistedCaseDurationMs(testCaseId, existing);
 
     if (existing) {
       await updateResult.mutateAsync({
         id: existing.id,
         input: {
           status: aggregateStatus,
+          duration_ms: durationMs ?? undefined,
           logs,
           error: aggregateStatus === "failed" ? "Step failed during execution" : ""
         }
@@ -535,6 +680,7 @@ export function ExecutionsPage() {
             ? {
                 ...item,
                 status: aggregateStatus,
+                duration_ms: durationMs,
                 logs,
                 error: aggregateStatus === "failed" ? "Step failed during execution" : null
               }
@@ -555,6 +701,7 @@ export function ExecutionsPage() {
       test_case_id: testCaseId,
       app_type_id: scopedAppTypeId,
       status: aggregateStatus,
+      duration_ms: durationMs ?? undefined,
       logs,
       error: aggregateStatus === "failed" ? "Step failed during execution" : undefined,
       executed_by: session!.user.id
@@ -570,7 +717,7 @@ export function ExecutionsPage() {
         suite_name: currentCaseSnapshot.suite_name,
         app_type_id: scopedAppTypeId,
         status: aggregateStatus,
-        duration_ms: null,
+        duration_ms: durationMs,
         error: aggregateStatus === "failed" ? "Step failed during execution" : null,
         logs,
         executed_by: session!.user.id
@@ -664,6 +811,30 @@ export function ExecutionsPage() {
       syncExecutionSearchParams(executionId, testCaseId);
     }
   };
+
+  useEffect(() => {
+    if (!isExecutionStarted || isExecutionLocked || !selectedTestCaseId) {
+      return;
+    }
+
+    setCaseTimerStartedAtById((current) =>
+      current[selectedTestCaseId] ? current : { ...current, [selectedTestCaseId]: Date.now() }
+    );
+  }, [isExecutionLocked, isExecutionStarted, selectedTestCaseId]);
+
+  const resolveCaseDurationMs = (testCaseId: string, result?: ExecutionResult | null) => {
+    if (typeof result?.duration_ms === "number") {
+      return result.duration_ms;
+    }
+
+    const startedAt = caseTimerStartedAtById[testCaseId];
+    if (startedAt && isExecutionStarted && !isExecutionLocked) {
+      return Math.max(liveNow - startedAt, 0);
+    }
+
+    return null;
+  };
+
   const selectedStepProgress = useMemo(() => {
     const passedCount = selectedSteps.filter((step) => stepStatuses[step.id] === "passed").length;
     const failedCount = selectedSteps.filter((step) => stepStatuses[step.id] === "failed").length;
@@ -678,6 +849,69 @@ export function ExecutionsPage() {
     };
   }, [selectedSteps, stepStatuses]);
 
+  const selectedExecutionDurationMs = useMemo(
+    () => computeExecutionDurationMs(selectedExecution?.started_at, selectedExecution?.ended_at, liveNow),
+    [liveNow, selectedExecution?.ended_at, selectedExecution?.started_at]
+  );
+
+  const selectedCaseDurationMs = useMemo(
+    () => (selectedExecutionCase ? resolveCaseDurationMs(selectedExecutionCase.id, selectedExecutionResult) : null),
+    [caseTimerStartedAtById, isExecutionLocked, isExecutionStarted, liveNow, selectedExecutionCase, selectedExecutionResult]
+  );
+
+  const averageCaseDurationMs = useMemo(
+    () => averageDuration(executionResults.map((result) => result.duration_ms)),
+    [executionResults]
+  );
+
+  const suiteDurationById = useMemo(() => {
+    return executionSuites.reduce<Record<string, number | null>>((accumulator, suite) => {
+      const suiteCases = displayCasesBySuiteId[suite.id] || [];
+      const total = suiteCases.reduce((sum, testCase) => {
+        const duration = resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]);
+        return sum + (duration || 0);
+      }, 0);
+      accumulator[suite.id] = total > 0 ? total : null;
+      return accumulator;
+    }, {});
+  }, [displayCasesBySuiteId, executionSuites, resultByCaseId, caseTimerStartedAtById, isExecutionLocked, isExecutionStarted, liveNow]);
+
+  const executionResultsWithTiming = useMemo(
+    () => executionResults.filter((result) => typeof result.duration_ms === "number").length,
+    [executionResults]
+  );
+
+  const queuedCases = useMemo(
+    () => executionCaseOrder.filter((testCase) => caseDerivedStatus(testCase) === "queued"),
+    [executionCaseOrder, resultByCaseId]
+  );
+
+  const nextFocusCase = useMemo(
+    () => blockingCases[0] || queuedCases[0] || executionCaseOrder[0] || null,
+    [blockingCases, executionCaseOrder, queuedCases]
+  );
+
+  const selectedCaseHistory = useMemo(
+    () =>
+      selectedTestCaseId
+        ? allExecutionResults
+            .filter((result) => result.test_case_id === selectedTestCaseId)
+            .slice()
+            .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")))
+        : [],
+    [allExecutionResults, selectedTestCaseId]
+  );
+
+  const resolvedStepNoteCount = useMemo(
+    () => Object.values(stepNotes).filter((value) => value.trim()).length,
+    [stepNotes]
+  );
+
+  const selectedExecutionAppTypeLabel =
+    appTypes.find((appType) => appType.id === selectedExecution?.app_type_id)?.name || "No app type scoped";
+  const remainingCaseCount = Math.max(executionProgress.totalCases - executionProgress.completedCases, 0);
+  const selectedCaseStatusLabel = selectedExecutionCase ? caseDerivedStatus(selectedExecutionCase) : executionProgress.derivedStatus;
+
   const filteredExecutions = useMemo(() => {
     const search = deferredExecutionSearch.trim().toLowerCase();
 
@@ -691,9 +925,6 @@ export function ExecutionsPage() {
     });
   }, [deferredExecutionSearch, executions, projects]);
 
-  const currentExecutionStatus = selectedExecution?.status || "queued";
-  const isExecutionStarted = currentExecutionStatus === "running";
-  const isExecutionLocked = currentExecutionStatus === "completed" || currentExecutionStatus === "failed";
   const canCreateExecution = Boolean(projectId && appTypeId && selectedSuiteIds.length);
   const selectedScopeSuites = useMemo(
     () => scopeSuites.filter((suite) => selectedSuiteIds.includes(suite.id)),
@@ -712,12 +943,14 @@ export function ExecutionsPage() {
     const existing = fresh.find((item) => item.test_case_id === testCaseId);
     const prev = parseExecutionLogs(existing?.logs || null);
     const logs = stringifyExecutionLogs({ stepStatuses: prev.stepStatuses || {}, stepNotes: prev.stepNotes || {} });
+    const durationMs = resolvePersistedCaseDurationMs(testCaseId, existing);
 
     if (existing) {
       await updateResult.mutateAsync({
         id: existing.id,
         input: {
           status,
+          duration_ms: durationMs ?? undefined,
           logs,
           error: status === "failed" ? "Marked at suite level" : ""
         }
@@ -725,7 +958,7 @@ export function ExecutionsPage() {
       queryClient.setQueryData<ExecutionResult[]>(["execution-results", selectedExecution.id], (current = []) =>
         current.map((item) =>
           item.id === existing.id
-            ? { ...item, status, logs, error: status === "failed" ? "Marked at suite level" : null }
+            ? { ...item, status, duration_ms: durationMs, logs, error: status === "failed" ? "Marked at suite level" : null }
             : item
         )
       );
@@ -737,6 +970,7 @@ export function ExecutionsPage() {
       test_case_id: testCaseId,
       app_type_id: scopedAppTypeId,
       status,
+      duration_ms: durationMs ?? undefined,
       logs,
       error: status === "failed" ? "Marked at suite level" : undefined,
       executed_by: session!.user.id
@@ -752,7 +986,7 @@ export function ExecutionsPage() {
         suite_name: currentCaseSnapshot.suite_name,
         app_type_id: scopedAppTypeId,
         status,
-        duration_ms: null,
+        duration_ms: durationMs,
         error: status === "failed" ? "Marked at suite level" : null,
         logs,
         executed_by: session!.user.id
@@ -832,50 +1066,102 @@ export function ExecutionsPage() {
         projects={projects}
       />
 
-      <Panel
-        title="Run health"
-        subtitle={selectedExecution ? "Current execution summary and immediate blockers." : "Create or select an execution to inspect its health."}
+      <ExecutionAccordionPanel
+        className="execution-health-panel"
+        isExpanded={isExecutionHealthExpanded}
+        onToggle={() => setIsExecutionHealthExpanded((current) => !current)}
+        title="Execution command center"
+        subtitle={selectedExecution ? "Operate the active run with live timing, failure pressure, and next-action guidance." : "Create or select an execution to inspect its health."}
       >
         {selectedExecution ? (
-          <div className="detail-stack">
-            <div className="metric-strip">
-              <div className="mini-card">
-                <strong>{executionProgress.percent}%</strong>
-                <span>{executionProgress.completedCases}/{executionProgress.totalCases} cases actioned</span>
-              </div>
-              <div className="mini-card">
-                <strong>{executionStatusCounts.failed}</strong>
-                <span>Failed cases</span>
-              </div>
-              <div className="mini-card">
-                <strong>{executionStatusCounts.blocked}</strong>
-                <span>Blocked cases</span>
-              </div>
-              <div className="mini-card">
-                <strong>{snapshotCases.length}</strong>
-                <span>Preserved snapshot cases</span>
-              </div>
-            </div>
+          <div className="execution-health-layout">
+            <div className="execution-health-hero">
+              <ExecutionOverviewOrb
+                blockedCount={executionStatusCounts.blocked}
+                failedCount={executionStatusCounts.failed}
+                passedCount={executionStatusCounts.passed}
+                percent={executionProgress.percent}
+                totalCount={executionProgress.totalCases}
+              />
 
-            <ExecutionContextSnapshotSummary execution={selectedExecution} />
+              <div className="execution-health-copy">
+                <div className="execution-health-status-row">
+                  <StatusBadge value={currentExecutionStatus} />
+                  <span className="count-pill">{selectedExecutionAppTypeLabel}</span>
+                  <span className="execution-health-trigger">{(selectedExecution.trigger || "manual").toUpperCase()} trigger</span>
+                </div>
 
-            <div className="stack-list">
-              {blockingCases.slice(0, 3).map((testCase) => (
-                <button className="stack-item stack-item-button" key={testCase.id} onClick={() => focusExecutionCase(testCase.id)} type="button">
-                  <div>
-                    <strong>{testCase.title}</strong>
-                    <span>{testCase.description || "Failure or block needs investigation."}</span>
+                <div className="execution-health-heading">
+                  <strong>{selectedExecution.name || "Unnamed execution"}</strong>
+                  <span>{selectedExecutionSuiteIds.length} suites snapped into this run with {executionProgress.totalCases} cases preserved for execution evidence.</span>
+                </div>
+
+                <ProgressMeter
+                  detail={`${executionStatusCounts.passed} passed · ${executionStatusCounts.failed} failed · ${executionStatusCounts.blocked} blocked · ${remainingCaseCount} remaining`}
+                  label="Run completion"
+                  segments={buildProgressSegments(
+                    executionStatusCounts.passed,
+                    executionStatusCounts.failed,
+                    executionStatusCounts.blocked,
+                    executionProgress.totalCases
+                  )}
+                  value={executionProgress.percent}
+                />
+
+                <div className="execution-health-timeline">
+                  <div className="execution-timeline-item">
+                    <span>Started</span>
+                    <strong>{formatExecutionTimestamp(selectedExecution.started_at, currentExecutionStatus === "queued" ? "Not started yet" : "Waiting to start")}</strong>
                   </div>
-                  <StatusBadge value={caseDerivedStatus(testCase)} />
-                </button>
-              ))}
-              {!blockingCases.length ? <div className="empty-state compact">No blockers are active in this run.</div> : null}
+                  <div className="execution-timeline-item">
+                    <span>Ended</span>
+                    <strong>{formatExecutionTimestamp(selectedExecution.ended_at, currentExecutionStatus === "running" ? "Live run" : "Not finished yet")}</strong>
+                  </div>
+                  <div className="execution-timeline-item">
+                    <span>Cases in scope</span>
+                    <strong>{executionProgress.totalCases}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="execution-health-glance">
+                <div className="execution-glance-card">
+                  <span>{currentExecutionStatus === "running" ? "Elapsed run time" : "Run duration"}</span>
+                  <strong>{formatDuration(selectedExecutionDurationMs, currentExecutionStatus === "queued" ? "Not started" : "Awaiting timing")}</strong>
+                  <small>{selectedExecutionDurationMs ? `${executionProgress.completedCases} cases touched so far` : "Timing begins when the run starts"}</small>
+                </div>
+                <div className="execution-glance-card">
+                  <span>Average case duration</span>
+                  <strong>{formatDuration(averageCaseDurationMs, executionResultsWithTiming ? "Awaiting timing" : "No case timing yet")}</strong>
+                  <small>{executionResultsWithTiming ? `${executionResultsWithTiming} cases already have stored duration` : "Capture evidence to unlock trend timing"}</small>
+                </div>
+                <div className="execution-glance-card">
+                  <span>Remaining queue</span>
+                  <strong>{remainingCaseCount}</strong>
+                  <small>{blockingCases.length ? `${blockingCases.length} blockers need triage first` : "No blockers currently slowing the run"}</small>
+                </div>
+                <div className="execution-glance-card">
+                  <span>Evidence records</span>
+                  <strong>{executionResults.length}</strong>
+                  <small>{executionResults.length ? `${executionStatusCounts.failed} failure records logged so far` : "No case evidence captured yet"}</small>
+                </div>
+              </div>
             </div>
+
+            <ExecutionAccordionSection
+              className="execution-health-support"
+              isExpanded={isExecutionSupportExpanded}
+              onToggle={() => setIsExecutionSupportExpanded((current) => !current)}
+              summary="Keep the environment, configuration, and data snapshots visible while you execute."
+              title="Execution context"
+            >
+              <ExecutionContextSnapshotSummary execution={selectedExecution} />
+            </ExecutionAccordionSection>
           </div>
         ) : (
           <div className="empty-state compact">No execution selected yet. Open the create dialog to start a new run.</div>
         )}
-      </Panel>
+      </ExecutionAccordionPanel>
 
       <div
         className={[
@@ -901,8 +1187,8 @@ export function ExecutionsPage() {
                   Minimize
                 </button>
               }
-              title="Execution list"
-              subtitle="Search and switch between recent runs."
+              title="Runs"
+              subtitle="Switch between recent executions with enough signal to know where to dive in."
             >
               <div className="execution-panel-body execution-panel-body--list">
                 <div className="design-list-toolbar">
@@ -928,7 +1214,7 @@ export function ExecutionsPage() {
                     className="execution-list-virtual"
                     emptyState={<div className="empty-state compact">No executions created yet.</div>}
                     fillHeight
-                    itemHeight={224}
+                    itemHeight={264}
                     itemKey={(execution) => execution.id}
                     items={filteredExecutions}
                     renderItem={(execution: Execution) => (
@@ -938,6 +1224,10 @@ export function ExecutionsPage() {
                         type="button"
                       >
                         <div className="tile-card-main">
+                          <div className="execution-card-topline">
+                            <span className="execution-card-time">{formatExecutionTimestamp(execution.started_at, execution.status === "queued" ? "Queued" : "Waiting to start")}</span>
+                            <span className="execution-card-time">{formatDuration(computeExecutionDurationMs(execution.started_at, execution.ended_at, liveNow), execution.status === "queued" ? "Not started" : "Awaiting timing")}</span>
+                          </div>
                           <div className="tile-card-header">
                             <div className="record-card-icon execution">EX</div>
                             <div className="tile-card-title-group">
@@ -952,6 +1242,7 @@ export function ExecutionsPage() {
                             <span className="tile-metric">{execution.suite_ids.length} suites</span>
                             <span className="tile-metric">{executionSummaryById[execution.id]?.total || 0} results</span>
                             <span className="tile-metric">{executionSummaryById[execution.id]?.failed || 0} failed</span>
+                            <span className="tile-metric">{formatDuration(executionSummaryById[execution.id]?.avgDurationMs, "No avg timing")}</span>
                           </div>
                           <ProgressMeter
                             detail={`${executionSummaryById[execution.id]?.passed || 0} passed · ${executionSummaryById[execution.id]?.failed || 0} failed · ${executionSummaryById[execution.id]?.blocked || 0} blocked`}
@@ -963,6 +1254,9 @@ export function ExecutionsPage() {
                             )}
                             value={executionSummaryById[execution.id]?.passRate || 0}
                           />
+                          <div className="execution-card-footer">
+                            <span>{executionSummaryById[execution.id]?.latestActivityAt ? `Latest evidence ${formatExecutionTimestamp(executionSummaryById[execution.id]?.latestActivityAt)}` : "No evidence recorded yet"}</span>
+                          </div>
                         </div>
                         <StatusBadge value={execution.status} />
                       </button>
@@ -978,7 +1272,7 @@ export function ExecutionsPage() {
           {isSuiteTreeMinimized ? (
             <ExecutionMinimizedRail
               count={selectedExecutionSuiteIds.length}
-              label="Suite tree"
+              label="Run board"
               onExpand={() => setIsSuiteTreeMinimized(false)}
             />
           ) : (
@@ -989,16 +1283,20 @@ export function ExecutionsPage() {
                   Minimize
                 </button>
               }
-              title="Suite tree"
-              subtitle={selectedExecution ? "The center workspace for run scope and case selection." : "Select an execution to see its snapped scope."}
+              title="Execution board"
+              subtitle={selectedExecution ? "Run through the snapped suite queue with stronger progress, timing, and next-case signal." : "Select an execution to see its snapped scope."}
             >
               {selectedExecution ? (
                 <div className="execution-panel-body execution-panel-body--tree">
                   <div className="suite-tree">
-                    <div className="metric-strip">
-                      <div className="mini-card">
+                    <div className="execution-board-hero">
+                      <div className="execution-board-primary">
+                        <div className="execution-section-head">
+                          <strong>Run board overview</strong>
+                          <span>Use this lane to move through suites, understand progress, and keep the next case obvious.</span>
+                        </div>
                         <ProgressMeter
-                          detail={`${executionStatusCounts.passed} passed · ${executionStatusCounts.failed} failed · ${executionStatusCounts.blocked} blocked`}
+                          detail={`${executionStatusCounts.passed} passed · ${executionStatusCounts.failed} failed · ${executionStatusCounts.blocked} blocked · ${remainingCaseCount} remaining`}
                           label="Execution progress"
                           segments={buildProgressSegments(
                             executionStatusCounts.passed,
@@ -1008,14 +1306,20 @@ export function ExecutionsPage() {
                           )}
                           value={executionProgress.percent}
                         />
-                      </div>
-                      <div className="mini-card">
-                        <strong>{executionProgress.completedCases}/{executionProgress.totalCases}</strong>
-                        <span>Completed cases</span>
-                      </div>
-                      <div className="mini-card">
-                        <strong>{selectedExecutionSuiteIds.length}</strong>
-                        <span>Scoped suites</span>
+                        <div className="execution-board-kpis">
+                          <div className="execution-board-kpi">
+                            <span>Completed</span>
+                            <strong>{executionProgress.completedCases}/{executionProgress.totalCases}</strong>
+                          </div>
+                          <div className="execution-board-kpi">
+                            <span>Scoped suites</span>
+                            <strong>{selectedExecutionSuiteIds.length}</strong>
+                          </div>
+                          <div className="execution-board-kpi">
+                            <span>Elapsed</span>
+                            <strong>{formatDuration(selectedExecutionDurationMs, currentExecutionStatus === "queued" ? "Not started" : "Awaiting timing")}</strong>
+                          </div>
+                        </div>
                       </div>
                     </div>
 
@@ -1051,6 +1355,7 @@ export function ExecutionsPage() {
                                   <span className="tile-metric">{suiteMetric?.count || 0} cases</span>
                                   <span className="tile-metric">{suiteMetric?.failedCount || 0} failed</span>
                                   <span className="tile-metric">{suiteMetric?.blockedCount || 0} blocked</span>
+                                  <span className="tile-metric">{formatDuration(suiteDurationById[suite.id], "No timing yet")}</span>
                                 </div>
                                 <ProgressMeter
                                   detail={`${suiteMetric?.passedCount || 0} passed · ${suiteMetric?.failedCount || 0} failed · ${suiteMetric?.blockedCount || 0} blocked`}
@@ -1091,7 +1396,13 @@ export function ExecutionsPage() {
                               {suiteCases.map((testCase) => (
                                 <button
                                   key={testCase.id}
-                                  className={selectedTestCaseId === testCase.id ? "record-card tile-card test-case-card is-active" : "record-card tile-card test-case-card"}
+                                  className={
+                                    selectedTestCaseId === testCase.id
+                                      ? "record-card tile-card test-case-card execution-case-card is-active"
+                                      : nextFocusCase?.id === testCase.id
+                                        ? "record-card tile-card test-case-card execution-case-card is-next"
+                                        : "record-card tile-card test-case-card execution-case-card"
+                                  }
                                   onClick={() => focusExecutionCase(testCase.id)}
                                   type="button"
                                 >
@@ -1106,7 +1417,8 @@ export function ExecutionsPage() {
                                     <p className="tile-card-description">{testCase.description || "No description recorded for this test case."}</p>
                                     <div className="tile-card-metrics">
                                       <span className="tile-metric">Priority P{testCase.priority || 3}</span>
-                                      <span className="tile-metric">Snapshot case</span>
+                                      <span className="tile-metric">{(stepsByCaseId[testCase.id] || []).length} steps</span>
+                                      <span className="tile-metric">{formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), "No timing yet")}</span>
                                     </div>
                                   </div>
                                   <StatusBadge value={caseDerivedStatus(testCase)} />
@@ -1131,30 +1443,47 @@ export function ExecutionsPage() {
         <div className="execution-column execution-column--detail">
           <Panel
             className="execution-panel execution-panel--detail"
-            title="Execution detail"
-            subtitle={selectedExecutionCase ? "Focused detail for the selected case." : "Select a case to view step execution and logs."}
+            title="Execution console"
+            subtitle={selectedExecutionCase ? "Run the selected case, capture evidence, and inspect history without leaving the console." : "Select a case to view step execution and logs."}
           >
             {selectedExecution ? (
               <div className="execution-panel-body execution-panel-body--detail">
                 <div className="detail-stack">
-                <div className="detail-summary">
-                  <strong>{selectedExecutionCase?.title || selectedExecution.name || "Unnamed execution"}</strong>
-                  <span>{selectedExecutionCase?.description || "Snapshot detail for the selected execution item."}</span>
-                  <span>Case status: {selectedExecutionCase ? caseDerivedStatus(selectedExecutionCase) : executionProgress.derivedStatus}</span>
-                </div>
+                  <div className="execution-detail-hero">
+                    <div className="execution-detail-heading">
+                      <div className="execution-health-status-row">
+                        <StatusBadge value={selectedCaseStatusLabel} />
+                        {selectedExecutionCase?.suite_name ? <span className="count-pill">{selectedExecutionCase.suite_name}</span> : null}
+                        <span className="execution-health-trigger">{selectedExecutionCase ? "Selected case" : "Run overview"}</span>
+                      </div>
+                      <strong>{selectedExecutionCase?.title || selectedExecution.name || "Unnamed execution"}</strong>
+                      <span>{selectedExecutionCase?.description || "Select a case from the run board to execute its steps and capture evidence."}</span>
+                    </div>
 
-                <SubnavTabs
-                  items={[
-                    { value: "overview", label: "Overview", meta: `${selectedSteps.length} steps` },
-                    { value: "logs", label: "Logs", meta: selectedExecutionResult?.status || "none" },
-                    { value: "failures", label: "Failures", meta: `${blockingCases.length}` }
-                  ]}
-                  onChange={setActiveTab}
-                  value={activeTab}
-                />
+                    <div className="execution-detail-glance">
+                      <div className="execution-detail-card">
+                        <span>Case duration</span>
+                        <strong>{formatDuration(selectedCaseDurationMs, selectedExecutionCase ? "No timing yet" : "Select a case")}</strong>
+                        <small>{selectedExecutionResult?.created_at ? `Last evidence ${formatExecutionTimestamp(selectedExecutionResult.created_at)}` : "Duration appears as the case is executed"}</small>
+                      </div>
+                      <div className="execution-detail-card">
+                        <span>Step completion</span>
+                        <strong>{selectedSteps.length ? `${selectedStepProgress.percent}%` : "0%"}</strong>
+                        <small>{selectedSteps.length ? `${selectedStepProgress.passedCount + selectedStepProgress.failedCount}/${selectedSteps.length} steps resolved` : "No steps loaded for this case"}</small>
+                      </div>
+                      <div className="execution-detail-card">
+                        <span>Evidence notes</span>
+                        <strong>{resolvedStepNoteCount}</strong>
+                        <small>{resolvedStepNoteCount ? "Comments captured for this case" : "No comments captured yet"}</small>
+                      </div>
+                    </div>
+                  </div>
 
-                {activeTab === "overview" ? (
-                  <div className="detail-stack">
+                  <div className="execution-control-strip">
+                    <div className="execution-control-copy">
+                      <strong>{currentExecutionStatus === "running" ? "Execution is live" : currentExecutionStatus === "queued" ? "Execution ready to start" : "Execution locked"}</strong>
+                      <span>{currentExecutionStatus === "running" ? `${formatDuration(selectedExecutionDurationMs, "Live")} elapsed across the run.` : currentExecutionStatus === "queued" ? "Start the run before step-level result capture." : "This execution has been completed. Evidence remains available for review."}</span>
+                    </div>
                     <div className="action-row">
                       <button
                         className="ghost-button"
@@ -1173,173 +1502,218 @@ export function ExecutionsPage() {
                         {completeExecution.isPending ? "Completing…" : "Complete execution"}
                       </button>
                     </div>
+                  </div>
 
-                    {selectedExecutionCase ? (
-                      <div className="mini-card">
-                        <ProgressMeter
-                          detail={`${selectedStepProgress.passedCount} passed · ${selectedStepProgress.failedCount} failed · ${selectedStepProgress.pendingCount} pending`}
-                          label="Step progress"
-                          segments={buildProgressSegments(
-                            selectedStepProgress.passedCount,
-                            selectedStepProgress.failedCount,
-                            0,
-                            selectedSteps.length
-                          )}
-                          value={selectedStepProgress.percent}
-                        />
-                      </div>
-                    ) : null}
+                  <SubnavTabs
+                    items={[
+                      { value: "overview", label: "Overview", meta: `${selectedSteps.length} steps` },
+                      { value: "logs", label: "Logs", meta: selectedExecutionResult?.status || "none" },
+                      { value: "failures", label: "Failures", meta: `${blockingCases.length}` },
+                      { value: "history", label: "History", meta: `${selectedCaseHistory.length}` }
+                    ]}
+                    onChange={setActiveTab}
+                    value={activeTab}
+                  />
 
-                    {!selectedExecutionCase ? <div className="empty-state compact">Select a case from the suite tree to run its steps.</div> : null}
-                    {selectedExecutionCase && !selectedSteps.length ? <div className="empty-state compact">No snapshot steps are available for this case.</div> : null}
-
-                    {selectedSteps.length ? (
-                      <div className="execution-steps-toolbar">
-                        <label className="execution-select-all">
-                          <input
-                            checked={selectedSteps.length > 0 && bulkSelectedStepIds.length === selectedSteps.length}
-                            onChange={() => {
-                              if (bulkSelectedStepIds.length === selectedSteps.length) {
-                                setBulkSelectedStepIds([]);
-                              } else {
-                                setBulkSelectedStepIds(selectedSteps.map((step) => step.id));
-                              }
-                            }}
-                            type="checkbox"
+                  {activeTab === "overview" ? (
+                    <div className="detail-stack">
+                      {selectedExecutionCase ? (
+                        <div className="execution-step-progress-card">
+                          <ProgressMeter
+                            detail={`${selectedStepProgress.passedCount} passed · ${selectedStepProgress.failedCount} failed · ${selectedStepProgress.pendingCount} pending`}
+                            label="Step progress"
+                            segments={buildProgressSegments(
+                              selectedStepProgress.passedCount,
+                              selectedStepProgress.failedCount,
+                              0,
+                              selectedSteps.length
+                            )}
+                            value={selectedStepProgress.percent}
                           />
-                          <span>Select all steps</span>
-                        </label>
-                        <div className="execution-steps-bulk-buttons">
-                          <button
-                            className="ghost-button"
-                            disabled={!isExecutionStarted || isExecutionLocked || !bulkSelectedStepIds.length}
-                            onClick={() => void handleBulkStepStatus("passed", "selected")}
-                            type="button"
-                          >
-                            Pass selected
-                          </button>
-                          <button
-                            className="ghost-button danger"
-                            disabled={!isExecutionStarted || isExecutionLocked || !bulkSelectedStepIds.length}
-                            onClick={() => void handleBulkStepStatus("failed", "selected")}
-                            type="button"
-                          >
-                            Fail selected
-                          </button>
-                          <button
-                            className="ghost-button"
-                            disabled={!isExecutionStarted || isExecutionLocked}
-                            onClick={() => void handleBulkStepStatus("passed", "all")}
-                            type="button"
-                          >
-                            Pass all steps
-                          </button>
-                          <button
-                            className="ghost-button danger"
-                            disabled={!isExecutionStarted || isExecutionLocked}
-                            onClick={() => void handleBulkStepStatus("failed", "all")}
-                            type="button"
-                          >
-                            Fail all steps
-                          </button>
                         </div>
-                      </div>
-                    ) : null}
+                      ) : null}
 
-                    <div className="execution-step-table" role="table" aria-label="Test steps for this case">
-                      <div className="execution-step-table-head" role="row">
-                        <span className="execution-step-col-check" role="columnheader" />
-                        <span className="execution-step-col-order" role="columnheader">
-                          #
-                        </span>
-                        <span className="execution-step-col-action" role="columnheader">
-                          Action
-                        </span>
-                        <span className="execution-step-col-expected" role="columnheader">
-                          Expected
-                        </span>
-                        <span className="execution-step-col-status" role="columnheader">
-                          Result
-                        </span>
-                        <span className="execution-step-col-actions" role="columnheader">
-                          Mark
-                        </span>
-                        <span className="execution-step-col-note" role="columnheader">
-                          Comment / log
-                        </span>
-                      </div>
-                      <div className="execution-step-table-body">
-                        {selectedSteps.map((step) => {
-                          const rowStatus = stepStatuses[step.id];
-                          return (
-                            <ExecutionCompactStepRow
-                              key={step.id}
-                              isLocked={!isExecutionStarted || isExecutionLocked}
-                              isSelected={bulkSelectedStepIds.includes(step.id)}
-                              note={stepNotes[step.id] || ""}
-                              onFail={() => void handleRecordStep(step.id, "failed")}
-                              onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
-                              onPass={() => void handleRecordStep(step.id, "passed")}
-                              onToggleSelect={(checked) =>
-                                setBulkSelectedStepIds((current) =>
-                                  checked ? [...new Set([...current, step.id])] : current.filter((id) => id !== step.id)
-                                )
-                              }
-                              status={rowStatus || "queued"}
-                              step={step}
+                      {!selectedExecutionCase ? <div className="empty-state compact">Select a case from the execution board to run its steps.</div> : null}
+                      {selectedExecutionCase && !selectedSteps.length ? <div className="empty-state compact">No snapshot steps are available for this case.</div> : null}
+
+                      {selectedSteps.length ? (
+                        <div className="execution-steps-toolbar">
+                          <label className="execution-select-all">
+                            <input
+                              checked={selectedSteps.length > 0 && bulkSelectedStepIds.length === selectedSteps.length}
+                              onChange={() => {
+                                if (bulkSelectedStepIds.length === selectedSteps.length) {
+                                  setBulkSelectedStepIds([]);
+                                } else {
+                                  setBulkSelectedStepIds(selectedSteps.map((step) => step.id));
+                                }
+                              }}
+                              type="checkbox"
                             />
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {!isExecutionStarted && !isExecutionLocked ? <div className="empty-state compact">Start the execution to enable step actions.</div> : null}
-                    {isExecutionLocked ? <div className="empty-state compact">This execution is locked because it has been completed.</div> : null}
-                  </div>
-                ) : null}
-
-                {activeTab === "logs" ? (
-                  <div className="stack-list execution-logs-stack">
-                    {selectedExecutionResult ? (
-                      <div className="detail-summary execution-logs-case">
-                        <strong>{selectedExecutionResult.test_case_title || selectedExecutionCase?.title || "Selected case logs"}</strong>
-                        {selectedExecutionResult.error ? <span className="execution-log-error">{selectedExecutionResult.error}</span> : null}
-                        <ExecutionStructuredLogView logsJson={selectedExecutionResult.logs} steps={selectedSteps} />
-                      </div>
-                    ) : (
-                      <div className="empty-state compact">No logs yet for the selected case.</div>
-                    )}
-
-                    {executionResults
-                      .filter((result) => result.id !== selectedExecutionResult?.id)
-                      .map((result) => (
-                        <div className="stack-item execution-log-row" key={result.id}>
-                          <div>
-                            <strong>{result.test_case_title || result.test_case_id}</strong>
-                            <ExecutionStructuredLogSummary logsJson={result.logs} />
-                            {result.error ? <span className="execution-log-error">{result.error}</span> : null}
+                            <span>Select all steps</span>
+                          </label>
+                          <div className="execution-steps-bulk-buttons">
+                            <button
+                              className="ghost-button"
+                              disabled={!isExecutionStarted || isExecutionLocked || !bulkSelectedStepIds.length}
+                              onClick={() => void handleBulkStepStatus("passed", "selected")}
+                              type="button"
+                            >
+                              Pass selected
+                            </button>
+                            <button
+                              className="ghost-button danger"
+                              disabled={!isExecutionStarted || isExecutionLocked || !bulkSelectedStepIds.length}
+                              onClick={() => void handleBulkStepStatus("failed", "selected")}
+                              type="button"
+                            >
+                              Fail selected
+                            </button>
+                            <button
+                              className="ghost-button"
+                              disabled={!isExecutionStarted || isExecutionLocked}
+                              onClick={() => void handleBulkStepStatus("passed", "all")}
+                              type="button"
+                            >
+                              Pass all steps
+                            </button>
+                            <button
+                              className="ghost-button danger"
+                              disabled={!isExecutionStarted || isExecutionLocked}
+                              onClick={() => void handleBulkStepStatus("failed", "all")}
+                              type="button"
+                            >
+                              Fail all steps
+                            </button>
                           </div>
-                          <StatusBadge value={result.status} />
                         </div>
-                      ))}
-                    {!executionResults.length ? <div className="empty-state compact">No execution results have been logged yet.</div> : null}
-                  </div>
-                ) : null}
+                      ) : null}
 
-                {activeTab === "failures" ? (
-                  <div className="stack-list">
-                    {blockingCases.map((testCase) => (
-                      <button className="stack-item stack-item-button" key={testCase.id} onClick={() => focusExecutionCase(testCase.id)} type="button">
-                        <div>
-                          <strong>{testCase.title}</strong>
-                          <span>{testCase.description || "Blocked or failed case."}</span>
+                      <div className="execution-step-table" role="table" aria-label="Test steps for this case">
+                        <div className="execution-step-table-head" role="row">
+                          <span className="execution-step-col-check" role="columnheader" />
+                          <span className="execution-step-col-order" role="columnheader">
+                            #
+                          </span>
+                          <span className="execution-step-col-action" role="columnheader">
+                            Action
+                          </span>
+                          <span className="execution-step-col-expected" role="columnheader">
+                            Expected
+                          </span>
+                          <span className="execution-step-col-status" role="columnheader">
+                            Result
+                          </span>
+                          <span className="execution-step-col-actions" role="columnheader">
+                            Mark
+                          </span>
+                          <span className="execution-step-col-note" role="columnheader">
+                            Comment / log
+                          </span>
                         </div>
-                        <StatusBadge value={caseDerivedStatus(testCase)} />
-                      </button>
-                    ))}
-                    {!blockingCases.length ? <div className="empty-state compact">No failed or blocked cases in this execution.</div> : null}
-                  </div>
-                ) : null}
+                        <div className="execution-step-table-body">
+                          {selectedSteps.map((step) => {
+                            const rowStatus = stepStatuses[step.id];
+                            return (
+                              <ExecutionCompactStepRow
+                                key={step.id}
+                                isLocked={!isExecutionStarted || isExecutionLocked}
+                                isSelected={bulkSelectedStepIds.includes(step.id)}
+                                note={stepNotes[step.id] || ""}
+                                onFail={() => void handleRecordStep(step.id, "failed")}
+                                onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
+                                onPass={() => void handleRecordStep(step.id, "passed")}
+                                onToggleSelect={(checked) =>
+                                  setBulkSelectedStepIds((current) =>
+                                    checked ? [...new Set([...current, step.id])] : current.filter((id) => id !== step.id)
+                                  )
+                                }
+                                status={rowStatus || "queued"}
+                                step={step}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {!isExecutionStarted && !isExecutionLocked ? <div className="empty-state compact">Start the execution to enable step actions.</div> : null}
+                      {isExecutionLocked ? <div className="empty-state compact">This execution is locked because it has been completed.</div> : null}
+                    </div>
+                  ) : null}
+
+                  {activeTab === "logs" ? (
+                    <div className="stack-list execution-logs-stack">
+                      {selectedExecutionResult ? (
+                        <div className="execution-log-focus">
+                          <div className="execution-section-head">
+                            <strong>{selectedExecutionResult.test_case_title || selectedExecutionCase?.title || "Selected case logs"}</strong>
+                            <span>{selectedExecutionResult.error || "Structured evidence and notes for the focused case."}</span>
+                          </div>
+                          <ExecutionStructuredLogView logsJson={selectedExecutionResult.logs} steps={selectedSteps} />
+                        </div>
+                      ) : (
+                        <div className="empty-state compact">No logs yet for the selected case.</div>
+                      )}
+
+                      {executionResults
+                        .filter((result) => result.id !== selectedExecutionResult?.id)
+                        .map((result) => (
+                          <div className="stack-item execution-log-row" key={result.id}>
+                            <div>
+                              <strong>{result.test_case_title || result.test_case_id}</strong>
+                              <ExecutionStructuredLogSummary logsJson={result.logs} />
+                              <span>{formatExecutionTimestamp(result.created_at, "Timestamp unavailable")} · {formatDuration(result.duration_ms, "No duration yet")}</span>
+                              {result.error ? <span className="execution-log-error">{result.error}</span> : null}
+                            </div>
+                            <StatusBadge value={result.status} />
+                          </div>
+                        ))}
+                      {!executionResults.length ? <div className="empty-state compact">No execution results have been logged yet.</div> : null}
+                    </div>
+                  ) : null}
+
+                  {activeTab === "failures" ? (
+                    <div className="stack-list">
+                      {blockingCases.map((testCase) => (
+                        <button className="stack-item stack-item-button" key={testCase.id} onClick={() => focusExecutionCase(testCase.id)} type="button">
+                          <div>
+                            <strong>{testCase.title}</strong>
+                            <span>{testCase.description || "Blocked or failed case."}</span>
+                            <small>{formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), "No timing yet")}</small>
+                          </div>
+                          <StatusBadge value={caseDerivedStatus(testCase)} />
+                        </button>
+                      ))}
+                      {!blockingCases.length ? <div className="empty-state compact">No failed or blocked cases in this execution.</div> : null}
+                    </div>
+                  ) : null}
+
+                  {activeTab === "history" ? (
+                    <div className="stack-list execution-history-stack">
+                      {selectedCaseHistory.map((result) => {
+                        const linkedExecution = executionById[result.execution_id];
+                        const isCurrentExecution = result.execution_id === selectedExecution.id;
+
+                        return (
+                          <button
+                            className={isCurrentExecution ? "stack-item stack-item-button execution-history-row is-current" : "stack-item stack-item-button execution-history-row"}
+                            key={result.id}
+                            onClick={() => focusExecutionCase(result.test_case_id, result.execution_id)}
+                            type="button"
+                          >
+                            <div>
+                              <strong>{linkedExecution?.name || result.test_case_title || "Execution record"}</strong>
+                              <span>{result.suite_name || "Recorded case evidence"} · {formatExecutionTimestamp(result.created_at, "Timestamp unavailable")}</span>
+                              <small>{formatDuration(result.duration_ms, "No duration yet")} · {isCurrentExecution ? "Current run" : "Open this execution"}</small>
+                            </div>
+                            <StatusBadge value={result.status} />
+                          </button>
+                        );
+                      })}
+                      {!selectedExecutionCase ? <div className="empty-state compact">Select a case to inspect its execution history across runs.</div> : null}
+                      {selectedExecutionCase && !selectedCaseHistory.length ? <div className="empty-state compact">No execution history exists yet for this selected case.</div> : null}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ) : (
@@ -1403,6 +1777,139 @@ export function ExecutionsPage() {
           }
         />
       ) : null}
+    </div>
+  );
+}
+
+function ExecutionAccordionPanel({
+  title,
+  subtitle,
+  isExpanded,
+  onToggle,
+  className = "",
+  children
+}: {
+  title: string;
+  subtitle?: string;
+  isExpanded: boolean;
+  onToggle: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className={`panel card execution-accordion-panel ${className}`.trim()}>
+      <button
+        aria-expanded={isExpanded}
+        className="execution-accordion-toggle execution-accordion-toggle--panel"
+        onClick={onToggle}
+        type="button"
+      >
+        <div className="execution-accordion-toggle-main">
+          <span aria-hidden="true" className={isExpanded ? "execution-accordion-icon is-expanded" : "execution-accordion-icon"}>
+            <ExecutionAccordionChevronIcon />
+          </span>
+          <div className="execution-accordion-toggle-copy">
+            <strong>{title}</strong>
+            {subtitle ? <span>{subtitle}</span> : null}
+          </div>
+        </div>
+        <div className="execution-accordion-toggle-meta">
+          <span className="execution-accordion-toggle-state">{isExpanded ? "Collapse" : "Expand"}</span>
+        </div>
+      </button>
+      {isExpanded ? <div className="execution-accordion-panel-body">{children}</div> : null}
+    </section>
+  );
+}
+
+function ExecutionAccordionSection({
+  title,
+  summary,
+  isExpanded,
+  onToggle,
+  className = "",
+  children
+}: {
+  title: string;
+  summary: string;
+  isExpanded: boolean;
+  onToggle: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className={`${isExpanded ? "execution-accordion-section is-expanded" : "execution-accordion-section"} ${className}`.trim()}>
+      <button
+        aria-expanded={isExpanded}
+        className="execution-accordion-toggle execution-accordion-toggle--section"
+        onClick={onToggle}
+        type="button"
+      >
+        <div className="execution-accordion-toggle-main">
+          <span aria-hidden="true" className={isExpanded ? "execution-accordion-icon is-expanded" : "execution-accordion-icon"}>
+            <ExecutionAccordionChevronIcon />
+          </span>
+          <div className="execution-accordion-toggle-copy">
+            <strong>{title}</strong>
+            <span>{summary}</span>
+          </div>
+        </div>
+        <div className="execution-accordion-toggle-meta">
+          <span className="execution-accordion-toggle-state">{isExpanded ? "Collapse" : "Expand"}</span>
+        </div>
+      </button>
+      {isExpanded ? <div className="execution-accordion-body">{children}</div> : null}
+    </section>
+  );
+}
+
+function ExecutionAccordionChevronIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width="18">
+      <path d="m9 6 6 6-6 6" />
+    </svg>
+  );
+}
+
+function ExecutionOverviewOrb({
+  passedCount,
+  failedCount,
+  blockedCount,
+  totalCount,
+  percent
+}: {
+  passedCount: number;
+  failedCount: number;
+  blockedCount: number;
+  totalCount: number;
+  percent: number;
+}) {
+  const safeTotal = Math.max(totalCount, 1);
+  const pendingCount = Math.max(totalCount - passedCount - failedCount - blockedCount, 0);
+  const passedStop = (passedCount / safeTotal) * 100;
+  const failedStop = passedStop + (failedCount / safeTotal) * 100;
+  const blockedStop = failedStop + (blockedCount / safeTotal) * 100;
+  const orbBackground = `conic-gradient(
+    #1aa96b 0% ${passedStop}%,
+    #d04668 ${passedStop}% ${failedStop}%,
+    #2d66e6 ${failedStop}% ${blockedStop}%,
+    rgba(94, 116, 146, 0.16) ${blockedStop}% 100%
+  )`;
+
+  return (
+    <div className="execution-overview-orb-shell">
+      <div className="execution-overview-orb" style={{ background: orbBackground }}>
+        <div className="execution-overview-orb-core">
+          <strong>{percent}%</strong>
+          <span>Run complete</span>
+        </div>
+      </div>
+      <div className="execution-overview-legend">
+        <span className="execution-legend-item tone-passed">{passedCount} passed</span>
+        <span className="execution-legend-item tone-failed">{failedCount} failed</span>
+        <span className="execution-legend-item tone-blocked">{blockedCount} blocked</span>
+        <span className="execution-legend-item tone-pending">{pendingCount} queued</span>
+      </div>
     </div>
   );
 }
@@ -1726,23 +2233,28 @@ function ExecutionContextSnapshotSummary({ execution }: { execution: Execution }
   ].filter(Boolean).join(" · ");
 
   return (
-    <div className="detail-summary execution-context-summary">
-      <strong>Attached execution context</strong>
-      <span>
-        {execution.test_environment
-          ? `${execution.test_environment.name}${environmentSummary?.base_url ? ` · ${environmentSummary.base_url}` : ""}`
-          : "No test environment attached."}
-      </span>
-      <span>
-        {execution.test_configuration
-          ? `${execution.test_configuration.name}${configurationTarget ? ` · ${configurationTarget}` : configurationSummary?.variables?.length ? ` · ${configurationSummary.variables.length} variables` : ""}`
-          : "No test configuration attached."}
-      </span>
-      <span>
-        {execution.test_data_set
-          ? `${execution.test_data_set.name}${dataSetSummary ? ` · ${dataSetSummary.mode === "table" ? `${dataSetSummary.rows.length} rows` : `${dataSetSummary.rows.length} pairs`}` : ""}`
-          : "No test data attached."}
-      </span>
+    <div className="execution-context-cards">
+      <div className="execution-context-card">
+        <span>Environment</span>
+        <strong>{execution.test_environment?.name || "No environment attached"}</strong>
+        <small>{environmentSummary?.base_url || environmentSummary?.browser || "No environment snapshot details recorded."}</small>
+      </div>
+      <div className="execution-context-card">
+        <span>Configuration</span>
+        <strong>{execution.test_configuration?.name || "No configuration attached"}</strong>
+        <small>{configurationTarget || (configurationSummary?.variables?.length ? `${configurationSummary.variables.length} variables available` : "No configuration snapshot details recorded.")}</small>
+      </div>
+      <div className="execution-context-card">
+        <span>Data set</span>
+        <strong>{execution.test_data_set?.name || "No data set attached"}</strong>
+        <small>
+          {dataSetSummary
+            ? dataSetSummary.mode === "table"
+              ? `${dataSetSummary.rows.length} table rows snapped`
+              : `${dataSetSummary.rows.length} key/value pairs snapped`
+            : "No data snapshot details recorded."}
+        </small>
+      </div>
     </div>
   );
 }
