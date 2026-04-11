@@ -48,6 +48,10 @@ type DraftTestStep = {
   id: string;
   action: string;
   expected_result: string;
+  group_id: string | null;
+  group_name: string | null;
+  group_kind: "local" | "reusable" | null;
+  reusable_group_id: string | null;
 };
 
 type SuiteCaseEditorSectionKey = "case" | "steps" | "history";
@@ -87,9 +91,25 @@ const normalizeDraftSteps = (steps: DraftTestStep[]) =>
     .map((step, index) => ({
       step_order: index + 1,
       action: step.action.trim(),
-      expected_result: step.expected_result.trim()
+      expected_result: step.expected_result.trim(),
+      group_id: step.group_id || undefined,
+      group_name: step.group_name || undefined,
+      group_kind: step.group_kind || undefined,
+      reusable_group_id: step.reusable_group_id || undefined
     }))
     .filter((step) => step.action || step.expected_result);
+
+const getSuiteStepKindMeta = (kind?: TestStep["group_kind"] | null) => {
+  if (kind === "reusable") {
+    return { label: "Shared step", tone: "shared" as const };
+  }
+
+  if (kind === "local") {
+    return { label: "Local group step", tone: "local" as const };
+  }
+
+  return { label: "Standard step", tone: "default" as const };
+};
 
 export function DesignPage() {
   const queryClient = useQueryClient();
@@ -189,7 +209,7 @@ export function DesignPage() {
   const deleteTestCaseMutation = useMutation({ mutationFn: api.testCases.delete });
   const createStepMutation = useMutation({ mutationFn: api.testSteps.create });
   const updateStepMutation = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: Partial<{ test_case_id: string; step_order: number; action: string; expected_result: string }> }) =>
+    mutationFn: ({ id, input }: { id: string; input: Partial<{ test_case_id: string; step_order: number; action: string; expected_result: string; group_id: string | null; group_name: string | null; group_kind: "local" | "reusable" | null; reusable_group_id: string | null }> }) =>
       api.testSteps.update(id, input)
   });
   const reorderStepsMutation = useMutation({
@@ -381,7 +401,11 @@ export function DesignPage() {
             test_case_id: selectedTestCaseId || "draft",
             step_order: index + 1,
             action: step.action,
-            expected_result: step.expected_result
+            expected_result: step.expected_result,
+            group_id: step.group_id,
+            group_name: step.group_name,
+            group_kind: step.group_kind,
+            reusable_group_id: step.reusable_group_id
           }))
         : sortedSteps,
     [draftSteps, isCreatingCase, selectedTestCaseId, sortedSteps]
@@ -1008,7 +1032,14 @@ export function DesignPage() {
 
     if (isCreatingCase) {
       const draftId = createDraftStepId();
-      setDraftSteps((current) => [...current, { id: draftId, ...normalizedDraft }]);
+      setDraftSteps((current) => [...current, {
+        id: draftId,
+        ...normalizedDraft,
+        group_id: null,
+        group_name: null,
+        group_kind: null,
+        reusable_group_id: null
+      }]);
       setExpandedStepIds((current) => [...new Set([...current, draftId])]);
       setNewStepDraft(EMPTY_STEP_DRAFT);
       setIsStepCreateVisible(false);
@@ -1036,7 +1067,11 @@ export function DesignPage() {
         test_case_id: selectedTestCase.id,
         step_order: nextStepOrder,
         action: normalizedDraft.action || null,
-        expected_result: normalizedDraft.expected_result || null
+        expected_result: normalizedDraft.expected_result || null,
+        group_id: null,
+        group_name: null,
+        group_kind: null,
+        reusable_group_id: null
       };
 
       updateStepsCache(selectedTestCase.id, (current) => [...current, optimisticStep]);
@@ -1065,7 +1100,11 @@ export function DesignPage() {
           test_case_id: step.test_case_id,
           step_order: step.step_order,
           action: draft.action,
-          expected_result: draft.expected_result
+          expected_result: draft.expected_result,
+          group_id: step.group_id || null,
+          group_name: step.group_name || null,
+          group_kind: step.group_kind || null,
+          reusable_group_id: step.reusable_group_id || null
         }
       });
 
@@ -1076,7 +1115,11 @@ export function DesignPage() {
                 ...item,
                 step_order: step.step_order,
                 action: draft.action || null,
-                expected_result: draft.expected_result || null
+                expected_result: draft.expected_result || null,
+                group_id: step.group_id || null,
+                group_name: step.group_name || null,
+                group_kind: step.group_kind || null,
+                reusable_group_id: step.reusable_group_id || null
               }
             : item
         )
@@ -2049,6 +2092,12 @@ function SuiteCaseEditorModal({
   const historySectionSummary = history.length
     ? "Review the latest preserved execution evidence for this reusable case."
     : "No execution history has been recorded yet for this case.";
+  const groupedStepCount = displaySteps.filter((step) => Boolean(step.group_id)).length;
+  const sharedGroupCount = new Set(
+    displaySteps
+      .filter((step) => step.group_kind === "reusable" && step.group_id)
+      .map((step) => step.group_id as string)
+  ).size;
 
   return (
     <div className="modal-backdrop" onClick={onClose} role="presentation">
@@ -2191,6 +2240,13 @@ function SuiteCaseEditorModal({
                     <button className="ghost-button" onClick={onCollapseAllSteps} type="button">
                       Collapse all
                     </button>
+                  </div>
+                ) : null}
+
+                {groupedStepCount ? (
+                  <div className="detail-summary">
+                    <strong>{groupedStepCount} grouped step{groupedStepCount === 1 ? "" : "s"} in this case</strong>
+                    <span>{sharedGroupCount ? `${sharedGroupCount} shared group snapshot${sharedGroupCount === 1 ? "" : "s"} are preserved in this suite editor.` : "Local step group metadata is preserved in this suite editor."}</span>
                   </div>
                 ) : null}
 
@@ -2375,6 +2431,7 @@ function EditableStepCard({
     action: stepDraft?.action || step.action || "",
     expected_result: stepDraft?.expected_result || step.expected_result || ""
   });
+  const stepKind = getSuiteStepKindMeta(step.group_kind);
 
   useEffect(() => {
     setDraft({
@@ -2384,10 +2441,22 @@ function EditableStepCard({
   }, [step.action, step.expected_result, step.id, stepDraft?.action, stepDraft?.expected_result]);
 
   return (
-    <article className={isExpanded ? "step-card is-expanded" : "step-card"}>
+    <article
+      className={[
+        isExpanded ? "step-card is-expanded" : "step-card",
+        step.group_kind === "reusable" ? "step-card--shared" : "",
+        step.group_kind === "local" ? "step-card--grouped" : ""
+      ].filter(Boolean).join(" ")}
+    >
       <button className="step-card-toggle" onClick={onToggle} type="button">
         <div className="step-card-summary">
-          <strong>Step {step.step_order}</strong>
+          <div className="step-card-summary-top">
+            <strong>Step {step.step_order}</strong>
+            <span className={["step-kind-badge", stepKind.tone === "default" ? "" : `is-${stepKind.tone}`].filter(Boolean).join(" ")}>
+              {stepKind.label}
+            </span>
+          </div>
+          {step.group_name ? <small className="suite-step-group-note">{step.group_name}</small> : null}
           <span>{draft.action || "No action written yet"}</span>
         </div>
         <span className="step-card-toggle-state">{isExpanded ? "Hide" : "Show"}</span>
@@ -2422,7 +2491,7 @@ function DraftStepCard({
   onMoveUp,
   onMoveDown
 }: {
-  step: { step_order: number; action: string; expected_result: string };
+  step: { step_order: number; action: string; expected_result: string; group_id?: string | null; group_name?: string | null; group_kind?: "local" | "reusable" | null; reusable_group_id?: string | null };
   canMoveUp: boolean;
   canMoveDown: boolean;
   onChange: (input: StepDraft) => void;
@@ -2430,11 +2499,25 @@ function DraftStepCard({
   onMoveUp: () => void;
   onMoveDown: () => void;
 }) {
+  const stepKind = getSuiteStepKindMeta(step.group_kind);
+
   return (
-    <article className="step-card is-expanded">
+    <article
+      className={[
+        "step-card is-expanded",
+        step.group_kind === "reusable" ? "step-card--shared" : "",
+        step.group_kind === "local" ? "step-card--grouped" : ""
+      ].filter(Boolean).join(" ")}
+    >
       <div className="step-card-top">
         <div className="step-card-summary">
-          <strong>Step {step.step_order}</strong>
+          <div className="step-card-summary-top">
+            <strong>Step {step.step_order}</strong>
+            <span className={["step-kind-badge", stepKind.tone === "default" ? "" : `is-${stepKind.tone}`].filter(Boolean).join(" ")}>
+              {stepKind.label}
+            </span>
+          </div>
+          {step.group_name ? <small className="suite-step-group-note">{step.group_name}</small> : null}
           <span>{step.action || step.expected_result || "Draft step details"}</span>
         </div>
       </div>

@@ -24,6 +24,12 @@ const selectRequirement = db.prepare(`
   WHERE id = ?
 `);
 
+const selectSharedStepGroup = db.prepare(`
+  SELECT id, app_type_id, name
+  FROM shared_step_groups
+  WHERE id = ?
+`);
+
 const insertTestCaseRecord = db.prepare(`
   INSERT INTO test_cases (id, app_type_id, suite_id, title, description, priority, status, requirement_id)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -106,8 +112,20 @@ const normalizePriority = (value) => {
 };
 
 const normalizeGroupKind = (value) => {
-  if (value === "local" || value === "reusable") {
-    return value;
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  const canonical = normalized.toLowerCase().replace(/[^a-z]/g, "");
+
+  if (canonical === "local" || canonical === "grouped") {
+    return "local";
+  }
+
+  if (canonical === "reusable" || canonical === "shared" || canonical === "sharedgroup" || canonical === "snapshot") {
+    return "reusable";
   }
 
   return null;
@@ -136,34 +154,76 @@ const normalizeSteps = (steps = []) => {
     }));
 };
 
-const splitImportValue = (value) => {
-  const normalized = normalizeText(value);
-
-  if (!normalized) {
+const splitImportSequence = (value) => {
+  if (value === undefined || value === null) {
     return [];
   }
 
-  return normalized
+  return String(value)
     .split(/\r?\n|\|/)
-    .map((item) => item.trim())
-    .filter(Boolean);
+    .map((item) => item.trim());
+};
+
+const pickImportSequenceValue = (items, index) => {
+  if (!items.length) {
+    return null;
+  }
+
+  if (index < items.length) {
+    return normalizeText(items[index]);
+  }
+
+  if (items.length === 1) {
+    return normalizeText(items[0]);
+  }
+
+  return null;
 };
 
 const buildStepsFromImportRow = (row) => {
-  const actions = splitImportValue(row.action);
-  const expectedResults = splitImportValue(row.expected_result || row.expectedResult);
+  const actions = splitImportSequence(row.action);
+  const expectedResults = splitImportSequence(row.expected_result || row.expectedResult);
+  const groupNames = splitImportSequence(row.step_group_name || row.stepGroupName);
+  const groupKinds = splitImportSequence(row.step_group_kind || row.stepGroupKind);
+  const sharedGroupIds = splitImportSequence(row.shared_group_id || row.sharedGroupId || row.reusable_group_id || row.reusableGroupId);
 
-  if (!actions.length && !expectedResults.length) {
+  if (!actions.length && !expectedResults.length && !groupNames.length && !groupKinds.length && !sharedGroupIds.length) {
     return [];
   }
 
-  const size = Math.max(actions.length, expectedResults.length, 1);
+  const size = Math.max(actions.length, expectedResults.length, groupNames.length, groupKinds.length, sharedGroupIds.length, 1);
+  let previousGroupSignature = null;
+  let currentGroupId = null;
 
-  return Array.from({ length: size }, (_, index) => ({
-    step_order: index + 1,
-    action: actions[index] || actions[0] || "",
-    expected_result: expectedResults[index] || expectedResults[0] || ""
-  }));
+  return Array.from({ length: size }, (_, index) => {
+    const action = pickImportSequenceValue(actions, index);
+    const expectedResult = pickImportSequenceValue(expectedResults, index);
+    const groupName = pickImportSequenceValue(groupNames, index);
+    const reusableGroupId = pickImportSequenceValue(sharedGroupIds, index);
+    const groupKind =
+      normalizeGroupKind(pickImportSequenceValue(groupKinds, index)) ||
+      (reusableGroupId ? "reusable" : groupName ? "local" : null);
+    const hasGroupMetadata = Boolean(groupName || reusableGroupId || groupKind);
+    const groupSignature = hasGroupMetadata ? `${groupKind || "local"}::${groupName || ""}::${reusableGroupId || ""}` : null;
+
+    if (groupSignature && groupSignature !== previousGroupSignature) {
+      currentGroupId = uuid();
+    } else if (!groupSignature) {
+      currentGroupId = null;
+    }
+
+    previousGroupSignature = groupSignature;
+
+    return {
+      step_order: index + 1,
+      action: action || "",
+      expected_result: expectedResult || "",
+      group_id: currentGroupId,
+      group_name: groupName,
+      group_kind: groupKind,
+      reusable_group_id: reusableGroupId
+    };
+  }).filter((step) => step.action || step.expected_result);
 };
 
 const ensureAppTypeExists = async (appTypeId) => {
@@ -313,6 +373,7 @@ exports.createTestCase = async (input) => {
 exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [] }) => {
   const resolvedAppTypeId = normalizeText(app_type_id);
   const defaultRequirementId = normalizeText(requirement_id);
+  const sharedGroupCache = new Map();
 
   if (!resolvedAppTypeId) {
     throw new Error("app_type_id is required");
@@ -333,6 +394,35 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [] })
 
   for (const [index, row] of rows.entries()) {
     try {
+      const importedSteps = buildStepsFromImportRow(row || {}).map((step) => ({ ...step }));
+
+      for (const step of importedSteps) {
+        if (step.group_kind !== "reusable") {
+          continue;
+        }
+
+        if (!step.reusable_group_id) {
+          step.group_kind = step.group_id ? "local" : null;
+          continue;
+        }
+
+        if (!sharedGroupCache.has(step.reusable_group_id)) {
+          sharedGroupCache.set(step.reusable_group_id, await selectSharedStepGroup.get(step.reusable_group_id));
+        }
+
+        const sharedGroup = sharedGroupCache.get(step.reusable_group_id);
+
+        if (!sharedGroup || sharedGroup.app_type_id !== resolvedAppTypeId) {
+          step.group_kind = step.group_id ? "local" : null;
+          step.reusable_group_id = null;
+          continue;
+        }
+
+        if (!step.group_name) {
+          step.group_name = sharedGroup.name;
+        }
+      }
+
       const response = await exports.createTestCase({
         app_type_id: resolvedAppTypeId,
         title: row?.title,
@@ -340,7 +430,7 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [] })
         priority: row?.priority,
         status: row?.status || "draft",
         requirement_ids: normalizeTextList([defaultRequirementId, row?.requirement_id, row?.requirementId]),
-        steps: buildStepsFromImportRow(row || {})
+        steps: importedSteps
       });
 
       created.push({

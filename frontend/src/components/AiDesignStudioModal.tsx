@@ -350,14 +350,22 @@ export function AiDesignStudioModal({
                         </div>
                       ) : null}
 
+                      <div className="detail-summary compact-summary">
+                        <strong>{item.step_count} standard step{item.step_count === 1 ? "" : "s"}</strong>
+                        <span>Accepted AI drafts start as standard steps. Add shared groups or group steps after they land in the library.</span>
+                      </div>
+
                       <div className="ai-case-steps">
                         {item.steps.map((step) => (
-                          <div className="segment" key={`${item.client_id}-${step.step_order}`}>
-                            <div>
-                              <strong>Step {step.step_order}</strong>
+                          <div className="ai-case-step-card" key={`${item.client_id}-${step.step_order}`}>
+                            <div className="step-card-summary">
+                              <div className="step-card-summary-top">
+                                <strong>Step {step.step_order}</strong>
+                                <span className="step-kind-badge">Standard step</span>
+                              </div>
                               <span>{step.action || "No action"}</span>
                             </div>
-                            <span>{step.expected_result || "No expected result"}</span>
+                            <span className="ai-case-step-expected">{step.expected_result || "No expected result"}</span>
                           </div>
                         ))}
                       </div>

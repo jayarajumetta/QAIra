@@ -193,6 +193,18 @@ function isStepGroupStart(steps: TestStep[], index: number) {
   return Boolean(currentStep?.group_id) && currentStep.group_id !== previousStep?.group_id;
 }
 
+function getExecutionStepKindMeta(kind?: TestStep["group_kind"] | null) {
+  if (kind === "reusable") {
+    return { label: "Shared group", detail: "Shared group snapshot", tone: "shared" as const };
+  }
+
+  if (kind === "local") {
+    return { label: "Local group", detail: "Local group snapshot", tone: "local" as const };
+  }
+
+  return { label: "Standard step", detail: "Standard step", tone: "default" as const };
+}
+
 function buildProgressSegments(
   passedCount: number,
   failedCount: number,
@@ -2513,11 +2525,18 @@ function ExecutionStepGroupRow({
   name: string;
   kind: TestStep["group_kind"];
 }) {
+  const stepKind = getExecutionStepKindMeta(kind || "local");
+
   return (
-    <div className="execution-step-group-row" role="row">
+    <div className={["execution-step-group-row", kind === "reusable" ? "is-shared-group" : "is-local-group"].join(" ")} role="row">
       <span className="execution-step-group-label" role="cell">
-        <strong>{name}</strong>
-        <span>{kind === "reusable" ? "Reusable group snapshot" : "Step group snapshot"}</span>
+        <span className="execution-step-group-label-main">
+          <strong>{name}</strong>
+          <span className={["step-kind-badge", stepKind.tone === "default" ? "" : `is-${stepKind.tone}`].filter(Boolean).join(" ")}>
+            {stepKind.label}
+          </span>
+        </span>
+        <span>{stepKind.detail}</span>
       </span>
     </div>
   );
@@ -2544,6 +2563,7 @@ function ExecutionCompactStepRow({
   onFail: () => void;
   onNoteBlur: (value: string) => void;
 }) {
+  const stepKind = getExecutionStepKindMeta(step.group_name ? step.group_kind || "local" : step.group_kind);
   const toneClass =
     status === "passed" ? "execution-step-row is-passed" : status === "failed" ? "execution-step-row is-failed" : "execution-step-row";
 
@@ -2561,9 +2581,19 @@ function ExecutionCompactStepRow({
       <span className="execution-step-col-order" role="cell">
         {step.step_order}
       </span>
-      <span className="execution-step-col-action execution-step-clamp" role="cell" title={step.action || ""}>
-        {step.action || "—"}
-      </span>
+      <div className="execution-step-col-action execution-step-copy" role="cell">
+        {step.group_name ? (
+          <div className="execution-step-badges">
+            <span className={["step-kind-badge", stepKind.tone === "default" ? "" : `is-${stepKind.tone}`].filter(Boolean).join(" ")}>
+              {stepKind.label}
+            </span>
+            <span className="execution-step-group-chip">{step.group_name}</span>
+          </div>
+        ) : null}
+        <span className="execution-step-clamp" title={step.action || ""}>
+          {step.action || "—"}
+        </span>
+      </div>
       <span className="execution-step-col-expected execution-step-clamp" role="cell" title={step.expected_result || ""}>
         {step.expected_result || "—"}
       </span>
@@ -2637,8 +2667,11 @@ function ExecutionStructuredLogView({ logsJson, steps }: { logsJson: string | nu
           {isStepGroupStart(steps, index) ? (
             <div className="execution-structured-log-row execution-structured-log-row--group">
               <strong>{step.group_name || "Step group"}</strong>
+              <span className={["step-kind-badge", step.group_kind === "reusable" ? "is-shared" : "is-local"].filter(Boolean).join(" ")}>
+                {step.group_kind === "reusable" ? "Shared group" : "Local group"}
+              </span>
               <span className="execution-structured-note">
-                {step.group_kind === "reusable" ? "Reusable group snapshot" : "Step group snapshot"}
+                {step.group_kind === "reusable" ? "Shared group snapshot" : "Local group snapshot"}
               </span>
             </div>
           ) : null}

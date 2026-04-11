@@ -661,7 +661,7 @@ export function RequirementsPage() {
       setIsAiStudioOpen(false);
       setPreviewCases([]);
       setPreviewMessage("");
-      showSuccess("AI-designed cases accepted and linked to the requirement.");
+      showSuccess("AI-designed cases accepted as standard steps and linked to the requirement.");
       await refresh();
       navigate("/test-cases");
     } catch (error) {

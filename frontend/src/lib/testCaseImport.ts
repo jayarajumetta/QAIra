@@ -4,6 +4,9 @@ export type ImportedTestCaseRow = {
   title: string;
   action?: string;
   expected_result?: string;
+  step_group_name?: string;
+  step_group_kind?: string;
+  shared_group_id?: string;
   description?: string;
   priority?: number;
   status?: string;
@@ -19,6 +22,9 @@ const HEADER_ALIASES: Record<keyof ImportedTestCaseRow, string[]> = {
   title: ["title", "testcasetitle", "testcase", "testcasename", "name"],
   action: ["action", "actions", "step", "steps", "teststep", "teststeps"],
   expected_result: ["expectedresult", "expectedresults", "expected", "result", "outcome"],
+  step_group_name: ["stepgroupname", "groupname", "sharedgroupname", "stepgroup", "group"],
+  step_group_kind: ["stepgroupkind", "groupkind", "sharedgroupkind", "grouptype", "grouprole"],
+  shared_group_id: ["sharedgroupid", "reusablegroupid", "stepgroupsourceid", "sharedgroupref"],
   description: ["description", "details", "notes", "scenario"],
   priority: ["priority", "severity"],
   status: ["status", "state"]

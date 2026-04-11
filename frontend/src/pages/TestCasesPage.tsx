@@ -110,14 +110,103 @@ const createDraftStepId = () =>
 const createDraftGroupId = () =>
   globalThis.crypto?.randomUUID?.() || `draft-group-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-const splitImportedStepValue = (value?: string) =>
+const splitImportedStepSequence = (value?: string) =>
   String(value || "")
     .split(/\r?\n|\|/)
-    .map((item) => item.trim())
-    .filter(Boolean);
+    .map((item) => item.trim());
 
-const countImportedSteps = (row: ImportedTestCaseRow) =>
-  Math.max(splitImportedStepValue(row.action).length, splitImportedStepValue(row.expected_result).length, 0);
+const pickImportedSequenceValue = (items: string[], index: number) => {
+  if (!items.length) {
+    return "";
+  }
+
+  if (index < items.length) {
+    return items[index] || "";
+  }
+
+  return items.length === 1 ? items[0] || "" : "";
+};
+
+const normalizeImportedGroupKind = (value?: string) => {
+  const normalized = String(value || "").trim().toLowerCase().replace(/[^a-z]/g, "");
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized === "reusable" || normalized === "shared" || normalized === "sharedgroup" || normalized === "snapshot") {
+    return "reusable";
+  }
+
+  if (normalized === "local" || normalized === "grouped") {
+    return "local";
+  }
+
+  return "";
+};
+
+const buildImportedStepPreview = (row: ImportedTestCaseRow) => {
+  const actions = splitImportedStepSequence(row.action);
+  const expectedResults = splitImportedStepSequence(row.expected_result);
+  const groupNames = splitImportedStepSequence(row.step_group_name);
+  const groupKinds = splitImportedStepSequence(row.step_group_kind);
+  const sharedGroupIds = splitImportedStepSequence(row.shared_group_id);
+  const size = Math.max(actions.length, expectedResults.length, groupNames.length, groupKinds.length, sharedGroupIds.length, 0);
+
+  return Array.from({ length: size }, (_, index) => {
+    const action = pickImportedSequenceValue(actions, index);
+    const expectedResult = pickImportedSequenceValue(expectedResults, index);
+    const groupName = pickImportedSequenceValue(groupNames, index);
+    const sharedGroupId = pickImportedSequenceValue(sharedGroupIds, index);
+    const resolvedGroupKind = normalizeImportedGroupKind(pickImportedSequenceValue(groupKinds, index)) || (sharedGroupId ? "reusable" : groupName ? "local" : "");
+
+    return {
+      action,
+      expected_result: expectedResult,
+      step_group_name: groupName,
+      step_group_kind: resolvedGroupKind,
+      shared_group_id: sharedGroupId
+    };
+  }).filter((step) => step.action || step.expected_result || step.step_group_name || step.shared_group_id);
+};
+
+const countImportedSteps = (row: ImportedTestCaseRow) => buildImportedStepPreview(row).length;
+
+const countImportedGroups = (row: ImportedTestCaseRow) => {
+  let previousSignature = "";
+  let count = 0;
+
+  buildImportedStepPreview(row).forEach((step) => {
+    const signature =
+      step.step_group_name || step.shared_group_id || step.step_group_kind
+        ? `${step.step_group_kind || "local"}::${step.step_group_name || ""}::${step.shared_group_id || ""}`
+        : "";
+
+    if (signature && signature !== previousSignature) {
+      count += 1;
+    }
+
+    previousSignature = signature;
+  });
+
+  return count;
+};
+
+const getImportedStepPreviewLabel = (row: ImportedTestCaseRow) => {
+  const firstStep = buildImportedStepPreview(row)[0];
+
+  if (!firstStep) {
+    return "No step content supplied";
+  }
+
+  const summary = firstStep.action || firstStep.expected_result || "Grouped step";
+
+  if (!firstStep.step_group_name) {
+    return summary;
+  }
+
+  return `${summary} · ${firstStep.step_group_kind === "reusable" ? "Shared group" : "Group"}: ${firstStep.step_group_name}`;
+};
 
 const normalizeDraftSteps = (steps: DraftTestStep[]) =>
   steps
@@ -1634,7 +1723,7 @@ export function TestCasesPage() {
 
       Object.values(stepsByCaseId).forEach((items) => items.sort((left, right) => left.step_order - right.step_order));
 
-      const header = ["title", "description", "priority", "status", "requirement", "suites", "action", "expected_result"];
+      const header = ["title", "description", "priority", "status", "requirement", "suites", "action", "expected_result", "step_group_name", "step_group_kind", "shared_group_id"];
       const rows = filteredCases.map((testCase) => {
         const requirement = requirements.find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id));
         const suiteCount = (testCase.suite_ids || []).length;
@@ -1648,7 +1737,10 @@ export function TestCasesPage() {
           requirement?.title || "",
           suiteCount ? `${suiteCount} suite${suiteCount === 1 ? "" : "s"}` : "",
           scopedSteps.map((step) => step.action || "").join("\n"),
-          scopedSteps.map((step) => step.expected_result || "").join("\n")
+          scopedSteps.map((step) => step.expected_result || "").join("\n"),
+          scopedSteps.map((step) => step.group_name || "").join("\n"),
+          scopedSteps.map((step) => step.group_kind || "").join("\n"),
+          scopedSteps.map((step) => step.reusable_group_id || "").join("\n")
         ];
       });
 
@@ -1664,7 +1756,7 @@ export function TestCasesPage() {
       link.click();
       link.remove();
       URL.revokeObjectURL(href);
-      showSuccess(`Exported ${filteredCases.length} test cases to CSV.`);
+      showSuccess(`Exported ${filteredCases.length} test cases to CSV with step groups preserved.`);
     } catch (error) {
       showError(error, "Unable to export test cases");
     }
@@ -1749,7 +1841,7 @@ export function TestCasesPage() {
         setSelectedTestCaseId(response.created[0].id);
         setIsCreating(false);
       }
-      showSuccess("AI-designed test cases accepted into the library.");
+      showSuccess("AI-designed test cases accepted into the library as standard steps.");
       await refreshCases();
     } catch (error) {
       setAiPreviewTone("error");
@@ -2706,7 +2798,7 @@ export function TestCasesPage() {
               <div className="import-modal-title">
                 <p className="eyebrow">Bulk Import</p>
                 <h3 id="bulk-import-title">Import test cases from CSV</h3>
-                <p>Upload reusable cases in bulk. Action and Expected Result columns are converted into attached test steps automatically.</p>
+                <p>Upload reusable cases in bulk. Action and Expected Result create attached steps automatically, while optional group columns preserve shared and local step snapshots.</p>
               </div>
               <button aria-label="Close bulk import dialog" className="ghost-button" disabled={importTestCases.isPending} onClick={() => setIsImportModalOpen(false)} type="button">
                 Close
@@ -2742,7 +2834,7 @@ export function TestCasesPage() {
 
               <div className="detail-summary">
                 <strong>{importFileName || "No CSV loaded yet"}</strong>
-                <span>Use new lines or the `|` character in Action and Expected Result to create multiple steps per test case.</span>
+                <span>Use new lines or the `|` character in Action and Expected Result to create multiple steps. Optional `Step Group Name`, `Step Group Kind`, and `Shared Group ID` columns keep grouped snapshots aligned step-by-step.</span>
               </div>
 
               {importWarnings.length ? (
@@ -2760,6 +2852,7 @@ export function TestCasesPage() {
                       <tr>
                         <th>Title</th>
                         <th>Step count</th>
+                        <th>Groups</th>
                         <th>Preview</th>
                       </tr>
                     </thead>
@@ -2768,7 +2861,8 @@ export function TestCasesPage() {
                         <tr key={`${row.title}-${index}`}>
                           <td>{row.title}</td>
                           <td>{countImportedSteps(row)}</td>
-                          <td>{splitImportedStepValue(row.action)[0] || splitImportedStepValue(row.expected_result)[0] || "No step content supplied"}</td>
+                          <td>{countImportedGroups(row)}</td>
+                          <td>{getImportedStepPreviewLabel(row)}</td>
                         </tr>
                       ))}
                     </tbody>
