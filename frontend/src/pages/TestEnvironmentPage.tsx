@@ -6,6 +6,8 @@ import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { SubnavTabs } from "../components/SubnavTabs";
 import { ToastMessage } from "../components/ToastMessage";
+import { TileCardStatusIndicator } from "../components/TileCardPrimitives";
+import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { useDialogFocus } from "../hooks/useDialogFocus";
@@ -341,17 +343,17 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
   }, [appTypeId, appTypes]);
 
   useEffect(() => {
-    setSelectedEnvironmentId((current) => (current && environments.some((item) => item.id === current) ? current : environments[0]?.id || ""));
+    setSelectedEnvironmentId((current) => (current && environments.some((item) => item.id === current) ? current : ""));
   }, [environments]);
 
   useEffect(() => {
     setSelectedConfigurationId((current) =>
-      current && configurations.some((item) => item.id === current) ? current : configurations[0]?.id || ""
+      current && configurations.some((item) => item.id === current) ? current : ""
     );
   }, [configurations]);
 
   useEffect(() => {
-    setSelectedDataSetId((current) => (current && dataSets.some((item) => item.id === current) ? current : dataSets[0]?.id || ""));
+    setSelectedDataSetId((current) => (current && dataSets.some((item) => item.id === current) ? current : ""));
   }, [dataSets]);
 
   useEffect(() => {
@@ -401,6 +403,20 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
 
     setCreateDataSetDraft(buildEmptyDataSetDraft());
     setIsCreateDataSetModalOpen(true);
+  };
+
+  const closeResourceWorkspace = () => {
+    if (view === "environments") {
+      setSelectedEnvironmentId("");
+      return;
+    }
+
+    if (view === "configurations") {
+      setSelectedConfigurationId("");
+      return;
+    }
+
+    setSelectedDataSetId("");
   };
 
   const handleCreateEnvironment = async (event: FormEvent<HTMLFormElement>) => {
@@ -617,29 +633,43 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
       />
 
       {view === "environments" ? (
-        <div className="workspace-grid test-environment-workspace">
-          <Panel title="Environment library" subtitle="Capture base URLs and reusable variables for each execution target.">
-            <div className="stack-list test-environment-list">
-              {environments.map((environment) => (
-                <button
-                  className={selectedEnvironmentId === environment.id ? "record-card stack-item stack-item-button is-active" : "record-card stack-item stack-item-button"}
-                  key={environment.id}
-                  onClick={() => setSelectedEnvironmentId(environment.id)}
-                  type="button"
-                >
-                  <div>
-                    <strong>{environment.name}</strong>
-                    <span>{environment.base_url || environment.description || "No environment URL or summary defined yet."}</span>
-                    <span>{environment.variables.length} variable{environment.variables.length === 1 ? "" : "s"}</span>
-                  </div>
-                </button>
-              ))}
+        <WorkspaceMasterDetail
+          browseView={(
+            <Panel title="Environment tiles" subtitle="Browse execution targets as tiles first, then open one environment into a focused editor.">
+              <div className="tile-browser-grid test-environment-list">
+                {environments.map((environment) => (
+                  <button
+                    className={selectedEnvironmentId === environment.id ? "record-card tile-card is-active" : "record-card tile-card"}
+                    key={environment.id}
+                    onClick={() => setSelectedEnvironmentId(environment.id)}
+                    type="button"
+                  >
+                    <div className="tile-card-main">
+                      <div className="tile-card-header">
+                        <span className="resource-card-badge">URL</span>
+                        <div className="tile-card-title-group">
+                          <strong>{environment.name}</strong>
+                          <span className="tile-card-kicker">{selectedAppTypeName}</span>
+                        </div>
+                        <TileCardStatusIndicator title={environment.base_url ? "Base URL configured" : "Draft target"} tone={environment.base_url ? "success" : "neutral"} />
+                      </div>
+                      <p className="tile-card-description">{environment.base_url || environment.description || "No environment URL or summary defined yet."}</p>
+                      <div className="resource-card-footer">
+                        <span className="count-pill">{environment.variables.length} variable{environment.variables.length === 1 ? "" : "s"}</span>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
               {!environmentsQuery.isLoading && !environments.length ? <div className="empty-state compact">No test environments defined for this scope yet.</div> : null}
-            </div>
-          </Panel>
-
-          <div className="stack-grid">
-            <Panel title="Selected environment" subtitle={selectedEnvironment ? "Refine the target without leaving the list." : "Create an environment to start reusing execution targets."}>
+            </Panel>
+          )}
+          detailView={(
+            <Panel
+              actions={<WorkspaceBackButton label="Back to environment tiles" onClick={closeResourceWorkspace} />}
+              title="Selected environment"
+              subtitle={selectedEnvironment ? "Refine the target without leaving the list." : "Create an environment to start reusing execution targets."}
+            >
               {selectedEnvironment ? (
                 <EnvironmentForm
                   draft={environmentDraft}
@@ -653,34 +683,49 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
                 <div className="empty-state compact">No environment selected.</div>
               )}
             </Panel>
-          </div>
-        </div>
+          )}
+          isDetailOpen={Boolean(selectedEnvironment)}
+        />
       ) : null}
 
       {view === "configurations" ? (
-        <div className="workspace-grid test-environment-workspace">
-          <Panel title="Configuration library" subtitle="Define browser and mobile target profiles together with reusable runtime variables.">
-            <div className="stack-list test-environment-list">
-              {configurations.map((configuration) => (
-                <button
-                  className={selectedConfigurationId === configuration.id ? "record-card stack-item stack-item-button is-active" : "record-card stack-item stack-item-button"}
-                  key={configuration.id}
-                  onClick={() => setSelectedConfigurationId(configuration.id)}
-                  type="button"
-                >
-                  <div>
-                    <strong>{configuration.name}</strong>
-                    <span>{formatConfigurationTarget(configuration) || configuration.description || "No browser, mobile OS, or version defined yet."}</span>
-                    <span>{configuration.variables.length} variable{configuration.variables.length === 1 ? "" : "s"}</span>
-                  </div>
-                </button>
-              ))}
+        <WorkspaceMasterDetail
+          browseView={(
+            <Panel title="Configuration tiles" subtitle="Browse reusable browser and device profiles as cards before opening one into the editor.">
+              <div className="tile-browser-grid test-environment-list">
+                {configurations.map((configuration) => (
+                  <button
+                    className={selectedConfigurationId === configuration.id ? "record-card tile-card is-active" : "record-card tile-card"}
+                    key={configuration.id}
+                    onClick={() => setSelectedConfigurationId(configuration.id)}
+                    type="button"
+                  >
+                    <div className="tile-card-main">
+                      <div className="tile-card-header">
+                        <span className="resource-card-badge">CFG</span>
+                        <div className="tile-card-title-group">
+                          <strong>{configuration.name}</strong>
+                          <span className="tile-card-kicker">{selectedAppTypeName}</span>
+                        </div>
+                        <TileCardStatusIndicator title={formatConfigurationTarget(configuration) ? "Target configured" : "Draft profile"} tone={formatConfigurationTarget(configuration) ? "success" : "neutral"} />
+                      </div>
+                      <p className="tile-card-description">{formatConfigurationTarget(configuration) || configuration.description || "No browser, mobile OS, or version defined yet."}</p>
+                      <div className="resource-card-footer">
+                        <span className="count-pill">{configuration.variables.length} variable{configuration.variables.length === 1 ? "" : "s"}</span>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
               {!configurationsQuery.isLoading && !configurations.length ? <div className="empty-state compact">No test configurations defined for this scope yet.</div> : null}
-            </div>
-          </Panel>
-
-          <div className="stack-grid">
-            <Panel title="Selected configuration" subtitle={selectedConfiguration ? "Update the reusable execution settings in place." : "Create a configuration to start reusing it in runs."}>
+            </Panel>
+          )}
+          detailView={(
+            <Panel
+              actions={<WorkspaceBackButton label="Back to configuration tiles" onClick={closeResourceWorkspace} />}
+              title="Selected configuration"
+              subtitle={selectedConfiguration ? "Update the reusable execution settings in place." : "Create a configuration to start reusing it in runs."}
+            >
               {selectedConfiguration ? (
                 <ConfigurationForm
                   draft={configurationDraft}
@@ -694,34 +739,49 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
                 <div className="empty-state compact">No configuration selected.</div>
               )}
             </Panel>
-          </div>
-        </div>
+          )}
+          isDetailOpen={Boolean(selectedConfiguration)}
+        />
       ) : null}
 
       {view === "data" ? (
-        <div className="workspace-grid test-environment-workspace">
-          <Panel title="Test data library" subtitle="Keep execution-ready data as key/value sets or spreadsheet-style tables, then attach them to a run when needed.">
-            <div className="stack-list test-environment-list">
-              {dataSets.map((dataSet) => (
-                <button
-                  className={selectedDataSetId === dataSet.id ? "record-card stack-item stack-item-button is-active" : "record-card stack-item stack-item-button"}
-                  key={dataSet.id}
-                  onClick={() => setSelectedDataSetId(dataSet.id)}
-                  type="button"
-                >
-                  <div>
-                    <strong>{dataSet.name}</strong>
-                    <span>{dataSet.description || "No test data summary defined yet."}</span>
-                    <span>{dataSet.mode === "table" ? `${dataSet.rows.length} rows · ${dataSet.columns.length} columns` : `${dataSet.rows.length} key/value pairs`}</span>
-                  </div>
-                </button>
-              ))}
+        <WorkspaceMasterDetail
+          browseView={(
+            <Panel title="Test data tiles" subtitle="Review reusable data sets as cards first, then open one source into a focused editor.">
+              <div className="tile-browser-grid test-environment-list">
+                {dataSets.map((dataSet) => (
+                  <button
+                    className={selectedDataSetId === dataSet.id ? "record-card tile-card is-active" : "record-card tile-card"}
+                    key={dataSet.id}
+                    onClick={() => setSelectedDataSetId(dataSet.id)}
+                    type="button"
+                  >
+                    <div className="tile-card-main">
+                      <div className="tile-card-header">
+                        <span className="resource-card-badge">DATA</span>
+                        <div className="tile-card-title-group">
+                          <strong>{dataSet.name}</strong>
+                          <span className="tile-card-kicker">{dataSet.mode === "table" ? "Table mode" : "Key/value mode"}</span>
+                        </div>
+                        <TileCardStatusIndicator title={dataSet.mode === "table" ? "Table data set" : "Key/value data set"} tone={dataSet.rows.length ? "success" : "neutral"} />
+                      </div>
+                      <p className="tile-card-description">{dataSet.description || "No test data summary defined yet."}</p>
+                      <div className="resource-card-footer">
+                        <span className="count-pill">{dataSet.mode === "table" ? `${dataSet.rows.length} rows · ${dataSet.columns.length} columns` : `${dataSet.rows.length} key/value pairs`}</span>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
               {!dataSetsQuery.isLoading && !dataSets.length ? <div className="empty-state compact">No test data sets defined for this scope yet.</div> : null}
-            </div>
-          </Panel>
-
-          <div className="stack-grid">
-            <Panel title="Selected test data" subtitle={selectedDataSet ? "Maintain reusable execution data without leaving the workspace." : "Create a test data set to start attaching data to executions."}>
+            </Panel>
+          )}
+          detailView={(
+            <Panel
+              actions={<WorkspaceBackButton label="Back to test data tiles" onClick={closeResourceWorkspace} />}
+              title="Selected test data"
+              subtitle={selectedDataSet ? "Maintain reusable execution data without leaving the workspace." : "Create a test data set to start attaching data to executions."}
+            >
               {selectedDataSet ? (
                 <DataSetForm
                   draft={dataSetDraft}
@@ -735,8 +795,9 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
                 <div className="empty-state compact">No test data set selected.</div>
               )}
             </Panel>
-          </div>
-        </div>
+          )}
+          isDetailOpen={Boolean(selectedDataSet)}
+        />
       ) : null}
 
       {isCreateEnvironmentModalOpen ? (

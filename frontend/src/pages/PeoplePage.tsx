@@ -1,10 +1,13 @@
-import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { SubnavTabs } from "../components/SubnavTabs";
+import { TileCardFact, TileCardIconFrame, TileCardStatusIndicator, TileCardUsersIcon } from "../components/TileCardPrimitives";
+import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { useAuth } from "../auth/AuthContext";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 import type { Role, User } from "../types";
@@ -17,10 +20,11 @@ const EMPTY_ROLE_DRAFT = { name: "" };
 
 export function PeoplePage() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useAuth();
   const { users, roles } = useWorkspaceData();
   const [feedback, setFeedback] = useState<{ message: string; tone: FeedbackTone } | null>(null);
-  const [view, setView] = useState<PeopleView>("users");
+  const [view, setView] = useState<PeopleView>(searchParams.get("view") === "roles" ? "roles" : "users");
   const [selectedUserId, setSelectedUserId] = useState("");
   const [selectedRoleId, setSelectedRoleId] = useState("");
   const [userDraft, setUserDraft] = useState(createEmptyUserDraft());
@@ -33,11 +37,11 @@ export function PeoplePage() {
   const userItems = users.data || [];
   const roleItems = roles.data || [];
   const selectedUser = useMemo(
-    () => userItems.find((item) => item.id === selectedUserId) || userItems[0],
+    () => userItems.find((item) => item.id === selectedUserId) || null,
     [selectedUserId, userItems]
   );
   const selectedRole = useMemo(
-    () => roleItems.find((item) => item.id === selectedRoleId) || roleItems[0],
+    () => roleItems.find((item) => item.id === selectedRoleId) || null,
     [selectedRoleId, roleItems]
   );
   const isAdmin = session?.user.role === "admin";
@@ -45,26 +49,92 @@ export function PeoplePage() {
     () => roleItems.find((item) => item.name === "member")?.id || roleItems[0]?.id || "",
     [roleItems]
   );
+  const userCountByRoleName = useMemo(
+    () =>
+      userItems.reduce<Record<string, number>>((counts, user) => {
+        const roleName = user.role || "member";
+        counts[roleName] = (counts[roleName] || 0) + 1;
+        return counts;
+      }, {}),
+    [userItems]
+  );
 
   useEffect(() => {
     if (selectedUser) {
       const matchedRole = roleItems.find((item) => item.name === selectedUser.role);
-      setSelectedUserId(selectedUser.id);
       setUserDraft({
         name: selectedUser.name || "",
         email: selectedUser.email,
         password_hash: "",
         role_id: matchedRole?.id || defaultMemberRoleId
       });
+      return;
     }
-  }, [defaultMemberRoleId, roleItems, selectedUser?.id]);
+
+    setUserDraft(createEmptyUserDraft(defaultMemberRoleId));
+  }, [defaultMemberRoleId, roleItems, selectedUser]);
 
   useEffect(() => {
     if (selectedRole) {
-      setSelectedRoleId(selectedRole.id);
       setRoleDraft({ name: selectedRole.name });
+      return;
     }
-  }, [selectedRole?.id]);
+
+    setRoleDraft(EMPTY_ROLE_DRAFT);
+  }, [selectedRole]);
+
+  useEffect(() => {
+    const requestedView = searchParams.get("view");
+    if ((requestedView === "users" || requestedView === "roles") && requestedView !== view) {
+      setView(requestedView);
+    }
+  }, [searchParams, view]);
+
+  useEffect(() => {
+    if (view !== "users") {
+      return;
+    }
+
+    const requestedUserId = searchParams.get("userId") || "";
+
+    if (!requestedUserId) {
+      if (selectedUserId) {
+        setSelectedUserId("");
+      }
+      return;
+    }
+
+    if (requestedUserId === selectedUserId) {
+      return;
+    }
+
+    if (userItems.some((item) => item.id === requestedUserId)) {
+      setSelectedUserId(requestedUserId);
+    }
+  }, [searchParams, selectedUserId, userItems, view]);
+
+  useEffect(() => {
+    if (view !== "roles") {
+      return;
+    }
+
+    const requestedRoleId = searchParams.get("roleId") || "";
+
+    if (!requestedRoleId) {
+      if (selectedRoleId) {
+        setSelectedRoleId("");
+      }
+      return;
+    }
+
+    if (requestedRoleId === selectedRoleId) {
+      return;
+    }
+
+    if (roleItems.some((item) => item.id === requestedRoleId)) {
+      setSelectedRoleId(requestedRoleId);
+    }
+  }, [roleItems, searchParams, selectedRoleId, view]);
 
   const invalidate = async () => {
     await Promise.all([
@@ -75,6 +145,58 @@ export function PeoplePage() {
 
   const showFeedback = (message: string, tone: FeedbackTone) => {
     setFeedback({ message, tone });
+  };
+
+  const syncPeopleSearchParams = (nextView: PeopleView, nextUserId?: string | null, nextRoleId?: string | null) => {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("view", nextView);
+
+    if (nextView === "users") {
+      if (nextUserId) {
+        nextParams.set("userId", nextUserId);
+      } else {
+        nextParams.delete("userId");
+      }
+      nextParams.delete("roleId");
+    } else {
+      if (nextRoleId) {
+        nextParams.set("roleId", nextRoleId);
+      } else {
+        nextParams.delete("roleId");
+      }
+      nextParams.delete("userId");
+    }
+
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  };
+
+  const openUserWorkspace = (userId: string) => {
+    setView("users");
+    setSelectedRoleId("");
+    setSelectedUserId(userId);
+    syncPeopleSearchParams("users", userId, null);
+  };
+
+  const openRoleWorkspace = (roleId: string) => {
+    setView("roles");
+    setSelectedUserId("");
+    setSelectedRoleId(roleId);
+    syncPeopleSearchParams("roles", null, roleId);
+  };
+
+  const handleViewChange = (nextView: PeopleView) => {
+    setView(nextView);
+
+    if (nextView === "users") {
+      setSelectedRoleId("");
+      syncPeopleSearchParams("users", selectedUserId || null, null);
+      return;
+    }
+
+    setSelectedUserId("");
+    syncPeopleSearchParams("roles", null, selectedRoleId || null);
   };
 
   const openCreateUserModal = () => {
@@ -109,7 +231,7 @@ export function PeoplePage() {
     mutationFn: api.users.create,
     onSuccess: async (response) => {
       showFeedback("User created.", "success");
-      setSelectedUserId(response.id);
+      openUserWorkspace(response.id);
       setIsCreateUserModalOpen(false);
       setCreateUserDraft(createEmptyUserDraft(defaultMemberRoleId));
       await invalidate();
@@ -132,6 +254,7 @@ export function PeoplePage() {
     onSuccess: async () => {
       showFeedback("User removed.", "success");
       setSelectedUserId("");
+      syncPeopleSearchParams("users", null, null);
       await invalidate();
     },
     onError: (error) => showFeedback(error instanceof Error ? error.message : "Unable to delete user", "error")
@@ -141,7 +264,7 @@ export function PeoplePage() {
     mutationFn: api.roles.create,
     onSuccess: async (response) => {
       showFeedback("Role created.", "success");
-      setSelectedRoleId(response.id);
+      openRoleWorkspace(response.id);
       setIsCreateRoleModalOpen(false);
       setCreateRoleDraft(EMPTY_ROLE_DRAFT);
       await invalidate();
@@ -163,6 +286,7 @@ export function PeoplePage() {
     onSuccess: async () => {
       showFeedback("Role removed.", "success");
       setSelectedRoleId("");
+      syncPeopleSearchParams("roles", null, null);
       await invalidate();
     },
     onError: (error) => showFeedback(error instanceof Error ? error.message : "Unable to delete role", "error")
@@ -181,15 +305,6 @@ export function PeoplePage() {
   const handleRoleCreate = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     createRole.mutate({ name: createRoleDraft.name });
-  };
-
-  const handleSelectableRowKeyDown = (event: ReactKeyboardEvent<HTMLTableRowElement>, userId: string) => {
-    if (event.key !== "Enter" && event.key !== " ") {
-      return;
-    }
-
-    event.preventDefault();
-    setSelectedUserId(userId);
   };
 
   const confirmDeleteUser = (user: User) => {
@@ -243,6 +358,18 @@ export function PeoplePage() {
     return () => window.removeEventListener("keydown", handleEscape);
   }, [createRole.isPending, isCreateRoleModalOpen]);
 
+  const closeUserWorkspace = () => {
+    setSelectedUserId("");
+    setUserDraft(createEmptyUserDraft(defaultMemberRoleId));
+    syncPeopleSearchParams("users", null, null);
+  };
+
+  const closeRoleWorkspace = () => {
+    setSelectedRoleId("");
+    setRoleDraft(EMPTY_ROLE_DRAFT);
+    syncPeopleSearchParams("roles", null, null);
+  };
+
   return (
     <div className="page-content">
       <PageHeader
@@ -273,7 +400,7 @@ export function PeoplePage() {
 
       <SubnavTabs
         value={view}
-        onChange={setView}
+        onChange={handleViewChange}
         items={[
           { value: "users", label: "Users", meta: `${userItems.length} records` },
           { value: "roles", label: "Roles", meta: `${roleItems.length} records` }
@@ -281,42 +408,45 @@ export function PeoplePage() {
       />
 
       {view === "users" ? (
-        <div className="workspace-grid people-users-grid">
-          <Panel title="User directory" subtitle="Review users in a stable table, then inspect the selected record on the right.">
-            <div className="table-wrap">
-              <table className="data-table workspace-table selectable-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>User type</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {userItems.map((user) => (
-                    <tr
-                      aria-selected={selectedUser?.id === user.id}
-                      className={selectedUser?.id === user.id ? "is-selected" : undefined}
-                      key={user.id}
-                      onClick={() => setSelectedUserId(user.id)}
-                      onKeyDown={(event) => handleSelectableRowKeyDown(event, user.id)}
-                      tabIndex={0}
-                    >
-                      <td><strong>{user.name || "Unnamed user"}</strong></td>
-                      <td>{user.email}</td>
-                      <td>{user.role === "admin" ? "Org Admin" : "Member"}</td>
-                      <td><span className={`status-pill ${user.role === "admin" ? "tone-info" : "tone-success"}`}>{user.role === "admin" ? "admin" : "active"}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {!userItems.length ? <div className="empty-state compact">No users found yet.</div> : null}
-          </Panel>
-
-          <div className="stack-grid">
-            <Panel title="Selected user" subtitle={selectedUser ? "Refine the record without leaving the list." : "Create your first user to begin."}>
+        <WorkspaceMasterDetail
+          browseView={(
+            <Panel title="User tiles" subtitle="Scan the directory in card form first, then open one person into a focused access editor.">
+              <div className="tile-browser-grid">
+                {userItems.map((user) => (
+                  <button
+                    className={selectedUser?.id === user.id ? "record-card tile-card is-active" : "record-card tile-card"}
+                    key={user.id}
+                    onClick={() => openUserWorkspace(user.id)}
+                    type="button"
+                  >
+                    <div className="tile-card-main">
+                      <div className="tile-card-header">
+                        <TileCardIconFrame tone={user.role === "admin" ? "info" : "success"}>
+                          <TileCardUsersIcon />
+                        </TileCardIconFrame>
+                        <div className="tile-card-title-group">
+                          <strong>{user.name || "Unnamed user"}</strong>
+                          <span className="tile-card-kicker">{user.email}</span>
+                        </div>
+                        <TileCardStatusIndicator title={user.role === "admin" ? "Admin access" : "Member access"} tone={user.role === "admin" ? "info" : "success"} />
+                      </div>
+                      <p className="tile-card-description">{user.role === "admin" ? "Workspace administrator with directory controls." : "Active workspace member with assigned project access."}</p>
+                      <div className="people-card-footer">
+                        <span className="count-pill">{user.role === "admin" ? "Org Admin" : "Member"}</span>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              {!userItems.length ? <div className="empty-state compact">No users found yet.</div> : null}
+            </Panel>
+          )}
+          detailView={(
+            <Panel
+              actions={<WorkspaceBackButton label="Back to user tiles" onClick={closeUserWorkspace} />}
+              title="Selected user"
+              subtitle={selectedUser ? "Refine the record without leaving the list." : "Create your first user to begin."}
+            >
               {selectedUser ? (
                 <div className="detail-stack">
                   <div className="detail-summary">
@@ -393,30 +523,51 @@ export function PeoplePage() {
                 <div className="empty-state compact">No user selected.</div>
               )}
             </Panel>
-
-          </div>
-        </div>
+          )}
+          isDetailOpen={Boolean(selectedUser)}
+        />
       ) : (
-        <div className="workspace-grid">
-          <Panel title="Role library" subtitle="Keep role naming compact and reusable across projects.">
-            <div className="catalog-grid compact">
-              {roleItems.map((role) => (
-                <button
-                  key={role.id}
-                  className={selectedRole?.id === role.id ? "catalog-card is-active" : "catalog-card"}
-                  onClick={() => setSelectedRoleId(role.id)}
-                  type="button"
-                >
-                  <strong>{role.name}</strong>
-                  <p>Project membership label used across assignments and access views.</p>
-                </button>
-              ))}
-            </div>
-            {!roleItems.length ? <div className="empty-state compact">No roles defined yet.</div> : null}
-          </Panel>
-
-          <div className="stack-grid">
-            <Panel title="Selected role" subtitle={selectedRole ? "Adjust the role name in place." : "Create a role to start reusing it in memberships."}>
+        <WorkspaceMasterDetail
+          browseView={(
+            <Panel title="Role tiles" subtitle="Keep role definitions scannable, then open one label into a focused editor when needed.">
+              <div className="tile-browser-grid">
+                {roleItems.map((role) => (
+                  <button
+                    key={role.id}
+                    className={selectedRole?.id === role.id ? "record-card tile-card is-active" : "record-card tile-card"}
+                    onClick={() => openRoleWorkspace(role.id)}
+                    type="button"
+                  >
+                    <div className="tile-card-main">
+                      <div className="tile-card-header">
+                        <TileCardIconFrame tone={role.name === "admin" ? "info" : "success"}>
+                          <TileCardUsersIcon />
+                        </TileCardIconFrame>
+                        <div className="tile-card-title-group">
+                          <strong>{role.name}</strong>
+                          <span className="tile-card-kicker">{userCountByRoleName[role.name] || 0} assigned</span>
+                        </div>
+                        <TileCardStatusIndicator title="Reusable role" tone={role.name === "admin" ? "info" : "success"} />
+                      </div>
+                      <p className="tile-card-description">Project membership label used across assignments and access views.</p>
+                      <div className="tile-card-facts" aria-label={`${role.name} facts`}>
+                        <TileCardFact label={String(userCountByRoleName[role.name] || 0)} title={`${userCountByRoleName[role.name] || 0} user${(userCountByRoleName[role.name] || 0) === 1 ? "" : "s"} assigned`} tone={(userCountByRoleName[role.name] || 0) ? "success" : "neutral"}>
+                          <TileCardUsersIcon />
+                        </TileCardFact>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              {!roleItems.length ? <div className="empty-state compact">No roles defined yet.</div> : null}
+            </Panel>
+          )}
+          detailView={(
+            <Panel
+              actions={<WorkspaceBackButton label="Back to role tiles" onClick={closeRoleWorkspace} />}
+              title="Selected role"
+              subtitle={selectedRole ? "Adjust the role name in place." : "Create a role to start reusing it in memberships."}
+            >
               {selectedRole ? (
                 <div className="detail-stack">
                   <div className="detail-summary">
@@ -455,9 +606,9 @@ export function PeoplePage() {
                 <div className="empty-state compact">No role selected.</div>
               )}
             </Panel>
-
-          </div>
-        </div>
+          )}
+          isDetailOpen={Boolean(selectedRole)}
+        />
       )}
 
       {isCreateUserModalOpen ? (

@@ -16,6 +16,7 @@ import {
 } from "../components/TileCardPrimitives";
 import { SubnavTabs } from "../components/SubnavTabs";
 import { ToastMessage } from "../components/ToastMessage";
+import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 import { useAuth } from "../auth/AuthContext";
@@ -59,6 +60,7 @@ export function ProjectsPage() {
   const { session } = useAuth();
   const { projects, users, roles, projectMembers, appTypes, requirements, testCases } = useWorkspaceData();
   const [selectedProjectId, setSelectedProjectId] = useCurrentProject();
+  const [focusedProjectId, setFocusedProjectId] = useState("");
   const [section, setSection] = useState<ProjectSection>("members");
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
@@ -88,7 +90,23 @@ export function ProjectsPage() {
     () => projectItems.find((project) => project.id === selectedProjectId) || projectItems[0],
     [projectItems, selectedProjectId]
   );
+  const focusedProject = useMemo(
+    () => projectItems.find((project) => project.id === focusedProjectId) || null,
+    [focusedProjectId, projectItems]
+  );
   const projectId = selectedProject?.id;
+
+  useEffect(() => {
+    if (focusedProjectId && !projectItems.some((project) => project.id === focusedProjectId)) {
+      setFocusedProjectId("");
+    }
+  }, [focusedProjectId, projectItems]);
+
+  useEffect(() => {
+    if (focusedProjectId && selectedProjectId && focusedProjectId !== selectedProjectId) {
+      setFocusedProjectId(selectedProjectId);
+    }
+  }, [focusedProjectId, selectedProjectId]);
 
   const memberCountByProjectId = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -193,6 +211,7 @@ export function ProjectsPage() {
         `Project created. ${response.members_added} members linked and ${response.app_types_created} app type${response.app_types_created === 1 ? "" : "s"} added.`
       );
       setSelectedProjectId(response.id);
+      setFocusedProjectId(response.id);
       setIsCreateModalOpen(false);
       setProjectDraft(createInitialProjectDraft());
       await invalidate();
@@ -381,101 +400,110 @@ export function ProjectsPage() {
         tone={messageTone}
       />
 
-      <div className="workspace-grid">
-        <Panel title="Project catalog" subtitle="Select a project card to switch context. Create Project opens a guided setup modal for scope, app types, and initial members.">
-          <div className="catalog-grid compact">
-            {projectItems.map((project) => {
-              const isSelected = selectedProject?.id === project.id;
-              const memberCount = memberCountByProjectId[project.id] || 0;
-              const appTypeCount = appTypeCountByProjectId[project.id] || 0;
-              const requirementCount = requirementCountByProjectId[project.id] || 0;
-              const testCaseCount = testCaseCountByProjectId[project.id] || 0;
+      <WorkspaceMasterDetail
+        browseView={(
+          <Panel title="Project tiles" subtitle="Browse workspace scope as tiles first, then open a focused project workspace when you want to edit members or app types.">
+            <div className="catalog-grid compact">
+              {projectItems.map((project) => {
+                const isSelected = selectedProject?.id === project.id;
+                const memberCount = memberCountByProjectId[project.id] || 0;
+                const appTypeCount = appTypeCountByProjectId[project.id] || 0;
+                const requirementCount = requirementCountByProjectId[project.id] || 0;
+                const testCaseCount = testCaseCountByProjectId[project.id] || 0;
 
-              return (
-                <button
-                  key={project.id}
-                  aria-pressed={isSelected}
-                  className={isSelected ? "catalog-card tile-card project-catalog-card is-active" : "catalog-card tile-card project-catalog-card"}
-                  onClick={() => setSelectedProjectId(project.id)}
-                  type="button"
-                >
-                  <div className="tile-card-main">
-                    <div className="tile-card-header">
-                      <TileCardIconFrame className="project-card-icon" tone={isSelected ? "success" : "info"}>
-                        <TileCardProjectIcon />
-                      </TileCardIconFrame>
-                      <div className="tile-card-title-group">
-                        <strong>{project.name}</strong>
-                        <span className="tile-card-kicker">{appTypeCount} app type{appTypeCount === 1 ? "" : "s"} in scope</span>
+                return (
+                  <button
+                    key={project.id}
+                    aria-pressed={isSelected}
+                    className={isSelected ? "catalog-card tile-card project-catalog-card is-active" : "catalog-card tile-card project-catalog-card"}
+                    onClick={() => {
+                      setSelectedProjectId(project.id);
+                      setFocusedProjectId(project.id);
+                    }}
+                    type="button"
+                  >
+                    <div className="tile-card-main">
+                      <div className="tile-card-header">
+                        <TileCardIconFrame className="project-card-icon" tone={isSelected ? "success" : "info"}>
+                          <TileCardProjectIcon />
+                        </TileCardIconFrame>
+                        <div className="tile-card-title-group">
+                          <strong>{project.name}</strong>
+                          <span className="tile-card-kicker">{appTypeCount} app type{appTypeCount === 1 ? "" : "s"} in scope</span>
+                        </div>
+                        <TileCardStatusIndicator title={isSelected ? "Current project" : "Available project"} tone={isSelected ? "success" : "neutral"} />
                       </div>
-                      <TileCardStatusIndicator title={isSelected ? "Current project" : "Available project"} tone={isSelected ? "success" : "neutral"} />
+                      <p className="tile-card-description">{project.description || "No description yet."}</p>
+                      <div className="tile-card-facts" aria-label={`${project.name} facts`}>
+                        <TileCardFact label={String(memberCount)} title={`${memberCount} member${memberCount === 1 ? "" : "s"}`} tone={memberCount ? "info" : "neutral"}>
+                          <TileCardUsersIcon />
+                        </TileCardFact>
+                        <TileCardFact label={String(appTypeCount)} title={`${appTypeCount} app type${appTypeCount === 1 ? "" : "s"}`} tone={appTypeCount ? "success" : "neutral"}>
+                          <TileCardAppTypesIcon />
+                        </TileCardFact>
+                        <TileCardFact label={String(requirementCount)} title={`${requirementCount} requirement${requirementCount === 1 ? "" : "s"}`} tone={requirementCount ? "warning" : "neutral"}>
+                          <TileCardRequirementIcon />
+                        </TileCardFact>
+                        <TileCardFact label={String(testCaseCount)} title={`${testCaseCount} test case${testCaseCount === 1 ? "" : "s"}`} tone={testCaseCount ? "success" : "neutral"}>
+                          <TileCardCaseIcon />
+                        </TileCardFact>
+                      </div>
                     </div>
-                    <p className="tile-card-description">{project.description || "No description yet."}</p>
-                    <div className="tile-card-facts" aria-label={`${project.name} facts`}>
-                      <TileCardFact label={String(memberCount)} title={`${memberCount} member${memberCount === 1 ? "" : "s"}`} tone={memberCount ? "info" : "neutral"}>
-                        <TileCardUsersIcon />
-                      </TileCardFact>
-                      <TileCardFact label={String(appTypeCount)} title={`${appTypeCount} app type${appTypeCount === 1 ? "" : "s"}`} tone={appTypeCount ? "success" : "neutral"}>
-                        <TileCardAppTypesIcon />
-                      </TileCardFact>
-                      <TileCardFact label={String(requirementCount)} title={`${requirementCount} requirement${requirementCount === 1 ? "" : "s"}`} tone={requirementCount ? "warning" : "neutral"}>
-                        <TileCardRequirementIcon />
-                      </TileCardFact>
-                      <TileCardFact label={String(testCaseCount)} title={`${testCaseCount} test case${testCaseCount === 1 ? "" : "s"}`} tone={testCaseCount ? "success" : "neutral"}>
-                        <TileCardCaseIcon />
-                      </TileCardFact>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-          {!projectItems.length ? <div className="empty-state compact">No projects yet. Create the first project to add scope, app types, and the initial team in one flow.</div> : null}
-        </Panel>
-
-        <div className="stack-grid">
-          <Panel title={selectedProject ? selectedProject.name : "Project summary"} subtitle={selectedProject ? "Quick orientation before you dive into related records." : "Select a project to reveal its scoped data."}>
-            {selectedProject ? (
-              <div className="detail-stack">
-                <div className="detail-summary">
-                  <strong>{selectedProject.name}</strong>
-                  <span>{selectedProject.description || "No description provided yet."}</span>
-                </div>
-                <div className="metric-strip">
-                  <div className="mini-card">
-                    <strong>{scopedMembers.length}</strong>
-                    <span>Members</span>
-                  </div>
-                  <div className="mini-card">
-                    <strong>{selectedProjectAppTypeCount}</strong>
-                    <span>App types</span>
-                  </div>
-                  <div className="mini-card">
-                    <strong>{selectedProjectRequirementCount}</strong>
-                    <span>Requirements</span>
-                  </div>
-                  <div className="mini-card">
-                    <strong>{selectedProjectTestCaseCount}</strong>
-                    <span>Test cases</span>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="empty-state compact">Choose a project to continue.</div>
-            )}
+                  </button>
+                );
+              })}
+            </div>
+            {!projectItems.length ? <div className="empty-state compact">No projects yet. Create the first project to add scope, app types, and the initial team in one flow.</div> : null}
           </Panel>
+        )}
+        detailView={(
+          <div className="stack-grid">
+            <Panel
+              actions={<WorkspaceBackButton label="Back to project tiles" onClick={() => setFocusedProjectId("")} />}
+              title={focusedProject ? focusedProject.name : "Project summary"}
+              subtitle={focusedProject ? "Quick orientation before you dive into related records." : "Select a project to reveal its scoped data."}
+            >
+              {focusedProject ? (
+                <div className="detail-stack">
+                  <div className="detail-summary">
+                    <strong>{focusedProject.name}</strong>
+                    <span>{focusedProject.description || "No description provided yet."}</span>
+                  </div>
+                  <div className="metric-strip">
+                    <div className="mini-card">
+                      <strong>{scopedMembers.length}</strong>
+                      <span>Members</span>
+                    </div>
+                    <div className="mini-card">
+                      <strong>{selectedProjectAppTypeCount}</strong>
+                      <span>App types</span>
+                    </div>
+                    <div className="mini-card">
+                      <strong>{selectedProjectRequirementCount}</strong>
+                      <span>Requirements</span>
+                    </div>
+                    <div className="mini-card">
+                      <strong>{selectedProjectTestCaseCount}</strong>
+                      <span>Test cases</span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="empty-state compact">Choose a project to continue.</div>
+              )}
+            </Panel>
 
-          <SubnavTabs
-            value={section}
-            onChange={setSection}
-            items={[
-              { value: "members", label: "Members", meta: `${scopedMembers.length}` },
-              { value: "appTypes", label: "App Types", meta: `${scopedAppTypes.length}` }
-            ]}
-          />
+            <SubnavTabs
+              value={section}
+              onChange={setSection}
+              items={[
+                { value: "members", label: "Members", meta: `${scopedMembers.length}` },
+                { value: "appTypes", label: "App Types", meta: `${scopedAppTypes.length}` }
+              ]}
+            />
 
-          {section === "members" ? (
-            <Panel title="Project members" subtitle={projectId ? `Assignments for ${selectedProject?.name}` : "Select a project first"}>
+            {section === "members" ? (
+              <Panel title="Project members" subtitle={projectId ? `Assignments for ${selectedProject?.name}` : "Select a project first"}>
               <form
                 className="elevated-toolbar"
                 onSubmit={(event) => {
@@ -526,11 +554,11 @@ export function ProjectsPage() {
                 })}
               </div>
               {!scopedMembers.length ? <div className="empty-state compact">No members assigned yet.</div> : null}
-            </Panel>
-          ) : null}
+              </Panel>
+            ) : null}
 
-          {section === "appTypes" ? (
-            <Panel title="App types" subtitle="Keep platform boundaries readable and lightweight.">
+            {section === "appTypes" ? (
+              <Panel title="App types" subtitle="Keep platform boundaries readable and lightweight.">
               <form
                 className="elevated-toolbar"
                 onSubmit={(event) => {
@@ -586,10 +614,12 @@ export function ProjectsPage() {
                 ))}
               </div>
               {!scopedAppTypes.length ? <div className="empty-state compact">No app types defined yet.</div> : null}
-            </Panel>
-          ) : null}
-        </div>
-      </div>
+              </Panel>
+            ) : null}
+          </div>
+        )}
+        isDetailOpen={Boolean(focusedProject)}
+      />
 
       {isCreateModalOpen ? (
         <div className="modal-backdrop" onClick={closeCreateProjectModal}>

@@ -17,6 +17,7 @@ import {
   getTileCardTone
 } from "../components/TileCardPrimitives";
 import { ToastMessage } from "../components/ToastMessage";
+import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { api } from "../lib/api";
@@ -187,8 +188,8 @@ export function RequirementsPage() {
       return;
     }
 
-    if (!selectedRequirementId || !requirements.some((item) => item.id === selectedRequirementId)) {
-      setSelectedRequirementId(requirements[0].id);
+    if (selectedRequirementId && !requirements.some((item) => item.id === selectedRequirementId)) {
+      setSelectedRequirementId("");
     }
   }, [requirements, selectedRequirementId]);
 
@@ -197,7 +198,7 @@ export function RequirementsPage() {
   }, [requirements]);
 
   const selectedRequirement = useMemo(
-    () => requirements.find((item) => item.id === selectedRequirementId) || requirements[0] || null,
+    () => requirements.find((item) => item.id === selectedRequirementId) || null,
     [requirements, selectedRequirementId]
   );
 
@@ -338,6 +339,13 @@ export function RequirementsPage() {
     setCreateDraft(EMPTY_REQUIREMENT);
     setCreateSelectedTestCaseIds([]);
     setIsCreateModalOpen(true);
+  };
+
+  const closeRequirementDetail = () => {
+    setSelectedRequirementId("");
+    setDraft(EMPTY_REQUIREMENT);
+    setSelectedTestCaseIds([]);
+    setExpandedSections(createDefaultRequirementSections());
   };
 
   const closeCreateRequirementModal = () => {
@@ -692,9 +700,9 @@ export function RequirementsPage() {
         projects={projects}
       />
 
-      <div className="requirement-workspace">
-        <div className="requirement-sidebar">
-          <Panel title="Requirement catalog" subtitle="Select a requirement card to review its details, adjust coverage links, or send it into the AI design studio.">
+      <WorkspaceMasterDetail
+        browseView={(
+          <Panel title="Requirement tiles" subtitle="Start in the visual catalog, scan coverage quickly, then open one requirement into a focused editor view.">
             <div className="design-list-toolbar requirement-catalog-toolbar">
               <input
                 placeholder="Search title, description, status, or priority"
@@ -732,11 +740,11 @@ export function RequirementsPage() {
             {deleteSelectedRequirementIds.length ? (
               <div className="detail-summary requirement-selection-summary">
                 <strong>{deleteSelectedRequirementIds.length} requirement{deleteSelectedRequirementIds.length === 1 ? "" : "s"} marked for delete</strong>
-                <span>Checkbox selections are only used for bulk delete. Click a card body to keep editing one requirement at a time.</span>
+                <span>Checkbox selections are only used for bulk delete. Open any tile to continue editing one requirement in a full-page workspace.</span>
               </div>
             ) : null}
 
-            <div className="record-list requirement-card-list">
+            <div className="tile-browser-grid requirement-card-list">
               {filteredRequirements.map((item) => {
                 const isSelectedForDelete = deleteSelectedRequirementIds.includes(item.id);
                 const isActive = selectedRequirement?.id === item.id;
@@ -806,10 +814,13 @@ export function RequirementsPage() {
             {!requirements.length ? <div className="empty-state compact">No requirements yet for this project.</div> : null}
             {requirements.length && !filteredRequirements.length ? <div className="empty-state compact">No requirements match the current search.</div> : null}
           </Panel>
-        </div>
-
-        <div className="requirement-detail-column">
-          <Panel title={selectedRequirement ? selectedRequirement.title : "Requirement details"} subtitle={selectedRequirement ? "Edit the requirement, manage reusable coverage links, and keep the selected item in focus." : "Select a requirement to review its details."}>
+        )}
+        detailView={(
+          <Panel
+            actions={<WorkspaceBackButton label="Back to requirement tiles" onClick={closeRequirementDetail} />}
+            title={selectedRequirement ? selectedRequirement.title : "Requirement details"}
+            subtitle={selectedRequirement ? "Edit the requirement, manage reusable coverage links, and keep the selected item in focus." : "Select a requirement to review its details."}
+          >
             {selectedRequirement ? (
               <div className="detail-stack">
                 <div className="requirement-accordion">
@@ -889,8 +900,9 @@ export function RequirementsPage() {
               <div className="empty-state compact">Select a requirement from the catalog to view and edit its details.</div>
             )}
           </Panel>
-        </div>
-      </div>
+        )}
+        isDetailOpen={Boolean(selectedRequirement)}
+      />
 
       {isCreateModalOpen ? (
         <div className="modal-backdrop" onClick={closeCreateRequirementModal}>

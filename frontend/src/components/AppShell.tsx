@@ -28,9 +28,9 @@ const navigation = [
         label: "Test Authoring",
         icon: FlaskIcon,
         children: [
-          { id: "requirements", to: "/requirements", label: "Requirements" },
-          { id: "test-cases", to: "/test-cases", label: "Test Cases" },
-          { id: "design", to: "/design", label: "Test Suites" }
+          { id: "requirements", to: "/requirements", label: "Requirements", icon: DocumentIcon },
+          { id: "test-cases", to: "/test-cases", label: "Test Cases", icon: PencilIcon },
+          { id: "design", to: "/design", label: "Test Suites", icon: LayersIcon }
         ]
       },
       {
@@ -38,7 +38,7 @@ const navigation = [
         label: "Test Runs",
         icon: PlayIcon,
         children: [
-          { id: "executions", to: "/executions", label: "Executions" }
+          { id: "executions", to: "/executions", label: "Executions", icon: RunIcon }
         ]
       },
       {
@@ -46,9 +46,9 @@ const navigation = [
         label: "Test Environment",
         icon: ServerIcon,
         children: [
-          { id: "test-environments", to: "/test-environments", label: "Environments" },
-          { id: "test-data", to: "/test-data", label: "Test Data" },
-          { id: "test-configurations", to: "/test-configurations", label: "Configurations" }
+          { id: "test-environments", to: "/test-environments", label: "Environments", icon: ServerIcon },
+          { id: "test-data", to: "/test-data", label: "Test Data", icon: DatabaseIcon },
+          { id: "test-configurations", to: "/test-configurations", label: "Configurations", icon: SlidersIcon }
         ]
       }
     ]
@@ -89,8 +89,10 @@ export function AppShell() {
 
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
-  const [isCollapsed, setIsCollapsed] = useState(() => window.localStorage.getItem(SIDEBAR_KEY) === "true");
-  const [isAutoCollapsed, setIsAutoCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    const stored = window.localStorage.getItem(SIDEBAR_KEY);
+    return stored === null ? true : stored === "true";
+  });
   const [isMobileViewport, setIsMobileViewport] = useState(() => window.matchMedia(MOBILE_SIDEBAR_BREAKPOINT).matches);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [sidebarProjectId, setSidebarProjectId] = useCurrentProject();
@@ -127,14 +129,13 @@ export function AppShell() {
       const nextTheme = detail?.theme || window.localStorage.getItem(THEME_KEY);
       const nextSidebarMode =
         detail?.sidebarMode ??
-        (window.localStorage.getItem(SIDEBAR_KEY) === "true" ? "collapsed" : "expanded");
+        (window.localStorage.getItem(SIDEBAR_KEY) === "false" ? "expanded" : "collapsed");
 
       if (nextTheme === "light" || nextTheme === "dark") {
         setTheme(nextTheme);
       }
 
       setIsCollapsed(nextSidebarMode === "collapsed");
-      setIsAutoCollapsed(false);
     };
 
     window.addEventListener(PREFERENCES_UPDATED_EVENT, syncPreferences as EventListener);
@@ -173,12 +174,6 @@ export function AppShell() {
       setIsMobileSidebarOpen(false);
     }
   }, [isMobileViewport]);
-
-  useEffect(() => {
-    if (isMobileViewport || isCollapsed) {
-      setIsAutoCollapsed(false);
-    }
-  }, [isCollapsed, isMobileViewport]);
 
   useEffect(() => {
     if (!isMobileSidebarOpen) {
@@ -262,34 +257,19 @@ export function AppShell() {
     return "Workspace";
   }, [location.pathname]);
 
-  const shouldCollapseSidebar = !isMobileViewport && (isCollapsed || isAutoCollapsed);
+  const shouldCollapseSidebar = !isMobileViewport && isCollapsed;
   const sidebarClassName = `${shouldCollapseSidebar ? "sidebar is-collapsed" : "sidebar"}${isMobileSidebarOpen ? " is-mobile-open" : ""}`;
+  const userWorkspaceTarget = session?.user.id
+    ? { pathname: "/people", search: `?view=users&userId=${session.user.id}` }
+    : "/people";
+  const resolveNavTarget = (item: { id: string; to: string }) => item.id === "people" ? userWorkspaceTarget : item.to;
 
   useEffect(() => {
     document.documentElement.dataset.sidebar = shouldCollapseSidebar ? "collapsed" : "expanded";
   }, [shouldCollapseSidebar]);
 
-  const expandSidebar = () => {
-    setIsCollapsed(false);
-    setIsAutoCollapsed(false);
-  };
-
   const toggleSidebarCollapse = () => {
-    if (shouldCollapseSidebar) {
-      expandSidebar();
-      return;
-    }
-
-    setIsCollapsed(true);
-    setIsAutoCollapsed(false);
-  };
-
-  const handleMainInteraction = () => {
-    if (isMobileViewport || isCollapsed || isAutoCollapsed) {
-      return;
-    }
-
-    setIsAutoCollapsed(true);
+    setIsCollapsed((current) => !current);
   };
 
   return (
@@ -393,6 +373,35 @@ export function AppShell() {
                     const isDisabled = hasNoProjects;
                     const firstChild = item.children[0];
 
+                    if (shouldCollapseSidebar) {
+                      return (
+                        <div className="nav-collapsed-branch" key={item.id}>
+                          {item.children.map((child) => {
+                            const childDisabled = hasNoProjects;
+                            const ChildIcon = child.icon || Icon;
+
+                            return (
+                              <NavLink
+                                key={child.to}
+                                to={child.to}
+                                className={({ isActive }) => isActive ? "nav-link nav-link--icon-only is-active" : "nav-link nav-link--icon-only"}
+                                aria-label={child.label}
+                                onClick={(event) => {
+                                  if (childDisabled) {
+                                    event.preventDefault();
+                                  }
+                                }}
+                                style={{ opacity: childDisabled ? 0.5 : 1, cursor: childDisabled ? "not-allowed" : "pointer" }}
+                                title={child.label}
+                              >
+                                <span className="nav-link-icon" aria-hidden="true"><ChildIcon /></span>
+                              </NavLink>
+                            );
+                          })}
+                        </div>
+                      );
+                    }
+
                     return (
                       <div className="nav-branch" key={item.id}>
                         <div className="nav-branch-control">
@@ -403,10 +412,6 @@ export function AppShell() {
                               if (isDisabled || !firstChild) {
                                 event.preventDefault();
                                 return;
-                              }
-
-                              if (shouldCollapseSidebar) {
-                                expandSidebar();
                               }
 
                               setExpandedGroups((current) => ({ ...current, [item.id]: true }));
@@ -443,6 +448,7 @@ export function AppShell() {
                           <div className="nav-subgroup">
                             {item.children.map((child) => {
                               const childDisabled = hasNoProjects;
+                              const ChildIcon = child.icon;
 
                               return (
                                 <NavLink
@@ -456,7 +462,8 @@ export function AppShell() {
                                   }}
                                   style={{ opacity: childDisabled ? 0.5 : 1, cursor: childDisabled ? "not-allowed" : "pointer" }}
                                 >
-                                  <span>{child.label}</span>
+                                  {ChildIcon ? <span className="nav-sublink-icon" aria-hidden="true"><ChildIcon /></span> : null}
+                                  <span className="nav-sublink-label">{child.label}</span>
                                 </NavLink>
                               );
                             })}
@@ -472,7 +479,7 @@ export function AppShell() {
                   return (
                     <NavLink
                       key={item.to}
-                      to={item.to}
+                      to={resolveNavTarget(item)}
                       className={({ isActive }) => isActive ? "nav-link is-active" : "nav-link"}
                       title={shouldCollapseSidebar ? item.label : undefined}
                       aria-label={item.label}
@@ -522,15 +529,27 @@ export function AppShell() {
             </button>
           )}
 
-          <div className="user-chip" role="status">
-            <strong>{session?.user.name || "Workspace User"}</strong>
-            {!shouldCollapseSidebar ? (
-              <>
-                <span>{session?.user.email}</span>
-                <span>{session?.user.role === "admin" ? "Admin" : "Member"}</span>
-              </>
-            ) : null}
-          </div>
+          <NavLink
+            aria-label="Open user profile"
+            className={({ isActive }) => isActive ? "user-chip user-chip-link is-active" : "user-chip user-chip-link"}
+            to={userWorkspaceTarget}
+            title={shouldCollapseSidebar ? (session?.user.name || "Workspace user") : undefined}
+          >
+            <div className="user-chip-head">
+              <span className="user-chip-icon" aria-hidden="true">
+                <UsersIcon />
+              </span>
+              <div className="user-chip-copy">
+                <strong>{session?.user.name || "Workspace User"}</strong>
+                {!shouldCollapseSidebar ? (
+                  <>
+                    <span>{session?.user.email}</span>
+                    <span>{session?.user.role === "admin" ? "Admin" : "Member"}</span>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          </NavLink>
 
           <button 
             className="ghost-button sidebar-signout" 
@@ -558,8 +577,6 @@ export function AppShell() {
       <main
         className={`workspace-main main${isWorkspaceWideLibrary ? " main--library-fill" : ""}`}
         data-section={currentSection}
-        onFocusCapture={handleMainInteraction}
-        onPointerDownCapture={handleMainInteraction}
       >
         {isMobileViewport ? (
           <div className="mobile-sidebar-bar">
@@ -625,8 +642,16 @@ function PencilIcon() {
   return <IconFrame><path d="M4 20l4.5-1 9-9-3.5-3.5-9 9z" /><path d="M13.5 6.5l3.5 3.5" /></IconFrame>;
 }
 
+function LayersIcon() {
+  return <IconFrame><path d="m12 4 8 4-8 4-8-4 8-4Z" /><path d="m4 12 8 4 8-4" /><path d="m4 16 8 4 8-4" /></IconFrame>;
+}
+
 function PlayIcon() {
   return <IconFrame><path d="m7 4 12 8-12 8z" /></IconFrame>;
+}
+
+function RunIcon() {
+  return <IconFrame><circle cx="12" cy="12" r="8" /><path d="m10 8 6 4-6 4z" /></IconFrame>;
 }
 
 function LogoutIcon() {
@@ -643,6 +668,14 @@ function BellIcon() {
 
 function CogIcon() {
   return <IconFrame><circle cx="12" cy="12" r="3.2" /><path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a2 2 0 0 1-2.8 2.8l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a2 2 0 0 1-4 0v-.2a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a2 2 0 0 1 0-4h.2a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V4a2 2 0 0 1 4 0v.2a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a2 2 0 0 1 2.8 2.8l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .9.6h.2a2 2 0 0 1 0 4h-.2a1 1 0 0 0-.9.6" /></IconFrame>;
+}
+
+function DatabaseIcon() {
+  return <IconFrame><ellipse cx="12" cy="6" rx="7" ry="3" /><path d="M5 6v6c0 1.66 3.13 3 7 3s7-1.34 7-3V6" /><path d="M5 12v6c0 1.66 3.13 3 7 3s7-1.34 7-3v-6" /></IconFrame>;
+}
+
+function SlidersIcon() {
+  return <IconFrame><path d="M4 6h6" /><path d="M14 6h6" /><path d="M10 6a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z" /><path d="M4 12h10" /><path d="M18 12h2" /><path d="M14 12a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z" /><path d="M4 18h3" /><path d="M11 18h9" /><path d="M7 18a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z" /></IconFrame>;
 }
 
 function SupportIcon() {

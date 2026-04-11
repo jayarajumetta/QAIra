@@ -6,6 +6,8 @@ import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StatusBadge } from "../components/StatusBadge";
 import { ToastMessage } from "../components/ToastMessage";
+import { TileCardStatusIndicator } from "../components/TileCardPrimitives";
+import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { api } from "../lib/api";
 import type { Integration } from "../types";
 
@@ -211,7 +213,7 @@ export function IntegrationsPage() {
 
   const integrations = integrationsQuery.data || [];
   const selectedIntegration = useMemo(
-    () => integrations.find((item) => item.id === selectedIntegrationId) || integrations[0] || null,
+    () => integrations.find((item) => item.id === selectedIntegrationId) || null,
     [integrations, selectedIntegrationId]
   );
   const activeIntegrationCount = integrations.filter((item) => item.is_active).length;
@@ -236,15 +238,19 @@ export function IntegrationsPage() {
       return;
     }
 
+    if (!selectedIntegrationId) {
+      setDraft(EMPTY_DRAFT);
+      return;
+    }
+
     if (selectedIntegration) {
-      setSelectedIntegrationId(selectedIntegration.id);
       setDraft(getDraftFromIntegration(selectedIntegration));
       return;
     }
 
     setSelectedIntegrationId("");
     setDraft(EMPTY_DRAFT);
-  }, [isCreating, selectedIntegration]);
+  }, [isCreating, selectedIntegration, selectedIntegrationId]);
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["integrations"] });
@@ -308,6 +314,12 @@ export function IntegrationsPage() {
     setDraft(EMPTY_DRAFT);
   };
 
+  const closeIntegrationWorkspace = () => {
+    setSelectedIntegrationId("");
+    setIsCreating(false);
+    setDraft(EMPTY_DRAFT);
+  };
+
   return (
     <div className="page-content">
       <ToastMessage message={message} onDismiss={() => setMessage("")} tone={messageTone === "error" ? "error" : "success"} />
@@ -339,45 +351,53 @@ export function IntegrationsPage() {
           <div className="empty-state compact">Ask an admin to manage LLM, Jira, Email Sender, and Google Sign-In integrations.</div>
         </Panel>
       ) : (
-        <div className="workspace-grid">
-          <Panel title="Configured integrations" subtitle="Choose a connection profile to update, activate, or replace.">
-            <div className="record-list">
-              {integrations.map((integration) => {
-                const summary = getIntegrationSummary(integration);
+        <WorkspaceMasterDetail
+          browseView={(
+            <Panel title="Integration tiles" subtitle="Review configured connections as tiles first, then open one profile into a focused editor.">
+              <div className="tile-browser-grid">
+                {integrations.map((integration) => {
+                  const summary = getIntegrationSummary(integration);
 
-                return (
-                  <button
-                    key={integration.id}
-                    className={selectedIntegrationId === integration.id ? "record-card is-active" : "record-card"}
-                    onClick={() => {
-                      setSelectedIntegrationId(integration.id);
-                      setIsCreating(false);
-                    }}
-                    type="button"
-                  >
-                    <div className="record-card-body">
-                      <div className="record-card-header">
-                        <div className="record-card-icon execution">{getIntegrationTypeIcon(integration.type)}</div>
-                        <strong>{integration.name}</strong>
+                  return (
+                    <button
+                      key={integration.id}
+                      className={selectedIntegrationId === integration.id ? "record-card tile-card is-active" : "record-card tile-card"}
+                      onClick={() => {
+                        setSelectedIntegrationId(integration.id);
+                        setIsCreating(false);
+                      }}
+                      type="button"
+                    >
+                      <div className="tile-card-main">
+                        <div className="tile-card-header">
+                          <span className="integration-type-badge">{getIntegrationTypeIcon(integration.type)}</span>
+                          <div className="tile-card-title-group">
+                            <strong>{integration.name}</strong>
+                            <span className="tile-card-kicker">{getIntegrationTypeLabel(integration.type)}</span>
+                          </div>
+                          <TileCardStatusIndicator title={integration.is_active ? "Active" : "Inactive"} tone={integration.is_active ? "success" : "neutral"} />
+                        </div>
+                        <p className="tile-card-description">{summary.primary}</p>
+                        <div className="integration-card-footer">
+                          <StatusBadge value={integration.is_active ? "active" : "inactive"} />
+                          <span className="count-pill">{summary.secondary}</span>
+                        </div>
                       </div>
-                      <span>{getIntegrationTypeLabel(integration.type)}</span>
-                      <span>{summary.primary}</span>
-                      <span>{summary.secondary}</span>
-                    </div>
-                    <StatusBadge value={integration.is_active ? "active" : "inactive"} />
-                  </button>
-                );
-              })}
-            </div>
-            {!integrations.length ? <div className="empty-state compact">No integrations configured yet.</div> : null}
-          </Panel>
-
-          <Panel
-            title={isCreating ? "New integration" : selectedIntegration ? "Integration details" : "Integration editor"}
-            subtitle="Store the credentials and provider settings QAira needs to call external systems and power secure authentication flows."
-          >
-            {isCreating || selectedIntegration ? (
-              <form className="form-grid" onSubmit={(event) => void handleSave(event)}>
+                    </button>
+                  );
+                })}
+              </div>
+              {!integrations.length ? <div className="empty-state compact">No integrations configured yet.</div> : null}
+            </Panel>
+          )}
+          detailView={(
+            <Panel
+              actions={<WorkspaceBackButton label="Back to integration tiles" onClick={closeIntegrationWorkspace} />}
+              title={isCreating ? "New integration" : selectedIntegration ? "Integration details" : "Integration editor"}
+              subtitle="Store the credentials and provider settings QAira needs to call external systems and power secure authentication flows."
+            >
+              {isCreating || selectedIntegration ? (
+                <form className="form-grid" onSubmit={(event) => void handleSave(event)}>
                 <div className="record-grid">
                   <FormField label="Type">
                     <select
@@ -551,12 +571,14 @@ export function IntegrationsPage() {
                     </button>
                   ) : null}
                 </div>
-              </form>
-            ) : (
-              <div className="empty-state compact">Choose an integration from the left or create a new one.</div>
-            )}
-          </Panel>
-        </div>
+                </form>
+              ) : (
+                <div className="empty-state compact">Choose an integration tile or create a new one.</div>
+              )}
+            </Panel>
+          )}
+          isDetailOpen={isCreating || Boolean(selectedIntegration)}
+        />
       )}
     </div>
   );

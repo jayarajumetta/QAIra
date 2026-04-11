@@ -12,6 +12,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { SubnavTabs } from "../components/SubnavTabs";
 import { ToastMessage } from "../components/ToastMessage";
 import { VirtualList } from "../components/VirtualList";
+import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { api } from "../lib/api";
@@ -275,7 +276,7 @@ export function ExecutionsPage() {
   const [isCreateExecutionModalOpen, setIsCreateExecutionModalOpen] = useState(false);
   const [isSuitePickerOpen, setIsSuitePickerOpen] = useState(false);
   const [selectedExecutionId, setSelectedExecutionId] = useState("");
-  const [expandedSuiteIds, setExpandedSuiteIds] = useState<string[]>([]);
+  const [focusedSuiteId, setFocusedSuiteId] = useState("");
   const [selectedTestCaseId, setSelectedTestCaseId] = useState("");
   const [bulkSelectedStepIds, setBulkSelectedStepIds] = useState<string[]>([]);
   const [executionName, setExecutionName] = useState("");
@@ -421,6 +422,7 @@ export function ExecutionsPage() {
 
   const focusExecution = (executionId: string) => {
     setSelectedExecutionId(executionId);
+    setFocusedSuiteId("");
     setSelectedTestCaseId("");
     syncExecutionSearchParams(executionId, null);
   };
@@ -467,13 +469,8 @@ export function ExecutionsPage() {
       return;
     }
 
-    if (!selectedExecutionId && executions[0]) {
-      setSelectedExecutionId(executions[0].id);
-      return;
-    }
-
     if (selectedExecutionId && !executions.some((execution) => execution.id === selectedExecutionId)) {
-      setSelectedExecutionId(executions[0]?.id || "");
+      setSelectedExecutionId("");
     }
   }, [executions, searchParams, selectedExecutionId]);
 
@@ -543,7 +540,7 @@ export function ExecutionsPage() {
       const requestedSuiteId = executionCaseOrder.find((testCase) => testCase.id === requestedTestCaseId)?.suite_id;
 
       if (requestedSuiteId) {
-        setExpandedSuiteIds([requestedSuiteId]);
+        setFocusedSuiteId(requestedSuiteId);
       }
 
       if (selectedTestCaseId !== requestedTestCaseId) {
@@ -553,27 +550,25 @@ export function ExecutionsPage() {
     }
 
     if (selectedTestCaseId && executionCaseOrder.some((testCase) => testCase.id === selectedTestCaseId)) {
+      const selectedSuiteId = executionCaseOrder.find((testCase) => testCase.id === selectedTestCaseId)?.suite_id;
+      if (selectedSuiteId && focusedSuiteId !== selectedSuiteId) {
+        setFocusedSuiteId(selectedSuiteId);
+      }
       return;
     }
 
-    setSelectedTestCaseId(executionCaseOrder[0]?.id || "");
-  }, [executionCaseOrder, searchParams, selectedTestCaseId]);
+    if (selectedTestCaseId) {
+      setSelectedTestCaseId("");
+    }
+  }, [executionCaseOrder, focusedSuiteId, searchParams, selectedTestCaseId]);
 
   useEffect(() => {
     if (!executionSuites.length) {
-      setExpandedSuiteIds([]);
+      setFocusedSuiteId("");
       return;
     }
 
-    setExpandedSuiteIds((current) => {
-      const currentSuiteId = current[0];
-
-      if (currentSuiteId && executionSuites.some((suite) => suite.id === currentSuiteId)) {
-        return [currentSuiteId];
-      }
-
-      return [executionSuites[0].id];
-    });
+    setFocusedSuiteId((current) => (current && executionSuites.some((suite) => suite.id === current) ? current : ""));
   }, [executionSuites]);
 
   useEffect(() => {
@@ -656,6 +651,21 @@ export function ExecutionsPage() {
   const blockingCases = useMemo(
     () => executionCaseOrder.filter((testCase) => ["failed", "blocked"].includes(caseDerivedStatus(testCase))).slice(0, 8),
     [executionCaseOrder, resultByCaseId]
+  );
+
+  const focusedExecutionSuite = useMemo(
+    () => executionSuites.find((suite) => suite.id === focusedSuiteId) || null,
+    [executionSuites, focusedSuiteId]
+  );
+
+  const focusedSuiteCases = useMemo(
+    () => (focusedSuiteId ? displayCasesBySuiteId[focusedSuiteId] || [] : []),
+    [displayCasesBySuiteId, focusedSuiteId]
+  );
+
+  const focusedSuiteMetric = useMemo(
+    () => suiteMetrics.find((suite) => suite.suiteId === focusedSuiteId) || null,
+    [focusedSuiteId, suiteMetrics]
   );
 
   const executionSummaryById = useMemo(() => {
@@ -766,7 +776,7 @@ export function ExecutionsPage() {
 
       closeExecutionBuilder();
       focusExecution(response.id);
-      setExpandedSuiteIds([]);
+      setFocusedSuiteId("");
       showSuccess("Execution created from a snapshot of the selected suites.");
       await refreshExecutionScope(response.id);
     } catch (error) {
@@ -880,8 +890,8 @@ export function ExecutionsPage() {
         const nextCase = executionCaseOrder[currentCaseIndex + 1];
 
         if (nextCase) {
-          if (nextCase.suite_id && !expandedSuiteIds.includes(nextCase.suite_id)) {
-            setExpandedSuiteIds((current) => [...current, nextCase.suite_id!]);
+          if (nextCase.suite_id) {
+            setFocusedSuiteId(nextCase.suite_id);
           }
           focusExecutionCase(nextCase.id);
         }
@@ -938,7 +948,11 @@ export function ExecutionsPage() {
     const scopedCase = executionCaseOrder.find((testCase) => testCase.id === testCaseId);
 
     if (scopedCase?.suite_id) {
-      setExpandedSuiteIds([scopedCase.suite_id]);
+      setFocusedSuiteId(scopedCase.suite_id);
+    }
+
+    if (executionId && executionId !== selectedExecutionId) {
+      setSelectedExecutionId(executionId);
     }
 
     setSelectedTestCaseId(testCaseId);
@@ -1047,6 +1061,47 @@ export function ExecutionsPage() {
     appTypeNameById[selectedExecution?.app_type_id || ""] || "No app type scoped";
   const remainingCaseCount = Math.max(executionProgress.totalCases - executionProgress.completedCases, 0);
   const selectedCaseStatusLabel = selectedExecutionCase ? caseDerivedStatus(selectedExecutionCase) : executionProgress.derivedStatus;
+  const activeExecutionStage = selectedExecutionCase ? "case" : focusedExecutionSuite ? "cases" : selectedExecution ? "suites" : "executions";
+  const executionControlTitle =
+    currentExecutionStatus === "running"
+      ? "Execution is live"
+      : currentExecutionStatus === "queued"
+        ? "Execution ready to start"
+        : currentExecutionStatus === "aborted"
+          ? "Execution was aborted"
+          : "Execution locked";
+  const executionControlDescription =
+    currentExecutionStatus === "running"
+      ? `${formatDuration(selectedExecutionDurationMs, DEFAULT_DURATION_LABEL)} elapsed across the run.`
+      : currentExecutionStatus === "queued"
+        ? "Start the run before step-level result capture."
+        : currentExecutionStatus === "aborted"
+          ? "This execution was stopped early. Captured evidence remains available for review."
+          : "This execution has been completed. Evidence remains available for review.";
+
+  const closeExecutionDrilldown = () => {
+    setSelectedExecutionId("");
+    setFocusedSuiteId("");
+    setSelectedTestCaseId("");
+    syncExecutionSearchParams("", null);
+  };
+
+  const openSuiteDrilldown = (suiteId: string) => {
+    setFocusedSuiteId(suiteId);
+    setSelectedTestCaseId("");
+    syncExecutionSearchParams(selectedExecutionId, null);
+  };
+
+  const closeSuiteDrilldown = () => {
+    setFocusedSuiteId("");
+    setSelectedTestCaseId("");
+    syncExecutionSearchParams(selectedExecutionId, null);
+  };
+
+  const closeCaseDrilldown = () => {
+    setSelectedTestCaseId("");
+    syncExecutionSearchParams(selectedExecutionId, null);
+  };
 
   const filteredExecutions = useMemo(() => {
     const search = deferredExecutionSearch.trim().toLowerCase();
@@ -1227,527 +1282,101 @@ export function ExecutionsPage() {
         projects={projects}
       />
 
-      <ExecutionAccordionPanel
-        className="execution-health-panel"
-        isExpanded={isExecutionHealthExpanded}
-        onToggle={() => setIsExecutionHealthExpanded((current) => !current)}
-        title="Execution command center"
-        subtitle={selectedExecution ? "Operate the active run with live timing, failure pressure, and next-action guidance." : "Create or select an execution to inspect its health."}
-      >
-        {selectedExecution ? (
-          <div className="execution-health-layout">
-            <div className="execution-health-hero">
-              <ExecutionOverviewOrb
-                blockedCount={executionStatusCounts.blocked}
-                failedCount={executionStatusCounts.failed}
-                passedCount={executionStatusCounts.passed}
-                percent={executionProgress.percent}
-                totalCount={executionProgress.totalCases}
+      <WorkspaceMasterDetail
+        browseView={(
+          <Panel
+            className="execution-panel execution-panel--list"
+            title="Execution tiles"
+            subtitle="Start from the run catalog, then drill into suites, cases, and step execution one focused screen at a time."
+          >
+            <div className="design-list-toolbar">
+              <input
+                aria-label="Search executions"
+                placeholder="Search executions"
+                value={executionSearch}
+                onChange={(event) => setExecutionSearch(event.target.value)}
+                type="search"
               />
-
-              <div className="execution-health-copy">
-                <div className="execution-health-status-row">
-                  <StatusBadge value={currentExecutionStatus} />
-                  <span className="count-pill">{selectedExecutionAppTypeLabel}</span>
-                  <span className="execution-health-trigger">{(selectedExecution.trigger || "manual").toUpperCase()} trigger</span>
-                </div>
-
-                <div className="execution-health-heading">
-                  <strong>{selectedExecution.name || "Unnamed execution"}</strong>
-                  <span>{selectedExecutionSuiteIds.length} suites snapped into this run with {executionProgress.totalCases} cases preserved for execution evidence.</span>
-                </div>
-
-                <ProgressMeter
-                  detail={`${executionStatusCounts.passed} passed · ${executionStatusCounts.failed} failed · ${executionStatusCounts.blocked} blocked · ${remainingCaseCount} remaining`}
-                  label="Run completion"
-                  segments={buildProgressSegments(
-                    executionStatusCounts.passed,
-                    executionStatusCounts.failed,
-                    executionStatusCounts.blocked,
-                    executionProgress.totalCases
-                  )}
-                  value={executionProgress.percent}
-                />
-
-                <div className="execution-health-timeline">
-                  <div className="execution-timeline-item">
-                    <span>Started</span>
-                    <strong>{formatExecutionTimestamp(selectedExecution.started_at, currentExecutionStatus === "queued" ? "Not started yet" : "Waiting to start")}</strong>
-                  </div>
-                  <div className="execution-timeline-item">
-                    <span>Ended</span>
-                    <strong>{formatExecutionTimestamp(selectedExecution.ended_at, currentExecutionStatus === "running" ? "Live run" : currentExecutionStatus === "aborted" ? "Stopped before completion" : "Not finished yet")}</strong>
-                  </div>
-                  <div className="execution-timeline-item">
-                    <span>Cases in scope</span>
-                    <strong>{executionProgress.totalCases}</strong>
-                  </div>
-                </div>
-              </div>
-
-              <div className="execution-health-glance">
-                <div className="execution-glance-card">
-                  <span>{currentExecutionStatus === "running" ? "Elapsed run time" : "Run duration"}</span>
-                  <strong>{formatDuration(selectedExecutionDurationMs, DEFAULT_DURATION_LABEL)}</strong>
-                  <small>{selectedExecutionDurationMs ? `${executionProgress.completedCases} cases touched so far` : currentExecutionStatus === "aborted" ? "Timing stopped when the run was aborted" : "Timing begins when the run starts"}</small>
-                </div>
-                <div className="execution-glance-card">
-                  <span>Average case duration</span>
-                  <strong>{formatDuration(averageCaseDurationMs, DEFAULT_DURATION_LABEL)}</strong>
-                  <small>{executionResultsWithTiming ? `${executionResultsWithTiming} cases already have stored duration` : "Capture evidence to unlock trend timing"}</small>
-                </div>
-                <div className="execution-glance-card">
-                  <span>Remaining queue</span>
-                  <strong>{remainingCaseCount}</strong>
-                  <small>{blockingCases.length ? `${blockingCases.length} blockers need triage first` : "No blockers currently slowing the run"}</small>
-                </div>
-                <div className="execution-glance-card">
-                  <span>Evidence records</span>
-                  <strong>{executionResults.length}</strong>
-                  <small>{executionResults.length ? `${executionStatusCounts.failed} failure records logged so far` : "No case evidence captured yet"}</small>
-                </div>
-              </div>
             </div>
 
-            <ExecutionAccordionSection
-              className="execution-health-support"
-              isExpanded={isExecutionSupportExpanded}
-              onToggle={() => setIsExecutionSupportExpanded((current) => !current)}
-              summary="Keep the environment, configuration, and data snapshots visible while you execute."
-              title="Execution context"
-            >
-              <ExecutionContextSnapshotSummary execution={selectedExecution} />
-            </ExecutionAccordionSection>
-          </div>
-        ) : (
-          <div className="empty-state compact">No execution selected yet. Open the create dialog to start a new run.</div>
-        )}
-      </ExecutionAccordionPanel>
-
-      <div
-        className={[
-          "execution-workspace",
-          isExecutionListMinimized ? "execution-workspace--list-minimized" : "",
-          isSuiteTreeMinimized ? "execution-workspace--tree-minimized" : ""
-        ]
-          .filter(Boolean)
-          .join(" ")}
-      >
-        <div className={isExecutionListMinimized ? "execution-column execution-column--collapsed" : "execution-column sticky-column"}>
-          {isExecutionListMinimized ? (
-            <ExecutionMinimizedRail
-              count={filteredExecutions.length}
-              label="Execution list"
-              onExpand={() => setIsExecutionListMinimized(false)}
-            />
-          ) : (
-            <Panel
-              className="execution-panel execution-panel--list"
-              actions={
-                <button className="ghost-button execution-panel-toggle" onClick={() => setIsExecutionListMinimized(true)} type="button">
-                  Minimize
-                </button>
-              }
-              title="Runs"
-              subtitle="Switch between recent executions with enough signal to know where to dive in."
-            >
-              <div className="execution-panel-body execution-panel-body--list">
-                {executionCardMeasureTarget ? (
-                  <div aria-hidden="true" className="execution-card-measure" ref={executionCardMeasureRef}>
-                    <ExecutionListCard
-                      execution={executionCardMeasureTarget}
-                      isActive={false}
-                      liveNow={liveNow}
-                      onSelect={() => undefined}
-                      summary={executionSummaryById[executionCardMeasureTarget.id] || EMPTY_EXECUTION_RUN_SUMMARY}
-                    />
-                  </div>
-                ) : null}
-
-                <div className="design-list-toolbar">
-                  <input
-                    aria-label="Search executions"
-                    value={executionSearch}
-                    onChange={(event) => setExecutionSearch(event.target.value)}
-                    type="search"
-                  />
-                </div>
-
-                {executionsQuery.isLoading ? (
-                  <div className="record-list">
-                    <div className="skeleton-block" />
-                    <div className="skeleton-block" />
-                    <div className="skeleton-block" />
-                  </div>
-                ) : null}
-
-                {!executionsQuery.isLoading ? (
-                  <VirtualList
-                    ariaLabel="Execution list"
-                    className="execution-list-virtual"
-                    emptyState={<div className="empty-state compact">No executions created yet.</div>}
-                    fillHeight
-                    itemHeight={executionListItemHeight}
-                    itemKey={(execution) => execution.id}
-                    items={filteredExecutions}
-                    renderItem={(execution: Execution) => (
-                      <ExecutionListCard
-                        execution={execution}
-                        isActive={selectedExecution?.id === execution.id}
-                        liveNow={liveNow}
-                        onSelect={() => focusExecution(execution.id)}
-                        summary={executionSummaryById[execution.id] || EMPTY_EXECUTION_RUN_SUMMARY}
-                      />
-                    )}
-                  />
-                ) : null}
+            {executionsQuery.isLoading ? (
+              <div className="tile-browser-grid">
+                <div className="skeleton-block" />
+                <div className="skeleton-block" />
+                <div className="skeleton-block" />
               </div>
-            </Panel>
-          )}
-        </div>
+            ) : null}
 
-        <div className={isSuiteTreeMinimized ? "execution-column execution-column--collapsed" : "execution-column"}>
-          {isSuiteTreeMinimized ? (
-            <ExecutionMinimizedRail
-              count={selectedExecutionSuiteIds.length}
-              label="Run board"
-              onExpand={() => setIsSuiteTreeMinimized(false)}
-            />
-          ) : (
-            <Panel
-              className="execution-panel execution-panel--tree"
-              actions={
-                <button className="ghost-button execution-panel-toggle" onClick={() => setIsSuiteTreeMinimized(true)} type="button">
-                  Minimize
-                </button>
-              }
-              title="Execution board"
-              subtitle={selectedExecution ? "Run through the snapped suite queue with stronger progress, timing, and next-case signal." : "Select an execution to see its snapped scope."}
-            >
-              {selectedExecution ? (
-                <div className="execution-panel-body execution-panel-body--tree">
-                  <div className="suite-tree">
-                    <div className="execution-board-hero">
-                      <div className="execution-board-primary">
-                        <div className="execution-section-head">
-                          <strong>Run board overview</strong>
-                          <span>Use this lane to move through suites, understand progress, and keep the next case obvious.</span>
-                        </div>
-                        <ProgressMeter
-                          detail={`${executionStatusCounts.passed} passed · ${executionStatusCounts.failed} failed · ${executionStatusCounts.blocked} blocked · ${remainingCaseCount} remaining`}
-                          label="Execution progress"
-                          segments={buildProgressSegments(
-                            executionStatusCounts.passed,
-                            executionStatusCounts.failed,
-                            executionStatusCounts.blocked,
-                            executionProgress.totalCases
-                          )}
-                          value={executionProgress.percent}
-                        />
-                        <div className="execution-board-kpis">
-                          <div className="execution-board-kpi">
-                            <span>Completed</span>
-                            <strong>{executionProgress.completedCases}/{executionProgress.totalCases}</strong>
-                          </div>
-                          <div className="execution-board-kpi">
-                            <span>Scoped suites</span>
-                            <strong>{selectedExecutionSuiteIds.length}</strong>
-                          </div>
-                          <div className="execution-board-kpi">
-                            <span>Elapsed</span>
-                            <strong>{formatDuration(selectedExecutionDurationMs, DEFAULT_DURATION_LABEL)}</strong>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {!executionSuites.length ? <div className="empty-state compact">No suites were selected for this execution.</div> : null}
-
-                    {executionSuites.map((suite) => {
-                      const suiteCases = displayCasesBySuiteId[suite.id] || [];
-                      const suiteMetric = suiteMetrics.find((item) => item.suiteId === suite.id);
-                      const isExpanded = expandedSuiteIds.includes(suite.id);
-                      const suiteStatus = suiteMetric ? suiteBoardStatus(suiteMetric) : "queued";
-                      const suiteResolvedCount =
-                        (suiteMetric?.passedCount || 0) +
-                        (suiteMetric?.failedCount || 0) +
-                        (suiteMetric?.blockedCount || 0);
-
-                      return (
-                        <div className="tree-suite" key={suite.id}>
-                          <div className={isExpanded ? "tree-suite-row record-card tile-card execution-suite-card is-active is-expanded" : "tree-suite-row record-card tile-card execution-suite-card is-collapsed"}>
-                            <button
-                              className="tree-suite-expand"
-                              onClick={() => {
-                                setExpandedSuiteIds((current) => (current[0] === suite.id ? [] : [suite.id]));
-                              }}
-                              type="button"
-                            >
-                              <div className="tile-card-main">
-                                <div className="tile-card-header">
-                                  <div
-                                    aria-hidden="true"
-                                    className={`record-card-icon execution-board-icon status-${suiteStatus}`}
-                                    title={boardStatusTooltip(suiteStatus)}
-                                  >
-                                    <SuiteBoardIcon />
-                                  </div>
-                                  <div className="tile-card-title-group">
-                                    <strong>{suite.name}</strong>
-                                    <span className="tile-card-kicker">
-                                      {isExpanded
-                                        ? suite.isHistorical
-                                          ? "Historical suite snapshot"
-                                          : "Execution snapshot scope"
-                                        : `${suiteResolvedCount}/${suiteMetric?.count || 0} resolved`}
-                                    </span>
-                                  </div>
-                                  <div className="execution-suite-card-actions">
-                                    <ExecutionStatusIndicator status={suiteStatus} />
-                                    <span aria-hidden="true" className={isExpanded ? "tree-suite-chevron is-expanded" : "tree-suite-chevron"}>
-                                      <ExecutionAccordionChevronIcon />
-                                    </span>
-                                  </div>
-                                </div>
-
-                                <div className="execution-card-facts" aria-label={`${suite.name} facts`}>
-                                  <ExecutionCardFact
-                                    ariaLabel={`${suiteMetric?.count || 0} cases in suite`}
-                                    label={String(suiteMetric?.count || 0)}
-                                    title={`${suiteMetric?.count || 0} cases in suite`}
-                                  >
-                                    <ExecutionScopeIcon />
-                                  </ExecutionCardFact>
-                                  <ExecutionCardFact
-                                    ariaLabel={`${suiteResolvedCount} of ${suiteMetric?.count || 0} cases resolved`}
-                                    label={`${suiteResolvedCount}/${suiteMetric?.count || 0}`}
-                                    title={`${suiteResolvedCount}/${suiteMetric?.count || 0} cases resolved`}
-                                  >
-                                    <ExecutionProgressFactsIcon />
-                                  </ExecutionCardFact>
-                                  <ExecutionCardFact
-                                    ariaLabel={`${(suiteMetric?.failedCount || 0) + (suiteMetric?.blockedCount || 0)} failing or blocked cases`}
-                                    label={String((suiteMetric?.failedCount || 0) + (suiteMetric?.blockedCount || 0))}
-                                    title={`${suiteMetric?.failedCount || 0} failed · ${suiteMetric?.blockedCount || 0} blocked`}
-                                    tone={suiteMetric?.failedCount ? "danger" : suiteMetric?.blockedCount ? "warning" : "success"}
-                                  >
-                                    <ExecutionRiskIcon />
-                                  </ExecutionCardFact>
-                                  <ExecutionCardFact
-                                    ariaLabel={`Suite duration ${formatDuration(suiteDurationById[suite.id], DEFAULT_DURATION_LABEL)}`}
-                                    label={formatDuration(suiteDurationById[suite.id], DEFAULT_DURATION_LABEL)}
-                                    title={`Total recorded suite duration ${formatDuration(suiteDurationById[suite.id], DEFAULT_DURATION_LABEL)}`}
-                                    tone={suiteStatus === "blocked" ? "warning" : "neutral"}
-                                  >
-                                    <ExecutionTimeIcon />
-                                  </ExecutionCardFact>
-                                </div>
-                                <ProgressMeter
-                                  detail={`${suiteMetric?.passedCount || 0} passed · ${suiteMetric?.failedCount || 0} failed · ${suiteMetric?.blockedCount || 0} blocked`}
-                                  hideCopy
-                                  label="Suite completion"
-                                  segments={buildProgressSegments(
-                                    suiteMetric?.passedCount || 0,
-                                    suiteMetric?.failedCount || 0,
-                                    suiteMetric?.blockedCount || 0,
-                                    suiteMetric?.count || 0
-                                  )}
-                                  value={suiteMetric?.percent || 0}
-                                />
-                              </div>
-                            </button>
-                          </div>
-
-                          {isExpanded ? (
-                            <div className="tree-suite-body">
-                              <div className="tree-suite-bulk-actions" role="group" aria-label={`${suite.name} suite-level results`}>
-                                <button
-                                  className="ghost-button suite-bulk-pass"
-                                  disabled={!isExecutionStarted || isExecutionLocked}
-                                  onClick={() => void handleSuiteBulkStatus(suite.id, "passed")}
-                                  type="button"
-                                >
-                                  <SuiteBoardIcon />
-                                  <span>Suite Pass</span>
-                                </button>
-                                <button
-                                  className="ghost-button danger suite-bulk-fail"
-                                  disabled={!isExecutionStarted || isExecutionLocked}
-                                  onClick={() => void handleSuiteBulkStatus(suite.id, "failed")}
-                                  type="button"
-                                >
-                                  <SuiteBoardIcon />
-                                  <span>Suite Fail</span>
-                                </button>
-                              </div>
-
-                              <div className="tree-children">
-                                {!suiteCases.length ? <div className="empty-state compact">No test cases in this suite.</div> : null}
-                                {suiteCases.map((testCase) => {
-                                  const caseStatus = caseDerivedStatus(testCase);
-
-                                  return (
-                                    <button
-                                      key={testCase.id}
-                                      className={
-                                        selectedTestCaseId === testCase.id
-                                          ? "record-card tile-card test-case-card execution-case-card execution-board-case-card is-active"
-                                          : nextFocusCase?.id === testCase.id
-                                            ? "record-card tile-card test-case-card execution-case-card execution-board-case-card is-next"
-                                            : "record-card tile-card test-case-card execution-case-card execution-board-case-card"
-                                      }
-                                      onClick={() => focusExecutionCase(testCase.id)}
-                                      type="button"
-                                    >
-                                      <div className="tile-card-main">
-                                        <div className="tile-card-header">
-                                          <div
-                                            aria-hidden="true"
-                                            className={`record-card-icon execution-board-icon status-${caseStatus}`}
-                                            title={boardStatusTooltip(caseStatus)}
-                                          >
-                                            <TestCaseBoardIcon />
-                                          </div>
-                                          <div className="tile-card-title-group">
-                                            <strong>{testCase.title}</strong>
-                                            <span className="tile-card-kicker">{nextFocusCase?.id === testCase.id ? "Next recommended case" : suite.name}</span>
-                                          </div>
-                                          <ExecutionStatusIndicator status={caseStatus} />
-                                        </div>
-                                        <div className="execution-card-facts" aria-label={`${testCase.title} facts`}>
-                                          <ExecutionCardFact
-                                            ariaLabel={`Priority P${testCase.priority || 3}`}
-                                            label={`P${testCase.priority || 3}`}
-                                            title={`Priority P${testCase.priority || 3}`}
-                                          >
-                                            <ExecutionPriorityIcon />
-                                          </ExecutionCardFact>
-                                          <ExecutionCardFact
-                                            ariaLabel={`${(stepsByCaseId[testCase.id] || []).length} steps`}
-                                            label={String((stepsByCaseId[testCase.id] || []).length)}
-                                            title={`${(stepsByCaseId[testCase.id] || []).length} steps`}
-                                          >
-                                            <ExecutionStepsIcon />
-                                          </ExecutionCardFact>
-                                          <ExecutionCardFact
-                                            ariaLabel={`Case duration ${formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}`}
-                                            label={formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}
-                                            title={`Case duration ${formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}`}
-                                            tone={caseStatus === "blocked" ? "warning" : "neutral"}
-                                          >
-                                            <ExecutionTimeIcon />
-                                          </ExecutionCardFact>
-                                        </div>
-                                      </div>
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : (
-                <div className="execution-panel-body execution-panel-body--tree">
-                  <div className="empty-state compact">Select an execution to inspect its snapshot scope.</div>
-                </div>
-              )}
-            </Panel>
-          )}
-        </div>
-
-        <div className="execution-column execution-column--detail">
-          <Panel
-            className="execution-panel execution-panel--detail"
-            title="Execution console"
-            subtitle={selectedExecutionCase ? "Run the selected case, capture evidence, and inspect history without leaving the console." : "Select a case to view step execution and logs."}
-          >
-            {selectedExecution ? (
-              <div className="execution-panel-body execution-panel-body--detail">
-                <div className="detail-stack">
-                  <div className="execution-detail-hero">
-                    <div className="execution-detail-heading">
-                      <div className="execution-health-status-row">
-                        <StatusBadge value={selectedCaseStatusLabel} />
-                        {selectedExecutionCase?.suite_name ? <span className="count-pill">{selectedExecutionCase.suite_name}</span> : null}
-                        <span className="execution-health-trigger">{selectedExecutionCase ? "Selected case" : "Run overview"}</span>
-                      </div>
-                      <strong>{selectedExecutionCase?.title || selectedExecution.name || "Unnamed execution"}</strong>
-                      <span>{selectedExecutionCase?.description || "Select a case from the run board to execute its steps and capture evidence."}</span>
-                    </div>
-
-                    <div className="execution-detail-glance">
-                      <div className="execution-detail-card">
-                        <span>Case duration</span>
-                        <strong>{formatDuration(selectedCaseDurationMs, DEFAULT_DURATION_LABEL)}</strong>
-                        <small>{selectedExecutionResult?.created_at ? `Last evidence ${formatExecutionTimestamp(selectedExecutionResult.created_at)}` : "Duration appears as the case is executed"}</small>
-                      </div>
-                      <div className="execution-detail-card">
-                        <span>Step completion</span>
-                        <strong>{selectedSteps.length ? `${selectedStepProgress.percent}%` : "0%"}</strong>
-                        <small>{selectedSteps.length ? `${selectedStepProgress.passedCount + selectedStepProgress.failedCount}/${selectedSteps.length} steps resolved` : "No steps loaded for this case"}</small>
-                      </div>
-                      <div className="execution-detail-card">
-                        <span>Evidence notes</span>
-                        <strong>{resolvedStepNoteCount}</strong>
-                        <small>{resolvedStepNoteCount ? "Comments captured for this case" : "No comments captured yet"}</small>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="execution-control-strip">
-                    <div className="execution-control-copy">
-                      <strong>{currentExecutionStatus === "running" ? "Execution is live" : currentExecutionStatus === "queued" ? "Execution ready to start" : currentExecutionStatus === "aborted" ? "Execution was aborted" : "Execution locked"}</strong>
-                      <span>{currentExecutionStatus === "running" ? `${formatDuration(selectedExecutionDurationMs, DEFAULT_DURATION_LABEL)} elapsed across the run.` : currentExecutionStatus === "queued" ? "Start the run before step-level result capture." : currentExecutionStatus === "aborted" ? "This execution was stopped early. Captured evidence remains available for review." : "This execution has been completed. Evidence remains available for review."}</span>
-                    </div>
-                    <div className="action-row">
-                      <button
-                        className="ghost-button"
-                        disabled={currentExecutionStatus !== "queued" || startExecution.isPending || completeExecution.isPending}
-                        onClick={() => void startExecution.mutateAsync(selectedExecution.id).then(() => refreshExecutionScope()).catch((error: Error) => showError(error, "Unable to start execution"))}
-                        type="button"
-                      >
-                        <ExecutionStartIcon />
-                        <span>{startExecution.isPending ? "Starting…" : "Start execution"}</span>
-                      </button>
-                      <button
-                        className="ghost-button warning"
-                        disabled={currentExecutionStatus !== "running" || completeExecution.isPending || startExecution.isPending}
-                        onClick={() => void handleFinalizeExecution("abort")}
-                        type="button"
-                      >
-                        <ExecutionAbortIcon />
-                        <span>{completeExecution.isPending && executionFinalizeAction === "abort" ? "Aborting…" : "Abort execution"}</span>
-                      </button>
-                      <button
-                        className="ghost-button"
-                        disabled={currentExecutionStatus !== "running" || completeExecution.isPending || startExecution.isPending}
-                        onClick={() => void handleFinalizeExecution("complete")}
-                        type="button"
-                      >
-                        <ExecutionCompleteIcon />
-                        <span>{completeExecution.isPending && executionFinalizeAction === "complete" ? "Completing…" : "Complete execution"}</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <SubnavTabs
-                    items={[
-                      { value: "overview", label: "Overview", meta: `${selectedSteps.length} steps` },
-                      { value: "logs", label: "Logs", meta: selectedExecutionResult?.status || "none" },
-                      { value: "failures", label: "Failures", meta: `${blockingCases.length}` },
-                      { value: "history", label: "History", meta: `${selectedCaseHistory.length}` }
-                    ]}
-                    onChange={setActiveTab}
-                    value={activeTab}
+            {!executionsQuery.isLoading ? (
+              <div className="tile-browser-grid">
+                {filteredExecutions.map((execution) => (
+                  <ExecutionListCard
+                    key={execution.id}
+                    execution={execution}
+                    isActive={selectedExecution?.id === execution.id}
+                    liveNow={liveNow}
+                    onSelect={() => focusExecution(execution.id)}
+                    summary={executionSummaryById[execution.id] || EMPTY_EXECUTION_RUN_SUMMARY}
                   />
+                ))}
+                {!filteredExecutions.length ? <div className="empty-state compact">No executions created yet.</div> : null}
+              </div>
+            ) : null}
+          </Panel>
+        )}
+        detailView={(
+          activeExecutionStage === "case" ? (
+            <Panel
+              className="execution-panel execution-panel--detail"
+              actions={<WorkspaceBackButton label={`Back to ${focusedExecutionSuite?.name || "suite cases"}`} onClick={closeCaseDrilldown} />}
+              title="Execution console"
+              subtitle="Run the selected case, capture evidence, and inspect logs and history without the rest of the workspace crowding the screen."
+            >
+              {selectedExecution && selectedExecutionCase ? (
+                <div className="execution-panel-body execution-panel-body--detail">
+                  <div className="detail-stack">
+                    <div className="execution-detail-hero">
+                      <div className="execution-detail-heading">
+                        <div className="execution-health-status-row">
+                          <StatusBadge value={selectedCaseStatusLabel} />
+                          {selectedExecutionCase.suite_name ? <span className="count-pill">{selectedExecutionCase.suite_name}</span> : null}
+                          <span className="execution-health-trigger">{selectedExecution?.name || "Selected execution"}</span>
+                        </div>
+                        <strong>{selectedExecutionCase.title}</strong>
+                        <span>{selectedExecutionCase.description || "Execute this case step by step and capture evidence as you go."}</span>
+                      </div>
 
-                  {activeTab === "overview" ? (
-                    <div className="detail-stack execution-overview-tab">
-                      {selectedExecutionCase ? (
+                      <div className="execution-detail-glance">
+                        <div className="execution-detail-card">
+                          <span>Case duration</span>
+                          <strong>{formatDuration(selectedCaseDurationMs, DEFAULT_DURATION_LABEL)}</strong>
+                          <small>{selectedExecutionResult?.created_at ? `Last evidence ${formatExecutionTimestamp(selectedExecutionResult.created_at)}` : "Duration appears as the case is executed"}</small>
+                        </div>
+                        <div className="execution-detail-card">
+                          <span>Step completion</span>
+                          <strong>{selectedSteps.length ? `${selectedStepProgress.percent}%` : "0%"}</strong>
+                          <small>{selectedSteps.length ? `${selectedStepProgress.passedCount + selectedStepProgress.failedCount}/${selectedSteps.length} steps resolved` : "No steps loaded for this case"}</small>
+                        </div>
+                        <div className="execution-detail-card">
+                          <span>Evidence notes</span>
+                          <strong>{resolvedStepNoteCount}</strong>
+                          <small>{resolvedStepNoteCount ? "Comments captured for this case" : "No comments captured yet"}</small>
+                        </div>
+                      </div>
+                    </div>
+
+                    <SubnavTabs
+                      items={[
+                        { value: "overview", label: "Overview", meta: `${selectedSteps.length} steps` },
+                        { value: "logs", label: "Logs", meta: selectedExecutionResult?.status || "none" },
+                        { value: "history", label: "History", meta: `${selectedCaseHistory.length}` }
+                      ]}
+                      onChange={setActiveTab}
+                      value={activeTab}
+                    />
+
+                    {activeTab === "overview" ? (
+                      <div className="detail-stack execution-overview-tab">
                         <div className="execution-step-progress-card">
                           <ProgressMeter
                             detail={`${selectedStepProgress.passedCount} passed · ${selectedStepProgress.failedCount} failed · ${selectedStepProgress.pendingCount} pending`}
@@ -1761,203 +1390,481 @@ export function ExecutionsPage() {
                             value={selectedStepProgress.percent}
                           />
                         </div>
-                      ) : null}
 
-                      {!selectedExecutionCase ? <div className="empty-state compact">Select a case from the execution board to run its steps.</div> : null}
-                      {selectedExecutionCase && !selectedSteps.length ? <div className="empty-state compact">No snapshot steps are available for this case.</div> : null}
+                        {!selectedSteps.length ? <div className="empty-state compact">No snapshot steps are available for this case.</div> : null}
 
-                      {selectedSteps.length ? (
-                        <div className="execution-steps-toolbar">
-                          <div className="execution-steps-bulk-buttons">
-                            <label className="execution-select-all">
-                              <input
-                                checked={selectedSteps.length > 0 && bulkSelectedStepIds.length === selectedSteps.length}
-                                onChange={() => {
-                                  if (bulkSelectedStepIds.length === selectedSteps.length) {
-                                    setBulkSelectedStepIds([]);
-                                  } else {
-                                    setBulkSelectedStepIds(selectedSteps.map((step) => step.id));
-                                  }
-                                }}
-                                type="checkbox"
-                              />
-                              <span>Select all steps</span>
-                            </label>
-                            <button
-                              className="ghost-button execution-steps-bulk-action"
-                              disabled={!isExecutionStarted || isExecutionLocked || !bulkSelectedStepIds.length}
-                              onClick={() => void handleBulkStepStatus("passed", "selected")}
-                              type="button"
-                            >
-                              <ExecutionStepsIcon />
-                              <span>Pass selected</span>
-                            </button>
-                            <button
-                              className="ghost-button danger execution-steps-bulk-action"
-                              disabled={!isExecutionStarted || isExecutionLocked || !bulkSelectedStepIds.length}
-                              onClick={() => void handleBulkStepStatus("failed", "selected")}
-                              type="button"
-                            >
-                              <ExecutionStepsIcon />
-                              <span>Fail selected</span>
-                            </button>
-                            <button
-                              className="ghost-button"
-                              disabled={!isExecutionStarted || isExecutionLocked}
-                              onClick={() => void handleBulkStepStatus("passed", "all")}
-                              type="button"
-                            >
-                              <TestCaseBoardIcon />
-                              <span>TC Pass</span>
-                            </button>
-                            <button
-                              className="ghost-button danger"
-                              disabled={!isExecutionStarted || isExecutionLocked}
-                              onClick={() => void handleBulkStepStatus("failed", "all")}
-                              type="button"
-                            >
-                              <TestCaseBoardIcon />
-                              <span>TC Fail</span>
-                            </button>
-                          </div>
-                        </div>
-                      ) : null}
-
-                      <div className="execution-step-table" role="table" aria-label="Test steps for this case">
-                        <div className="execution-step-table-head" role="row">
-                          <span className="execution-step-col-check" role="columnheader" />
-                          <span className="execution-step-col-order" role="columnheader">
-                            #
-                          </span>
-                          <span className="execution-step-col-action" role="columnheader">
-                            Action
-                          </span>
-                          <span className="execution-step-col-expected" role="columnheader">
-                            Expected
-                          </span>
-                          <span className="execution-step-col-status" role="columnheader">
-                            Result
-                          </span>
-                          <span className="execution-step-col-actions" role="columnheader">
-                            Mark
-                          </span>
-                          <span className="execution-step-col-note" role="columnheader">
-                            Comment / log
-                          </span>
-                        </div>
-                        <div className="execution-step-table-body">
-                          {selectedSteps.map((step) => {
-                            const rowStatus = stepStatuses[step.id];
-                            return (
-                              <ExecutionCompactStepRow
-                                key={step.id}
-                                isLocked={!isExecutionStarted || isExecutionLocked}
-                                isSelected={bulkSelectedStepIds.includes(step.id)}
-                                note={stepNotes[step.id] || ""}
-                                onFail={() => void handleRecordStep(step.id, "failed")}
-                                onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
-                                onPass={() => void handleRecordStep(step.id, "passed")}
-                                onToggleSelect={(checked) =>
-                                  setBulkSelectedStepIds((current) =>
-                                    checked ? [...new Set([...current, step.id])] : current.filter((id) => id !== step.id)
-                                  )
-                                }
-                                status={rowStatus || "queued"}
-                                step={step}
-                              />
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {!isExecutionStarted && !isExecutionLocked ? <div className="empty-state compact">Start the execution to enable step actions.</div> : null}
-                      {isExecutionLocked ? <div className="empty-state compact">This execution is locked because it is {executionStatusLabel(currentExecutionStatus).toLowerCase()}.</div> : null}
-                    </div>
-                  ) : null}
-
-                  {activeTab === "logs" ? (
-                    <div className="stack-list execution-logs-stack">
-                      {selectedExecutionResult ? (
-                        <div className="execution-log-focus">
-                          <div className="execution-section-head">
-                            <strong>{selectedExecutionResult.test_case_title || selectedExecutionCase?.title || "Selected case logs"}</strong>
-                            <span>{selectedExecutionResult.error || "Structured evidence and notes for the focused case."}</span>
-                          </div>
-                          <ExecutionStructuredLogView logsJson={selectedExecutionResult.logs} steps={selectedSteps} />
-                        </div>
-                      ) : (
-                        <div className="empty-state compact">No logs yet for the selected case.</div>
-                      )}
-
-                      {executionResults
-                        .filter((result) => result.id !== selectedExecutionResult?.id)
-                        .map((result) => (
-                          <div className="stack-item execution-log-row" key={result.id}>
-                            <div>
-                              <strong>{result.test_case_title || result.test_case_id}</strong>
-                              <ExecutionStructuredLogSummary logsJson={result.logs} />
-                              <span>{formatExecutionTimestamp(result.created_at, "Timestamp unavailable")} · {formatDuration(result.duration_ms, DEFAULT_DURATION_LABEL)}</span>
-                              {result.error ? <span className="execution-log-error">{result.error}</span> : null}
+                        {selectedSteps.length ? (
+                          <div className="execution-steps-toolbar">
+                            <div className="execution-steps-bulk-buttons">
+                              <label className="execution-select-all">
+                                <input
+                                  checked={selectedSteps.length > 0 && bulkSelectedStepIds.length === selectedSteps.length}
+                                  onChange={() => {
+                                    if (bulkSelectedStepIds.length === selectedSteps.length) {
+                                      setBulkSelectedStepIds([]);
+                                    } else {
+                                      setBulkSelectedStepIds(selectedSteps.map((step) => step.id));
+                                    }
+                                  }}
+                                  type="checkbox"
+                                />
+                                <span>Select all steps</span>
+                              </label>
+                              <button
+                                className="ghost-button execution-steps-bulk-action"
+                                disabled={!isExecutionStarted || isExecutionLocked || !bulkSelectedStepIds.length}
+                                onClick={() => void handleBulkStepStatus("passed", "selected")}
+                                type="button"
+                              >
+                                <ExecutionStepsIcon />
+                                <span>Pass selected</span>
+                              </button>
+                              <button
+                                className="ghost-button danger execution-steps-bulk-action"
+                                disabled={!isExecutionStarted || isExecutionLocked || !bulkSelectedStepIds.length}
+                                onClick={() => void handleBulkStepStatus("failed", "selected")}
+                                type="button"
+                              >
+                                <ExecutionStepsIcon />
+                                <span>Fail selected</span>
+                              </button>
+                              <button
+                                className="ghost-button"
+                                disabled={!isExecutionStarted || isExecutionLocked}
+                                onClick={() => void handleBulkStepStatus("passed", "all")}
+                                type="button"
+                              >
+                                <TestCaseBoardIcon />
+                                <span>TC Pass</span>
+                              </button>
+                              <button
+                                className="ghost-button danger"
+                                disabled={!isExecutionStarted || isExecutionLocked}
+                                onClick={() => void handleBulkStepStatus("failed", "all")}
+                                type="button"
+                              >
+                                <TestCaseBoardIcon />
+                                <span>TC Fail</span>
+                              </button>
                             </div>
-                            <StatusBadge value={result.status} />
                           </div>
-                        ))}
-                      {!executionResults.length ? <div className="empty-state compact">No execution results have been logged yet.</div> : null}
-                    </div>
-                  ) : null}
+                        ) : null}
 
-                  {activeTab === "failures" ? (
-                    <div className="stack-list">
-                      {blockingCases.map((testCase) => (
-                        <button className="stack-item stack-item-button" key={testCase.id} onClick={() => focusExecutionCase(testCase.id)} type="button">
-                          <div>
-                            <strong>{testCase.title}</strong>
-                            <span>{testCase.description || "Blocked or failed case."}</span>
-                            <small>{formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}</small>
+                        <div className="execution-step-table" role="table" aria-label="Test steps for this case">
+                          <div className="execution-step-table-head" role="row">
+                            <span className="execution-step-col-check" role="columnheader" />
+                            <span className="execution-step-col-order" role="columnheader">#</span>
+                            <span className="execution-step-col-action" role="columnheader">Action</span>
+                            <span className="execution-step-col-expected" role="columnheader">Expected</span>
+                            <span className="execution-step-col-status" role="columnheader">Result</span>
+                            <span className="execution-step-col-actions" role="columnheader">Mark</span>
+                            <span className="execution-step-col-note" role="columnheader">Comment / log</span>
                           </div>
-                          <StatusBadge value={caseDerivedStatus(testCase)} />
+                          <div className="execution-step-table-body">
+                            {selectedSteps.map((step) => {
+                              const rowStatus = stepStatuses[step.id];
+                              return (
+                                <ExecutionCompactStepRow
+                                  key={step.id}
+                                  isLocked={!isExecutionStarted || isExecutionLocked}
+                                  isSelected={bulkSelectedStepIds.includes(step.id)}
+                                  note={stepNotes[step.id] || ""}
+                                  onFail={() => void handleRecordStep(step.id, "failed")}
+                                  onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
+                                  onPass={() => void handleRecordStep(step.id, "passed")}
+                                  onToggleSelect={(checked) =>
+                                    setBulkSelectedStepIds((current) =>
+                                      checked ? [...new Set([...current, step.id])] : current.filter((id) => id !== step.id)
+                                    )
+                                  }
+                                  status={rowStatus || "queued"}
+                                  step={step}
+                                />
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {!isExecutionStarted && !isExecutionLocked ? <div className="empty-state compact">Start the execution to enable step actions.</div> : null}
+                        {isExecutionLocked ? <div className="empty-state compact">This execution is locked because it is {executionStatusLabel(currentExecutionStatus).toLowerCase()}.</div> : null}
+                      </div>
+                    ) : null}
+
+                    {activeTab === "logs" ? (
+                      <div className="stack-list execution-logs-stack">
+                        {selectedExecutionResult ? (
+                          <div className="execution-log-focus">
+                            <div className="execution-section-head">
+                              <strong>{selectedExecutionResult.test_case_title || selectedExecutionCase.title || "Selected case logs"}</strong>
+                              <span>{selectedExecutionResult.error || "Structured evidence and notes for the focused case."}</span>
+                            </div>
+                            <ExecutionStructuredLogView logsJson={selectedExecutionResult.logs} steps={selectedSteps} />
+                          </div>
+                        ) : (
+                          <div className="empty-state compact">No logs yet for the selected case.</div>
+                        )}
+
+                        {executionResults
+                          .filter((result) => result.id !== selectedExecutionResult?.id)
+                          .map((result) => (
+                            <div className="stack-item execution-log-row" key={result.id}>
+                              <div>
+                                <strong>{result.test_case_title || result.test_case_id}</strong>
+                                <ExecutionStructuredLogSummary logsJson={result.logs} />
+                                <span>{formatExecutionTimestamp(result.created_at, "Timestamp unavailable")} · {formatDuration(result.duration_ms, DEFAULT_DURATION_LABEL)}</span>
+                                {result.error ? <span className="execution-log-error">{result.error}</span> : null}
+                              </div>
+                              <StatusBadge value={result.status} />
+                            </div>
+                          ))}
+                        {!executionResults.length ? <div className="empty-state compact">No execution results have been logged yet.</div> : null}
+                      </div>
+                    ) : null}
+
+                    {activeTab === "history" ? (
+                      <div className="stack-list execution-history-stack">
+                        {selectedCaseHistory.map((result) => {
+                          const linkedExecution = executionById[result.execution_id];
+                          const isCurrentExecution = result.execution_id === selectedExecution.id;
+
+                          return (
+                            <button
+                              className={isCurrentExecution ? "stack-item stack-item-button execution-history-row is-current" : "stack-item stack-item-button execution-history-row"}
+                              key={result.id}
+                              onClick={() => focusExecutionCase(result.test_case_id, result.execution_id)}
+                              type="button"
+                            >
+                              <div>
+                                <strong>{linkedExecution?.name || result.test_case_title || "Execution record"}</strong>
+                                <span>{result.suite_name || "Recorded case evidence"} · {formatExecutionTimestamp(result.created_at, "Timestamp unavailable")}</span>
+                                <small>{formatDuration(result.duration_ms, DEFAULT_DURATION_LABEL)} · {isCurrentExecution ? "Current run" : "Open this execution"}</small>
+                              </div>
+                              <StatusBadge value={result.status} />
+                            </button>
+                          );
+                        })}
+                        {!selectedCaseHistory.length ? <div className="empty-state compact">No execution history exists yet for this selected case.</div> : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <div className="execution-panel-body execution-panel-body--detail">
+                  <div className="empty-state compact">Select a case to continue.</div>
+                </div>
+              )}
+            </Panel>
+          ) : activeExecutionStage === "cases" ? (
+            <Panel
+              className="execution-panel execution-panel--tree"
+              actions={<WorkspaceBackButton label={`Back to ${selectedExecution?.name || "execution suites"}`} onClick={closeSuiteDrilldown} />}
+              title={focusedExecutionSuite ? `${focusedExecutionSuite.name} cases` : "Suite cases"}
+              subtitle="Review every snapped case in this suite, then open a single case into its full execution console."
+            >
+              <div className="detail-stack">
+                {focusedExecutionSuite && focusedSuiteMetric ? (
+                  <>
+                    <div className="detail-summary">
+                      <strong>{focusedExecutionSuite.name}</strong>
+                      <span>{focusedSuiteMetric.count} cases snapped into this suite for the selected execution.</span>
+                      <span>{focusedSuiteMetric.passedCount} passed · {focusedSuiteMetric.failedCount} failed · {focusedSuiteMetric.blockedCount} blocked</span>
+                    </div>
+
+                    <ProgressMeter
+                      detail={`${focusedSuiteMetric.passedCount} passed · ${focusedSuiteMetric.failedCount} failed · ${focusedSuiteMetric.blockedCount} blocked`}
+                      label="Suite completion"
+                      segments={buildProgressSegments(
+                        focusedSuiteMetric.passedCount,
+                        focusedSuiteMetric.failedCount,
+                        focusedSuiteMetric.blockedCount,
+                        focusedSuiteMetric.count
+                      )}
+                      value={focusedSuiteMetric.percent}
+                    />
+
+                    <div className="action-row">
+                      <button
+                        className="ghost-button suite-bulk-pass"
+                        disabled={!isExecutionStarted || isExecutionLocked}
+                        onClick={() => void handleSuiteBulkStatus(focusedExecutionSuite.id, "passed")}
+                        type="button"
+                      >
+                        <SuiteBoardIcon />
+                        <span>Suite Pass</span>
+                      </button>
+                      <button
+                        className="ghost-button danger suite-bulk-fail"
+                        disabled={!isExecutionStarted || isExecutionLocked}
+                        onClick={() => void handleSuiteBulkStatus(focusedExecutionSuite.id, "failed")}
+                        type="button"
+                      >
+                        <SuiteBoardIcon />
+                        <span>Suite Fail</span>
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+
+                <div className="tile-browser-grid">
+                  {focusedSuiteCases.map((testCase) => {
+                    const caseStatus = caseDerivedStatus(testCase);
+
+                    return (
+                      <button
+                        key={testCase.id}
+                        className={
+                          selectedTestCaseId === testCase.id
+                            ? "record-card tile-card test-case-card execution-case-card execution-board-case-card is-active"
+                            : nextFocusCase?.id === testCase.id
+                              ? "record-card tile-card test-case-card execution-case-card execution-board-case-card is-next"
+                              : "record-card tile-card test-case-card execution-case-card execution-board-case-card"
+                        }
+                        onClick={() => focusExecutionCase(testCase.id)}
+                        type="button"
+                      >
+                        <div className="tile-card-main">
+                          <div className="tile-card-header">
+                            <div
+                              aria-hidden="true"
+                              className={`record-card-icon execution-board-icon status-${caseStatus}`}
+                              title={boardStatusTooltip(caseStatus)}
+                            >
+                              <TestCaseBoardIcon />
+                            </div>
+                            <div className="tile-card-title-group">
+                              <strong>{testCase.title}</strong>
+                              <span className="tile-card-kicker">{nextFocusCase?.id === testCase.id ? "Next recommended case" : focusedExecutionSuite?.name || "Suite case"}</span>
+                            </div>
+                            <ExecutionStatusIndicator status={caseStatus} />
+                          </div>
+                          <div className="execution-card-facts" aria-label={`${testCase.title} facts`}>
+                            <ExecutionCardFact
+                              ariaLabel={`Priority P${testCase.priority || 3}`}
+                              label={`P${testCase.priority || 3}`}
+                              title={`Priority P${testCase.priority || 3}`}
+                            >
+                              <ExecutionPriorityIcon />
+                            </ExecutionCardFact>
+                            <ExecutionCardFact
+                              ariaLabel={`${(stepsByCaseId[testCase.id] || []).length} steps`}
+                              label={String((stepsByCaseId[testCase.id] || []).length)}
+                              title={`${(stepsByCaseId[testCase.id] || []).length} steps`}
+                            >
+                              <ExecutionStepsIcon />
+                            </ExecutionCardFact>
+                            <ExecutionCardFact
+                              ariaLabel={`Case duration ${formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}`}
+                              label={formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}
+                              title={`Case duration ${formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}`}
+                              tone={caseStatus === "blocked" ? "warning" : "neutral"}
+                            >
+                              <ExecutionTimeIcon />
+                            </ExecutionCardFact>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {!focusedSuiteCases.length ? <div className="empty-state compact">No test cases were snapped into this suite.</div> : null}
+                </div>
+              </div>
+            </Panel>
+          ) : (
+            <Panel
+              className="execution-panel execution-panel--tree"
+              actions={<WorkspaceBackButton label="Back to execution tiles" onClick={closeExecutionDrilldown} />}
+              title={selectedExecution?.name || "Execution suites"}
+              subtitle="Open any suite tile to continue into its snapped cases. This run summary stays visible without the old three-column crowding."
+            >
+              {selectedExecution ? (
+                <div className="detail-stack">
+                  <div className="execution-health-layout">
+                    <div className="execution-health-hero">
+                      <ExecutionOverviewOrb
+                        blockedCount={executionStatusCounts.blocked}
+                        failedCount={executionStatusCounts.failed}
+                        passedCount={executionStatusCounts.passed}
+                        percent={executionProgress.percent}
+                        totalCount={executionProgress.totalCases}
+                      />
+
+                      <div className="execution-health-copy">
+                        <div className="execution-health-status-row">
+                          <StatusBadge value={currentExecutionStatus} />
+                          <span className="count-pill">{selectedExecutionAppTypeLabel}</span>
+                          <span className="execution-health-trigger">{(selectedExecution.trigger || "manual").toUpperCase()} trigger</span>
+                        </div>
+
+                        <div className="execution-health-heading">
+                          <strong>{selectedExecution.name || "Unnamed execution"}</strong>
+                          <span>{selectedExecutionSuiteIds.length} suites snapped into this run with {executionProgress.totalCases} cases preserved for execution evidence.</span>
+                        </div>
+
+                        <ProgressMeter
+                          detail={`${executionStatusCounts.passed} passed · ${executionStatusCounts.failed} failed · ${executionStatusCounts.blocked} blocked · ${remainingCaseCount} remaining`}
+                          label="Run completion"
+                          segments={buildProgressSegments(
+                            executionStatusCounts.passed,
+                            executionStatusCounts.failed,
+                            executionStatusCounts.blocked,
+                            executionProgress.totalCases
+                          )}
+                          value={executionProgress.percent}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="metric-strip">
+                      <div className="mini-card">
+                        <strong>{formatExecutionTimestamp(selectedExecution.started_at, currentExecutionStatus === "queued" ? "Not started yet" : "Waiting to start")}</strong>
+                        <span>Started</span>
+                      </div>
+                      <div className="mini-card">
+                        <strong>{formatExecutionTimestamp(selectedExecution.ended_at, currentExecutionStatus === "running" ? "Live run" : currentExecutionStatus === "aborted" ? "Stopped before completion" : "Not finished yet")}</strong>
+                        <span>Ended</span>
+                      </div>
+                      <div className="mini-card">
+                        <strong>{formatDuration(selectedExecutionDurationMs, DEFAULT_DURATION_LABEL)}</strong>
+                        <span>Run duration</span>
+                      </div>
+                      <div className="mini-card">
+                        <strong>{blockingCases.length}</strong>
+                        <span>Blocking cases</span>
+                      </div>
+                    </div>
+
+                    <ExecutionContextSnapshotSummary execution={selectedExecution} />
+
+                    <div className="execution-control-strip">
+                      <div className="execution-control-copy">
+                        <strong>{executionControlTitle}</strong>
+                        <span>{executionControlDescription}</span>
+                      </div>
+                      <div className="action-row">
+                        <button
+                          className="ghost-button"
+                          disabled={currentExecutionStatus !== "queued" || startExecution.isPending || completeExecution.isPending}
+                          onClick={() => void startExecution.mutateAsync(selectedExecution.id).then(() => refreshExecutionScope()).catch((error: Error) => showError(error, "Unable to start execution"))}
+                          type="button"
+                        >
+                          <ExecutionStartIcon />
+                          <span>{startExecution.isPending ? "Starting…" : "Start execution"}</span>
                         </button>
-                      ))}
-                      {!blockingCases.length ? <div className="empty-state compact">No failed or blocked cases in this execution.</div> : null}
+                        <button
+                          className="ghost-button warning"
+                          disabled={currentExecutionStatus !== "running" || completeExecution.isPending || startExecution.isPending}
+                          onClick={() => void handleFinalizeExecution("abort")}
+                          type="button"
+                        >
+                          <ExecutionAbortIcon />
+                          <span>{completeExecution.isPending && executionFinalizeAction === "abort" ? "Aborting…" : "Abort execution"}</span>
+                        </button>
+                        <button
+                          className="ghost-button"
+                          disabled={currentExecutionStatus !== "running" || completeExecution.isPending || startExecution.isPending}
+                          onClick={() => void handleFinalizeExecution("complete")}
+                          type="button"
+                        >
+                          <ExecutionCompleteIcon />
+                          <span>{completeExecution.isPending && executionFinalizeAction === "complete" ? "Completing…" : "Complete execution"}</span>
+                        </button>
+                      </div>
                     </div>
-                  ) : null}
 
-                  {activeTab === "history" ? (
-                    <div className="stack-list execution-history-stack">
-                      {selectedCaseHistory.map((result) => {
-                        const linkedExecution = executionById[result.execution_id];
-                        const isCurrentExecution = result.execution_id === selectedExecution.id;
+                    <div className="tile-browser-grid">
+                      {executionSuites.map((suite) => {
+                        const suiteCases = displayCasesBySuiteId[suite.id] || [];
+                        const suiteMetric = suiteMetrics.find((item) => item.suiteId === suite.id);
+                        const suiteStatus = suiteMetric ? suiteBoardStatus(suiteMetric) : "queued";
+                        const suiteResolvedCount =
+                          (suiteMetric?.passedCount || 0) +
+                          (suiteMetric?.failedCount || 0) +
+                          (suiteMetric?.blockedCount || 0);
 
                         return (
                           <button
-                            className={isCurrentExecution ? "stack-item stack-item-button execution-history-row is-current" : "stack-item stack-item-button execution-history-row"}
-                            key={result.id}
-                            onClick={() => focusExecutionCase(result.test_case_id, result.execution_id)}
+                            key={suite.id}
+                            className={focusedSuiteId === suite.id ? "record-card tile-card execution-suite-card is-active" : "record-card tile-card execution-suite-card"}
+                            onClick={() => openSuiteDrilldown(suite.id)}
                             type="button"
                           >
-                            <div>
-                              <strong>{linkedExecution?.name || result.test_case_title || "Execution record"}</strong>
-                              <span>{result.suite_name || "Recorded case evidence"} · {formatExecutionTimestamp(result.created_at, "Timestamp unavailable")}</span>
-                              <small>{formatDuration(result.duration_ms, DEFAULT_DURATION_LABEL)} · {isCurrentExecution ? "Current run" : "Open this execution"}</small>
+                            <div className="tile-card-main">
+                              <div className="tile-card-header">
+                                <div
+                                  aria-hidden="true"
+                                  className={`record-card-icon execution-board-icon status-${suiteStatus}`}
+                                  title={boardStatusTooltip(suiteStatus)}
+                                >
+                                  <SuiteBoardIcon />
+                                </div>
+                                <div className="tile-card-title-group">
+                                  <strong>{suite.name}</strong>
+                                  <span className="tile-card-kicker">{suiteResolvedCount}/{suiteMetric?.count || 0} resolved</span>
+                                </div>
+                                <ExecutionStatusIndicator status={suiteStatus} />
+                              </div>
+
+                              <div className="execution-card-facts" aria-label={`${suite.name} facts`}>
+                                <ExecutionCardFact
+                                  ariaLabel={`${suiteCases.length} cases in suite`}
+                                  label={String(suiteCases.length)}
+                                  title={`${suiteCases.length} cases in suite`}
+                                >
+                                  <ExecutionScopeIcon />
+                                </ExecutionCardFact>
+                                <ExecutionCardFact
+                                  ariaLabel={`${suiteResolvedCount} of ${suiteMetric?.count || 0} cases resolved`}
+                                  label={`${suiteResolvedCount}/${suiteMetric?.count || 0}`}
+                                  title={`${suiteResolvedCount}/${suiteMetric?.count || 0} cases resolved`}
+                                >
+                                  <ExecutionProgressFactsIcon />
+                                </ExecutionCardFact>
+                                <ExecutionCardFact
+                                  ariaLabel={`${(suiteMetric?.failedCount || 0) + (suiteMetric?.blockedCount || 0)} failing or blocked cases`}
+                                  label={String((suiteMetric?.failedCount || 0) + (suiteMetric?.blockedCount || 0))}
+                                  title={`${suiteMetric?.failedCount || 0} failed · ${suiteMetric?.blockedCount || 0} blocked`}
+                                  tone={suiteMetric?.failedCount ? "danger" : suiteMetric?.blockedCount ? "warning" : "success"}
+                                >
+                                  <ExecutionRiskIcon />
+                                </ExecutionCardFact>
+                                <ExecutionCardFact
+                                  ariaLabel={`Suite duration ${formatDuration(suiteDurationById[suite.id], DEFAULT_DURATION_LABEL)}`}
+                                  label={formatDuration(suiteDurationById[suite.id], DEFAULT_DURATION_LABEL)}
+                                  title={`Total recorded suite duration ${formatDuration(suiteDurationById[suite.id], DEFAULT_DURATION_LABEL)}`}
+                                  tone={suiteStatus === "blocked" ? "warning" : "neutral"}
+                                >
+                                  <ExecutionTimeIcon />
+                                </ExecutionCardFact>
+                              </div>
+
+                              <ProgressMeter
+                                detail={`${suiteMetric?.passedCount || 0} passed · ${suiteMetric?.failedCount || 0} failed · ${suiteMetric?.blockedCount || 0} blocked`}
+                                hideCopy
+                                label="Suite completion"
+                                segments={buildProgressSegments(
+                                  suiteMetric?.passedCount || 0,
+                                  suiteMetric?.failedCount || 0,
+                                  suiteMetric?.blockedCount || 0,
+                                  suiteMetric?.count || 0
+                                )}
+                                value={suiteMetric?.percent || 0}
+                              />
                             </div>
-                            <StatusBadge value={result.status} />
                           </button>
                         );
                       })}
-                      {!selectedExecutionCase ? <div className="empty-state compact">Select a case to inspect its execution history across runs.</div> : null}
-                      {selectedExecutionCase && !selectedCaseHistory.length ? <div className="empty-state compact">No execution history exists yet for this selected case.</div> : null}
+                      {!executionSuites.length ? <div className="empty-state compact">No suites were selected for this execution.</div> : null}
                     </div>
-                  ) : null}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="execution-panel-body execution-panel-body--detail">
-                <div className="empty-state compact">Select an execution to continue.</div>
-              </div>
-            )}
-          </Panel>
-        </div>
-      </div>
+              ) : (
+                <div className="empty-state compact">Select an execution to inspect its snapshot scope.</div>
+              )}
+            </Panel>
+          )
+        )}
+        isDetailOpen={Boolean(selectedExecution)}
+      />
 
       {isCreateExecutionModalOpen ? (
         <ExecutionCreateModal

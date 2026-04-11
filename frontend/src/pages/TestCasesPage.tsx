@@ -22,6 +22,7 @@ import {
 } from "../components/TileCardPrimitives";
 import { SuiteCasePicker } from "../components/SuiteCasePicker";
 import { ToastMessage } from "../components/ToastMessage";
+import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { parseTestCaseCsv, type ImportedTestCaseRow } from "../lib/testCaseImport";
@@ -416,8 +417,8 @@ export function TestCasesPage() {
   );
 
   const selectedTestCase = useMemo(
-    () => filteredCases.find((item) => item.id === selectedTestCaseId) || testCases.find((item) => item.id === selectedTestCaseId) || null,
-    [filteredCases, selectedTestCaseId, testCases]
+    () => testCases.find((item) => item.id === selectedTestCaseId) || null,
+    [selectedTestCaseId, testCases]
   );
 
   useEffect(() => {
@@ -425,8 +426,12 @@ export function TestCasesPage() {
       return;
     }
 
+    if (!selectedTestCaseId) {
+      setCaseDraft(EMPTY_CASE_DRAFT);
+      return;
+    }
+
     if (selectedTestCase) {
-      setSelectedTestCaseId(selectedTestCase.id);
       setCaseDraft({
         title: selectedTestCase.title,
         description: selectedTestCase.description || "",
@@ -437,14 +442,9 @@ export function TestCasesPage() {
       return;
     }
 
-    if (filteredCases[0]) {
-      setSelectedTestCaseId(filteredCases[0].id);
-      return;
-    }
-
     setSelectedTestCaseId("");
     setCaseDraft(EMPTY_CASE_DRAFT);
-  }, [filteredCases, isCreating, selectedTestCase]);
+  }, [isCreating, selectedTestCase, selectedTestCaseId]);
 
   useEffect(() => {
     setNewStepDraft(EMPTY_STEP_DRAFT);
@@ -1090,6 +1090,17 @@ export function TestCasesPage() {
     );
   }, [aiRequirementIds, testCases]);
 
+  const closeCaseWorkspace = () => {
+    setIsCreating(false);
+    setSelectedTestCaseId("");
+    setCaseDraft(EMPTY_CASE_DRAFT);
+    setNewStepDraft(EMPTY_STEP_DRAFT);
+    setDraftSteps([]);
+    setExpandedStepIds([]);
+    setExpandedSections(createDefaultTestCaseSections());
+    setIsStepCreateVisible(false);
+  };
+
   return (
     <div className="page-content page-content--library-full">
       <PageHeader
@@ -1137,9 +1148,9 @@ export function TestCasesPage() {
         projects={projects}
       />
 
-      <div className="test-case-workspace">
-        <div className="test-case-sidebar">
-          <Panel title="Test case library" subtitle={appTypeId ? "Search the library, scan quick quality signals, and jump into a case without the list taking over the page." : "Choose an app type to begin."}>
+      <WorkspaceMasterDetail
+        browseView={(
+          <Panel title="Test case tiles" subtitle={appTypeId ? "Browse reusable coverage as cards first, then open one case into a full-page editor." : "Choose an app type to begin."}>
             <div className="design-list-toolbar test-case-catalog-toolbar">
               <input
                 placeholder="Search title, description, or requirement"
@@ -1191,12 +1202,12 @@ export function TestCasesPage() {
             {selectedActionTestCaseIds.length ? (
               <div className="detail-summary test-case-selection-summary">
                 <strong>{selectedActionTestCaseIds.length} test case{selectedActionTestCaseIds.length === 1 ? "" : "s"} selected for bulk actions</strong>
-                <span>Use the checked cases to create a suite, create an execution under the linked Default suite snapshot, or bulk delete them. Click a card body to keep editing one test case at a time.</span>
+                <span>Use the checked cases to create a suite, create an execution under the linked Default suite snapshot, or bulk delete them. Open any tile body to keep editing one case at a time.</span>
               </div>
             ) : null}
 
             {isLibraryLoading ? (
-              <div className="record-list test-case-library-scroll">
+              <div className="tile-browser-grid test-case-library-scroll">
                 <div className="skeleton-block" />
                 <div className="skeleton-block" />
                 <div className="skeleton-block" />
@@ -1204,7 +1215,7 @@ export function TestCasesPage() {
             ) : null}
 
             {!isLibraryLoading ? (
-              <div className="record-list test-case-library-scroll">
+              <div className="tile-browser-grid test-case-library-scroll">
                 {filteredCases.map((testCase) => {
                   const isSelectedForAction = selectedActionTestCaseIds.includes(testCase.id);
                   const isActive = selectedTestCaseId === testCase.id && !isCreating;
@@ -1307,10 +1318,13 @@ export function TestCasesPage() {
               </div>
             ) : null}
           </Panel>
-        </div>
-
-        <div className="test-case-editor-column">
-          <Panel title="Test case workspace" subtitle={selectedTestCaseId || isCreating ? "Switch between case details and step editing without losing the selected context." : "Select a test case or create a new one."}>
+        )}
+        detailView={(
+          <Panel
+            actions={<WorkspaceBackButton label="Back to test case tiles" onClick={closeCaseWorkspace} />}
+            title="Test case workspace"
+            subtitle={selectedTestCaseId || isCreating ? "Switch between case details and step editing without losing the selected context." : "Select a test case or create a new one."}
+          >
             {selectedTestCaseId || isCreating ? (
               <div className="detail-stack">
                 <div className="editor-accordion">
@@ -1554,8 +1568,9 @@ export function TestCasesPage() {
               <div className="empty-state compact">Select a test case from the library, or start a new one for this app type.</div>
             )}
           </Panel>
-        </div>
-      </div>
+        )}
+        isDetailOpen={Boolean(selectedTestCaseId) || isCreating}
+      />
 
       {isCreateSuiteModalOpen ? (
         <TestCaseSuiteModal

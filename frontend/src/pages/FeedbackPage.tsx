@@ -4,6 +4,8 @@ import { useAuth } from "../auth/AuthContext";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { TileCardStatusIndicator, formatTileCardLabel, getTileCardTone } from "../components/TileCardPrimitives";
+import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { api } from "../lib/api";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 import type { Feedback } from "../types";
@@ -33,7 +35,7 @@ export function FeedbackPage() {
   const items = feedback.data || [];
   const openFeedbackCount = items.filter((item) => (item.status || "open") === "open").length;
   const selectedItem = useMemo(
-    () => items.find((item) => item.id === selectedFeedbackId) || items[0] || null,
+    () => items.find((item) => item.id === selectedFeedbackId) || null,
     [items, selectedFeedbackId]
   );
 
@@ -42,8 +44,12 @@ export function FeedbackPage() {
       return;
     }
 
+    if (!selectedFeedbackId) {
+      setDraft(EMPTY_DRAFT);
+      return;
+    }
+
     if (selectedItem) {
-      setSelectedFeedbackId(selectedItem.id);
       setDraft({
         title: selectedItem.title,
         message: selectedItem.message,
@@ -54,7 +60,7 @@ export function FeedbackPage() {
 
     setSelectedFeedbackId("");
     setDraft(EMPTY_DRAFT);
-  }, [isCreating, selectedItem]);
+  }, [isCreating, selectedFeedbackId, selectedItem]);
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["feedback"] });
@@ -132,6 +138,12 @@ export function FeedbackPage() {
     });
   };
 
+  const closeFeedbackWorkspace = () => {
+    setSelectedFeedbackId("");
+    setIsCreating(false);
+    setDraft(EMPTY_DRAFT);
+  };
+
   return (
     <div className="page-content">
       <PageHeader
@@ -160,43 +172,62 @@ export function FeedbackPage() {
 
       {message ? <p className={messageTone === "error" ? "inline-message error-message" : "inline-message success-message"}>{message}</p> : null}
 
-      <div className="workspace-grid">
-        <Panel title="Feedback stream" subtitle="All submitted feedback is shown here, independent of project scope.">
-          {feedback.isLoading ? (
-            <div className="record-list">
-              <div className="skeleton-block" />
-              <div className="skeleton-block" />
-              <div className="skeleton-block" />
+      <WorkspaceMasterDetail
+        browseView={(
+          <Panel title="Feedback tiles" subtitle="Open one thread at a time from a card-first stream without keeping a split panel on screen.">
+            {feedback.isLoading ? (
+              <div className="tile-browser-grid">
+                <div className="skeleton-block" />
+                <div className="skeleton-block" />
+                <div className="skeleton-block" />
+              </div>
+            ) : null}
+
+            <div className="tile-browser-grid">
+              {items.map((item: Feedback) => {
+                const feedbackTone = getTileCardTone(item.status || "open");
+                const feedbackStatus = formatTileCardLabel(item.status, "Open");
+
+                return (
+                  <button
+                    key={item.id}
+                    className={selectedFeedbackId === item.id ? "record-card tile-card is-active" : "record-card tile-card"}
+                    onClick={() => {
+                      setSelectedFeedbackId(item.id);
+                      setIsCreating(false);
+                    }}
+                    type="button"
+                  >
+                    <div className="tile-card-main">
+                      <div className="tile-card-header">
+                        <span className="feedback-card-badge">FB</span>
+                        <div className="tile-card-title-group">
+                          <strong>{item.title}</strong>
+                          <span className="tile-card-kicker">{item.user_name || item.user_email || item.user_id}</span>
+                        </div>
+                        <TileCardStatusIndicator title={feedbackStatus} tone={feedbackTone} />
+                      </div>
+                      <p className="tile-card-description">{item.message}</p>
+                      <div className="feedback-card-footer">
+                        <span className="count-pill">{feedbackStatus}</span>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
-          ) : null}
 
-          <div className="record-list">
-            {items.map((item: Feedback) => (
-              <button
-                key={item.id}
-                className={selectedFeedbackId === item.id ? "record-card is-active" : "record-card"}
-                onClick={() => {
-                  setSelectedFeedbackId(item.id);
-                  setIsCreating(false);
-                }}
-                type="button"
-              >
-                <div className="record-card-body">
-                  <strong>{item.title}</strong>
-                  <span>{item.message}</span>
-                  <span>{item.user_name || item.user_email || item.user_id}</span>
-                </div>
-                <span className="count-pill">{item.status || "open"}</span>
-              </button>
-            ))}
-          </div>
-
-          {!feedback.isLoading && !items.length ? <div className="empty-state compact">No feedback submitted yet.</div> : null}
-        </Panel>
-
-        <Panel title={isCreating ? "New feedback" : selectedItem ? "Selected feedback" : "Feedback editor"} subtitle="Use this space to capture requests, issues, or ideas and keep the thread visible to the whole team.">
-          {(isCreating || selectedItem) ? (
-            <form className="form-grid" onSubmit={(event) => void handleSave(event)}>
+            {!feedback.isLoading && !items.length ? <div className="empty-state compact">No feedback submitted yet.</div> : null}
+          </Panel>
+        )}
+        detailView={(
+          <Panel
+            actions={<WorkspaceBackButton label="Back to feedback tiles" onClick={closeFeedbackWorkspace} />}
+            title={isCreating ? "New feedback" : selectedItem ? "Selected feedback" : "Feedback editor"}
+            subtitle="Use this space to capture requests, issues, or ideas and keep the thread visible to the whole team."
+          >
+            {(isCreating || selectedItem) ? (
+              <form className="form-grid" onSubmit={(event) => void handleSave(event)}>
               <FormField label="Title">
                 <input required value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} />
               </FormField>
@@ -228,11 +259,13 @@ export function FeedbackPage() {
                 ) : null}
               </div>
             </form>
-          ) : (
-            <div className="empty-state compact">Select feedback from the left or create a new entry.</div>
-          )}
-        </Panel>
-      </div>
+            ) : (
+              <div className="empty-state compact">Select feedback from the tiles or create a new entry.</div>
+            )}
+          </Panel>
+        )}
+        isDetailOpen={isCreating || Boolean(selectedItem)}
+      />
     </div>
   );
 }
