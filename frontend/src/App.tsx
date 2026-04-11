@@ -21,6 +21,7 @@ import { IntegrationsPage } from "./pages/IntegrationsPage";
 import { SupportPage } from "./pages/SupportPage";
 import { NotificationsPage } from "./pages/NotificationsPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { SharedStepsPage } from "./pages/SharedStepsPage";
 import { TestEnvironmentPage } from "./pages/TestEnvironmentPage";
 
 const queryClient = new QueryClient();
@@ -38,6 +39,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/notifications": "Notifications · QAIra",
   "/settings": "Settings · QAIra",
   "/test-cases": "Test Cases · QAIra",
+  "/shared-steps": "Shared Groups · QAIra",
   "/executions": "Executions · QAIra",
   "/test-environments": "Test Environments · QAIra",
   "/test-data": "Test Data · QAIra",
@@ -129,6 +131,7 @@ const router = createBrowserRouter([
       { path: "notifications", element: <NotificationsPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "test-cases", element: <TestCasesPage /> },
+      { path: "shared-steps", element: <SharedStepsPage /> },
       { path: "executions", element: <ExecutionsPage /> },
       { path: "test-environments", element: <TestEnvironmentPage view="environments" /> },
       { path: "test-data", element: <TestEnvironmentPage view="data" /> },

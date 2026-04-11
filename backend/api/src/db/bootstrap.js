@@ -166,8 +166,35 @@ const statements = [
       PRIMARY KEY (execution_id, snapshot_step_id)
     )
   `,
+  `
+    CREATE TABLE IF NOT EXISTS shared_step_groups (
+      id TEXT PRIMARY KEY,
+      app_type_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    )
+  `,
+  `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS app_type_id TEXT`,
+  `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS name TEXT`,
+  `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS description TEXT`,
+  `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]'::jsonb`,
+  `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
+  `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
+  `ALTER TABLE test_steps ADD COLUMN IF NOT EXISTS group_id TEXT`,
+  `ALTER TABLE test_steps ADD COLUMN IF NOT EXISTS group_name TEXT`,
+  `ALTER TABLE test_steps ADD COLUMN IF NOT EXISTS group_kind TEXT`,
+  `ALTER TABLE test_steps ADD COLUMN IF NOT EXISTS reusable_group_id TEXT`,
+  `ALTER TABLE execution_step_snapshots ADD COLUMN IF NOT EXISTS group_id TEXT`,
+  `ALTER TABLE execution_step_snapshots ADD COLUMN IF NOT EXISTS group_name TEXT`,
+  `ALTER TABLE execution_step_snapshots ADD COLUMN IF NOT EXISTS group_kind TEXT`,
+  `ALTER TABLE execution_step_snapshots ADD COLUMN IF NOT EXISTS reusable_group_id TEXT`,
   `CREATE INDEX IF NOT EXISTS idx_execution_case_snapshots_execution_id ON execution_case_snapshots (execution_id, sort_order)`,
-  `CREATE INDEX IF NOT EXISTS idx_execution_step_snapshots_execution_case ON execution_step_snapshots (execution_id, test_case_id, step_order)`
+  `CREATE INDEX IF NOT EXISTS idx_execution_step_snapshots_execution_case ON execution_step_snapshots (execution_id, test_case_id, step_order)`,
+  `CREATE INDEX IF NOT EXISTS idx_shared_step_groups_app_type ON shared_step_groups (app_type_id, updated_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_test_steps_case_group ON test_steps (test_case_id, group_id, step_order)`
 ];
 
 const ensureRuntimeSchema = async () => {

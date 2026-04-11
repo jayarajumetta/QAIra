@@ -174,8 +174,29 @@ CREATE TABLE test_steps (
   step_order INTEGER NOT NULL,
   action TEXT,
   expected_result TEXT,
+  group_id TEXT,
+  group_name TEXT,
+  group_kind TEXT,
+  reusable_group_id TEXT,
   FOREIGN KEY (test_case_id) REFERENCES test_cases(id)
 );
+
+CREATE TABLE shared_step_groups (
+  id TEXT PRIMARY KEY,
+  app_type_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (app_type_id) REFERENCES app_types(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_shared_step_groups_app_type
+  ON shared_step_groups (app_type_id, updated_at DESC);
+
+CREATE INDEX idx_test_steps_case_group
+  ON test_steps (test_case_id, group_id, step_order);
 
 CREATE TABLE test_environments (
   id TEXT PRIMARY KEY,
@@ -287,6 +308,10 @@ CREATE TABLE execution_step_snapshots (
   step_order INTEGER NOT NULL,
   action TEXT,
   expected_result TEXT,
+  group_id TEXT,
+  group_name TEXT,
+  group_kind TEXT,
+  reusable_group_id TEXT,
   PRIMARY KEY (execution_id, snapshot_step_id),
   FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
 );

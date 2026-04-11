@@ -57,8 +57,8 @@ const deleteRequirementMappings = db.prepare(`
 `);
 
 const insertStep = db.prepare(`
-  INSERT INTO test_steps (id, test_case_id, step_order, action, expected_result)
-  VALUES (?, ?, ?, ?, ?)
+  INSERT INTO test_steps (id, test_case_id, step_order, action, expected_result, group_id, group_name, group_kind, reusable_group_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const deleteStepsForTestCase = db.prepare(`
@@ -105,6 +105,14 @@ const normalizePriority = (value) => {
   return Number.isFinite(numeric) ? numeric : DEFAULT_PRIORITY;
 };
 
+const normalizeGroupKind = (value) => {
+  if (value === "local" || value === "reusable") {
+    return value;
+  }
+
+  return null;
+};
+
 const normalizeSteps = (steps = []) => {
   if (!Array.isArray(steps)) {
     return [];
@@ -114,7 +122,11 @@ const normalizeSteps = (steps = []) => {
     .map((step, index) => ({
       step_order: Number.isFinite(Number(step?.step_order)) ? Number(step.step_order) : index + 1,
       action: normalizeText(step?.action),
-      expected_result: normalizeText(step?.expected_result || step?.expectedResult)
+      expected_result: normalizeText(step?.expected_result || step?.expectedResult),
+      group_id: normalizeText(step?.group_id || step?.groupId),
+      group_name: normalizeText(step?.group_name || step?.groupName),
+      group_kind: normalizeGroupKind(step?.group_kind || step?.groupKind || (step?.group_id || step?.groupId ? "local" : null)),
+      reusable_group_id: normalizeText(step?.reusable_group_id || step?.reusableGroupId)
     }))
     .filter((step) => step.action || step.expected_result)
     .sort((left, right) => left.step_order - right.step_order)
@@ -278,7 +290,17 @@ const createOne = db.transaction(async (payload) => {
   await syncRequirementMappings(id, payload.requirement_ids);
 
   for (const step of payload.steps) {
-    await insertStep.run(uuid(), id, step.step_order, step.action, step.expected_result);
+    await insertStep.run(
+      uuid(),
+      id,
+      step.step_order,
+      step.action,
+      step.expected_result,
+      step.group_id,
+      step.group_name,
+      step.group_kind,
+      step.reusable_group_id
+    );
   }
 
   return { id };

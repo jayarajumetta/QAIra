@@ -20,7 +20,7 @@ const getCaseSnapshotsForExecution = db.prepare(`
 `);
 
 const getStepSnapshotsForExecution = db.prepare(`
-  SELECT execution_id, test_case_id, snapshot_step_id, step_order, action, expected_result
+  SELECT execution_id, test_case_id, snapshot_step_id, step_order, action, expected_result, group_id, group_name, group_kind, reusable_group_id
   FROM execution_step_snapshots
   WHERE execution_id = ?
   ORDER BY test_case_id ASC, step_order ASC
@@ -53,9 +53,13 @@ const insertExecutionStepSnapshot = db.prepare(`
     snapshot_step_id,
     step_order,
     action,
-    expected_result
+    expected_result,
+    group_id,
+    group_name,
+    group_kind,
+    reusable_group_id
   )
-  VALUES (?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const validateSuite = db.prepare(`
@@ -109,7 +113,7 @@ const selectTestDataSet = db.prepare(`
 `);
 
 const selectStepsForCase = db.prepare(`
-  SELECT id, step_order, action, expected_result
+  SELECT id, step_order, action, expected_result, group_id, group_name, group_kind, reusable_group_id
   FROM test_steps
   WHERE test_case_id = ?
   ORDER BY step_order ASC, id ASC
@@ -242,7 +246,11 @@ async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
             : `${executionId}:${suiteCase.test_case_id}:${step.id}`,
           step_order: step.step_order,
           action: step.action,
-          expected_result: step.expected_result
+          expected_result: step.expected_result,
+          group_id: step.group_id,
+          group_name: step.group_name,
+          group_kind: step.group_kind,
+          reusable_group_id: step.reusable_group_id
         });
       }
     }
@@ -283,7 +291,11 @@ async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
             : `${executionId}:${directCase.test_case_id}:${step.id}`,
           step_order: step.step_order,
           action: step.action,
-          expected_result: step.expected_result
+          expected_result: step.expected_result,
+          group_id: step.group_id,
+          group_name: step.group_name,
+          group_kind: step.group_kind,
+          reusable_group_id: step.reusable_group_id
         });
       }
     }
@@ -551,7 +563,11 @@ exports.createExecution = async ({
         stepSnapshot.snapshot_step_id,
         stepSnapshot.step_order,
         stepSnapshot.action,
-        stepSnapshot.expected_result
+        stepSnapshot.expected_result,
+        stepSnapshot.group_id,
+        stepSnapshot.group_name,
+        stepSnapshot.group_kind,
+        stepSnapshot.reusable_group_id
       );
     }
   });

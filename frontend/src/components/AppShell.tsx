@@ -30,6 +30,7 @@ const navigation = [
         children: [
           { id: "requirements", to: "/requirements", label: "Requirements", icon: DocumentIcon },
           { id: "test-cases", to: "/test-cases", label: "Test Cases", icon: PencilIcon },
+          { id: "shared-steps", to: "/shared-steps", label: "Shared Groups", icon: SharedStepsIcon },
           { id: "design", to: "/design", label: "Test Suites", icon: LayersIcon }
         ]
       },
@@ -232,6 +233,7 @@ export function AppShell() {
   const isWorkspaceWideLibrary =
     location.pathname === "/requirements" ||
     location.pathname === "/test-cases" ||
+    location.pathname === "/shared-steps" ||
     location.pathname === "/design" ||
     location.pathname === "/executions" ||
     location.pathname === "/test-environments" ||
@@ -644,6 +646,10 @@ function PencilIcon() {
 
 function LayersIcon() {
   return <IconFrame><path d="m12 4 8 4-8 4-8-4 8-4Z" /><path d="m4 12 8 4 8-4" /><path d="m4 16 8 4 8-4" /></IconFrame>;
+}
+
+function SharedStepsIcon() {
+  return <IconFrame><rect x="3" y="5" width="7" height="6" rx="1.5" /><rect x="14" y="13" width="7" height="6" rx="1.5" /><path d="M10 8h2.5A2.5 2.5 0 0 1 15 10.5V13" /><path d="M14 16h-2.5A2.5 2.5 0 0 1 9 13.5V11" /></IconFrame>;
 }
 
 function PlayIcon() {

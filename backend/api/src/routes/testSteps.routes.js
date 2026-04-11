@@ -6,7 +6,11 @@ module.exports = async function (fastify) {
       test_case_id: { required: true, type: "string" },
       step_order: { required: true, type: "number" },
       action: { required: false, type: "string" },
-      expected_result: { required: false, type: "string" }
+      expected_result: { required: false, type: "string" },
+      group_id: { required: false, type: "string" },
+      group_name: { required: false, type: "string" },
+      group_kind: { required: false, enum: ["local", "reusable"] },
+      reusable_group_id: { required: false, type: "string" }
     }, req.body);
 
     return service.createTestStep(req.body);
@@ -26,10 +30,55 @@ module.exports = async function (fastify) {
       test_case_id: { required: false, type: "string" },
       step_order: { required: false, type: "number" },
       action: { required: false, type: "string" },
-      expected_result: { required: false, type: "string" }
+      expected_result: { required: false, type: "string" },
+      group_id: { required: false, type: "string" },
+      group_name: { required: false, type: "string" },
+      group_kind: { required: false, enum: ["local", "reusable"] },
+      reusable_group_id: { required: false, type: "string" }
     }, req.body);
 
     return service.updateTestStep(req.params.id, req.body);
+  });
+
+  fastify.post("/test-steps/duplicate", async (req) => {
+    fastify.validate({
+      test_case_id: { required: true, type: "string" },
+      step_ids: { required: true, type: "array", items: "string" },
+      insert_after_step_id: { required: false, type: "string" }
+    }, req.body);
+
+    return service.duplicateTestSteps(req.body);
+  });
+
+  fastify.post("/test-steps/group", async (req) => {
+    fastify.validate({
+      test_case_id: { required: true, type: "string" },
+      step_ids: { required: true, type: "array", items: "string" },
+      name: { required: true, type: "string", minLength: 2 },
+      kind: { required: false, enum: ["local", "reusable"] },
+      reusable_group_id: { required: false, type: "string" }
+    }, req.body);
+
+    return service.groupTestSteps(req.body);
+  });
+
+  fastify.post("/test-steps/ungroup", async (req) => {
+    fastify.validate({
+      test_case_id: { required: true, type: "string" },
+      group_id: { required: true, type: "string" }
+    }, req.body);
+
+    return service.ungroupTestSteps(req.body);
+  });
+
+  fastify.post("/test-steps/insert-shared-group", async (req) => {
+    fastify.validate({
+      test_case_id: { required: true, type: "string" },
+      shared_step_group_id: { required: true, type: "string" },
+      insert_after_step_id: { required: false, type: "string" }
+    }, req.body);
+
+    return service.insertSharedStepGroup(req.body);
   });
 
   fastify.put("/test-cases/:id/test-steps/reorder", async (req) => {

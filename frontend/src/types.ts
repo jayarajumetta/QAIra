@@ -142,6 +142,34 @@ export type TestStep = {
   step_order: number;
   action: string | null;
   expected_result: string | null;
+  group_id?: string | null;
+  group_name?: string | null;
+  group_kind?: "local" | "reusable" | null;
+  reusable_group_id?: string | null;
+};
+
+export type SharedStepGroupStep = {
+  step_order: number;
+  action: string | null;
+  expected_result: string | null;
+};
+
+export type SharedStepGroup = {
+  id: string;
+  app_type_id: string;
+  name: string;
+  description: string | null;
+  steps: SharedStepGroupStep[];
+  step_count?: number;
+  usage_count?: number;
+  used_test_cases?: Array<{
+    id: string;
+    title: string;
+    status: string | null;
+    referenced_step_count: number;
+  }>;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type KeyValueEntry = {
@@ -275,6 +303,10 @@ export type ExecutionStepSnapshot = {
   step_order: number;
   action: string | null;
   expected_result: string | null;
+  group_id?: string | null;
+  group_name?: string | null;
+  group_kind?: "local" | "reusable" | null;
+  reusable_group_id?: string | null;
 };
 
 export type ExecutionResult = {

@@ -1,0 +1,907 @@
+import { Fragment, FormEvent, useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
+import { FormField } from "../components/FormField";
+import { PageHeader } from "../components/PageHeader";
+import { Panel } from "../components/Panel";
+import { StatusBadge } from "../components/StatusBadge";
+import { ToastMessage } from "../components/ToastMessage";
+import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
+import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
+import { useCurrentProject } from "../hooks/useCurrentProject";
+import { api } from "../lib/api";
+import type { SharedStepGroup } from "../types";
+
+type SharedGroupDraftStep = {
+  id: string;
+  action: string;
+  expected_result: string;
+};
+
+type SharedGroupDraft = {
+  name: string;
+  description: string;
+  steps: SharedGroupDraftStep[];
+};
+
+type SharedGroupStepInput = Pick<SharedGroupDraftStep, "action" | "expected_result">;
+
+const EMPTY_GROUP_DRAFT: SharedGroupDraft = {
+  name: "",
+  description: "",
+  steps: []
+};
+
+const EMPTY_SHARED_GROUP_STEP_INPUT: SharedGroupStepInput = {
+  action: "",
+  expected_result: ""
+};
+
+const createDraftStepId = () =>
+  globalThis.crypto?.randomUUID?.() || `shared-step-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+const createEmptyDraftStep = (): SharedGroupDraftStep => ({
+  id: createDraftStepId(),
+  action: "",
+  expected_result: ""
+});
+
+const draftFromGroup = (group: SharedStepGroup): SharedGroupDraft => ({
+  name: group.name,
+  description: group.description || "",
+  steps: (group.steps || []).map((step) => ({
+    id: createDraftStepId(),
+    action: step.action || "",
+    expected_result: step.expected_result || ""
+  }))
+});
+
+const normalizeGroupSteps = (steps: SharedGroupDraftStep[]) =>
+  steps
+    .map((step, index) => ({
+      step_order: index + 1,
+      action: step.action.trim(),
+      expected_result: step.expected_result.trim()
+    }))
+    .filter((step) => step.action || step.expected_result);
+
+const sharedStepDateFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  year: "numeric"
+});
+
+const formatSharedStepDate = (value?: string) => {
+  if (!value) {
+    return "Recently updated";
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : sharedStepDateFormatter.format(parsed);
+};
+
+export function SharedStepsPage() {
+  const queryClient = useQueryClient();
+  const [projectId, setProjectId] = useCurrentProject();
+  const [appTypeId, setAppTypeId] = useState("");
+  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const deferredSearchTerm = useDeferredValue(searchTerm);
+  const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"success" | "error">("success");
+  const [groupDraft, setGroupDraft] = useState<SharedGroupDraft>(EMPTY_GROUP_DRAFT);
+  const [stepInsertIndex, setStepInsertIndex] = useState<number | null>(null);
+  const [newStepDraft, setNewStepDraft] = useState<SharedGroupStepInput>(EMPTY_SHARED_GROUP_STEP_INPUT);
+
+  const projectsQuery = useQuery({
+    queryKey: ["projects"],
+    queryFn: api.projects.list
+  });
+  const appTypesQuery = useQuery({
+    queryKey: ["app-types", projectId],
+    queryFn: () => api.appTypes.list({ project_id: projectId }),
+    enabled: Boolean(projectId)
+  });
+  const sharedGroupsQuery = useQuery({
+    queryKey: ["shared-step-groups", appTypeId],
+    queryFn: () => api.sharedStepGroups.list({ app_type_id: appTypeId }),
+    enabled: Boolean(appTypeId)
+  });
+
+  const createSharedGroup = useMutation({ mutationFn: api.sharedStepGroups.create });
+  const updateSharedGroup = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: Parameters<typeof api.sharedStepGroups.update>[1] }) =>
+      api.sharedStepGroups.update(id, input)
+  });
+  const deleteSharedGroup = useMutation({ mutationFn: api.sharedStepGroups.delete });
+
+  const projects = projectsQuery.data || [];
+  const appTypes = appTypesQuery.data || [];
+  const sharedGroups = sharedGroupsQuery.data || [];
+
+  const resetStepComposer = () => {
+    setStepInsertIndex(null);
+    setNewStepDraft(EMPTY_SHARED_GROUP_STEP_INPUT);
+  };
+
+  useEffect(() => {
+    if (projectsQuery.isPending) {
+      return;
+    }
+
+    if (!projects.length) {
+      if (projectId) {
+        setProjectId("");
+      }
+      return;
+    }
+
+    if (!projects.some((project) => project.id === projectId)) {
+      setProjectId(projects[0].id);
+    }
+  }, [projectId, projects, projectsQuery.isPending, setProjectId]);
+
+  useEffect(() => {
+    if (!appTypes.length) {
+      setAppTypeId("");
+      return;
+    }
+
+    if (!appTypes.some((appType) => appType.id === appTypeId)) {
+      setAppTypeId(appTypes[0].id);
+    }
+  }, [appTypeId, appTypes]);
+
+  useEffect(() => {
+    setSelectedGroupId("");
+    setIsCreating(false);
+    setGroupDraft(EMPTY_GROUP_DRAFT);
+    resetStepComposer();
+  }, [appTypeId]);
+
+  const selectedGroup = useMemo(
+    () => sharedGroups.find((group) => group.id === selectedGroupId) || null,
+    [selectedGroupId, sharedGroups]
+  );
+
+  useEffect(() => {
+    if (isCreating) {
+      return;
+    }
+
+    if (!selectedGroupId) {
+      setGroupDraft(EMPTY_GROUP_DRAFT);
+      resetStepComposer();
+      return;
+    }
+
+    if (selectedGroup) {
+      setGroupDraft(draftFromGroup(selectedGroup));
+      resetStepComposer();
+      return;
+    }
+
+    setSelectedGroupId("");
+    setGroupDraft(EMPTY_GROUP_DRAFT);
+    resetStepComposer();
+  }, [isCreating, selectedGroup, selectedGroupId]);
+
+  const filteredGroups = useMemo(() => {
+    const search = deferredSearchTerm.trim().toLowerCase();
+
+    return sharedGroups.filter((group) => {
+      if (!search) {
+        return true;
+      }
+
+      return [group.name, group.description || "", ...(group.steps || []).map((step) => `${step.action || ""} ${step.expected_result || ""}`)]
+        .join(" ")
+        .toLowerCase()
+        .includes(search);
+    });
+  }, [deferredSearchTerm, sharedGroups]);
+
+  const selectedProject = projects.find((project) => project.id === projectId) || null;
+  const selectedAppType = appTypes.find((appType) => appType.id === appTypeId) || null;
+
+  const showSuccess = (text: string) => {
+    setMessageTone("success");
+    setMessage(text);
+  };
+
+  const showError = (error: unknown, fallback: string) => {
+    setMessageTone("error");
+    setMessage(error instanceof Error ? error.message : fallback);
+  };
+
+  const refreshGroups = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["shared-step-groups"] }),
+      queryClient.invalidateQueries({ queryKey: ["shared-step-groups", appTypeId] })
+    ]);
+  };
+
+  const beginCreateGroup = () => {
+    setIsCreating(true);
+    setSelectedGroupId("");
+    setGroupDraft({
+      ...EMPTY_GROUP_DRAFT,
+      steps: [createEmptyDraftStep()]
+    });
+    resetStepComposer();
+  };
+
+  const closeWorkspace = () => {
+    setSelectedGroupId("");
+    setIsCreating(false);
+    setGroupDraft(EMPTY_GROUP_DRAFT);
+    resetStepComposer();
+  };
+
+  const updateDraftStep = (stepId: string, input: Partial<SharedGroupDraftStep>) => {
+    setGroupDraft((current) => ({
+      ...current,
+      steps: current.steps.map((step) => (step.id === stepId ? { ...step, ...input } : step))
+    }));
+  };
+
+  const activateStepInsert = (index: number) => {
+    setStepInsertIndex(index);
+    setNewStepDraft(EMPTY_SHARED_GROUP_STEP_INPUT);
+  };
+
+  const insertDraftStepAt = (index: number, stepInput: SharedGroupStepInput) => {
+    const nextStep: SharedGroupDraftStep = {
+      id: createDraftStepId(),
+      action: stepInput.action.trim(),
+      expected_result: stepInput.expected_result.trim()
+    };
+
+    setGroupDraft((current) => {
+      const nextSteps = [...current.steps];
+      const boundedIndex = Math.max(0, Math.min(index, nextSteps.length));
+      nextSteps.splice(boundedIndex, 0, nextStep);
+
+      return {
+        ...current,
+        steps: nextSteps
+      };
+    });
+  };
+
+  const handleInsertStep = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (stepInsertIndex === null) {
+      return;
+    }
+
+    const nextAction = newStepDraft.action.trim();
+    const nextExpectedResult = newStepDraft.expected_result.trim();
+
+    if (!nextAction && !nextExpectedResult) {
+      return;
+    }
+
+    insertDraftStepAt(stepInsertIndex, {
+      action: nextAction,
+      expected_result: nextExpectedResult
+    });
+    resetStepComposer();
+  };
+
+  const removeDraftStep = (stepId: string) => {
+    setGroupDraft((current) => ({
+      ...current,
+      steps: current.steps.filter((step) => step.id !== stepId)
+    }));
+  };
+
+  const moveDraftStep = (stepId: string, direction: "up" | "down") => {
+    setGroupDraft((current) => {
+      const currentIndex = current.steps.findIndex((step) => step.id === stepId);
+      const nextIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+
+      if (currentIndex === -1 || nextIndex < 0 || nextIndex >= current.steps.length) {
+        return current;
+      }
+
+      const nextSteps = [...current.steps];
+      const [movedStep] = nextSteps.splice(currentIndex, 1);
+      nextSteps.splice(nextIndex, 0, movedStep);
+
+      return {
+        ...current,
+        steps: nextSteps
+      };
+    });
+  };
+
+  const handleSaveGroup = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!appTypeId) {
+      showError(new Error("Select an app type before saving a shared step group."), "Unable to save shared step group");
+      return;
+    }
+
+    const steps = normalizeGroupSteps(groupDraft.steps);
+
+    try {
+      if (isCreating) {
+        const response = await createSharedGroup.mutateAsync({
+          app_type_id: appTypeId,
+          name: groupDraft.name.trim(),
+          description: groupDraft.description.trim() || undefined,
+          steps
+        });
+
+        setSelectedGroupId(response.id);
+        setIsCreating(false);
+        showSuccess("Shared step group created.");
+      } else if (selectedGroup) {
+        await updateSharedGroup.mutateAsync({
+          id: selectedGroup.id,
+          input: {
+            app_type_id: appTypeId,
+            name: groupDraft.name.trim(),
+            description: groupDraft.description.trim(),
+            steps
+          }
+        });
+
+        showSuccess(
+          selectedGroup.usage_count
+            ? `Shared step group updated. ${selectedGroup.usage_count} existing case snapshot${selectedGroup.usage_count === 1 ? "" : "s"} stay unchanged.`
+            : "Shared step group updated."
+        );
+      }
+
+      await refreshGroups();
+    } catch (error) {
+      showError(error, "Unable to save shared step group");
+    }
+  };
+
+  const handleDeleteGroup = async () => {
+    if (!selectedGroup) {
+      return;
+    }
+
+    if (!window.confirm(`Delete shared step group "${selectedGroup.name}"? Existing test cases that already copied it will stay unchanged.`)) {
+      return;
+    }
+
+    try {
+      await deleteSharedGroup.mutateAsync(selectedGroup.id);
+      setSelectedGroupId("");
+      setGroupDraft(EMPTY_GROUP_DRAFT);
+      resetStepComposer();
+      showSuccess("Shared step group deleted.");
+      await refreshGroups();
+    } catch (error) {
+      showError(error, "Unable to delete shared step group");
+    }
+  };
+
+  const coverageMeta = {
+    total: sharedGroups.length,
+    totalSteps: sharedGroups.reduce((count, group) => count + (group.step_count || group.steps.length || 0), 0),
+    usedInCases: sharedGroups.reduce((count, group) => count + (group.usage_count || 0), 0)
+  };
+
+  return (
+    <div className="page-content page-content--library-full">
+      <PageHeader
+        eyebrow="Shared Groups"
+        title="Reusable Step Groups"
+        description="Curate repeatable step blocks once, then insert them into test cases as reusable snapshots."
+        meta={[
+          { label: "Groups", value: coverageMeta.total },
+          { label: "Reusable steps", value: coverageMeta.totalSteps },
+          { label: "Case links", value: coverageMeta.usedInCases }
+        ]}
+        actions={
+          <button className="primary-button" disabled={!appTypeId} onClick={beginCreateGroup} type="button">
+            New shared group
+          </button>
+        }
+      />
+
+      <ToastMessage message={message} onDismiss={() => setMessage("")} tone={messageTone} />
+
+      <WorkspaceScopeBar
+        appTypeId={appTypeId}
+        appTypes={appTypes}
+        onAppTypeChange={setAppTypeId}
+        onProjectChange={(value) => {
+          setProjectId(value);
+          setAppTypeId("");
+        }}
+        projectId={projectId}
+        projects={projects}
+      />
+
+      <WorkspaceMasterDetail
+        browseView={(
+          <Panel
+            title="Shared group tiles"
+            subtitle={appTypeId ? "Browse reusable groups as tiles first, then open one for editing." : "Choose an app type to begin."}
+          >
+            <div className="design-list-toolbar test-case-catalog-toolbar">
+              <CatalogSearchFilter
+                activeFilterCount={Number(Boolean(searchTerm.trim()))}
+                ariaLabel="Search shared step groups"
+                onChange={setSearchTerm}
+                placeholder="Search group name, description, or step text"
+                subtitle="Find reusable groups by intent, summary, or step content."
+                title="Filter shared step groups"
+                value={searchTerm}
+              >
+                <div className="catalog-filter-grid">
+                  <div className="catalog-filter-actions">
+                    <button className="ghost-button" disabled={!searchTerm.trim()} onClick={() => setSearchTerm("")} type="button">
+                      Clear search
+                    </button>
+                  </div>
+                </div>
+              </CatalogSearchFilter>
+              <button className="ghost-button" disabled={!appTypeId} onClick={beginCreateGroup} type="button">
+                New group
+              </button>
+            </div>
+
+            {sharedGroupsQuery.isLoading ? (
+              <div className="tile-browser-grid test-case-library-scroll">
+                <div className="skeleton-block" />
+                <div className="skeleton-block" />
+                <div className="skeleton-block" />
+              </div>
+            ) : (
+              <div className="tile-browser-grid test-case-library-scroll">
+                {filteredGroups.map((group) => {
+                  const isActive = !isCreating && selectedGroupId === group.id;
+                  const stepCount = group.step_count || group.steps.length;
+                  const usageCount = group.usage_count || 0;
+                  const preview = group.steps[0]?.action || group.steps[0]?.expected_result || "No step preview yet";
+
+                  return (
+                    <button
+                      className={["record-card tile-card test-case-card test-case-catalog-card", isActive ? "is-active" : ""].filter(Boolean).join(" ")}
+                      key={group.id}
+                      onClick={() => {
+                        setSelectedGroupId(group.id);
+                        setIsCreating(false);
+                        resetStepComposer();
+                      }}
+                      type="button"
+                    >
+                      <div className="tile-card-main">
+                        <div className="tile-card-header">
+                          <div className="tile-card-title-group">
+                            <strong>{group.name}</strong>
+                            <span className="tile-card-kicker">{formatSharedStepDate(group.updated_at)}</span>
+                          </div>
+                        </div>
+                        <p className="tile-card-description">{group.description || preview}</p>
+                        <div className="tile-card-facts" aria-label={`${group.name} facts`}>
+                          <span className="tile-card-fact">
+                            <strong>{stepCount}</strong>
+                            <small>steps</small>
+                          </span>
+                          <span className="tile-card-fact">
+                            <strong>{usageCount}</strong>
+                            <small>{usageCount === 1 ? "case" : "cases"}</small>
+                          </span>
+                          <span className="tile-card-fact">
+                            <strong>{selectedAppType?.name || "App type"}</strong>
+                            <small>scope</small>
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+                {!filteredGroups.length ? (
+                  <div className="empty-state compact">{sharedGroups.length ? "No shared groups match the current search." : "No shared step groups exist for this app type yet."}</div>
+                ) : null}
+              </div>
+            )}
+          </Panel>
+        )}
+        detailView={(
+          <Panel
+            actions={<WorkspaceBackButton label="Back to shared group tiles" onClick={closeWorkspace} />}
+            title="Shared group workspace"
+            subtitle={selectedGroupId || isCreating ? "Edit the reusable group and keep its step sequence ready for test case insertion." : "Select a shared step group or create a new one."}
+          >
+            {selectedGroupId || isCreating ? (
+              <form className="detail-stack" onSubmit={(event) => void handleSaveGroup(event)}>
+                <div className="form-grid">
+                  <div className="record-grid">
+                    <FormField label="Group name" required>
+                      <input
+                        data-autofocus="true"
+                        required
+                        value={groupDraft.name}
+                        onChange={(event) => setGroupDraft((current) => ({ ...current, name: event.target.value }))}
+                      />
+                    </FormField>
+                  </div>
+
+                  <FormField label="Description">
+                    <textarea
+                      rows={3}
+                      value={groupDraft.description}
+                      onChange={(event) => setGroupDraft((current) => ({ ...current, description: event.target.value }))}
+                    />
+                  </FormField>
+                </div>
+
+                <div className="step-editor step-editor--embedded">
+                  <div className="detail-summary">
+                    <strong>{groupDraft.steps.length} step{groupDraft.steps.length === 1 ? "" : "s"}</strong>
+                    <span>These steps become the reusable snapshot copied into any test case that inserts this shared group.</span>
+                  </div>
+
+                  {!isCreating && selectedGroup ? (
+                    <div className="detail-summary">
+                      <strong>
+                        {selectedGroup.usage_count
+                          ? `Used in ${selectedGroup.usage_count} test case${selectedGroup.usage_count === 1 ? "" : "s"}`
+                          : "Not used in any test cases yet"}
+                      </strong>
+                      <span>
+                        {selectedGroup.usage_count
+                          ? "Editing this shared group changes future insertions only. The cases below already keep their own copied snapshots."
+                          : "Once this group is inserted into a test case, the case reference count will appear here."}
+                      </span>
+                    </div>
+                  ) : null}
+
+                  {!groupDraft.steps.length ? (
+                    <div className="empty-state compact">No shared steps yet. Add at least one step so this group is useful across cases.</div>
+                  ) : null}
+
+                  <div className="action-row step-editor-toolbar">
+                    <SharedGroupStepIconButton
+                      ariaLabel="Add shared step"
+                      onClick={() => activateStepInsert(groupDraft.steps.length)}
+                      title="Add shared step"
+                      type="button"
+                    >
+                      <SharedGroupStepInsertIcon />
+                    </SharedGroupStepIconButton>
+                  </div>
+
+                  <div className="step-list">
+                    {!groupDraft.steps.length ? (
+                      <InlineSharedGroupStepInsertSlot
+                        draft={newStepDraft}
+                        index={0}
+                        isActive={stepInsertIndex === 0}
+                        isVisibleByDefault={true}
+                        onActivate={() => activateStepInsert(0)}
+                        onCancel={resetStepComposer}
+                        onChange={setNewStepDraft}
+                        onSubmit={handleInsertStep}
+                      />
+                    ) : null}
+
+                    {groupDraft.steps.map((step, index) => (
+                      <Fragment key={step.id}>
+                        <InlineSharedGroupStepInsertSlot
+                          draft={newStepDraft}
+                          index={index}
+                          isActive={stepInsertIndex === index}
+                          onActivate={() => activateStepInsert(index)}
+                          onCancel={resetStepComposer}
+                          onChange={setNewStepDraft}
+                          onSubmit={handleInsertStep}
+                        />
+                        <SharedGroupDraftStepCard
+                          canMoveDown={index < groupDraft.steps.length - 1}
+                          canMoveUp={index > 0}
+                          onChange={(input) => updateDraftStep(step.id, input)}
+                          onDelete={() => removeDraftStep(step.id)}
+                          onInsertAbove={() => activateStepInsert(index)}
+                          onInsertBelow={() => activateStepInsert(index + 1)}
+                          onMoveDown={() => moveDraftStep(step.id, "down")}
+                          onMoveUp={() => moveDraftStep(step.id, "up")}
+                          step={step}
+                          stepNumber={index + 1}
+                        />
+                        {index === groupDraft.steps.length - 1 ? (
+                          <InlineSharedGroupStepInsertSlot
+                            draft={newStepDraft}
+                            index={index + 1}
+                            isActive={stepInsertIndex === index + 1}
+                            onActivate={() => activateStepInsert(index + 1)}
+                            onCancel={resetStepComposer}
+                            onChange={setNewStepDraft}
+                            onSubmit={handleInsertStep}
+                          />
+                        ) : null}
+                      </Fragment>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="action-row">
+                  <button className="primary-button" disabled={createSharedGroup.isPending || updateSharedGroup.isPending} type="submit">
+                    {isCreating ? (createSharedGroup.isPending ? "Creating…" : "Create shared group") : (updateSharedGroup.isPending ? "Saving…" : "Save shared group")}
+                  </button>
+                  {isCreating ? (
+                    <button className="ghost-button" onClick={closeWorkspace} type="button">
+                      Cancel
+                    </button>
+                  ) : null}
+                  {!isCreating && selectedGroup ? (
+                    <button className="ghost-button danger" disabled={deleteSharedGroup.isPending} onClick={() => void handleDeleteGroup()} type="button">
+                      Delete group
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="detail-summary">
+                  <strong>How reusable groups behave</strong>
+                  <span>When you insert this group into a test case, the case receives its own snapshot copy of these steps. Future edits here do not rewrite older cases or execution history.</span>
+                </div>
+
+                {!isCreating && selectedGroup?.used_test_cases?.length ? (
+                  <div className="stack-list">
+                    {selectedGroup.used_test_cases.map((testCase) => (
+                      <div className="stack-item" key={testCase.id}>
+                        <div>
+                          <strong>{testCase.title}</strong>
+                          <span>{testCase.referenced_step_count} referenced step{testCase.referenced_step_count === 1 ? "" : "s"} from this shared group</span>
+                        </div>
+                        <StatusBadge value={testCase.status || "draft"} />
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </form>
+            ) : (
+              <div className="empty-state compact">
+                {selectedProject && selectedAppType
+                  ? `Select a shared step group for ${selectedProject.name} / ${selectedAppType.name}, or create a new one.`
+                  : "Choose a project and app type, then select a shared step group or create a new one."}
+              </div>
+            )}
+          </Panel>
+        )}
+        isDetailOpen={Boolean(selectedGroupId) || isCreating}
+      />
+    </div>
+  );
+}
+
+function SharedGroupStepIconButton({
+  children,
+  ariaLabel,
+  title,
+  onClick,
+  disabled = false,
+  type = "button"
+}: {
+  children: ReactNode;
+  ariaLabel: string;
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  type?: "button" | "submit" | "reset";
+}) {
+  return (
+    <button aria-label={ariaLabel} className="step-action-button" disabled={disabled} onClick={onClick} title={title} type={type}>
+      {children}
+    </button>
+  );
+}
+
+function SharedGroupStepIconShell({ children }: { children: ReactNode }) {
+  return (
+    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
+      {children}
+    </svg>
+  );
+}
+
+function SharedGroupStepInsertIcon() {
+  return (
+    <SharedGroupStepIconShell>
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+      <path d="M7 5h10" />
+      <path d="M7 19h10" />
+    </SharedGroupStepIconShell>
+  );
+}
+
+function SharedGroupStepInsertAboveIcon() {
+  return (
+    <SharedGroupStepIconShell>
+      <path d="M12 19V7" />
+      <path d="m8.5 10.5 3.5-3.5 3.5 3.5" />
+      <path d="M6 4h12" />
+      <path d="M8 15h8" />
+    </SharedGroupStepIconShell>
+  );
+}
+
+function SharedGroupStepInsertBelowIcon() {
+  return (
+    <SharedGroupStepIconShell>
+      <path d="M12 5v12" />
+      <path d="m8.5 13.5 3.5 3.5 3.5-3.5" />
+      <path d="M8 9h8" />
+      <path d="M6 20h12" />
+    </SharedGroupStepIconShell>
+  );
+}
+
+function SharedGroupStepMoveUpIcon() {
+  return (
+    <SharedGroupStepIconShell>
+      <path d="m12 6-4 4" />
+      <path d="m12 6 4 4" />
+      <path d="M12 6v12" />
+    </SharedGroupStepIconShell>
+  );
+}
+
+function SharedGroupStepMoveDownIcon() {
+  return (
+    <SharedGroupStepIconShell>
+      <path d="m12 18-4-4" />
+      <path d="m12 18 4-4" />
+      <path d="M12 6v12" />
+    </SharedGroupStepIconShell>
+  );
+}
+
+function SharedGroupStepDeleteIcon() {
+  return (
+    <SharedGroupStepIconShell>
+      <path d="M4 7h16" />
+      <path d="M9 7V5.8A1.8 1.8 0 0 1 10.8 4h2.4A1.8 1.8 0 0 1 15 5.8V7" />
+      <path d="M7 7l.8 11.1A2 2 0 0 0 9.8 20h4.4a2 2 0 0 0 2-1.9L17 7" />
+      <path d="M10 11v5" />
+      <path d="M14 11v5" />
+    </SharedGroupStepIconShell>
+  );
+}
+
+function InlineSharedGroupStepInsertSlot({
+  index,
+  isActive,
+  isVisibleByDefault = false,
+  draft,
+  onActivate,
+  onCancel,
+  onChange,
+  onSubmit
+}: {
+  index: number;
+  isActive: boolean;
+  isVisibleByDefault?: boolean;
+  draft: SharedGroupStepInput;
+  onActivate: () => void;
+  onCancel: () => void;
+  onChange: (draft: SharedGroupStepInput) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const insertTitle = index === 0 ? "Add first shared step" : "Insert shared step here";
+
+  if (!isActive && !isVisibleByDefault) {
+    return null;
+  }
+
+  return (
+    <div className={["step-insert-slot", isActive ? "is-active" : "", isVisibleByDefault ? "is-visible" : ""].filter(Boolean).join(" ")}>
+      {!isActive ? (
+        <div className="step-insert-actions">
+          <SharedGroupStepIconButton ariaLabel={insertTitle} onClick={onActivate} title={insertTitle} type="button">
+            <SharedGroupStepInsertIcon />
+          </SharedGroupStepIconButton>
+        </div>
+      ) : (
+        <form className="step-create step-create--inline" onSubmit={onSubmit}>
+          <strong>{index === 0 ? "+ Add Shared Step" : "+ Insert Shared Step"}</strong>
+          <FormField label="Action">
+            <input
+              autoFocus
+              value={draft.action}
+              onChange={(event) => onChange({ ...draft, action: event.target.value })}
+            />
+          </FormField>
+          <FormField label="Expected result">
+            <textarea
+              rows={3}
+              value={draft.expected_result}
+              onChange={(event) => onChange({ ...draft, expected_result: event.target.value })}
+            />
+          </FormField>
+          <div className="action-row">
+            <button className="primary-button" type="submit">Save step</button>
+            <button className="ghost-button" onClick={onCancel} type="button">
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function SharedGroupDraftStepCard({
+  step,
+  stepNumber,
+  canMoveUp,
+  canMoveDown,
+  onChange,
+  onDelete,
+  onInsertAbove,
+  onInsertBelow,
+  onMoveUp,
+  onMoveDown
+}: {
+  step: SharedGroupDraftStep;
+  stepNumber: number;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onChange: (input: SharedGroupStepInput) => void;
+  onDelete: () => void;
+  onInsertAbove: () => void;
+  onInsertBelow: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+}) {
+  return (
+    <article className="step-card step-card--shared is-expanded">
+      <div className="step-card-top">
+        <div className="step-card-summary">
+          <div className="step-card-summary-top">
+            <strong>Step {stepNumber}</strong>
+            <span className="step-kind-badge is-shared">Shared step</span>
+          </div>
+          <span>{step.action || step.expected_result || "Shared step details"}</span>
+        </div>
+        <div className="step-card-action-menu">
+          <SharedGroupStepIconButton ariaLabel={`Insert above step ${stepNumber}`} onClick={onInsertAbove} title="Insert above" type="button">
+            <SharedGroupStepInsertAboveIcon />
+          </SharedGroupStepIconButton>
+          <SharedGroupStepIconButton ariaLabel={`Insert below step ${stepNumber}`} onClick={onInsertBelow} title="Insert below" type="button">
+            <SharedGroupStepInsertBelowIcon />
+          </SharedGroupStepIconButton>
+          <SharedGroupStepIconButton ariaLabel={`Move step ${stepNumber} up`} disabled={!canMoveUp} onClick={onMoveUp} title="Move up" type="button">
+            <SharedGroupStepMoveUpIcon />
+          </SharedGroupStepIconButton>
+          <SharedGroupStepIconButton ariaLabel={`Move step ${stepNumber} down`} disabled={!canMoveDown} onClick={onMoveDown} title="Move down" type="button">
+            <SharedGroupStepMoveDownIcon />
+          </SharedGroupStepIconButton>
+          <SharedGroupStepIconButton ariaLabel={`Delete step ${stepNumber}`} onClick={onDelete} title="Delete step" type="button">
+            <SharedGroupStepDeleteIcon />
+          </SharedGroupStepIconButton>
+        </div>
+      </div>
+
+      <div className="step-card-body">
+        <FormField label="Action">
+          <input
+            value={step.action}
+            onChange={(event) => onChange({ action: event.target.value, expected_result: step.expected_result })}
+          />
+        </FormField>
+        <FormField label="Expected result">
+          <textarea
+            rows={3}
+            value={step.expected_result}
+            onChange={(event) => onChange({ action: step.action, expected_result: event.target.value })}
+          />
+        </FormField>
+      </div>
+    </article>
+  );
+}

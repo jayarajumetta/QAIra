@@ -2,6 +2,7 @@ import { DragEvent, FormEvent, useEffect, useMemo, useState, type ReactNode } fr
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
 import { FormField } from "../components/FormField";
 import { ExecutionContextSelector } from "../components/ExecutionContextSelector";
 import { PageHeader } from "../components/PageHeader";
@@ -23,6 +24,7 @@ import {
 } from "../components/TileCardPrimitives";
 import { SuiteCasePicker } from "../components/SuiteCasePicker";
 import { ToastMessage } from "../components/ToastMessage";
+import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { api } from "../lib/api";
@@ -51,6 +53,11 @@ type DraftTestStep = {
 type SuiteCaseEditorSectionKey = "case" | "steps" | "history";
 
 type SuiteModalMode = "create" | "edit";
+type SuitePlacementFilter = "all" | "root" | "nested";
+type SuiteMappedCasesFilter = "all" | "with-cases" | "empty";
+type SuiteChildrenFilter = "all" | "with-children" | "no-children";
+type SuiteCaseStepFilter = "all" | "with-steps" | "no-steps";
+type SuiteCaseRunFilter = "all" | "with-runs" | "no-runs";
 
 const DEFAULT_CASE_STATUS = "active";
 const EMPTY_CASE_DRAFT: CaseDraft = {
@@ -96,6 +103,12 @@ export function DesignPage() {
   const [suiteSearchTerm, setSuiteSearchTerm] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [suitePlacementFilter, setSuitePlacementFilter] = useState<SuitePlacementFilter>("all");
+  const [suiteMappedCasesFilter, setSuiteMappedCasesFilter] = useState<SuiteMappedCasesFilter>("all");
+  const [suiteChildrenFilter, setSuiteChildrenFilter] = useState<SuiteChildrenFilter>("all");
+  const [casePriorityFilter, setCasePriorityFilter] = useState("all");
+  const [caseStepFilter, setCaseStepFilter] = useState<SuiteCaseStepFilter>("all");
+  const [caseRunFilter, setCaseRunFilter] = useState<SuiteCaseRunFilter>("all");
   const [isCreatingCase, setIsCreatingCase] = useState(false);
   const [isTestCaseEditorModalOpen, setIsTestCaseEditorModalOpen] = useState(false);
   const [isCreateExecutionModalOpen, setIsCreateExecutionModalOpen] = useState(false);
@@ -281,54 +294,54 @@ export function DesignPage() {
 
     return counts;
   }, [suites]);
+  const requirementTitleById = useMemo(
+    () =>
+      requirements.reduce<Record<string, string>>((map, requirement) => {
+        map[requirement.id] = requirement.title;
+        return map;
+      }, {}),
+    [requirements]
+  );
   const filteredSuites = useMemo(() => {
     const normalizedSearch = suiteSearchTerm.trim().toLowerCase();
 
-    if (!normalizedSearch) {
-      return suites;
-    }
-
     return suites.filter((suite) => {
+      const mappedCaseCount = suiteCounts[suite.id] || 0;
+      const childSuiteCount = childSuiteCounts[suite.id] || 0;
       const haystack = `${suite.name} ${suite.parent_id ? "nested" : "root"}`.toLowerCase();
-      return haystack.includes(normalizedSearch);
-    });
-  }, [suiteSearchTerm, suites]);
+      const matchesSearch = !normalizedSearch || haystack.includes(normalizedSearch);
 
-  const filteredCases = useMemo(() => {
-    const suiteOrder = new Map(suiteMappings.map((mapping) => [mapping.test_case_id, mapping.sort_order]));
-    const sourceCases = selectedSuiteId
-      ? appTypeCases
-          .filter((testCase) => (testCase.suite_ids || []).includes(selectedSuiteId))
-          .slice()
-          .sort((left, right) => {
-            const leftOrder = suiteOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER;
-            const rightOrder = suiteOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER;
-
-            if (leftOrder !== rightOrder) {
-              return leftOrder - rightOrder;
-            }
-
-            return left.title.localeCompare(right.title);
-          })
-      : appTypeCases;
-
-    return sourceCases.filter((testCase) => {
-      if (selectedSuiteId && !(testCase.suite_ids || []).includes(selectedSuiteId)) {
+      if (!matchesSearch) {
         return false;
       }
 
-      if (statusFilter !== "all" && (testCase.status || DEFAULT_CASE_STATUS) !== statusFilter) {
+      if (suitePlacementFilter === "root" && suite.parent_id) {
         return false;
       }
 
-      if (!searchTerm.trim()) {
-        return true;
+      if (suitePlacementFilter === "nested" && !suite.parent_id) {
+        return false;
       }
 
-      const haystack = `${testCase.title} ${testCase.description || ""}`.toLowerCase();
-      return haystack.includes(searchTerm.trim().toLowerCase());
+      if (suiteMappedCasesFilter === "with-cases" && !mappedCaseCount) {
+        return false;
+      }
+
+      if (suiteMappedCasesFilter === "empty" && mappedCaseCount) {
+        return false;
+      }
+
+      if (suiteChildrenFilter === "with-children" && !childSuiteCount) {
+        return false;
+      }
+
+      if (suiteChildrenFilter === "no-children" && childSuiteCount) {
+        return false;
+      }
+
+      return true;
     });
-  }, [appTypeCases, searchTerm, selectedSuiteId, statusFilter, suiteMappings]);
+  }, [childSuiteCounts, suiteChildrenFilter, suiteMappedCasesFilter, suitePlacementFilter, suiteCounts, suiteSearchTerm, suites]);
 
   const orderedSuiteCases = useMemo(() => {
     if (!selectedSuiteId) {
@@ -401,6 +414,101 @@ export function DesignPage() {
 
     return counts;
   }, [allTestSteps, appTypeCases]);
+  const caseStatusOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          appTypeCases.map((testCase) => {
+            const history = historyByCaseId[testCase.id] || [];
+            return history[0]?.status || testCase.status || DEFAULT_CASE_STATUS;
+          })
+        )
+      ).sort((left, right) => left.localeCompare(right)),
+    [appTypeCases, historyByCaseId]
+  );
+  const casePriorityOptions = useMemo(
+    () => Array.from(new Set(appTypeCases.map((testCase) => String(testCase.priority || 3)))).sort((left, right) => Number(left) - Number(right)),
+    [appTypeCases]
+  );
+  const filteredCases = useMemo(() => {
+    const suiteOrder = new Map(suiteMappings.map((mapping) => [mapping.test_case_id, mapping.sort_order]));
+    const sourceCases = selectedSuiteId
+      ? appTypeCases
+          .filter((testCase) => (testCase.suite_ids || []).includes(selectedSuiteId))
+          .slice()
+          .sort((left, right) => {
+            const leftOrder = suiteOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+            const rightOrder = suiteOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+
+            if (leftOrder !== rightOrder) {
+              return leftOrder - rightOrder;
+            }
+
+            return left.title.localeCompare(right.title);
+          })
+      : appTypeCases;
+
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+
+    return sourceCases.filter((testCase) => {
+      if (selectedSuiteId && !(testCase.suite_ids || []).includes(selectedSuiteId)) {
+        return false;
+      }
+
+      const requirementTitle =
+        (testCase.requirement_ids || [testCase.requirement_id]).map((id) => (id ? requirementTitleById[id] || "" : "")).find(Boolean) || "";
+      const history = historyByCaseId[testCase.id] || [];
+      const latest = history[0];
+      const caseStatusValue = latest?.status || testCase.status || DEFAULT_CASE_STATUS;
+      const stepCount = stepCountByCaseId[testCase.id] || 0;
+      const runCount = history.length;
+      const matchesSearch =
+        !normalizedSearch ||
+        `${testCase.title} ${testCase.description || ""} ${requirementTitle}`.toLowerCase().includes(normalizedSearch);
+
+      if (!matchesSearch) {
+        return false;
+      }
+
+      if (statusFilter !== "all" && caseStatusValue !== statusFilter) {
+        return false;
+      }
+
+      if (casePriorityFilter !== "all" && String(testCase.priority || 3) !== casePriorityFilter) {
+        return false;
+      }
+
+      if (caseStepFilter === "with-steps" && !stepCount) {
+        return false;
+      }
+
+      if (caseStepFilter === "no-steps" && stepCount) {
+        return false;
+      }
+
+      if (caseRunFilter === "with-runs" && !runCount) {
+        return false;
+      }
+
+      if (caseRunFilter === "no-runs" && runCount) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [
+    appTypeCases,
+    casePriorityFilter,
+    caseRunFilter,
+    caseStepFilter,
+    historyByCaseId,
+    requirementTitleById,
+    searchTerm,
+    selectedSuiteId,
+    statusFilter,
+    stepCountByCaseId,
+    suiteMappings
+  ]);
   const selectedHistory = selectedTestCase ? historyByCaseId[selectedTestCase.id] || [] : [];
   const executionTargetSuiteIds = useMemo(
     () => selectedSuiteActionIds,
@@ -411,6 +519,15 @@ export function DesignPage() {
     [executionTargetSuiteIds, suites]
   );
   const areAllFilteredSuitesSelected = Boolean(filteredSuites.length) && filteredSuites.every((suite) => selectedSuiteActionIds.includes(suite.id));
+  const activeSuiteFilterCount =
+    Number(suitePlacementFilter !== "all") +
+    Number(suiteMappedCasesFilter !== "all") +
+    Number(suiteChildrenFilter !== "all");
+  const activeCaseFilterCount =
+    Number(statusFilter !== "all") +
+    Number(casePriorityFilter !== "all") +
+    Number(caseStepFilter !== "all") +
+    Number(caseRunFilter !== "all");
 
   useEffect(() => {
     if (selectedSuiteId && !suites.some((suite) => suite.id === selectedSuiteId)) {
@@ -419,14 +536,6 @@ export function DesignPage() {
       setIsCreatingCase(false);
       setIsTestCaseEditorModalOpen(false);
     }
-  }, [selectedSuiteId, suites]);
-
-  useEffect(() => {
-    if (selectedSuiteId || !suites.length) {
-      return;
-    }
-
-    setSelectedSuiteId(suites[0].id);
   }, [selectedSuiteId, suites]);
 
   useEffect(() => {
@@ -480,21 +589,6 @@ export function DesignPage() {
   }, [isCreatingCase, sortedSteps]);
 
   useEffect(() => {
-    if (isCreatingCase) {
-      return;
-    }
-
-    if (!filteredCases.length) {
-      setSelectedTestCaseId("");
-      return;
-    }
-
-    if (!filteredCases.some((testCase) => testCase.id === selectedTestCaseId)) {
-      setSelectedTestCaseId(filteredCases[0].id);
-    }
-  }, [filteredCases, isCreatingCase, selectedTestCaseId]);
-
-  useEffect(() => {
     setIsStepCreateVisible(false);
   }, [isCreatingCase, selectedTestCaseId]);
 
@@ -502,7 +596,7 @@ export function DesignPage() {
     if (isCreatingCase || !selectedTestCase) {
       setCaseDraft({
         ...EMPTY_CASE_DRAFT,
-        suite_id: selectedSuiteId || suites[0]?.id || ""
+        suite_id: selectedSuiteId || ""
       });
       return;
     }
@@ -565,18 +659,24 @@ export function DesignPage() {
       setDraftSteps([]);
       setCaseDraft({
         ...EMPTY_CASE_DRAFT,
-        suite_id: selectedSuiteId || suites[0]?.id || ""
+        suite_id: selectedSuiteId || ""
       });
     }
   };
 
   const beginCreateCase = () => {
+    if (!selectedSuiteId) {
+      setMessageTone("error");
+      setMessage("Select a suite first before creating a test case.");
+      return;
+    }
+
     setSelectedTestCaseId("");
     setIsCreatingCase(true);
     setDraftSteps([]);
     setCaseDraft({
       ...EMPTY_CASE_DRAFT,
-      suite_id: selectedSuiteId || suites[0]?.id || ""
+      suite_id: selectedSuiteId
     });
     setExpandedSections(createDefaultSuiteCaseSections());
     setExpandedStepIds([]);
@@ -600,6 +700,14 @@ export function DesignPage() {
     setSelectedSuiteActionIds([]);
     setSelectedTestCaseId("");
     setSuiteSearchTerm("");
+    setSearchTerm("");
+    setStatusFilter("all");
+    setSuitePlacementFilter("all");
+    setSuiteMappedCasesFilter("all");
+    setSuiteChildrenFilter("all");
+    setCasePriorityFilter("all");
+    setCaseStepFilter("all");
+    setCaseRunFilter("all");
     setIsCreatingCase(false);
     setIsTestCaseEditorModalOpen(false);
     setIsCreateExecutionModalOpen(false);
@@ -625,6 +733,12 @@ export function DesignPage() {
     resetExecutionContextSelection();
     setSearchTerm("");
     setStatusFilter("all");
+    setSuitePlacementFilter("all");
+    setSuiteMappedCasesFilter("all");
+    setSuiteChildrenFilter("all");
+    setCasePriorityFilter("all");
+    setCaseStepFilter("all");
+    setCaseRunFilter("all");
     setExpandedSections(createDefaultSuiteCaseSections());
     setExpandedStepIds([]);
     setDraftSteps([]);
@@ -670,7 +784,7 @@ export function DesignPage() {
   };
 
   const handleSaveTestCase = async () => {
-    const suiteId = caseDraft.suite_id || selectedSuiteId || suites[0]?.id || "";
+    const suiteId = caseDraft.suite_id || selectedSuiteId;
 
     if (!suiteId) {
       setMessageTone("error");
@@ -751,6 +865,17 @@ export function DesignPage() {
     } catch (error) {
       showError(error, "Unable to save test case");
     }
+  };
+
+  const closeSuiteWorkspace = () => {
+    setSelectedSuiteId("");
+    setSelectedTestCaseId("");
+    setIsCreatingCase(false);
+    setIsTestCaseEditorModalOpen(false);
+    setDraftSteps([]);
+    setExpandedSections(createDefaultSuiteCaseSections());
+    setExpandedStepIds([]);
+    setNewStepDraft(EMPTY_STEP_DRAFT);
   };
 
   const handleDeleteSelectedSuites = async () => {
@@ -1124,7 +1249,7 @@ export function DesignPage() {
         ]}
         actions={
           <>
-            <button className="ghost-button" disabled={!appTypeId || !suites.length} onClick={beginCreateCase} type="button">
+            <button className="ghost-button" disabled={!selectedSuiteId} onClick={beginCreateCase} type="button">
               New Test Case
             </button>
             <button
@@ -1150,18 +1275,25 @@ export function DesignPage() {
         projects={projects}
       />
 
-      <div className="test-case-workspace suite-design-workspace">
-        <div className="test-case-sidebar suite-design-sidebar">
+      <WorkspaceMasterDetail
+        browseView={(
           <SuiteSidebar
             suites={filteredSuites}
             activeSuiteId={selectedSuiteId}
             counts={suiteCounts}
             childCounts={childSuiteCounts}
             suiteSearchTerm={suiteSearchTerm}
+            suitePlacementFilter={suitePlacementFilter}
+            suiteMappedCasesFilter={suiteMappedCasesFilter}
+            suiteChildrenFilter={suiteChildrenFilter}
+            activeFilterCount={activeSuiteFilterCount}
             selectedSuiteActionIds={selectedSuiteActionIds}
             areAllVisibleSuitesSelected={areAllFilteredSuitesSelected}
-            onSelectSuite={(suiteId) => setSelectedSuiteId((current) => (current === suiteId ? "" : suiteId))}
+            onSelectSuite={setSelectedSuiteId}
             onSuiteSearchChange={setSuiteSearchTerm}
+            onSuitePlacementFilter={setSuitePlacementFilter}
+            onSuiteMappedCasesFilter={setSuiteMappedCasesFilter}
+            onSuiteChildrenFilter={setSuiteChildrenFilter}
             onToggleSuiteSelection={(suiteId) =>
               setSelectedSuiteActionIds((current) =>
                 current.includes(suiteId) ? current.filter((id) => id !== suiteId) : [...new Set([...current, suiteId])]
@@ -1172,15 +1304,10 @@ export function DesignPage() {
             }
             onClearSuiteSelection={() => setSelectedSuiteActionIds([])}
             onCreateSuite={openCreateSuiteModal}
-            onEditSuite={() => {
-              setSuiteModalMode("edit");
-              setIsSuiteModalOpen(true);
-            }}
             onDeleteSelectedSuites={() => void handleDeleteSelectedSuites()}
             onCreateExecution={() => setIsCreateExecutionModalOpen(true)}
             isLoading={suitesQuery.isLoading && Boolean(appTypeId)}
             selectedAppType={selectedAppType}
-            selectedSuite={selectedSuite}
             canCreateSuite={Boolean(appTypeId)}
             canCreateExecution={Boolean(projectId && appTypeId && executionTargetSuiteIds.length && session?.user.id)}
             selectedSuiteCount={selectedSuiteActionIds.length}
@@ -1188,14 +1315,35 @@ export function DesignPage() {
             hasSuiteSearchResults={Boolean(filteredSuites.length)}
             hasAnySuites={Boolean(suites.length)}
           />
-        </div>
-
-        <div className="test-case-editor-column suite-design-main">
+        )}
+        detailView={(
           <TestCaseList
+            actions={
+              <>
+                <WorkspaceBackButton label="Back to suite tiles" onClick={closeSuiteWorkspace} />
+                <button
+                  className="ghost-button"
+                  disabled={!selectedSuite}
+                  onClick={() => {
+                    setSuiteModalMode("edit");
+                    setIsSuiteModalOpen(true);
+                  }}
+                  type="button"
+                >
+                  Edit Suite
+                </button>
+              </>
+            }
             cases={filteredCases}
             activeCaseId={selectedTestCaseId}
             searchTerm={searchTerm}
             statusFilter={statusFilter}
+            casePriorityFilter={casePriorityFilter}
+            caseStepFilter={caseStepFilter}
+            caseRunFilter={caseRunFilter}
+            statusOptions={caseStatusOptions}
+            priorityOptions={casePriorityOptions}
+            activeFilterCount={activeCaseFilterCount}
             selectedSuite={selectedSuite}
             isLoading={isDesignLoading}
             historyByCaseId={historyByCaseId}
@@ -1203,6 +1351,9 @@ export function DesignPage() {
             stepCountByCaseId={stepCountByCaseId}
             onSearch={setSearchTerm}
             onStatusFilter={setStatusFilter}
+            onCasePriorityFilter={setCasePriorityFilter}
+            onCaseStepFilter={setCaseStepFilter}
+            onCaseRunFilter={setCaseRunFilter}
             onSelectCase={(testCaseId) => {
               setSelectedTestCaseId(testCaseId);
               setIsCreatingCase(false);
@@ -1212,8 +1363,9 @@ export function DesignPage() {
             canOpenCaseEditor={Boolean(selectedTestCaseId) || isCreatingCase}
             onReorderCases={handleReorderCases}
           />
-        </div>
-      </div>
+        )}
+        isDetailOpen={Boolean(selectedSuiteId)}
+      />
 
       {isTestCaseEditorModalOpen ? (
         <SuiteCaseEditorModal
@@ -1314,20 +1466,25 @@ function SuiteSidebar({
   counts,
   childCounts,
   suiteSearchTerm,
+  suitePlacementFilter,
+  suiteMappedCasesFilter,
+  suiteChildrenFilter,
+  activeFilterCount,
   selectedSuiteActionIds,
   areAllVisibleSuitesSelected,
   onSelectSuite,
   onSuiteSearchChange,
+  onSuitePlacementFilter,
+  onSuiteMappedCasesFilter,
+  onSuiteChildrenFilter,
   onToggleSuiteSelection,
   onSelectAllVisibleSuites,
   onClearSuiteSelection,
   onCreateSuite,
-  onEditSuite,
   onDeleteSelectedSuites,
   onCreateExecution,
   isLoading,
   selectedAppType,
-  selectedSuite,
   canCreateSuite,
   canCreateExecution,
   selectedSuiteCount,
@@ -1341,20 +1498,25 @@ function SuiteSidebar({
   counts: Record<string, number>;
   childCounts: Record<string, number>;
   suiteSearchTerm: string;
+  suitePlacementFilter: SuitePlacementFilter;
+  suiteMappedCasesFilter: SuiteMappedCasesFilter;
+  suiteChildrenFilter: SuiteChildrenFilter;
+  activeFilterCount: number;
   selectedSuiteActionIds: string[];
   areAllVisibleSuitesSelected: boolean;
   onSelectSuite: (suiteId: string) => void;
   onSuiteSearchChange: (value: string) => void;
+  onSuitePlacementFilter: (value: SuitePlacementFilter) => void;
+  onSuiteMappedCasesFilter: (value: SuiteMappedCasesFilter) => void;
+  onSuiteChildrenFilter: (value: SuiteChildrenFilter) => void;
   onToggleSuiteSelection: (suiteId: string) => void;
   onSelectAllVisibleSuites: () => void;
   onClearSuiteSelection: () => void;
   onCreateSuite: () => void;
-  onEditSuite: () => void;
   onDeleteSelectedSuites: () => void;
   onCreateExecution: () => void;
   isLoading: boolean;
   selectedAppType: AppType | null;
-  selectedSuite: TestSuite | null;
   canCreateSuite: boolean;
   canCreateExecution: boolean;
   selectedSuiteCount: number;
@@ -1366,23 +1528,69 @@ function SuiteSidebar({
     <Panel
       className="execution-panel suite-design-panel suite-design-panel--list"
       actions={actions}
-      title="Suites"
-      subtitle={selectedAppType ? `${selectedAppType.name} · ${selectedAppType.type}` : "Select a project and app type first."}
+      title="Suite tiles"
+      subtitle={selectedAppType ? "Browse suites as tiles first, then open one to manage its mapped test cases." : "Select a project and app type first."}
     >
       <div className="suite-design-panel-stack">
         <div className="design-sidebar-actions">
           <button className="primary-button" disabled={!canCreateSuite} onClick={onCreateSuite} type="button">Create Suite</button>
-          <button className="ghost-button" disabled={!selectedSuite} onClick={onEditSuite} type="button">Edit Suite</button>
           <button className="ghost-button" disabled={!canCreateExecution} onClick={onCreateExecution} type="button">Create Execution</button>
         </div>
 
         <div className="design-list-toolbar suite-sidebar-toolbar">
-          <input
-            aria-label="Search suites"
+          <CatalogSearchFilter
+            activeFilterCount={activeFilterCount}
+            ariaLabel="Search suites"
+            onChange={onSuiteSearchChange}
             placeholder="Search suites"
+            subtitle="Filter suite tiles by the placement and counts shown on each card."
+            title="Filter suites"
             value={suiteSearchTerm}
-            onChange={(event) => onSuiteSearchChange(event.target.value)}
-          />
+          >
+            <div className="catalog-filter-grid">
+              <label className="catalog-filter-field">
+                <span>Placement</span>
+                <select value={suitePlacementFilter} onChange={(event) => onSuitePlacementFilter(event.target.value as SuitePlacementFilter)}>
+                  <option value="all">All suites</option>
+                  <option value="root">Root suites</option>
+                  <option value="nested">Nested suites</option>
+                </select>
+              </label>
+
+              <label className="catalog-filter-field">
+                <span>Mapped cases</span>
+                <select value={suiteMappedCasesFilter} onChange={(event) => onSuiteMappedCasesFilter(event.target.value as SuiteMappedCasesFilter)}>
+                  <option value="all">All suites</option>
+                  <option value="with-cases">With mapped cases</option>
+                  <option value="empty">Empty suites</option>
+                </select>
+              </label>
+
+              <label className="catalog-filter-field">
+                <span>Child suites</span>
+                <select value={suiteChildrenFilter} onChange={(event) => onSuiteChildrenFilter(event.target.value as SuiteChildrenFilter)}>
+                  <option value="all">All suites</option>
+                  <option value="with-children">With child suites</option>
+                  <option value="no-children">No child suites</option>
+                </select>
+              </label>
+
+              <div className="catalog-filter-actions">
+                <button
+                  className="ghost-button"
+                  disabled={!activeFilterCount}
+                  onClick={() => {
+                    onSuitePlacementFilter("all");
+                    onSuiteMappedCasesFilter("all");
+                    onSuiteChildrenFilter("all");
+                  }}
+                  type="button"
+                >
+                  Clear filters
+                </button>
+              </div>
+            </div>
+          </CatalogSearchFilter>
           <button className="ghost-button" disabled={!suites.length || areAllVisibleSuitesSelected} onClick={onSelectAllVisibleSuites} type="button">
             Select all visible
           </button>
@@ -1405,16 +1613,13 @@ function SuiteSidebar({
             <span>Checkbox selections power bulk delete and execution creation. Click a card body to keep curating one suite at a time.</span>
           </div>
         ) : null}
-
-        {selectedSuite ? (
-          <div className="detail-summary suite-workspace-card">
-            <strong>{selectedSuite.name}</strong>
-            <span>{selectedSuite.parent_id ? "Nested suite" : "Root suite"} · {counts[selectedSuite.id] || 0} mapped cases</span>
-            <span>Use the workspace to review scope, open a case editor, or restructure suite membership.</span>
+        {isLoading ? (
+          <div className="tile-browser-grid test-case-library-scroll suite-tile-browser">
+            <div className="skeleton-block" />
+            <div className="skeleton-block" />
+            <div className="skeleton-block" />
           </div>
         ) : null}
-
-        {isLoading ? <div className="empty-state compact">Loading suites…</div> : null}
         {!isLoading && !hasAnySuites ? (
           <div className="empty-state compact">
             <div>No suites yet. Create your first suite to start organizing reusable cases.</div>
@@ -1423,65 +1628,67 @@ function SuiteSidebar({
         ) : null}
         {!isLoading && hasAnySuites && !hasSuiteSearchResults ? <div className="empty-state compact">No suites match the current search.</div> : null}
 
-        <div className="suite-design-panel-scroll suite-sidebar-list">
-          {suites.map((suite) => {
-            const suitePlacementLabel = suite.parent_id ? "Nested suite" : "Root suite";
-            const mappedCaseCount = counts[suite.id] || 0;
-            const childSuiteCount = childCounts[suite.id] || 0;
-            const suiteTone = suite.parent_id ? "info" : "success";
+        {!isLoading && hasSuiteSearchResults ? (
+          <div className="tile-browser-grid test-case-library-scroll suite-tile-browser">
+            {suites.map((suite) => {
+              const suitePlacementLabel = suite.parent_id ? "Nested suite" : "Root suite";
+              const mappedCaseCount = counts[suite.id] || 0;
+              const childSuiteCount = childCounts[suite.id] || 0;
+              const suiteTone = suite.parent_id ? "info" : "success";
 
-            return (
-              <button
-                key={suite.id}
-                className={[
-                  "record-card tile-card test-suite-card",
-                  activeSuiteId === suite.id ? "is-active" : "",
-                  selectedSuiteActionIds.includes(suite.id) ? "is-marked-for-delete" : ""
-                ].filter(Boolean).join(" ")}
-                onClick={() => onSelectSuite(suite.id)}
-                type="button"
-              >
-                <div className="tile-card-main">
-                  <div className="tile-card-header">
-                    <TileCardIconFrame tone={suiteTone}>
-                      <TileCardSuiteIcon />
-                    </TileCardIconFrame>
-                    <div className="tile-card-title-group">
-                      <strong>{suite.name}</strong>
-                      <span className="tile-card-kicker">{suitePlacementLabel}</span>
+              return (
+                <button
+                  key={suite.id}
+                  className={[
+                    "record-card tile-card test-suite-card",
+                    activeSuiteId === suite.id ? "is-active" : "",
+                    selectedSuiteActionIds.includes(suite.id) ? "is-marked-for-delete" : ""
+                  ].filter(Boolean).join(" ")}
+                  onClick={() => onSelectSuite(suite.id)}
+                  type="button"
+                >
+                  <div className="tile-card-main">
+                    <div className="tile-card-header">
+                      <TileCardIconFrame tone={suiteTone}>
+                        <TileCardSuiteIcon />
+                      </TileCardIconFrame>
+                      <div className="tile-card-title-group">
+                        <strong>{suite.name}</strong>
+                        <span className="tile-card-kicker">{suitePlacementLabel}</span>
+                      </div>
+                      <TileCardStatusIndicator icon={<TileCardHierarchyIcon />} title={suitePlacementLabel} tone={suite.parent_id ? "info" : "neutral"} />
                     </div>
-                    <TileCardStatusIndicator icon={<TileCardHierarchyIcon />} title={suitePlacementLabel} tone={suite.parent_id ? "info" : "neutral"} />
+                    <p className="tile-card-description">{selectedAppType ? `${selectedAppType.name} workspace suite` : "No app type selected"}</p>
+                    <div className="tile-card-facts" aria-label={`${suite.name} facts`}>
+                      <TileCardFact
+                        label={String(mappedCaseCount)}
+                        title={`${mappedCaseCount} mapped case${mappedCaseCount === 1 ? "" : "s"}`}
+                        tone={mappedCaseCount ? "success" : "neutral"}
+                      >
+                        <TileCardCaseIcon />
+                      </TileCardFact>
+                      <TileCardFact
+                        label={String(childSuiteCount)}
+                        title={`${childSuiteCount} child suite${childSuiteCount === 1 ? "" : "s"}`}
+                        tone={childSuiteCount ? "info" : "neutral"}
+                      >
+                        <TileCardHierarchyIcon />
+                      </TileCardFact>
+                    </div>
+                    <label className="checkbox-field suite-card-action-checkbox" onClick={(event) => event.stopPropagation()}>
+                      <input
+                        checked={selectedSuiteActionIds.includes(suite.id)}
+                        onChange={() => onToggleSuiteSelection(suite.id)}
+                        type="checkbox"
+                      />
+                      Select suite
+                    </label>
                   </div>
-                  <p className="tile-card-description">{selectedAppType ? `${selectedAppType.name} workspace suite` : "No app type selected"}</p>
-                  <div className="tile-card-facts" aria-label={`${suite.name} facts`}>
-                    <TileCardFact
-                      label={String(mappedCaseCount)}
-                      title={`${mappedCaseCount} mapped case${mappedCaseCount === 1 ? "" : "s"}`}
-                      tone={mappedCaseCount ? "success" : "neutral"}
-                    >
-                      <TileCardCaseIcon />
-                    </TileCardFact>
-                    <TileCardFact
-                      label={String(childSuiteCount)}
-                      title={`${childSuiteCount} child suite${childSuiteCount === 1 ? "" : "s"}`}
-                      tone={childSuiteCount ? "info" : "neutral"}
-                    >
-                      <TileCardHierarchyIcon />
-                    </TileCardFact>
-                  </div>
-                  <label className="checkbox-field suite-card-action-checkbox" onClick={(event) => event.stopPropagation()}>
-                    <input
-                      checked={selectedSuiteActionIds.includes(suite.id)}
-                      onChange={() => onToggleSuiteSelection(suite.id)}
-                      type="checkbox"
-                    />
-                    Select suite
-                  </label>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
     </Panel>
   );
@@ -1493,6 +1700,12 @@ function TestCaseList({
   activeCaseId,
   searchTerm,
   statusFilter,
+  casePriorityFilter,
+  caseStepFilter,
+  caseRunFilter,
+  statusOptions,
+  priorityOptions,
+  activeFilterCount,
   selectedSuite,
   isLoading,
   historyByCaseId,
@@ -1500,6 +1713,9 @@ function TestCaseList({
   stepCountByCaseId,
   onSearch,
   onStatusFilter,
+  onCasePriorityFilter,
+  onCaseStepFilter,
+  onCaseRunFilter,
   onSelectCase,
   onCreateCase,
   onOpenCaseEditor,
@@ -1511,6 +1727,12 @@ function TestCaseList({
   activeCaseId: string;
   searchTerm: string;
   statusFilter: string;
+  casePriorityFilter: string;
+  caseStepFilter: SuiteCaseStepFilter;
+  caseRunFilter: SuiteCaseRunFilter;
+  statusOptions: string[];
+  priorityOptions: string[];
+  activeFilterCount: number;
   selectedSuite: TestSuite | null;
   isLoading: boolean;
   historyByCaseId: Record<string, ExecutionResult[]>;
@@ -1518,6 +1740,9 @@ function TestCaseList({
   stepCountByCaseId: Record<string, number>;
   onSearch: (value: string) => void;
   onStatusFilter: (value: string) => void;
+  onCasePriorityFilter: (value: string) => void;
+  onCaseStepFilter: (value: SuiteCaseStepFilter) => void;
+  onCaseRunFilter: (value: SuiteCaseRunFilter) => void;
   onSelectCase: (testCaseId: string) => void;
   onCreateCase: () => void;
   onOpenCaseEditor: () => void;
@@ -1532,7 +1757,7 @@ function TestCaseList({
     <Panel
       className="execution-panel suite-design-panel suite-design-panel--cases"
       actions={actions}
-      title="Test Case Workspace"
+      title="Suite cases"
       subtitle={selectedSuite ? `Curated reusable cases inside ${selectedSuite.name}.` : "Showing all reusable cases for the current app type."}
     >
       <div className="suite-design-panel-stack">
@@ -1556,13 +1781,75 @@ function TestCaseList({
         </div>
 
         <div className="design-list-toolbar test-case-catalog-toolbar">
-          <input placeholder="Search title or description" value={searchTerm} onChange={(event) => onSearch(event.target.value)} />
-          <select value={statusFilter} onChange={(event) => onStatusFilter(event.target.value)}>
-            <option value="all">All statuses</option>
-            <option value="active">active</option>
-            <option value="draft">draft</option>
-            <option value="ready">ready</option>
-          </select>
+          <CatalogSearchFilter
+            activeFilterCount={activeFilterCount}
+            ariaLabel="Search suite cases"
+            onChange={onSearch}
+            placeholder="Search title or description"
+            subtitle="Filter the case tiles by the same facts shown on each card."
+            title="Filter suite cases"
+            value={searchTerm}
+          >
+            <div className="catalog-filter-grid">
+              <label className="catalog-filter-field">
+                <span>Status</span>
+                <select value={statusFilter} onChange={(event) => onStatusFilter(event.target.value)}>
+                  <option value="all">All statuses</option>
+                  {statusOptions.map((status) => (
+                    <option key={status} value={status}>
+                      {formatTileCardLabel(status, "Active")}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="catalog-filter-field">
+                <span>Priority</span>
+                <select value={casePriorityFilter} onChange={(event) => onCasePriorityFilter(event.target.value)}>
+                  <option value="all">All priorities</option>
+                  {priorityOptions.map((priority) => (
+                    <option key={priority} value={priority}>
+                      {`P${priority}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="catalog-filter-field">
+                <span>Steps</span>
+                <select value={caseStepFilter} onChange={(event) => onCaseStepFilter(event.target.value as SuiteCaseStepFilter)}>
+                  <option value="all">All cases</option>
+                  <option value="with-steps">With steps</option>
+                  <option value="no-steps">Without steps</option>
+                </select>
+              </label>
+
+              <label className="catalog-filter-field">
+                <span>Recent runs</span>
+                <select value={caseRunFilter} onChange={(event) => onCaseRunFilter(event.target.value as SuiteCaseRunFilter)}>
+                  <option value="all">All cases</option>
+                  <option value="with-runs">With recent runs</option>
+                  <option value="no-runs">No recent runs</option>
+                </select>
+              </label>
+
+              <div className="catalog-filter-actions">
+                <button
+                  className="ghost-button"
+                  disabled={!activeFilterCount}
+                  onClick={() => {
+                    onStatusFilter("all");
+                    onCasePriorityFilter("all");
+                    onCaseStepFilter("all");
+                    onCaseRunFilter("all");
+                  }}
+                  type="button"
+                >
+                  Clear filters
+                </button>
+              </div>
+            </div>
+          </CatalogSearchFilter>
           <button className="primary-button" onClick={onCreateCase} type="button">New Test Case</button>
           <button className="ghost-button" disabled={!canOpenCaseEditor} onClick={onOpenCaseEditor} type="button">Open Case Editor</button>
         </div>
@@ -1577,7 +1864,7 @@ function TestCaseList({
         {isLoading ? <div className="empty-state compact">Loading test cases…</div> : null}
         {!isLoading && !cases.length ? <div className="empty-state compact">No test cases match this scope yet.</div> : null}
 
-        <div className="suite-design-panel-scroll test-case-library-scroll">
+        <div className="tile-browser-grid test-case-library-scroll">
           {cases.map((testCase) => {
             const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
             const latest = history[0];

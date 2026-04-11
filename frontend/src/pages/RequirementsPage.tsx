@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
+import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
@@ -33,6 +34,7 @@ type RequirementDraft = {
 };
 
 type RequirementSectionKey = "details" | "linked" | "library";
+type RequirementCoverageFilter = "all" | "linked" | "unlinked";
 
 const EMPTY_REQUIREMENT: RequirementDraft = {
   title: "",
@@ -58,6 +60,9 @@ export function RequirementsPage() {
   const [deleteSelectedRequirementIds, setDeleteSelectedRequirementIds] = useState<string[]>([]);
   const [isDeletingSelectedRequirements, setIsDeletingSelectedRequirements] = useState(false);
   const [requirementSearchTerm, setRequirementSearchTerm] = useState("");
+  const [requirementStatusFilter, setRequirementStatusFilter] = useState("all");
+  const [requirementPriorityFilter, setRequirementPriorityFilter] = useState("all");
+  const [requirementCoverageFilter, setRequirementCoverageFilter] = useState<RequirementCoverageFilter>("all");
   const [expandedSections, setExpandedSections] = useState<Record<RequirementSectionKey, boolean>>(createDefaultRequirementSections);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
@@ -202,23 +207,59 @@ export function RequirementsPage() {
     [requirements, selectedRequirementId]
   );
 
+  const requirementStatusOptions = useMemo(
+    () => Array.from(new Set(requirements.map((item) => item.status || "open"))).sort((left, right) => left.localeCompare(right)),
+    [requirements]
+  );
+  const requirementPriorityOptions = useMemo(
+    () =>
+      Array.from(new Set(requirements.map((item) => String(item.priority ?? 3)))).sort((left, right) => Number(left) - Number(right)),
+    [requirements]
+  );
+
   const filteredRequirements = useMemo(() => {
     const normalizedSearch = requirementSearchTerm.trim().toLowerCase();
 
-    if (!normalizedSearch) {
-      return requirements;
-    }
+    return requirements.filter((item) => {
+      const linkedCaseCount = (item.test_case_ids || []).length;
+      const matchesSearch =
+        !normalizedSearch ||
+        [
+          item.title,
+          item.description || "",
+          item.status || "open",
+          `p${item.priority ?? 3}`,
+          `priority ${item.priority ?? 3}`
+        ].some((value) => value.toLowerCase().includes(normalizedSearch));
 
-    return requirements.filter((item) =>
-      [
-        item.title,
-        item.description || "",
-        item.status || "open",
-        `p${item.priority ?? 3}`,
-        `priority ${item.priority ?? 3}`
-      ].some((value) => value.toLowerCase().includes(normalizedSearch))
-    );
-  }, [requirementSearchTerm, requirements]);
+      if (!matchesSearch) {
+        return false;
+      }
+
+      if (requirementStatusFilter !== "all" && (item.status || "open") !== requirementStatusFilter) {
+        return false;
+      }
+
+      if (requirementPriorityFilter !== "all" && String(item.priority ?? 3) !== requirementPriorityFilter) {
+        return false;
+      }
+
+      if (requirementCoverageFilter === "linked" && !linkedCaseCount) {
+        return false;
+      }
+
+      if (requirementCoverageFilter === "unlinked" && linkedCaseCount) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [requirementCoverageFilter, requirementPriorityFilter, requirementSearchTerm, requirementStatusFilter, requirements]);
+
+  const activeRequirementFilterCount =
+    Number(requirementStatusFilter !== "all") +
+    Number(requirementPriorityFilter !== "all") +
+    Number(requirementCoverageFilter !== "all");
 
   const areAllFilteredRequirementsSelected =
     filteredRequirements.length > 0 && filteredRequirements.every((item) => deleteSelectedRequirementIds.includes(item.id));
@@ -704,11 +745,68 @@ export function RequirementsPage() {
         browseView={(
           <Panel title="Requirement tiles" subtitle="Start in the visual catalog, scan coverage quickly, then open one requirement into a focused editor view.">
             <div className="design-list-toolbar requirement-catalog-toolbar">
-              <input
+              <CatalogSearchFilter
+                activeFilterCount={activeRequirementFilterCount}
+                ariaLabel="Search requirements"
+                onChange={setRequirementSearchTerm}
                 placeholder="Search title, description, status, or priority"
+                subtitle="Filter the requirement tiles by the same facts shown on each card."
+                title="Filter requirements"
                 value={requirementSearchTerm}
-                onChange={(event) => setRequirementSearchTerm(event.target.value)}
-              />
+              >
+                <div className="catalog-filter-grid">
+                  <label className="catalog-filter-field">
+                    <span>Status</span>
+                    <select value={requirementStatusFilter} onChange={(event) => setRequirementStatusFilter(event.target.value)}>
+                      <option value="all">All statuses</option>
+                      {requirementStatusOptions.map((status) => (
+                        <option key={status} value={status}>
+                          {formatTileCardLabel(status, "Open")}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="catalog-filter-field">
+                    <span>Priority</span>
+                    <select value={requirementPriorityFilter} onChange={(event) => setRequirementPriorityFilter(event.target.value)}>
+                      <option value="all">All priorities</option>
+                      {requirementPriorityOptions.map((priority) => (
+                        <option key={priority} value={priority}>
+                          {`P${priority}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="catalog-filter-field">
+                    <span>Linked cases</span>
+                    <select
+                      value={requirementCoverageFilter}
+                      onChange={(event) => setRequirementCoverageFilter(event.target.value as RequirementCoverageFilter)}
+                    >
+                      <option value="all">All requirements</option>
+                      <option value="linked">With linked cases</option>
+                      <option value="unlinked">Without linked cases</option>
+                    </select>
+                  </label>
+
+                  <div className="catalog-filter-actions">
+                    <button
+                      className="ghost-button"
+                      disabled={!activeRequirementFilterCount}
+                      onClick={() => {
+                        setRequirementStatusFilter("all");
+                        setRequirementPriorityFilter("all");
+                        setRequirementCoverageFilter("all");
+                      }}
+                      type="button"
+                    >
+                      Clear filters
+                    </button>
+                  </div>
+                </div>
+              </CatalogSearchFilter>
               <button
                 className="ghost-button"
                 disabled={!filteredRequirements.length || areAllFilteredRequirementsSelected}

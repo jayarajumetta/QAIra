@@ -3,25 +3,26 @@ import type {
   AiDesignPreviewResponse,
   AuthSetupPayload,
   ApiError,
-    AppType,
-    Execution,
-    ExecutionResult,
-    Feedback,
-    Integration,
-    KeyValueEntry,
-    Project,
-    ProjectMember,
-    Requirement,
-    Role,
-    SessionPayload,
-    TestConfiguration,
-    TestCase,
-    TestDataSet,
-    TestDataSetMode,
-    TestEnvironment,
-    TestStep,
-    TestSuite,
-    User
+  AppType,
+  Execution,
+  ExecutionResult,
+  Feedback,
+  Integration,
+  KeyValueEntry,
+  Project,
+  ProjectMember,
+  Requirement,
+  Role,
+  SessionPayload,
+  SharedStepGroup,
+  TestConfiguration,
+  TestCase,
+  TestDataSet,
+  TestDataSetMode,
+  TestEnvironment,
+  TestStep,
+  TestSuite,
+  User
 } from "../types";
 
 declare global {
@@ -274,7 +275,7 @@ export const api = {
   testCases: {
     list: (query?: { suite_id?: string; requirement_id?: string; status?: string; app_type_id?: string }) =>
       request<TestCase[]>(`/test-cases${toQueryString(query)}`),
-    create: (input: { app_type_id?: string; suite_id?: string; suite_ids?: string[]; title: string; description?: string; priority?: number; status?: string; requirement_id?: string; requirement_ids?: string[]; steps?: Array<{ step_order?: number; action?: string; expected_result?: string }> }) =>
+    create: (input: { app_type_id?: string; suite_id?: string; suite_ids?: string[]; title: string; description?: string; priority?: number; status?: string; requirement_id?: string; requirement_ids?: string[]; steps?: Array<{ step_order?: number; action?: string; expected_result?: string; group_id?: string; group_name?: string; group_kind?: "local" | "reusable"; reusable_group_id?: string }> }) =>
       request<{ id: string }>("/test-cases", { method: "POST", body: JSON.stringify(input) }),
     previewDesignedCases: (input: { app_type_id: string; requirement_ids: string[]; integration_id?: string; max_cases?: number; additional_context?: string; external_links?: string[]; images?: AiDesignImageInput[] }) =>
       request<AiDesignPreviewResponse>("/test-cases/design-test-cases-preview", {
@@ -291,7 +292,7 @@ export const api = {
         method: "POST",
         body: JSON.stringify(input)
       }),
-    update: (id: string, input: Partial<{ app_type_id: string; suite_id: string; suite_ids: string[]; title: string; description: string; priority: number; status: string; requirement_id: string; requirement_ids: string[]; steps: Array<{ step_order?: number; action?: string; expected_result?: string }> }>) =>
+    update: (id: string, input: Partial<{ app_type_id: string; suite_id: string; suite_ids: string[]; title: string; description: string; priority: number; status: string; requirement_id: string; requirement_ids: string[]; steps: Array<{ step_order?: number; action?: string; expected_result?: string; group_id?: string; group_name?: string; group_kind?: "local" | "reusable"; reusable_group_id?: string }> }>) =>
       request<{ updated: boolean }>(`/test-cases/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/test-cases/${id}`, { method: "DELETE" })
   },
@@ -307,16 +308,47 @@ export const api = {
   testSteps: {
     list: (query?: { test_case_id?: string }) =>
       request<TestStep[]>(`/test-steps${toQueryString(query)}`),
-    create: (input: { test_case_id: string; step_order: number; action?: string; expected_result?: string }) =>
+    create: (input: { test_case_id: string; step_order: number; action?: string; expected_result?: string; group_id?: string; group_name?: string; group_kind?: "local" | "reusable"; reusable_group_id?: string }) =>
       request<{ id: string }>("/test-steps", { method: "POST", body: JSON.stringify(input) }),
-    update: (id: string, input: Partial<{ test_case_id: string; step_order: number; action: string; expected_result: string }>) =>
+    update: (id: string, input: Partial<{ test_case_id: string; step_order: number; action: string; expected_result: string; group_id: string | null; group_name: string | null; group_kind: "local" | "reusable" | null; reusable_group_id: string | null }>) =>
       request<{ updated: boolean }>(`/test-steps/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     reorder: (test_case_id: string, step_ids: string[]) =>
       request<{ reordered: boolean }>(`/test-steps/reorder`, {
         method: "PUT",
         body: JSON.stringify({ test_case_id, step_ids })
       }),
+    duplicate: (input: { test_case_id: string; step_ids: string[]; insert_after_step_id?: string }) =>
+      request<{ duplicated: boolean }>("/test-steps/duplicate", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
+    group: (input: { test_case_id: string; step_ids: string[]; name: string; kind?: "local" | "reusable"; reusable_group_id?: string }) =>
+      request<{ grouped: boolean; group_id: string }>("/test-steps/group", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
+    ungroup: (input: { test_case_id: string; group_id: string }) =>
+      request<{ updated: boolean }>("/test-steps/ungroup", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
+    insertSharedGroup: (input: { test_case_id: string; shared_step_group_id: string; insert_after_step_id?: string }) =>
+      request<{ inserted: boolean }>("/test-steps/insert-shared-group", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
     delete: (id: string) => request<{ deleted: boolean }>(`/test-steps/${id}`, { method: "DELETE" })
+  },
+  sharedStepGroups: {
+    list: (query?: { app_type_id?: string }) =>
+      request<SharedStepGroup[]>(`/shared-step-groups${toQueryString(query)}`),
+    get: (id: string) =>
+      request<SharedStepGroup>(`/shared-step-groups/${id}`),
+    create: (input: { app_type_id: string; name: string; description?: string; steps?: Array<{ step_order?: number; action?: string; expected_result?: string }> }) =>
+      request<{ id: string }>("/shared-step-groups", { method: "POST", body: JSON.stringify(input) }),
+    update: (id: string, input: Partial<{ app_type_id: string; name: string; description: string; steps: Array<{ step_order?: number; action?: string; expected_result?: string }> }>) =>
+      request<{ updated: boolean }>(`/shared-step-groups/${id}`, { method: "PUT", body: JSON.stringify(input) }),
+    delete: (id: string) => request<{ deleted: boolean }>(`/shared-step-groups/${id}`, { method: "DELETE" })
   },
   testEnvironments: {
     list: (query?: { project_id?: string; app_type_id?: string }) =>

@@ -1,7 +1,8 @@
-import { FormEvent, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { FormEvent, Fragment, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
 import { FormField } from "../components/FormField";
 import { ExecutionContextSelector } from "../components/ExecutionContextSelector";
 import { PageHeader } from "../components/PageHeader";
@@ -55,6 +56,9 @@ type ExecutionRunSummary = {
   latestActivityAt: string | null;
   totalDurationMs: number;
 };
+
+type ExecutionIssueFilter = "all" | "with-issues" | "clean";
+type ExecutionEvidenceFilter = "all" | "with-evidence" | "no-evidence";
 
 const EMPTY_EXECUTION_RUN_SUMMARY: ExecutionRunSummary = {
   passed: 0,
@@ -174,8 +178,19 @@ function toStepView(snapshot: ExecutionStepSnapshot): TestStep {
     test_case_id: snapshot.test_case_id,
     step_order: snapshot.step_order,
     action: snapshot.action,
-    expected_result: snapshot.expected_result
+    expected_result: snapshot.expected_result,
+    group_id: snapshot.group_id,
+    group_name: snapshot.group_name,
+    group_kind: snapshot.group_kind,
+    reusable_group_id: snapshot.reusable_group_id
   };
+}
+
+function isStepGroupStart(steps: TestStep[], index: number) {
+  const currentStep = steps[index];
+  const previousStep = steps[index - 1];
+
+  return Boolean(currentStep?.group_id) && currentStep.group_id !== previousStep?.group_id;
 }
 
 function buildProgressSegments(
@@ -291,6 +306,9 @@ export function ExecutionsPage() {
   const [isSuiteTreeMinimized, setIsSuiteTreeMinimized] = useState(false);
   const [isExecutionHealthExpanded, setIsExecutionHealthExpanded] = useState(true);
   const [isExecutionSupportExpanded, setIsExecutionSupportExpanded] = useState(true);
+  const [executionStatusFilter, setExecutionStatusFilter] = useState<ExecutionStatus | "all">("all");
+  const [executionIssueFilter, setExecutionIssueFilter] = useState<ExecutionIssueFilter>("all");
+  const [executionEvidenceFilter, setExecutionEvidenceFilter] = useState<ExecutionEvidenceFilter>("all");
   const [liveNow, setLiveNow] = useState(() => Date.now());
   const [executionListItemHeight, setExecutionListItemHeight] = useState(236);
   const [caseTimerStartedAtById, setCaseTimerStartedAtById] = useState<Record<string, number>>({});
@@ -1103,18 +1121,54 @@ export function ExecutionsPage() {
     syncExecutionSearchParams(selectedExecutionId, null);
   };
 
+  const executionStatusOptions = useMemo(
+    () => Array.from(new Set(executions.map((execution) => normalizeExecutionStatus(execution.status)))),
+    [executions]
+  );
+
   const filteredExecutions = useMemo(() => {
     const search = deferredExecutionSearch.trim().toLowerCase();
 
-    if (!search) {
-      return executions;
-    }
-
     return executions.filter((execution) => {
       const projectName = projectNameById[execution.project_id] || "";
-      return [execution.name || "", projectName].some((value) => value.toLowerCase().includes(search));
+      const summary = executionSummaryById[execution.id] || EMPTY_EXECUTION_RUN_SUMMARY;
+      const executionStatus = normalizeExecutionStatus(execution.status);
+      const hasIssues = summary.failed + summary.blocked > 0;
+      const hasEvidence = summary.total > 0;
+      const matchesSearch = !search || [execution.name || "", projectName].some((value) => value.toLowerCase().includes(search));
+
+      if (!matchesSearch) {
+        return false;
+      }
+
+      if (executionStatusFilter !== "all" && executionStatus !== executionStatusFilter) {
+        return false;
+      }
+
+      if (executionIssueFilter === "with-issues" && !hasIssues) {
+        return false;
+      }
+
+      if (executionIssueFilter === "clean" && hasIssues) {
+        return false;
+      }
+
+      if (executionEvidenceFilter === "with-evidence" && !hasEvidence) {
+        return false;
+      }
+
+      if (executionEvidenceFilter === "no-evidence" && hasEvidence) {
+        return false;
+      }
+
+      return true;
     });
-  }, [deferredExecutionSearch, executions, projectNameById]);
+  }, [deferredExecutionSearch, executionEvidenceFilter, executionIssueFilter, executionStatusFilter, executionSummaryById, executions, projectNameById]);
+
+  const activeExecutionFilterCount =
+    Number(executionStatusFilter !== "all") +
+    Number(executionIssueFilter !== "all") +
+    Number(executionEvidenceFilter !== "all");
 
   const executionCardMeasureTarget = filteredExecutions[0] || null;
 
@@ -1290,13 +1344,72 @@ export function ExecutionsPage() {
             subtitle="Start from the run catalog, then drill into suites, cases, and step execution one focused screen at a time."
           >
             <div className="design-list-toolbar">
-              <input
-                aria-label="Search executions"
+              <CatalogSearchFilter
+                activeFilterCount={activeExecutionFilterCount}
+                ariaLabel="Search executions"
+                onChange={setExecutionSearch}
                 placeholder="Search executions"
-                value={executionSearch}
-                onChange={(event) => setExecutionSearch(event.target.value)}
+                subtitle="Filter execution tiles by the run status and facts shown on each card."
+                title="Filter executions"
                 type="search"
-              />
+                value={executionSearch}
+              >
+                <div className="catalog-filter-grid">
+                  <label className="catalog-filter-field">
+                    <span>Status</span>
+                    <select
+                      value={executionStatusFilter}
+                      onChange={(event) => setExecutionStatusFilter(event.target.value as ExecutionStatus | "all")}
+                    >
+                      <option value="all">All statuses</option>
+                      {executionStatusOptions.map((status) => (
+                        <option key={status} value={status}>
+                          {executionStatusLabel(status)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="catalog-filter-field">
+                    <span>Issue count</span>
+                    <select
+                      value={executionIssueFilter}
+                      onChange={(event) => setExecutionIssueFilter(event.target.value as ExecutionIssueFilter)}
+                    >
+                      <option value="all">All runs</option>
+                      <option value="with-issues">With failed or blocked cases</option>
+                      <option value="clean">No failed or blocked cases</option>
+                    </select>
+                  </label>
+
+                  <label className="catalog-filter-field">
+                    <span>Evidence activity</span>
+                    <select
+                      value={executionEvidenceFilter}
+                      onChange={(event) => setExecutionEvidenceFilter(event.target.value as ExecutionEvidenceFilter)}
+                    >
+                      <option value="all">All runs</option>
+                      <option value="with-evidence">Touched cases recorded</option>
+                      <option value="no-evidence">No evidence yet</option>
+                    </select>
+                  </label>
+
+                  <div className="catalog-filter-actions">
+                    <button
+                      className="ghost-button"
+                      disabled={!activeExecutionFilterCount}
+                      onClick={() => {
+                        setExecutionStatusFilter("all");
+                        setExecutionIssueFilter("all");
+                        setExecutionEvidenceFilter("all");
+                      }}
+                      type="button"
+                    >
+                      Clear filters
+                    </button>
+                  </div>
+                </div>
+              </CatalogSearchFilter>
             </div>
 
             {executionsQuery.isLoading ? (
@@ -1461,25 +1574,29 @@ export function ExecutionsPage() {
                             <span className="execution-step-col-note" role="columnheader">Comment / log</span>
                           </div>
                           <div className="execution-step-table-body">
-                            {selectedSteps.map((step) => {
+                            {selectedSteps.map((step, index) => {
                               const rowStatus = stepStatuses[step.id];
                               return (
-                                <ExecutionCompactStepRow
-                                  key={step.id}
-                                  isLocked={!isExecutionStarted || isExecutionLocked}
-                                  isSelected={bulkSelectedStepIds.includes(step.id)}
-                                  note={stepNotes[step.id] || ""}
-                                  onFail={() => void handleRecordStep(step.id, "failed")}
-                                  onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
-                                  onPass={() => void handleRecordStep(step.id, "passed")}
-                                  onToggleSelect={(checked) =>
-                                    setBulkSelectedStepIds((current) =>
-                                      checked ? [...new Set([...current, step.id])] : current.filter((id) => id !== step.id)
-                                    )
-                                  }
-                                  status={rowStatus || "queued"}
-                                  step={step}
-                                />
+                                <Fragment key={step.id}>
+                                  {isStepGroupStart(selectedSteps, index) ? (
+                                    <ExecutionStepGroupRow kind={step.group_kind} name={step.group_name || "Step group"} />
+                                  ) : null}
+                                  <ExecutionCompactStepRow
+                                    isLocked={!isExecutionStarted || isExecutionLocked}
+                                    isSelected={bulkSelectedStepIds.includes(step.id)}
+                                    note={stepNotes[step.id] || ""}
+                                    onFail={() => void handleRecordStep(step.id, "failed")}
+                                    onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
+                                    onPass={() => void handleRecordStep(step.id, "passed")}
+                                    onToggleSelect={(checked) =>
+                                      setBulkSelectedStepIds((current) =>
+                                        checked ? [...new Set([...current, step.id])] : current.filter((id) => id !== step.id)
+                                      )
+                                    }
+                                    status={rowStatus || "queued"}
+                                    step={step}
+                                  />
+                                </Fragment>
                               );
                             })}
                           </div>
@@ -2389,6 +2506,23 @@ function ExecutionOverviewOrb({
   );
 }
 
+function ExecutionStepGroupRow({
+  name,
+  kind
+}: {
+  name: string;
+  kind: TestStep["group_kind"];
+}) {
+  return (
+    <div className="execution-step-group-row" role="row">
+      <span className="execution-step-group-label" role="cell">
+        <strong>{name}</strong>
+        <span>{kind === "reusable" ? "Reusable group snapshot" : "Step group snapshot"}</span>
+      </span>
+    </div>
+  );
+}
+
 function ExecutionCompactStepRow({
   step,
   status,
@@ -2490,18 +2624,32 @@ function ExecutionStructuredLogView({ logsJson, steps }: { logsJson: string | nu
   }
 
   const rows = steps
-    .map((step) => {
+    .map((step, index) => {
       const st = parsed.stepStatuses?.[step.id];
       const nt = parsed.stepNotes?.[step.id];
       if (!st && !nt) {
-        return null;
+        if (!isStepGroupStart(steps, index)) {
+          return null;
+        }
       }
       return (
-        <div className="execution-structured-log-row" key={step.id}>
-          <strong>Step {step.step_order}</strong>
-          {st ? <StatusBadge value={st} /> : null}
-          {nt ? <span className="execution-structured-note">{nt}</span> : null}
-        </div>
+        <Fragment key={step.id}>
+          {isStepGroupStart(steps, index) ? (
+            <div className="execution-structured-log-row execution-structured-log-row--group">
+              <strong>{step.group_name || "Step group"}</strong>
+              <span className="execution-structured-note">
+                {step.group_kind === "reusable" ? "Reusable group snapshot" : "Step group snapshot"}
+              </span>
+            </div>
+          ) : null}
+          {st || nt ? (
+            <div className="execution-structured-log-row">
+              <strong>Step {step.step_order}</strong>
+              {st ? <StatusBadge value={st} /> : null}
+              {nt ? <span className="execution-structured-note">{nt}</span> : null}
+            </div>
+          ) : null}
+        </Fragment>
       );
     })
     .filter(Boolean);
