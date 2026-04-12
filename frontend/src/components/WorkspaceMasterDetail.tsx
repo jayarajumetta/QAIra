@@ -28,7 +28,7 @@ export function WorkspaceBackButton({
   onClick: () => void;
 }) {
   return (
-    <button aria-label={label} className="ghost-button workspace-back-button" onClick={onClick} title={label} type="button">
+    <button aria-label={label} className="ghost-button workspace-back-button" onClick={onClick} title="Back" type="button">
       <WorkspaceBackIcon />
       <span>Back</span>
     </button>

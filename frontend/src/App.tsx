@@ -39,7 +39,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/notifications": "Notifications · QAIra",
   "/settings": "Settings · QAIra",
   "/test-cases": "Test Cases · QAIra",
-  "/shared-steps": "Shared Groups · QAIra",
+  "/shared-steps": "Shared Step Groups · QAIra",
   "/executions": "Executions · QAIra",
   "/test-environments": "Test Environments · QAIra",
   "/test-data": "Test Data · QAIra",

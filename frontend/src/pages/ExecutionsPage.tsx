@@ -195,7 +195,7 @@ function isStepGroupStart(steps: TestStep[], index: number) {
 
 function getExecutionStepKindMeta(kind?: TestStep["group_kind"] | null) {
   if (kind === "reusable") {
-    return { label: "Shared group", detail: "Shared group snapshot", tone: "shared" as const };
+    return { label: "Shared Steps", detail: "Shared group snapshot", tone: "shared" as const };
   }
 
   if (kind === "local") {
@@ -2458,6 +2458,41 @@ function ExecutionStepsIcon() {
   );
 }
 
+function SharedStepsIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
+      <circle cx="7" cy="8" r="2.5" />
+      <circle cx="17" cy="8" r="2.5" />
+      <circle cx="12" cy="17" r="2.5" />
+      <path d="m9.2 9.4 2 5.2" />
+      <path d="m14.8 9.4-2 5.2" />
+      <path d="M9.5 8h5" />
+    </svg>
+  );
+}
+
+function StepKindIconBadge({
+  kind,
+  label,
+  tone
+}: {
+  kind?: TestStep["group_kind"] | null;
+  label: string;
+  tone: "default" | "shared" | "local";
+}) {
+  const icon = kind === "reusable" ? <SharedStepsIcon /> : <ExecutionStepsIcon />;
+
+  return (
+    <span
+      aria-label={kind === "reusable" ? "Shared Steps" : label}
+      className={["step-kind-badge", tone === "default" ? "" : `is-${tone}`].filter(Boolean).join(" ")}
+      title={kind === "reusable" ? "Shared Steps" : label}
+    >
+      {icon}
+    </span>
+  );
+}
+
 function ExecutionStepPassIcon() {
   return (
     <ExecutionIconShell>
@@ -2532,9 +2567,7 @@ function ExecutionStepGroupRow({
       <span className="execution-step-group-label" role="cell">
         <span className="execution-step-group-label-main">
           <strong>{name}</strong>
-          <span className={["step-kind-badge", stepKind.tone === "default" ? "" : `is-${stepKind.tone}`].filter(Boolean).join(" ")}>
-            {stepKind.label}
-          </span>
+          <StepKindIconBadge kind={kind} label={stepKind.label} tone={stepKind.tone} />
         </span>
         <span>{stepKind.detail}</span>
       </span>
@@ -2584,9 +2617,7 @@ function ExecutionCompactStepRow({
       <div className="execution-step-col-action execution-step-copy" role="cell">
         {step.group_name ? (
           <div className="execution-step-badges">
-            <span className={["step-kind-badge", stepKind.tone === "default" ? "" : `is-${stepKind.tone}`].filter(Boolean).join(" ")}>
-              {stepKind.label}
-            </span>
+            <StepKindIconBadge kind={step.group_kind} label={stepKind.label} tone={stepKind.tone} />
             <span className="execution-step-group-chip">{step.group_name}</span>
           </div>
         ) : null}
@@ -2667,9 +2698,11 @@ function ExecutionStructuredLogView({ logsJson, steps }: { logsJson: string | nu
           {isStepGroupStart(steps, index) ? (
             <div className="execution-structured-log-row execution-structured-log-row--group">
               <strong>{step.group_name || "Step group"}</strong>
-              <span className={["step-kind-badge", step.group_kind === "reusable" ? "is-shared" : "is-local"].filter(Boolean).join(" ")}>
-                {step.group_kind === "reusable" ? "Shared group" : "Local group"}
-              </span>
+              <StepKindIconBadge
+                kind={step.group_kind}
+                label={step.group_kind === "reusable" ? "Shared group" : "Local group"}
+                tone={step.group_kind === "reusable" ? "shared" : "local"}
+              />
               <span className="execution-structured-note">
                 {step.group_kind === "reusable" ? "Shared group snapshot" : "Local group snapshot"}
               </span>

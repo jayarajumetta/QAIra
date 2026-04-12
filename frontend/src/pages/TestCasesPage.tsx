@@ -1,6 +1,6 @@
-import { ChangeEvent, FormEvent, Fragment, useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
+import { ChangeEvent, FormEvent, Fragment, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
@@ -99,8 +99,8 @@ const executionHistoryDateFormatter = new Intl.DateTimeFormat(undefined, {
 });
 
 const createDefaultTestCaseSections = (): Record<TestCaseEditorSectionKey, boolean> => ({
-  case: true,
-  steps: false,
+  case: false,
+  steps: true,
   history: false
 });
 
@@ -222,16 +222,30 @@ const normalizeDraftSteps = (steps: DraftTestStep[]) =>
     .filter((step) => step.action || step.expected_result);
 
 const normalizeCopiedSteps = (
-  steps: Array<Pick<TestStep, "action" | "expected_result" | "group_id" | "group_name" | "group_kind" | "reusable_group_id">>
+  steps: Array<Pick<TestStep, "action" | "expected_result" | "group_id" | "group_name" | "group_kind" | "reusable_group_id">>,
+  mode: "copy" | "cut"
 ): CopiedTestStep[] =>
-  steps.map((step) => ({
-    action: step.action || "",
-    expected_result: step.expected_result || "",
-    group_id: null,
-    group_name: null,
-    group_kind: null,
-    reusable_group_id: null
-  }));
+  steps.map((step) => {
+    if (mode === "cut") {
+      return {
+        action: step.action || "",
+        expected_result: step.expected_result || "",
+        group_id: step.group_id || null,
+        group_name: step.group_name || null,
+        group_kind: step.group_kind || null,
+        reusable_group_id: step.reusable_group_id || null
+      };
+    }
+
+    return {
+      action: step.action || "",
+      expected_result: step.expected_result || "",
+      group_id: null,
+      group_name: null,
+      group_kind: null,
+      reusable_group_id: null
+    };
+  });
 
 const materializeCopiedSteps = (steps: CopiedTestStep[]) => {
   const nextGroupIds = new Map<string, string>();
@@ -269,6 +283,7 @@ const formatExecutionHistoryDate = (value?: string | null) => {
 export function TestCasesPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useAuth();
   const [projectId, setProjectId] = useCurrentProject();
   const [appTypeId, setAppTypeId] = useState("");
@@ -302,12 +317,15 @@ export function TestCasesPage() {
   const [cutStepSource, setCutStepSource] = useState<CutStepSource | null>(null);
   const [expandedStepIds, setExpandedStepIds] = useState<string[]>([]);
   const [expandedStepGroupIds, setExpandedStepGroupIds] = useState<string[]>([]);
+  const [stepDrafts, setStepDrafts] = useState<Record<string, StepDraft>>({});
   const [isStepGroupModalOpen, setIsStepGroupModalOpen] = useState(false);
   const [stepGroupName, setStepGroupName] = useState("");
   const [saveAsReusableGroup, setSaveAsReusableGroup] = useState(false);
   const [isSharedGroupPickerOpen, setIsSharedGroupPickerOpen] = useState(false);
   const [selectedSharedGroupId, setSelectedSharedGroupId] = useState("");
   const [sharedGroupSearchTerm, setSharedGroupSearchTerm] = useState("");
+  const caseSectionRef = useRef<HTMLDivElement | null>(null);
+  const suppressCaseSelectionFromUrlRef = useRef(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [importFileName, setImportFileName] = useState("");
   const [importRows, setImportRows] = useState<ImportedTestCaseRow[]>([]);
@@ -449,6 +467,29 @@ export function TestCasesPage() {
     setMessage(error instanceof Error ? error.message : fallback);
   };
 
+  function syncTestCaseSearchParams(nextCaseId?: string | null) {
+    const currentCaseId = searchParams.get("case") || "";
+    const targetCaseId = nextCaseId || "";
+
+    if (currentCaseId === targetCaseId) {
+      if (!targetCaseId) {
+        suppressCaseSelectionFromUrlRef.current = false;
+      }
+      return;
+    }
+
+    const nextParams = new URLSearchParams(searchParams);
+
+    if (targetCaseId) {
+      nextParams.set("case", targetCaseId);
+    } else {
+      nextParams.delete("case");
+      suppressCaseSelectionFromUrlRef.current = true;
+    }
+
+    setSearchParams(nextParams, { replace: true });
+  }
+
   const resetExecutionContextSelection = () => {
     setSelectedExecutionEnvironmentId("");
     setSelectedExecutionConfigurationId("");
@@ -462,6 +503,7 @@ export function TestCasesPage() {
   };
 
   const beginCreateCase = () => {
+    syncTestCaseSearchParams(null);
     setIsCreating(true);
     setSelectedTestCaseId("");
     setCaseDraft(EMPTY_CASE_DRAFT);
@@ -514,6 +556,7 @@ export function TestCasesPage() {
   }, [integrationId, integrations]);
 
   useEffect(() => {
+    syncTestCaseSearchParams(null);
     setSelectedTestCaseId("");
     setIsCreating(false);
     setIsImportModalOpen(false);
@@ -699,6 +742,10 @@ export function TestCasesPage() {
       return;
     }
 
+    if (testCasesQuery.isLoading || testCasesQuery.isFetching) {
+      return;
+    }
+
     if (selectedTestCase) {
       setCaseDraft({
         title: selectedTestCase.title,
@@ -710,9 +757,37 @@ export function TestCasesPage() {
       return;
     }
 
+    syncTestCaseSearchParams(null);
     setSelectedTestCaseId("");
     setCaseDraft(EMPTY_CASE_DRAFT);
-  }, [isCreating, selectedTestCase, selectedTestCaseId]);
+  }, [isCreating, selectedTestCase, selectedTestCaseId, testCasesQuery.isFetching, testCasesQuery.isLoading]);
+
+  useEffect(() => {
+    if (!searchParams.get("case")) {
+      suppressCaseSelectionFromUrlRef.current = false;
+    }
+
+    if (suppressCaseSelectionFromUrlRef.current) {
+      return;
+    }
+
+    if (isCreating || selectedTestCaseId) {
+      return;
+    }
+
+    const requestedCaseId = searchParams.get("case");
+    if (!requestedCaseId) {
+      return;
+    }
+
+    if (testCasesQuery.isLoading || testCasesQuery.isFetching) {
+      return;
+    }
+
+    if (testCases.some((item) => item.id === requestedCaseId)) {
+      setSelectedTestCaseId(requestedCaseId);
+    }
+  }, [isCreating, searchParams, selectedTestCaseId, testCases, testCasesQuery.isFetching, testCasesQuery.isLoading]);
 
   useEffect(() => {
     setNewStepDraft(EMPTY_STEP_DRAFT);
@@ -721,6 +796,7 @@ export function TestCasesPage() {
     setSelectedStepIds([]);
     setExpandedStepIds([]);
     setExpandedStepGroupIds([]);
+    setStepDrafts({});
     setExpandedSections(createDefaultTestCaseSections());
   }, [isCreating, selectedTestCaseId]);
 
@@ -736,6 +812,24 @@ export function TestCasesPage() {
     });
 
     setSelectedStepIds((current) => current.filter((id) => displaySteps.some((step) => step.id === id)));
+
+    setStepDrafts((current) => {
+      const next = { ...current };
+      displaySteps.forEach((step) => {
+        if (!next[step.id]) {
+          next[step.id] = {
+            action: step.action || "",
+            expected_result: step.expected_result || ""
+          };
+        }
+      });
+      Object.keys(next).forEach((stepId) => {
+        if (!displaySteps.some((step) => step.id === stepId)) {
+          delete next[stepId];
+        }
+      });
+      return next;
+    });
   }, [displaySteps]);
 
   useEffect(() => {
@@ -877,9 +971,7 @@ export function TestCasesPage() {
     setNewStepDraft(EMPTY_STEP_DRAFT);
   };
 
-  const handleSaveCase = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
+  const handleSaveCaseDirect = async () => {
     try {
       if (isCreating) {
         const response = await createTestCase.mutateAsync({
@@ -893,6 +985,7 @@ export function TestCasesPage() {
           steps: normalizeDraftSteps(draftSteps)
         });
 
+        syncTestCaseSearchParams(response.id);
         setSelectedTestCaseId(response.id);
         setIsCreating(false);
         setDraftSteps([]);
@@ -922,6 +1015,11 @@ export function TestCasesPage() {
     }
   };
 
+  const handleSaveCase = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await handleSaveCaseDirect();
+  };
+
   const handleDeleteCase = async () => {
     if (!selectedTestCase || !window.confirm(`Delete test case "${selectedTestCase.title}"? Historical execution evidence will stay preserved.`)) {
       return;
@@ -930,6 +1028,7 @@ export function TestCasesPage() {
     try {
       await deleteTestCase.mutateAsync(selectedTestCase.id);
       setSelectedActionTestCaseIds((current) => current.filter((id) => id !== selectedTestCase.id));
+      syncTestCaseSearchParams(null);
       setSelectedTestCaseId("");
       setCaseDraft(EMPTY_CASE_DRAFT);
       setIsCreating(false);
@@ -970,6 +1069,7 @@ export function TestCasesPage() {
       setSelectedActionTestCaseIds((current) => current.filter((id) => !deletedIds.includes(id)));
 
       if (deletedIds.includes(selectedTestCaseId)) {
+        syncTestCaseSearchParams(null);
         setSelectedTestCaseId("");
         setCaseDraft(EMPTY_CASE_DRAFT);
         setDraftSteps([]);
@@ -1169,10 +1269,50 @@ export function TestCasesPage() {
           expected_result: input.expected_result
         }
       });
+      setStepDrafts((current) => ({
+        ...current,
+        [step.id]: {
+          action: input.action,
+          expected_result: input.expected_result
+        }
+      }));
       showSuccess("Step updated.");
       await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
     } catch (error) {
       showError(error, "Unable to update step");
+    }
+  };
+
+  const handleSaveMultipleSteps = async (stepIds: string[], label: string) => {
+    const targets = stepIds.filter(Boolean);
+
+    if (!targets.length) {
+      showError(new Error("Select one or more steps to save."), "Unable to save steps");
+      return;
+    }
+
+    try {
+      const resolvedSteps = targets
+        .map((id) => displaySteps.find((step) => step.id === id))
+        .filter((step): step is TestStep => Boolean(step));
+
+      await Promise.all(
+        resolvedSteps.map((step) => {
+          const draft = stepDrafts[step.id] || { action: step.action || "", expected_result: step.expected_result || "" };
+          return updateStep.mutateAsync({
+            id: step.id,
+            input: {
+              action: draft.action,
+              expected_result: draft.expected_result
+            }
+          });
+        })
+      );
+
+      showSuccess(`${label} saved.`);
+      await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+    } catch (error) {
+      showError(error, "Unable to save steps");
     }
   };
 
@@ -1188,9 +1328,35 @@ export function TestCasesPage() {
       return;
     }
 
-    const reordered = [...steps];
-    const [movedStep] = reordered.splice(currentIndex, 1);
-    reordered.splice(targetIndex, 0, movedStep);
+    const currentStep = steps[currentIndex];
+    const targetStep = steps[targetIndex];
+
+    let reordered: TestStep[] = [];
+
+    if (currentStep.group_id) {
+      if (targetStep.group_id !== currentStep.group_id) {
+        return;
+      }
+
+      reordered = [...steps];
+      const [movedStep] = reordered.splice(currentIndex, 1);
+      reordered.splice(targetIndex, 0, movedStep);
+    } else {
+      const blocks = buildStepBlocks(steps);
+      const blockIndex = blocks.findIndex((block) => block.steps.some((step) => step.id === stepId));
+      const swapIndex = direction === "up" ? blockIndex - 1 : blockIndex + 1;
+
+      if (blockIndex === -1 || swapIndex < 0 || swapIndex >= blocks.length) {
+        return;
+      }
+
+      const reorderedBlocks = [...blocks];
+      const [movedBlock] = reorderedBlocks.splice(blockIndex, 1);
+      reorderedBlocks.splice(swapIndex, 0, movedBlock);
+      const newOrderIds = reorderedBlocks.flatMap((block) => block.steps.map((step) => step.id));
+      const stepById = new Map(steps.map((step) => [step.id, step]));
+      reordered = newOrderIds.map((id) => stepById.get(id)).filter(Boolean) as TestStep[];
+    }
 
     try {
       await reorderSteps.mutateAsync({
@@ -1201,6 +1367,50 @@ export function TestCasesPage() {
       await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
     } catch (error) {
       showError(error, "Unable to reorder steps");
+    }
+  };
+
+  const handleMoveStepGroup = async (groupId: string, direction: "up" | "down") => {
+    if (!groupId) {
+      return;
+    }
+
+    const items = displaySteps;
+    const blocks = buildStepBlocks(items);
+    const blockIndex = blocks.findIndex((block) => block.group_id === groupId);
+    const swapIndex = direction === "up" ? blockIndex - 1 : blockIndex + 1;
+
+    if (blockIndex === -1 || swapIndex < 0 || swapIndex >= blocks.length) {
+      return;
+    }
+
+    const reorderedBlocks = [...blocks];
+    const [movedBlock] = reorderedBlocks.splice(blockIndex, 1);
+    reorderedBlocks.splice(swapIndex, 0, movedBlock);
+    const newOrderIds = reorderedBlocks.flatMap((block) => block.steps.map((step) => step.id));
+
+    if (isCreating) {
+      setDraftSteps((current) => {
+        const stepById = new Map(current.map((step) => [step.id, step]));
+        return newOrderIds.map((id) => stepById.get(id)).filter(Boolean) as DraftTestStep[];
+      });
+      showSuccess("Step group order updated.");
+      return;
+    }
+
+    if (!selectedTestCaseId) {
+      return;
+    }
+
+    try {
+      await reorderSteps.mutateAsync({
+        testCaseId: selectedTestCaseId,
+        stepIds: newOrderIds
+      });
+      showSuccess("Step group order updated.");
+      await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+    } catch (error) {
+      showError(error, "Unable to move step group");
     }
   };
 
@@ -1281,6 +1491,25 @@ export function TestCasesPage() {
     );
   };
 
+  const buildStepBlocks = <T extends { id: string; group_id?: string | null }>(items: T[]) =>
+    items.reduce<Array<{ group_id: string | null; steps: T[] }>>((blocks, step) => {
+      const previousBlock = blocks[blocks.length - 1];
+
+      const resolvedGroupId = step.group_id ?? null;
+
+      if (resolvedGroupId && previousBlock?.group_id === resolvedGroupId) {
+        previousBlock.steps.push(step);
+        return blocks;
+      }
+
+      blocks.push({
+        group_id: resolvedGroupId,
+        steps: [step]
+      });
+
+      return blocks;
+    }, []);
+
   const handleReorderDraftStep = (stepId: string, direction: "up" | "down") => {
     setDraftSteps((current) => {
       const currentIndex = current.findIndex((step) => step.id === stepId);
@@ -1290,10 +1519,35 @@ export function TestCasesPage() {
         return current;
       }
 
-      const reordered = [...current];
-      const [movedStep] = reordered.splice(currentIndex, 1);
-      reordered.splice(targetIndex, 0, movedStep);
-      return reordered;
+      const currentStep = current[currentIndex];
+      const targetStep = current[targetIndex];
+
+      if (currentStep.group_id) {
+        if (targetStep.group_id !== currentStep.group_id) {
+          return current;
+        }
+
+        const reordered = [...current];
+        const [movedStep] = reordered.splice(currentIndex, 1);
+        reordered.splice(targetIndex, 0, movedStep);
+        return reordered;
+      }
+
+      const blocks = buildStepBlocks(current);
+      const blockIndex = blocks.findIndex((block) => block.steps.some((step) => step.id === stepId));
+      const swapIndex = direction === "up" ? blockIndex - 1 : blockIndex + 1;
+
+      if (blockIndex === -1 || swapIndex < 0 || swapIndex >= blocks.length) {
+        return current;
+      }
+
+      const reorderedBlocks = [...blocks];
+      const [movedBlock] = reorderedBlocks.splice(blockIndex, 1);
+      reorderedBlocks.splice(swapIndex, 0, movedBlock);
+      const newOrderIds = reorderedBlocks.flatMap((block) => block.steps.map((step) => step.id));
+      const stepById = new Map(current.map((step) => [step.id, step]));
+
+      return newOrderIds.map((id) => stepById.get(id)).filter(Boolean) as DraftTestStep[];
     });
     showSuccess("Draft step order updated.");
   };
@@ -1312,7 +1566,7 @@ export function TestCasesPage() {
       return;
     }
 
-    setCopiedSteps(normalizeCopiedSteps(orderedSelection));
+    setCopiedSteps(normalizeCopiedSteps(orderedSelection, "copy"));
     setCopiedStepMode("copy");
     setCutStepSource(null);
     showSuccess(`${orderedSelection.length} step${orderedSelection.length === 1 ? "" : "s"} copied. Use paste to insert them where you want.`);
@@ -1332,7 +1586,7 @@ export function TestCasesPage() {
       return;
     }
 
-    setCopiedSteps(normalizeCopiedSteps(orderedSelection));
+    setCopiedSteps(normalizeCopiedSteps(orderedSelection, "cut"));
     setCopiedStepMode("cut");
     setCutStepSource({
       stepIds: orderedSelection.map((step) => step.id),
@@ -1695,6 +1949,7 @@ export function TestCasesPage() {
       setImportRows([]);
       setImportFileName("");
       if (response.created[0]) {
+        syncTestCaseSearchParams(response.created[0].id);
         setSelectedTestCaseId(response.created[0].id);
       }
       if (!response.failed) {
@@ -1723,7 +1978,7 @@ export function TestCasesPage() {
 
       Object.values(stepsByCaseId).forEach((items) => items.sort((left, right) => left.step_order - right.step_order));
 
-      const header = ["title", "description", "priority", "status", "requirement", "suites", "action", "expected_result", "step_group_name", "step_group_kind", "shared_group_id"];
+      const header = ["title", "description", "priority", "status", "requirement", "suites", "action", "expected_result", "step_group_name"];
       const rows = filteredCases.map((testCase) => {
         const requirement = requirements.find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id));
         const suiteCount = (testCase.suite_ids || []).length;
@@ -1738,9 +1993,7 @@ export function TestCasesPage() {
           suiteCount ? `${suiteCount} suite${suiteCount === 1 ? "" : "s"}` : "",
           scopedSteps.map((step) => step.action || "").join("\n"),
           scopedSteps.map((step) => step.expected_result || "").join("\n"),
-          scopedSteps.map((step) => step.group_name || "").join("\n"),
-          scopedSteps.map((step) => step.group_kind || "").join("\n"),
-          scopedSteps.map((step) => step.reusable_group_id || "").join("\n")
+          scopedSteps.map((step) => step.group_name || "").join("\n")
         ];
       });
 
@@ -1838,6 +2091,7 @@ export function TestCasesPage() {
       setAiPreviewMessage("");
       setIsAiStudioOpen(false);
       if (response.created[0]) {
+        syncTestCaseSearchParams(response.created[0].id);
         setSelectedTestCaseId(response.created[0].id);
         setIsCreating(false);
       }
@@ -1922,6 +2176,35 @@ export function TestCasesPage() {
   const selectedSharedGroup = sharedStepGroups.find((group) => group.id === selectedSharedGroupId) || null;
   const isCaseWorkspaceOpen = Boolean(selectedTestCaseId) || isCreating;
   const stepCountLabel = `${displaySteps.length} step${displaySteps.length === 1 ? "" : "s"}`;
+  const allStepsSelected = Boolean(displaySteps.length) && selectedStepIds.length === displaySteps.length;
+  const dirtyStepIds = useMemo(
+    () =>
+      displaySteps
+        .filter((step) => {
+          const draft = stepDrafts[step.id];
+          if (!draft) {
+            return false;
+          }
+          return (draft.action || "").trim() !== (step.action || "").trim()
+            || (draft.expected_result || "").trim() !== (step.expected_result || "").trim();
+        })
+        .map((step) => step.id),
+    [displaySteps, stepDrafts]
+  );
+  const hasDirtySteps = Boolean(dirtyStepIds.length);
+  const dirtySelectedStepIds = selectedEditorSteps.map((step) => step.id).filter((id) => dirtyStepIds.includes(id));
+  const hasDirtySelection = Boolean(dirtySelectedStepIds.length);
+  const selectionIsContinuous = isContinuousStepSelection(displaySteps, selectedStepIds);
+  const selectionGroupId = selectedEditorSteps.length && selectedEditorSteps.every((step) => step.group_id && step.group_id === selectedEditorSteps[0]?.group_id)
+    ? (selectedEditorSteps[0]?.group_id as string)
+    : "";
+  const selectionGroupKind = selectionGroupId ? (selectedEditorSteps[0]?.group_kind || null) : null;
+  const canUngroupSelection = Boolean(selectionGroupId && selectionIsContinuous);
+  const canGroupSelection = Boolean(selectedEditorSteps.length && selectionIsContinuous && !canUngroupSelection);
+  const selectionMinOrder = selectedEditorSteps.length ? Math.min(...selectedEditorSteps.map((step) => step.step_order)) : null;
+  const selectionMaxOrder = selectedEditorSteps.length ? Math.max(...selectedEditorSteps.map((step) => step.step_order)) : null;
+  const selectionPasteAboveIndex = selectionMinOrder ? Math.max(0, selectionMinOrder - 1) : null;
+  const selectionPasteBelowIndex = selectionMaxOrder ? selectionMaxOrder : null;
   const firstStepPreview = displaySteps[0]?.action || displaySteps[0]?.expected_result || "";
   const caseSectionSummary = isCreating
     ? caseDraft.title.trim() || "Start defining the reusable case before saving it."
@@ -1949,7 +2232,9 @@ export function TestCasesPage() {
     );
   }, [aiRequirementIds, testCases]);
 
+
   const closeCaseWorkspace = () => {
+    syncTestCaseSearchParams(null);
     setIsCreating(false);
     setSelectedTestCaseId("");
     setCaseDraft(EMPTY_CASE_DRAFT);
@@ -1969,20 +2254,27 @@ export function TestCasesPage() {
     setSharedGroupSearchTerm("");
   };
 
+  const handleWorkspaceBack = () => {
+    closeCaseWorkspace();
+  };
+
+  const caseHeaderActions = (
+    <div className="panel-head-actions-row">
+      <WorkspaceBackButton label="Back to test case tiles" onClick={handleWorkspaceBack} />
+      {selectedTestCaseId || isCreating ? null : null}
+    </div>
+  );
+
   const isMatchingStepInsertContext = (groupContext: StepInsertionGroupContext | null = null) =>
     (stepInsertGroupContext?.group_id || null) === (groupContext?.group_id || null);
 
-  const renderStepInsertSlot = (index: number, groupContext: StepInsertionGroupContext | null = null, isVisibleByDefault = false) => (
+  const renderStepInsertSlot = (index: number, groupContext: StepInsertionGroupContext | null = null) => (
     <InlineStepInsertSlot
-      canPaste={Boolean(copiedSteps.length)}
       draft={newStepDraft}
       index={index}
       isActive={stepInsertIndex === index && isMatchingStepInsertContext(groupContext)}
-      isVisibleByDefault={isVisibleByDefault}
-      onActivate={() => activateStepInsert(index, groupContext)}
       onCancel={cancelStepInsert}
       onChange={setNewStepDraft}
-      onPaste={() => void handlePasteSteps(index, groupContext)}
       onSubmit={(event) => void handleCreateStep(event)}
     />
   );
@@ -1990,13 +2282,18 @@ export function TestCasesPage() {
   const renderStepCard = (step: TestStep, index: number, groupContext: StepInsertionGroupContext | null = null) => {
     const insertAboveIndex = Math.max(0, step.step_order - 1);
     const insertBelowIndex = step.step_order;
+    const stepDraft = stepDrafts[step.id] || { action: step.action || "", expected_result: step.expected_result || "" };
+    const previousStep = displaySteps[index - 1];
+    const nextStep = displaySteps[index + 1];
+    const canMoveUp = step.group_id ? Boolean(previousStep && previousStep.group_id === step.group_id) : index > 0;
+    const canMoveDown = step.group_id ? Boolean(nextStep && nextStep.group_id === step.group_id) : index < displaySteps.length - 1;
 
     if (isCreating) {
       return (
         <DraftStepCard
           canPaste={Boolean(copiedSteps.length)}
-          canMoveDown={index < displaySteps.length - 1}
-          canMoveUp={index > 0}
+          canMoveDown={canMoveDown}
+          canMoveUp={canMoveUp}
           isSelected={selectedStepIds.includes(step.id)}
           onChange={(input) => handleUpdateDraftStep(step.id, input)}
           onCopy={() => handleCopySteps([step.id])}
@@ -2030,8 +2327,9 @@ export function TestCasesPage() {
     return (
       <EditableStepCard
         canPaste={Boolean(copiedSteps.length)}
-        canMoveDown={index < displaySteps.length - 1}
-        canMoveUp={index > 0}
+        canMoveDown={canMoveDown}
+        canMoveUp={canMoveUp}
+        draft={stepDraft}
         isExpanded={expandedStepIds.includes(step.id)}
         isSelected={selectedStepIds.includes(step.id)}
         onCopy={() => handleCopySteps([step.id])}
@@ -2044,6 +2342,12 @@ export function TestCasesPage() {
         onPasteAbove={() => void handlePasteSteps(insertAboveIndex, groupContext)}
         onPasteBelow={() => void handlePasteSteps(insertBelowIndex, groupContext)}
         onSave={(input) => void handleUpdateStep(step, input)}
+        onDraftChange={(input) =>
+          setStepDrafts((current) => ({
+            ...current,
+            [step.id]: input
+          }))
+        }
         onToggle={() =>
           setExpandedStepIds((current) =>
             current.includes(step.id) ? current.filter((id) => id !== step.id) : [...current, step.id]
@@ -2264,6 +2568,7 @@ export function TestCasesPage() {
                       ].filter(Boolean).join(" ")}
                       key={testCase.id}
                       onClick={() => {
+                        syncTestCaseSearchParams(testCase.id);
                         setSelectedTestCaseId(testCase.id);
                         setIsCreating(false);
                         setDraftSteps([]);
@@ -2348,97 +2653,99 @@ export function TestCasesPage() {
         )}
         detailView={(
           <Panel
-            actions={<WorkspaceBackButton label="Back to test case tiles" onClick={closeCaseWorkspace} />}
+            actions={caseHeaderActions}
             title="Test case workspace"
             subtitle={selectedTestCaseId || isCreating ? "Switch between case details and step editing without losing the selected context." : "Select a test case or create a new one."}
           >
             {selectedTestCaseId || isCreating ? (
               <div className="detail-stack">
                 <div className="editor-accordion">
-                  <EditorAccordionSection
-                    countLabel={isCreating ? "Draft" : caseDraft.status || "active"}
-                    isExpanded={expandedSections.case}
-                    onToggle={() => setExpandedSections((current) => ({ ...current, case: !current.case }))}
-                    summary={caseSectionSummary}
-                    title={isCreating ? "New test case" : "Selected test case"}
-                  >
-                    <form className="form-grid" onSubmit={(event) => void handleSaveCase(event)}>
-                      <div className="record-grid">
-                        <FormField label="Title" required>
-                          <input
-                            required
-                            value={caseDraft.title}
-                            onChange={(event) => setCaseDraft((current) => ({ ...current, title: event.target.value }))}
+                  <div ref={caseSectionRef}>
+                    <EditorAccordionSection
+                      countLabel={isCreating ? "Draft" : caseDraft.status || "active"}
+                      isExpanded={expandedSections.case}
+                      onToggle={() => setExpandedSections((current) => ({ ...current, case: !current.case }))}
+                      summary={caseSectionSummary}
+                      title={isCreating ? "New test case" : "Selected test case"}
+                    >
+                      <form className="form-grid" onSubmit={(event) => void handleSaveCase(event)}>
+                        <div className="record-grid">
+                          <FormField label="Title" required>
+                            <input
+                              required
+                              value={caseDraft.title}
+                              onChange={(event) => setCaseDraft((current) => ({ ...current, title: event.target.value }))}
+                            />
+                          </FormField>
+                          <FormField label="Status">
+                            <select
+                              value={caseDraft.status}
+                              onChange={(event) => setCaseDraft((current) => ({ ...current, status: event.target.value }))}
+                            >
+                              <option value="active">active</option>
+                              <option value="draft">draft</option>
+                              <option value="ready">ready</option>
+                              <option value="retired">retired</option>
+                            </select>
+                          </FormField>
+                          <FormField label="Requirement">
+                            <select
+                              value={caseDraft.requirement_id}
+                              onChange={(event) => setCaseDraft((current) => ({ ...current, requirement_id: event.target.value }))}
+                            >
+                              <option value="">No requirement</option>
+                              {requirements.map((requirement: Requirement) => (
+                                <option key={requirement.id} value={requirement.id}>{requirement.title}</option>
+                              ))}
+                            </select>
+                          </FormField>
+                          <FormField label="Priority">
+                            <input
+                              min="1"
+                              max="5"
+                              type="number"
+                              value={caseDraft.priority}
+                              onChange={(event) => setCaseDraft((current) => ({ ...current, priority: Number(event.target.value) || 3 }))}
+                            />
+                          </FormField>
+                        </div>
+                        <FormField label="Description">
+                          <textarea
+                            rows={4}
+                            value={caseDraft.description}
+                            onChange={(event) => setCaseDraft((current) => ({ ...current, description: event.target.value }))}
                           />
                         </FormField>
-                        <FormField label="Status">
-                          <select
-                            value={caseDraft.status}
-                            onChange={(event) => setCaseDraft((current) => ({ ...current, status: event.target.value }))}
-                          >
-                            <option value="active">active</option>
-                            <option value="draft">draft</option>
-                            <option value="ready">ready</option>
-                            <option value="retired">retired</option>
-                          </select>
-                        </FormField>
-                        <FormField label="Requirement">
-                          <select
-                            value={caseDraft.requirement_id}
-                            onChange={(event) => setCaseDraft((current) => ({ ...current, requirement_id: event.target.value }))}
-                          >
-                            <option value="">No requirement</option>
-                            {requirements.map((requirement: Requirement) => (
-                              <option key={requirement.id} value={requirement.id}>{requirement.title}</option>
-                            ))}
-                          </select>
-                        </FormField>
-                        <FormField label="Priority">
-                          <input
-                            min="1"
-                            max="5"
-                            type="number"
-                            value={caseDraft.priority}
-                            onChange={(event) => setCaseDraft((current) => ({ ...current, priority: Number(event.target.value) || 3 }))}
-                          />
-                        </FormField>
-                      </div>
-                      <FormField label="Description">
-                        <textarea
-                          rows={4}
-                          value={caseDraft.description}
-                          onChange={(event) => setCaseDraft((current) => ({ ...current, description: event.target.value }))}
-                        />
-                      </FormField>
 
-                      <div className="action-row">
-                        <button className="primary-button" disabled={createTestCase.isPending || updateTestCase.isPending} type="submit">
-                          {isCreating ? (createTestCase.isPending ? "Creating…" : "Create test case") : (updateTestCase.isPending ? "Saving…" : "Save test case")}
-                        </button>
-                        {isCreating ? (
-                          <button
-                            className="ghost-button"
-                            onClick={() => {
-                              setIsCreating(false);
-                              setDraftSteps([]);
-                              setNewStepDraft(EMPTY_STEP_DRAFT);
-                              setStepInsertIndex(null);
-                              setStepInsertGroupContext(null);
-                              setSelectedStepIds([]);
-                            }}
-                            type="button"
-                          >
-                            Cancel new case
+                        <div className="action-row">
+                          <button className="primary-button" disabled={createTestCase.isPending || updateTestCase.isPending} type="submit">
+                            {isCreating ? (createTestCase.isPending ? "Creating…" : "Create test case") : (updateTestCase.isPending ? "Saving…" : "Save test case")}
                           </button>
-                        ) : null}
-                        {!isCreating && selectedTestCase ? (
-                          <button className="ghost-button danger" onClick={() => void handleDeleteCase()} type="button">
-                            Delete test case
-                          </button>
-                        ) : null}
-                      </div>
-                    </form>
-                  </EditorAccordionSection>
+                          {isCreating ? (
+                            <button
+                              className="ghost-button"
+                              onClick={() => {
+                                setIsCreating(false);
+                                setDraftSteps([]);
+                                setNewStepDraft(EMPTY_STEP_DRAFT);
+                                setStepInsertIndex(null);
+                                setStepInsertGroupContext(null);
+                                setSelectedStepIds([]);
+                              }}
+                              type="button"
+                            >
+                              Cancel new case
+                            </button>
+                          ) : null}
+                          {!isCreating && selectedTestCase ? (
+                            <button className="ghost-button danger" onClick={() => void handleDeleteCase()} type="button">
+                              Delete test case
+                            </button>
+                          ) : null}
+                        </div>
+                      </form>
+                    </EditorAccordionSection>
+                  </div>
 
                   <EditorAccordionSection
                     countLabel={stepCountLabel}
@@ -2448,133 +2755,192 @@ export function TestCasesPage() {
                     title={isCreating ? "Draft steps" : "Test steps"}
                   >
                     <div className="step-editor step-editor--embedded">
-                      <div className="action-row step-editor-toolbar">
-                        {!isCreating && displaySteps.length ? (
-                          <>
-                            <StepIconButton
-                              ariaLabel="Expand all steps"
-                              onClick={() => {
+                      <div className="step-editor-toolbar">
+                        <label className="checkbox-field step-select-all">
+                          <input
+                            checked={allStepsSelected}
+                            disabled={!displaySteps.length}
+                            onChange={(event) =>
+                              setSelectedStepIds(event.target.checked ? displaySteps.map((step) => step.id) : [])
+                            }
+                            type="checkbox"
+                          />
+                          Select all steps
+                        </label>
+                        <StepActionMenu
+                          className="step-card-menu--inline step-card-menu--inline-right"
+                          label="Test step actions"
+                          openOnHover
+                          previewActions={[
+                            hasDirtySelection
+                              ? {
+                                  label: "Save steps",
+                                  icon: <StepSaveIcon />,
+                                  onClick: () => void handleSaveMultipleSteps(dirtySelectedStepIds, "Selected steps"),
+                                  disabled: isCreating || !dirtySelectedStepIds.length
+                                }
+                              : null,
+                            !hasDirtySelection && hasDirtySteps
+                              ? {
+                                  label: "Save all",
+                                  icon: <StepSaveIcon />,
+                                  onClick: () => void handleSaveMultipleSteps(dirtyStepIds, "All steps"),
+                                  disabled: isCreating || !dirtyStepIds.length
+                                }
+                              : null,
+                            selectedEditorSteps.length
+                              ? { label: "Copy", icon: <StepCopyIcon />, onClick: () => handleCopySteps() }
+                              : null,
+                            selectedEditorSteps.length
+                              ? { label: "Cut", icon: <StepCutIcon />, onClick: () => handleCutSteps() }
+                              : null,
+                            canUngroupSelection
+                              ? { label: "Ungroup", icon: <StepUngroupIcon />, onClick: () => void handleUngroupStepGroup(selectionGroupId, selectionGroupKind || undefined) }
+                              : null,
+                            canGroupSelection
+                              ? { label: "Group", icon: <StepGroupIcon />, onClick: handleOpenStepGroupModal }
+                              : null,
+                            copiedSteps.length
+                              ? {
+                                  label: "Paste",
+                                  icon: <StepPasteIcon />,
+                                  onClick: () =>
+                                    selectionPasteBelowIndex !== null
+                                      ? void handlePasteSteps(selectionPasteBelowIndex)
+                                      : void handlePasteSteps()
+                                }
+                              : null
+                          ].filter(Boolean) as Array<{ label: string; icon: ReactNode; onClick: () => void; disabled?: boolean; tone?: "default" | "danger" | "primary"; }>}
+                          actions={[
+                            {
+                              label: isCreating ? "Create test case" : "Save test case",
+                              icon: <StepSaveIcon />,
+                              onClick: () => void handleSaveCaseDirect(),
+                              tone: "primary",
+                              disabled: createTestCase.isPending || updateTestCase.isPending
+                            },
+                            {
+                              label: "Save selected steps",
+                              icon: <StepSaveIcon />,
+                              onClick: () => void handleSaveMultipleSteps(dirtySelectedStepIds.length ? dirtySelectedStepIds : selectedEditorSteps.map((step) => step.id), "Selected steps"),
+                              disabled: isCreating || !selectedEditorSteps.length
+                            },
+                            {
+                              label: "Save all steps",
+                              icon: <StepSaveIcon />,
+                              onClick: () => void handleSaveMultipleSteps(dirtyStepIds.length ? dirtyStepIds : displaySteps.map((step) => step.id), "All steps"),
+                              disabled: isCreating || !displaySteps.length
+                            },
+                            {
+                              label: "Expand all steps",
+                              icon: <StepExpandAllIcon />,
+                              onClick: () => {
                                 setExpandedStepIds(displaySteps.map((step) => step.id));
                                 setExpandedStepGroupIds(stepGroupIds);
-                              }}
-                              title="Expand all steps"
-                              type="button"
-                            >
-                              <StepExpandAllIcon />
-                            </StepIconButton>
-                            <StepIconButton
-                              ariaLabel="Collapse all steps"
-                              onClick={() => {
+                              },
+                              disabled: !displaySteps.length
+                            },
+                            {
+                              label: "Collapse all steps",
+                              icon: <StepCollapseAllIcon />,
+                              onClick: () => {
                                 setExpandedStepIds([]);
                                 setExpandedStepGroupIds([]);
-                              }}
-                              title="Collapse all steps"
-                              type="button"
-                            >
-                              <StepCollapseAllIcon />
-                            </StepIconButton>
-                          </>
-                        ) : null}
-                        <StepIconButton
-                          ariaLabel="Copy selected steps"
-                          count={selectedEditorSteps.length}
-                          disabled={!selectedEditorSteps.length}
-                          onClick={() => handleCopySteps()}
-                          title="Copy selected steps"
-                          type="button"
-                        >
-                          <StepCopyIcon />
-                        </StepIconButton>
-                        <StepIconButton
-                          ariaLabel="Cut selected steps"
-                          count={selectedEditorSteps.length}
-                          disabled={!selectedEditorSteps.length}
-                          onClick={() => handleCutSteps()}
-                          title="Cut selected steps"
-                          type="button"
-                        >
-                          <StepCutIcon />
-                        </StepIconButton>
-                        <StepIconButton
-                          ariaLabel={copiedStepMode === "cut" ? "Paste cut steps" : "Paste copied steps"}
-                          count={copiedSteps.length}
-                          disabled={!copiedSteps.length}
-                          onClick={() => void handlePasteSteps()}
-                          title={copiedStepMode === "cut" ? "Paste cut steps" : "Paste copied steps"}
-                          type="button"
-                        >
-                          <StepPasteIcon />
-                        </StepIconButton>
-                        <StepIconButton
-                          ariaLabel="Group selected steps"
-                          count={selectedEditorSteps.length}
-                          disabled={!selectedEditorSteps.length}
-                          onClick={handleOpenStepGroupModal}
-                          title="Group selected steps"
-                          type="button"
-                        >
-                          <StepGroupIcon />
-                        </StepIconButton>
-                        <StepIconButton
-                          ariaLabel="Delete selected steps"
-                          count={selectedEditorSteps.length}
-                          disabled={!selectedEditorSteps.length}
-                          onClick={() => void handleDeleteSelectedSteps()}
-                          title="Delete selected steps"
-                          tone="danger"
-                          type="button"
-                        >
-                          <StepDeleteIcon />
-                        </StepIconButton>
-                        <StepIconButton
-                          ariaLabel="Insert shared group"
-                          disabled={!appTypeId}
-                          onClick={() => {
-                            setIsSharedGroupPickerOpen(true);
-                            setSelectedSharedGroupId((current) => current || sharedStepGroups[0]?.id || "");
-                          }}
-                          title="Insert shared group"
-                          type="button"
-                        >
-                          <StepSharedGroupIcon />
-                        </StepIconButton>
-                        {selectedEditorSteps.length ? (
-                          <StepIconButton
-                            ariaLabel="Clear step selection"
-                            count={selectedEditorSteps.length}
-                            onClick={() => setSelectedStepIds([])}
-                            title="Clear step selection"
-                            type="button"
-                          >
-                            <StepClearSelectionIcon />
-                          </StepIconButton>
-                        ) : null}
+                              },
+                              disabled: !displaySteps.length
+                            },
+                            {
+                              label: "Copy selected steps",
+                              icon: <StepCopyIcon />,
+                              onClick: () => handleCopySteps(),
+                              disabled: !selectedEditorSteps.length
+                            },
+                            {
+                              label: "Cut selected steps",
+                              icon: <StepCutIcon />,
+                              onClick: () => handleCutSteps(),
+                              disabled: !selectedEditorSteps.length
+                            },
+                            ...(copiedSteps.length && selectionPasteAboveIndex !== null
+                              ? [{
+                                  label: "Paste above selection",
+                                  icon: <StepPasteAboveIcon />,
+                                  onClick: () => void handlePasteSteps(selectionPasteAboveIndex)
+                                },
+                                {
+                                  label: "Paste below selection",
+                                  icon: <StepPasteBelowIcon />,
+                                  onClick: () => void handlePasteSteps(selectionPasteBelowIndex as number)
+                                }]
+                              : copiedSteps.length
+                                ? [{
+                                    label: copiedStepMode === "cut" ? "Paste cut steps" : "Paste copied steps",
+                                    icon: <StepPasteIcon />,
+                                    onClick: () => void handlePasteSteps()
+                                  }]
+                                : []),
+                            canUngroupSelection
+                              ? {
+                                  label: "Ungroup selected",
+                                  icon: <StepUngroupIcon />,
+                                  onClick: () => void handleUngroupStepGroup(selectionGroupId, selectionGroupKind || undefined)
+                                }
+                              : {
+                                  label: "Group selected steps",
+                                  icon: <StepGroupIcon />,
+                                  onClick: handleOpenStepGroupModal,
+                                  disabled: !selectedEditorSteps.length || !selectionIsContinuous
+                                },
+                            {
+                              label: "Delete selected steps",
+                              icon: <StepDeleteIcon />,
+                              onClick: () => void handleDeleteSelectedSteps(),
+                              disabled: !selectedEditorSteps.length,
+                              tone: "danger"
+                            },
+                            {
+                              label: "Insert shared group",
+                              icon: <StepSharedGroupIcon />,
+                              onClick: () => {
+                                setIsSharedGroupPickerOpen(true);
+                                setSelectedSharedGroupId((current) => current || sharedStepGroups[0]?.id || "");
+                              },
+                              disabled: !appTypeId
+                            },
+                            {
+                              label: "Clear step selection",
+                              icon: <StepClearSelectionIcon />,
+                              onClick: () => setSelectedStepIds([]),
+                              disabled: !selectedEditorSteps.length
+                            }
+                          ]}
+                        />
                       </div>
 
-                      {selectedEditorSteps.length ? (
-                        <div className="detail-summary">
-                          <strong>{selectedEditorSteps.length} step{selectedEditorSteps.length === 1 ? "" : "s"} selected</strong>
-                          <span>Select a continuous range to group them, copy them into the paste buffer, or paste the current buffer after the selection.</span>
-                        </div>
-                      ) : null}
+      {copiedSteps.length ? null : null}
 
-                      {copiedSteps.length ? (
-                        <div className="detail-summary">
-                          <strong>{copiedSteps.length} {copiedStepMode === "cut" ? "cut" : "copied"} step{copiedSteps.length === 1 ? "" : "s"} ready to paste</strong>
-                          <span>{copiedStepMode === "cut" ? "Use a paste target to move the cut steps into place." : "Use any paste target to place them exactly where you want, even in another test case under the same app type."}</span>
-                        </div>
-                      ) : null}
+      {!isCreating && stepsQuery.isLoading ? <div className="empty-state compact">Loading steps…</div> : null}
 
-                      {!isCreating && stepsQuery.isLoading ? <div className="empty-state compact">Loading steps…</div> : null}
-
-                      <div className="step-list">
-                        {!displaySteps.length ? renderStepInsertSlot(0, null, true) : null}
+      <div className="step-list">
+                        {!displaySteps.length ? (
+                          <>
+                            <div className="step-empty-insert">
+                              <StepIconButton ariaLabel="Add first step" onClick={() => activateStepInsert(0, null)} title="Add first step" type="button">
+                                <StepInsertIcon />
+                              </StepIconButton>
+                            </div>
+                            {renderStepInsertSlot(0, null)}
+                          </>
+                        ) : null}
 
                         {stepBlocks.map((block) => {
                           if (block.group_id) {
                             const firstStep = block.steps[0];
                             const lastStep = block.steps[block.steps.length - 1];
                             const isGroupExpanded = expandedStepGroupIds.includes(block.group_id);
+                            const blockIndex = stepBlocks.findIndex((item) => item.key === block.key);
+                            const canMoveGroupUp = blockIndex > 0;
+                            const canMoveGroupDown = blockIndex < stepBlocks.length - 1;
                             const blockGroupContext: StepInsertionGroupContext = {
                               group_id: block.group_id,
                               group_name: block.group_name,
@@ -2592,23 +2958,41 @@ export function TestCasesPage() {
                                   ].join(" ")}
                                 >
                                   <StepGroupHeader
-                                    canPaste={Boolean(copiedSteps.length)}
                                     isExpanded={isGroupExpanded}
                                     kind={block.group_kind}
                                     name={block.group_name || "Step group"}
-                                    onInsertAbove={() => activateStepInsert(Math.max(0, firstStep.step_order - 1))}
-                                    onInsertBelow={() => activateStepInsert(lastStep.step_order)}
+                                    canMoveUp={canMoveGroupUp}
+                                    canMoveDown={canMoveGroupDown}
                                     onToggle={() =>
                                       setExpandedStepGroupIds((current) =>
                                         current.includes(block.group_id as string)
                                           ? current.filter((id) => id !== block.group_id)
-                                        : [...current, block.group_id as string]
+                                          : [...current, block.group_id as string]
                                       )
                                     }
-                                    onPasteAbove={() => void handlePasteSteps(Math.max(0, firstStep.step_order - 1))}
-                                    onPasteBelow={() => void handlePasteSteps(lastStep.step_order)}
+                                    onMoveUp={() => void handleMoveStepGroup(block.group_id as string, "up")}
+                                    onMoveDown={() => void handleMoveStepGroup(block.group_id as string, "down")}
                                     onRemoveGroup={() => void handleRemoveStepGroup(block.group_id as string, block.steps, block.group_kind)}
                                     onUngroup={() => void handleUngroupStepGroup(block.group_id as string, block.group_kind)}
+                                    onToggleSelect={(checked) => {
+                                      const groupStepIds = block.steps.map((step) => step.id);
+                                      if (checked) {
+                                        setSelectedStepIds((current) => Array.from(new Set([...current, ...groupStepIds])));
+                                      } else {
+                                        setSelectedStepIds((current) => current.filter((id) => !groupStepIds.includes(id)));
+                                      }
+                                    }}
+                                    selectionState={(() => {
+                                      const groupStepIds = block.steps.map((step) => step.id);
+                                      const selectedCount = groupStepIds.filter((id) => selectedStepIds.includes(id)).length;
+                                      if (!selectedCount) {
+                                        return "none";
+                                      }
+                                      if (selectedCount === groupStepIds.length) {
+                                        return "all";
+                                      }
+                                      return "some";
+                                    })()}
                                     stepCount={block.steps.length}
                                   />
                                   {isGroupExpanded ? (
@@ -2650,6 +3034,14 @@ export function TestCasesPage() {
                           {isCreating
                             ? "No draft steps yet. Use the inline + action to add the first step or insert a shared group."
                             : "No steps yet for this test case. Use the inline + action to add one or insert a shared group."}
+                        </div>
+                      ) : null}
+
+                      {!isCreating ? (
+                        <div className="action-row step-editor-save-row">
+                          <button className="primary-button" disabled={updateTestCase.isPending} onClick={() => void handleSaveCaseDirect()} type="button">
+                            {updateTestCase.isPending ? "Saving…" : "Save test case"}
+                          </button>
                         </div>
                       ) : null}
                     </div>
@@ -2798,7 +3190,7 @@ export function TestCasesPage() {
               <div className="import-modal-title">
                 <p className="eyebrow">Bulk Import</p>
                 <h3 id="bulk-import-title">Import test cases from CSV</h3>
-                <p>Upload reusable cases in bulk. Action and Expected Result create attached steps automatically, while optional group columns preserve shared and local step snapshots.</p>
+                <p>Upload reusable cases in bulk. Action and Expected Result create attached steps automatically, while optional step group names preserve step grouping snapshots.</p>
               </div>
               <button aria-label="Close bulk import dialog" className="ghost-button" disabled={importTestCases.isPending} onClick={() => setIsImportModalOpen(false)} type="button">
                 Close
@@ -2834,7 +3226,7 @@ export function TestCasesPage() {
 
               <div className="detail-summary">
                 <strong>{importFileName || "No CSV loaded yet"}</strong>
-                <span>Use new lines or the `|` character in Action and Expected Result to create multiple steps. Optional `Step Group Name`, `Step Group Kind`, and `Shared Group ID` columns keep grouped snapshots aligned step-by-step.</span>
+                <span>Use new lines or the `|` character in Action and Expected Result to create multiple steps. Optional `Step Group Name` keeps grouped snapshots aligned step-by-step.</span>
               </div>
 
               {importWarnings.length ? (
@@ -3351,28 +3743,6 @@ function StepInsertIcon() {
   );
 }
 
-function StepPasteIcon() {
-  return (
-    <StepIconShell>
-      <path d="M8 5.5A2.5 2.5 0 0 1 10.5 3h3A2.5 2.5 0 0 1 16 5.5V7H8z" />
-      <path d="M7 7h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" />
-      <path d="M12 10v6" />
-      <path d="m9.5 13.5 2.5 2.5 2.5-2.5" />
-    </StepIconShell>
-  );
-}
-
-function StepCutIcon() {
-  return (
-    <StepIconShell>
-      <circle cx="6" cy="7" r="2" />
-      <circle cx="6" cy="17" r="2" />
-      <path d="M8 8.5 19 18" />
-      <path d="M8 15.5 19 6" />
-    </StepIconShell>
-  );
-}
-
 function StepInsertAboveIcon() {
   return (
     <StepIconShell>
@@ -3395,13 +3765,35 @@ function StepInsertBelowIcon() {
   );
 }
 
+function StepPasteIcon() {
+  return (
+    <StepIconShell>
+      <path d="M8 5.5A2.5 2.5 0 0 1 10.5 3h3A2.5 2.5 0 0 1 16 5.5V7H8z" />
+      <path d="M7 7h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" />
+      <path d="M12 10v6" />
+      <path d="m9.5 13.5 2.5 2.5 2.5-2.5" />
+    </StepIconShell>
+  );
+}
+
+function StepCutIcon() {
+  return (
+    <StepIconShell>
+      <circle cx="6" cy="7" r="2" />
+      <circle cx="6" cy="17" r="2" />
+      <path d="M8 8.5 19 18" />
+      <path d="M8 15.5 19 6" />
+    </StepIconShell>
+  );
+}
+
 function StepPasteAboveIcon() {
   return (
     <StepIconShell>
-      <path d="M8 6h8" />
-      <path d="M7 8h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z" />
-      <path d="M12 16V4" />
-      <path d="m8.5 7.5 3.5-3.5 3.5 3.5" />
+      <path d="M8 5.5A2.5 2.5 0 0 1 10.5 3h3A2.5 2.5 0 0 1 16 5.5V7H8z" />
+      <path d="M7 7h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" />
+      <path d="M12 16V10" />
+      <path d="m8.5 12.5 3.5-3.5 3.5 3.5" />
     </StepIconShell>
   );
 }
@@ -3409,10 +3801,20 @@ function StepPasteAboveIcon() {
 function StepPasteBelowIcon() {
   return (
     <StepIconShell>
-      <path d="M8 4h8" />
-      <path d="M7 6h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
-      <path d="M12 8v12" />
-      <path d="m8.5 16.5 3.5 3.5 3.5-3.5" />
+      <path d="M8 5.5A2.5 2.5 0 0 1 10.5 3h3A2.5 2.5 0 0 1 16 5.5V7H8z" />
+      <path d="M7 7h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" />
+      <path d="M12 10v6" />
+      <path d="m8.5 15.5 3.5 3.5 3.5-3.5" />
+    </StepIconShell>
+  );
+}
+
+function StepKebabIcon() {
+  return (
+    <StepIconShell>
+      <circle cx="12" cy="6" r="1.5" />
+      <circle cx="12" cy="12" r="1.5" />
+      <circle cx="12" cy="18" r="1.5" />
     </StepIconShell>
   );
 }
@@ -3457,9 +3859,33 @@ function StepGroupChevronIcon() {
   );
 }
 
+function ExecutionStepsIcon() {
+  return (
+    <StepIconShell>
+      <path d="M8 7h10" />
+      <path d="M8 12h10" />
+      <path d="M8 17h10" />
+      <circle cx="5" cy="7" r="1" fill="currentColor" stroke="none" />
+      <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
+      <circle cx="5" cy="17" r="1" fill="currentColor" stroke="none" />
+    </StepIconShell>
+  );
+}
+
+function SharedStepsIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="20" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width="20">
+      <rect x="3" y="5" width="7" height="6" rx="1.5" />
+      <rect x="14" y="13" width="7" height="6" rx="1.5" />
+      <path d="M10 8h2.5A2.5 2.5 0 0 1 15 10.5V13" />
+      <path d="M14 16h-2.5A2.5 2.5 0 0 1 9 13.5V11" />
+    </svg>
+  );
+}
+
 function getStepKindMeta(groupKind?: TestStep["group_kind"] | null) {
   if (groupKind === "reusable") {
-    return { label: "Shared step", tone: "shared" as const };
+    return { label: "Shared Steps", tone: "shared" as const };
   }
 
   if (groupKind === "local") {
@@ -3469,16 +3895,24 @@ function getStepKindMeta(groupKind?: TestStep["group_kind"] | null) {
   return { label: "Standard step", tone: "default" as const };
 }
 
-function StepKindBadge({
+function StepKindIconBadge({
+  kind,
   label,
   tone
 }: {
+  kind?: TestStep["group_kind"] | null;
   label: string;
   tone: "default" | "shared" | "local";
 }) {
+  const icon = kind === "reusable" ? <SharedStepsIcon /> : <ExecutionStepsIcon />;
+
   return (
-    <span className={["step-kind-badge", tone === "default" ? "" : `is-${tone}`].filter(Boolean).join(" ")}>
-      {label}
+    <span
+      aria-label={kind === "reusable" ? "Shared Steps" : label}
+      className={["step-kind-badge", tone === "default" ? "" : `is-${tone}`].filter(Boolean).join(" ")}
+      title={kind === "reusable" ? "Shared Steps" : label}
+    >
+      {icon}
     </span>
   );
 }
@@ -3496,73 +3930,174 @@ function StepUngroupIcon() {
   );
 }
 
+function StepActionMenu({
+  className = "",
+  label,
+  actions,
+  previewActions,
+  openOnHover = false
+}: {
+  className?: string;
+  label: string;
+  actions: Array<{
+    label: string;
+    icon: ReactNode;
+    onClick: () => void;
+    disabled?: boolean;
+    tone?: "default" | "danger" | "primary";
+  }>;
+  previewActions?: Array<{
+    label: string;
+    icon: ReactNode;
+    onClick: () => void;
+    disabled?: boolean;
+    tone?: "default" | "danger" | "primary";
+  }>;
+  openOnHover?: boolean;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isHovering, setIsHovering] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handlePointer = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) {
+        return;
+      }
+      setIsOpen(false);
+    };
+
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointer);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("mousedown", handlePointer);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [isOpen]);
+
+  return (
+    <div
+      className={["step-card-menu", className].filter(Boolean).join(" ")}
+      onMouseEnter={() => {
+        if (openOnHover) {
+          setIsHovering(true);
+        }
+      }}
+      onMouseLeave={() => {
+        if (openOnHover) {
+          setIsHovering(false);
+        }
+      }}
+    >
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        aria-label={label}
+        className="step-card-menu-trigger"
+        onClick={() => setIsOpen((current) => !current)}
+        ref={triggerRef}
+        title={label}
+        type="button"
+      >
+        <StepKebabIcon />
+      </button>
+      {openOnHover && previewActions?.length && isHovering && !isOpen ? (
+        <div className="step-card-menu-panel is-horizontal" role="menu">
+          {previewActions.map((action) => (
+            <button
+              className={["step-card-menu-item", action.tone ? `is-${action.tone}` : ""].filter(Boolean).join(" ")}
+              disabled={action.disabled}
+              key={action.label}
+              onClick={() => action.onClick()}
+              role="menuitem"
+              type="button"
+            >
+              {action.icon}
+              <span>{action.label}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {isOpen ? (
+        <div className="step-card-menu-panel" ref={menuRef} role="menu">
+          {actions.map((action) => (
+            <button
+              className={["step-card-menu-item", action.tone ? `is-${action.tone}` : ""].filter(Boolean).join(" ")}
+              disabled={action.disabled}
+              key={action.label}
+              onClick={() => {
+                action.onClick();
+                setIsOpen(false);
+              }}
+              role="menuitem"
+              type="button"
+            >
+              {action.icon}
+              <span>{action.label}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function InlineStepInsertSlot({
   index,
   isActive,
-  isVisibleByDefault = false,
-  canPaste,
   draft,
-  onActivate,
   onCancel,
   onChange,
-  onPaste,
   onSubmit
 }: {
   index: number;
   isActive: boolean;
-  isVisibleByDefault?: boolean;
-  canPaste: boolean;
   draft: StepDraft;
-  onActivate: () => void;
   onCancel: () => void;
   onChange: (draft: StepDraft) => void;
-  onPaste: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  const insertTitle = index === 0 ? "Add first step" : "Insert step here";
-
-  if (!isActive && !isVisibleByDefault) {
+  if (!isActive) {
     return null;
   }
 
   return (
-    <div className={["step-insert-slot", isActive ? "is-active" : "", isVisibleByDefault ? "is-visible" : ""].filter(Boolean).join(" ")}>
-      {!isActive ? (
-        <div className="step-insert-actions">
-          <StepIconButton ariaLabel={insertTitle} onClick={onActivate} title={insertTitle} type="button">
-            <StepInsertIcon />
-          </StepIconButton>
-          {canPaste ? (
-            <StepIconButton ariaLabel="Paste copied here" onClick={onPaste} title="Paste copied here" type="button">
-              <StepPasteIcon />
-            </StepIconButton>
-          ) : null}
+    <div className="step-insert-slot is-active">
+      <form className="step-create step-create--inline" onSubmit={onSubmit}>
+        <strong>{index === 0 ? "+ Add Step" : "+ Insert Step"}</strong>
+        <FormField label="Action">
+          <input
+            autoFocus
+            value={draft.action}
+            onChange={(event) => onChange({ ...draft, action: event.target.value })}
+          />
+        </FormField>
+        <FormField label="Expected result">
+          <textarea
+            rows={3}
+            value={draft.expected_result}
+            onChange={(event) => onChange({ ...draft, expected_result: event.target.value })}
+          />
+        </FormField>
+        <div className="action-row">
+          <button className="primary-button" type="submit">Save step</button>
+          <button className="ghost-button" onClick={onCancel} type="button">
+            Cancel
+          </button>
         </div>
-      ) : (
-        <form className="step-create step-create--inline" onSubmit={onSubmit}>
-          <strong>{index === 0 ? "+ Add Step" : "+ Insert Step"}</strong>
-          <FormField label="Action">
-            <input
-              autoFocus
-              value={draft.action}
-              onChange={(event) => onChange({ ...draft, action: event.target.value })}
-            />
-          </FormField>
-          <FormField label="Expected result">
-            <textarea
-              rows={3}
-              value={draft.expected_result}
-              onChange={(event) => onChange({ ...draft, expected_result: event.target.value })}
-            />
-          </FormField>
-          <div className="action-row">
-            <button className="primary-button" type="submit">Save step</button>
-            <button className="ghost-button" onClick={onCancel} type="button">
-              Cancel
-            </button>
-          </div>
-        </form>
-      )}
+      </form>
     </div>
   );
 }
@@ -3571,80 +4106,113 @@ function StepGroupHeader({
   name,
   kind,
   stepCount,
-  canPaste,
   isExpanded,
-  onInsertAbove,
-  onInsertBelow,
+  canMoveUp,
+  canMoveDown,
+  selectionState,
   onToggle,
-  onPasteAbove,
-  onPasteBelow,
+  onMoveUp,
+  onMoveDown,
   onRemoveGroup,
-  onUngroup
+  onUngroup,
+  onToggleSelect
 }: {
   name: string;
   kind: TestStep["group_kind"];
   stepCount: number;
-  canPaste: boolean;
   isExpanded: boolean;
-  onInsertAbove: () => void;
-  onInsertBelow: () => void;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  selectionState: "all" | "some" | "none";
   onToggle: () => void;
-  onPasteAbove: () => void;
-  onPasteBelow: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
   onRemoveGroup: () => void;
   onUngroup: () => void;
+  onToggleSelect: (checked: boolean) => void;
 }) {
   const isSharedGroup = kind === "reusable";
-  const kindLabel = isSharedGroup ? "Shared group snapshot" : "Local step group";
   const unlinkTitle = isSharedGroup ? "Unlink shared group from this case" : "Ungroup steps";
   const removeTitle = isSharedGroup ? "Remove shared group from this case" : "Remove group and steps";
+  const selectionRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!selectionRef.current) {
+      return;
+    }
+    selectionRef.current.indeterminate = selectionState === "some";
+  }, [selectionState]);
 
   return (
     <div className="step-group-header">
-      <button
+      <div
         aria-expanded={isExpanded}
         aria-label={`${isExpanded ? "Collapse" : "Expand"} ${name}`}
         className="step-group-toggle"
         onClick={onToggle}
-        type="button"
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onToggle();
+          }
+        }}
+        role="button"
+        tabIndex={0}
       >
+        <label className="checkbox-field step-group-select" onClick={(event) => event.stopPropagation()}>
+          <input
+            aria-label={`Select steps in ${name}`}
+            checked={selectionState === "all"}
+            onChange={(event) => onToggleSelect(event.target.checked)}
+            ref={selectionRef}
+            type="checkbox"
+          />
+        </label>
         <span aria-hidden="true" className={isExpanded ? "step-group-chevron is-expanded" : "step-group-chevron"}>
           <StepGroupChevronIcon />
         </span>
-        <span aria-hidden="true" className={isSharedGroup ? "step-group-icon is-shared" : "step-group-icon is-local"} title={kindLabel}>
-          {isSharedGroup ? <StepSharedGroupIcon /> : <StepGroupIcon />}
-        </span>
         <span className="step-group-title">
           <span className="step-group-title-row">
+            <span aria-hidden="true" className={isSharedGroup ? "step-group-icon is-shared" : "step-group-icon is-local"}>
+              {isSharedGroup ? <StepSharedGroupIcon /> : <StepGroupIcon />}
+            </span>
             <strong>{name}</strong>
-            <StepKindBadge label={isSharedGroup ? "Shared group" : "Local group"} tone={isSharedGroup ? "shared" : "local"} />
           </span>
-          <span>{stepCount} step{stepCount === 1 ? "" : "s"}</span>
         </span>
-      </button>
-      <div className="step-group-header-actions">
-        <StepIconButton ariaLabel={`Insert step above ${name}`} onClick={onInsertAbove} title="Insert above group" type="button">
-          <StepInsertAboveIcon />
-        </StepIconButton>
-        <StepIconButton ariaLabel={`Insert step below ${name}`} onClick={onInsertBelow} title="Insert below group" type="button">
-          <StepInsertBelowIcon />
-        </StepIconButton>
-        {canPaste ? (
-          <>
-            <StepIconButton ariaLabel={`Paste above ${name}`} onClick={onPasteAbove} title="Paste above group" type="button">
-              <StepPasteAboveIcon />
-            </StepIconButton>
-            <StepIconButton ariaLabel={`Paste below ${name}`} onClick={onPasteBelow} title="Paste below group" type="button">
-              <StepPasteBelowIcon />
-            </StepIconButton>
-          </>
-        ) : null}
-        <StepIconButton ariaLabel={unlinkTitle} onClick={onUngroup} title={unlinkTitle} type="button">
-          <StepUngroupIcon />
-        </StepIconButton>
-        <StepIconButton ariaLabel={removeTitle} onClick={onRemoveGroup} title={removeTitle} tone="danger" type="button">
-          <StepDeleteIcon />
-        </StepIconButton>
+      </div>
+      <div className="step-group-meta">
+        <span className="step-group-count">
+          {stepCount} step{stepCount === 1 ? "" : "s"}
+        </span>
+        <StepActionMenu
+          className="step-group-header-actions step-card-menu--flat"
+          label="Group actions"
+          actions={[
+            {
+              label: "Move group up",
+              icon: <StepMoveUpIcon />,
+              onClick: onMoveUp,
+              disabled: !canMoveUp
+            },
+            {
+              label: "Move group down",
+              icon: <StepMoveDownIcon />,
+              onClick: onMoveDown,
+              disabled: !canMoveDown
+            },
+            {
+              label: unlinkTitle,
+              icon: <StepUngroupIcon />,
+              onClick: onUngroup
+            },
+            {
+              label: removeTitle,
+              icon: <StepDeleteIcon />,
+              onClick: onRemoveGroup,
+              tone: "danger"
+            }
+          ]}
+        />
       </div>
     </div>
   );
@@ -3652,12 +4220,14 @@ function StepGroupHeader({
 
 function EditableStepCard({
   step,
+  draft,
   isExpanded,
   isSelected,
   canPaste,
   canMoveUp,
   canMoveDown,
   onSave,
+  onDraftChange,
   onCopy,
   onCut,
   onDelete,
@@ -3671,12 +4241,14 @@ function EditableStepCard({
   onPasteBelow
 }: {
   step: TestStep;
+  draft: StepDraft;
   isExpanded: boolean;
   isSelected: boolean;
   canPaste: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
   onSave: (input: StepDraft) => void;
+  onDraftChange: (input: StepDraft) => void;
   onCopy: () => void;
   onCut: () => void;
   onDelete: () => void;
@@ -3691,18 +4263,6 @@ function EditableStepCard({
 }) {
   const stepKind = getStepKindMeta(step.group_kind);
 
-  const [draft, setDraft] = useState<StepDraft>({
-    action: step.action || "",
-    expected_result: step.expected_result || ""
-  });
-
-  useEffect(() => {
-    setDraft({
-      action: step.action || "",
-      expected_result: step.expected_result || ""
-    });
-  }, [step.action, step.expected_result, step.id]);
-
   return (
     <article
       className={[
@@ -3713,64 +4273,78 @@ function EditableStepCard({
     >
       <div className="step-card-top">
         <label className="checkbox-field step-card-select">
-          <input checked={isSelected} onChange={(event) => onToggleSelect(event.target.checked)} type="checkbox" />
-          Select
+          <input
+            aria-label={`Select step ${step.step_order}`}
+            checked={isSelected}
+            onChange={(event) => onToggleSelect(event.target.checked)}
+            type="checkbox"
+          />
         </label>
-        <button className="step-card-toggle" onClick={onToggle} type="button">
+        <button
+          aria-label={isExpanded ? `Hide step ${step.step_order} details` : `Show step ${step.step_order} details`}
+          className="step-card-toggle"
+          onClick={onToggle}
+          type="button"
+        >
           <div className="step-card-summary">
             <div className="step-card-summary-top">
+              <StepKindIconBadge kind={step.group_kind} label={stepKind.label} tone={stepKind.tone} />
               <strong>Step {step.step_order}</strong>
-              <StepKindBadge label={stepKind.label} tone={stepKind.tone} />
             </div>
             <span>{draft.action || "No action written yet"}</span>
           </div>
-          <span className="step-card-toggle-state">{isExpanded ? "Hide" : "Show"}</span>
+          <span aria-hidden="true" className="step-card-toggle-state">
+            <StepKebabIcon />
+          </span>
         </button>
-        <div className="step-card-action-menu">
-          <StepIconButton ariaLabel={`Insert above step ${step.step_order}`} onClick={onInsertAbove} title="Insert above" type="button">
-            <StepInsertAboveIcon />
-          </StepIconButton>
-          <StepIconButton ariaLabel={`Insert below step ${step.step_order}`} onClick={onInsertBelow} title="Insert below" type="button">
-            <StepInsertBelowIcon />
-          </StepIconButton>
-          {canPaste ? (
-            <>
-              <StepIconButton ariaLabel={`Paste above step ${step.step_order}`} onClick={onPasteAbove} title="Paste above" type="button">
-                <StepPasteAboveIcon />
-              </StepIconButton>
-              <StepIconButton ariaLabel={`Paste below step ${step.step_order}`} onClick={onPasteBelow} title="Paste below" type="button">
-                <StepPasteBelowIcon />
-              </StepIconButton>
-            </>
-          ) : null}
-          <StepIconButton ariaLabel={`Copy step ${step.step_order}`} onClick={onCopy} title="Copy step" type="button">
-            <StepCopyIcon />
-          </StepIconButton>
-          <StepIconButton ariaLabel={`Cut step ${step.step_order}`} onClick={onCut} title="Cut step" type="button">
-            <StepCutIcon />
-          </StepIconButton>
-          <StepIconButton ariaLabel={`Move step ${step.step_order} up`} disabled={!canMoveUp} onClick={onMoveUp} title="Move up" type="button">
-            <StepMoveUpIcon />
-          </StepIconButton>
-          <StepIconButton ariaLabel={`Move step ${step.step_order} down`} disabled={!canMoveDown} onClick={onMoveDown} title="Move down" type="button">
-            <StepMoveDownIcon />
-          </StepIconButton>
-          <StepIconButton ariaLabel={`Save step ${step.step_order}`} onClick={() => onSave(draft)} title="Save step" tone="primary" type="button">
-            <StepSaveIcon />
-          </StepIconButton>
-          <StepIconButton ariaLabel={`Delete step ${step.step_order}`} onClick={onDelete} title="Delete step" tone="danger" type="button">
-            <StepDeleteIcon />
-          </StepIconButton>
-        </div>
+        <StepActionMenu
+          className="step-card-menu--floating"
+          label={`Step ${step.step_order} actions`}
+          openOnHover
+          previewActions={[
+            ((draft.action || "").trim() !== (step.action || "").trim() || (draft.expected_result || "").trim() !== (step.expected_result || "").trim())
+              ? { label: "Save", icon: <StepSaveIcon />, onClick: () => onSave(draft), tone: "primary" }
+              : null,
+            { label: "Copy", icon: <StepCopyIcon />, onClick: onCopy },
+            { label: "Cut", icon: <StepCutIcon />, onClick: onCut }
+          ].filter(Boolean) as Array<{ label: string; icon: ReactNode; onClick: () => void; disabled?: boolean; tone?: "default" | "danger" | "primary"; }>}
+          actions={[
+            {
+              label: "Insert above",
+              icon: <StepInsertAboveIcon />,
+              onClick: onInsertAbove
+            },
+            {
+              label: "Insert below",
+              icon: <StepInsertBelowIcon />,
+              onClick: onInsertBelow
+            },
+            ...(canPaste ? [{
+              label: "Paste above",
+              icon: <StepPasteAboveIcon />,
+              onClick: onPasteAbove
+            }, {
+              label: "Paste below",
+              icon: <StepPasteBelowIcon />,
+              onClick: onPasteBelow
+            }] : []),
+            { label: "Copy step", icon: <StepCopyIcon />, onClick: onCopy },
+            { label: "Cut step", icon: <StepCutIcon />, onClick: onCut },
+            { label: "Move up", icon: <StepMoveUpIcon />, onClick: onMoveUp, disabled: !canMoveUp },
+            { label: "Move down", icon: <StepMoveDownIcon />, onClick: onMoveDown, disabled: !canMoveDown },
+            { label: "Save step", icon: <StepSaveIcon />, onClick: () => onSave(draft), tone: "primary" },
+            { label: "Delete step", icon: <StepDeleteIcon />, onClick: onDelete, tone: "danger" }
+          ]}
+        />
       </div>
 
       {isExpanded ? (
         <div className="step-card-body">
           <FormField label="Action">
-            <input value={draft.action} onChange={(event) => setDraft((current) => ({ ...current, action: event.target.value }))} />
+            <input value={draft.action} onChange={(event) => onDraftChange({ ...draft, action: event.target.value })} />
           </FormField>
           <FormField label="Expected result">
-            <textarea rows={3} value={draft.expected_result} onChange={(event) => setDraft((current) => ({ ...current, expected_result: event.target.value }))} />
+            <textarea rows={3} value={draft.expected_result} onChange={(event) => onDraftChange({ ...draft, expected_result: event.target.value })} />
           </FormField>
         </div>
       ) : null}
@@ -3825,49 +4399,56 @@ function DraftStepCard({
     >
       <div className="step-card-top">
         <label className="checkbox-field step-card-select">
-          <input checked={isSelected} onChange={(event) => onToggleSelect(event.target.checked)} type="checkbox" />
-          Select
+          <input
+            aria-label={`Select step ${step.step_order}`}
+            checked={isSelected}
+            onChange={(event) => onToggleSelect(event.target.checked)}
+            type="checkbox"
+          />
         </label>
         <div className="step-card-summary">
           <div className="step-card-summary-top">
+            <StepKindIconBadge kind={step.group_kind} label={stepKind.label} tone={stepKind.tone} />
             <strong>Step {step.step_order}</strong>
-            <StepKindBadge label={stepKind.label} tone={stepKind.tone} />
           </div>
           <span>{step.action || step.expected_result || "Draft step details"}</span>
         </div>
-        <div className="step-card-action-menu">
-          <StepIconButton ariaLabel={`Insert above draft step ${step.step_order}`} onClick={onInsertAbove} title="Insert above" type="button">
-            <StepInsertAboveIcon />
-          </StepIconButton>
-          <StepIconButton ariaLabel={`Insert below draft step ${step.step_order}`} onClick={onInsertBelow} title="Insert below" type="button">
-            <StepInsertBelowIcon />
-          </StepIconButton>
-          {canPaste ? (
-            <>
-              <StepIconButton ariaLabel={`Paste above draft step ${step.step_order}`} onClick={onPasteAbove} title="Paste above" type="button">
-                <StepPasteAboveIcon />
-              </StepIconButton>
-              <StepIconButton ariaLabel={`Paste below draft step ${step.step_order}`} onClick={onPasteBelow} title="Paste below" type="button">
-                <StepPasteBelowIcon />
-              </StepIconButton>
-            </>
-          ) : null}
-          <StepIconButton ariaLabel={`Copy draft step ${step.step_order}`} onClick={onCopy} title="Copy step" type="button">
-            <StepCopyIcon />
-          </StepIconButton>
-          <StepIconButton ariaLabel={`Cut draft step ${step.step_order}`} onClick={onCut} title="Cut step" type="button">
-            <StepCutIcon />
-          </StepIconButton>
-          <StepIconButton ariaLabel={`Move draft step ${step.step_order} up`} disabled={!canMoveUp} onClick={onMoveUp} title="Move up" type="button">
-            <StepMoveUpIcon />
-          </StepIconButton>
-          <StepIconButton ariaLabel={`Move draft step ${step.step_order} down`} disabled={!canMoveDown} onClick={onMoveDown} title="Move down" type="button">
-            <StepMoveDownIcon />
-          </StepIconButton>
-          <StepIconButton ariaLabel={`Delete draft step ${step.step_order}`} onClick={onDelete} title="Delete step" tone="danger" type="button">
-            <StepDeleteIcon />
-          </StepIconButton>
-        </div>
+        <StepActionMenu
+          className="step-card-menu--floating"
+          label={`Step ${step.step_order} actions`}
+          openOnHover
+          previewActions={[
+            { label: "Copy", icon: <StepCopyIcon />, onClick: onCopy },
+            { label: "Cut", icon: <StepCutIcon />, onClick: onCut },
+            { label: "Delete", icon: <StepDeleteIcon />, onClick: onDelete, tone: "danger" }
+          ]}
+          actions={[
+            {
+              label: "Insert above",
+              icon: <StepInsertAboveIcon />,
+              onClick: onInsertAbove
+            },
+            {
+              label: "Insert below",
+              icon: <StepInsertBelowIcon />,
+              onClick: onInsertBelow
+            },
+            ...(canPaste ? [{
+              label: "Paste above",
+              icon: <StepPasteAboveIcon />,
+              onClick: onPasteAbove
+            }, {
+              label: "Paste below",
+              icon: <StepPasteBelowIcon />,
+              onClick: onPasteBelow
+            }] : []),
+            { label: "Copy step", icon: <StepCopyIcon />, onClick: onCopy },
+            { label: "Cut step", icon: <StepCutIcon />, onClick: onCut },
+            { label: "Move up", icon: <StepMoveUpIcon />, onClick: onMoveUp, disabled: !canMoveUp },
+            { label: "Move down", icon: <StepMoveDownIcon />, onClick: onMoveDown, disabled: !canMoveDown },
+            { label: "Delete step", icon: <StepDeleteIcon />, onClick: onDelete, tone: "danger" }
+          ]}
+        />
       </div>
       <div className="step-card-body">
         <FormField label="Action">

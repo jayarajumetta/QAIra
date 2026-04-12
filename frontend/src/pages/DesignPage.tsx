@@ -101,7 +101,7 @@ const normalizeDraftSteps = (steps: DraftTestStep[]) =>
 
 const getSuiteStepKindMeta = (kind?: TestStep["group_kind"] | null) => {
   if (kind === "reusable") {
-    return { label: "Shared step", tone: "shared" as const };
+    return { label: "Shared Steps", tone: "shared" as const };
   }
 
   if (kind === "local") {
@@ -110,6 +110,54 @@ const getSuiteStepKindMeta = (kind?: TestStep["group_kind"] | null) => {
 
   return { label: "Standard step", tone: "default" as const };
 };
+
+function ExecutionStepsIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width="16">
+      <path d="M8 7h10" />
+      <path d="M8 12h10" />
+      <path d="M8 17h10" />
+      <circle cx="5" cy="7" r="1" fill="currentColor" stroke="none" />
+      <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
+      <circle cx="5" cy="17" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function SharedStepsIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
+      <circle cx="7" cy="8" r="2.5" />
+      <circle cx="17" cy="8" r="2.5" />
+      <circle cx="12" cy="17" r="2.5" />
+      <path d="m9.2 9.4 2 5.2" />
+      <path d="m14.8 9.4-2 5.2" />
+      <path d="M9.5 8h5" />
+    </svg>
+  );
+}
+
+function StepKindIconBadge({
+  kind,
+  label,
+  tone
+}: {
+  kind?: TestStep["group_kind"] | null;
+  label: string;
+  tone: "default" | "shared" | "local";
+}) {
+  const icon = kind === "reusable" ? <SharedStepsIcon /> : <ExecutionStepsIcon />;
+
+  return (
+    <span
+      aria-label={kind === "reusable" ? "Shared Steps" : label}
+      className={["step-kind-badge", tone === "default" ? "" : `is-${tone}`].filter(Boolean).join(" ")}
+      title={kind === "reusable" ? "Shared Steps" : label}
+    >
+      {icon}
+    </span>
+  );
+}
 
 export function DesignPage() {
   const queryClient = useQueryClient();
@@ -2404,6 +2452,16 @@ function EditorAccordionChevronIcon() {
   );
 }
 
+function StepKebabIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width="18">
+      <circle cx="12" cy="6" r="1.5" />
+      <circle cx="12" cy="12" r="1.5" />
+      <circle cx="12" cy="18" r="1.5" />
+    </svg>
+  );
+}
+
 function EditableStepCard({
   step,
   stepDraft,
@@ -2448,18 +2506,23 @@ function EditableStepCard({
         step.group_kind === "local" ? "step-card--grouped" : ""
       ].filter(Boolean).join(" ")}
     >
-      <button className="step-card-toggle" onClick={onToggle} type="button">
+      <button
+        aria-label={isExpanded ? `Hide step ${step.step_order} details` : `Show step ${step.step_order} details`}
+        className="step-card-toggle"
+        onClick={onToggle}
+        type="button"
+      >
         <div className="step-card-summary">
           <div className="step-card-summary-top">
+            <StepKindIconBadge kind={step.group_kind} label={stepKind.label} tone={stepKind.tone} />
             <strong>Step {step.step_order}</strong>
-            <span className={["step-kind-badge", stepKind.tone === "default" ? "" : `is-${stepKind.tone}`].filter(Boolean).join(" ")}>
-              {stepKind.label}
-            </span>
           </div>
           {step.group_name ? <small className="suite-step-group-note">{step.group_name}</small> : null}
           <span>{draft.action || "No action written yet"}</span>
         </div>
-        <span className="step-card-toggle-state">{isExpanded ? "Hide" : "Show"}</span>
+        <span aria-hidden="true" className="step-card-toggle-state">
+          <StepKebabIcon />
+        </span>
       </button>
 
       {isExpanded ? (
@@ -2512,10 +2575,8 @@ function DraftStepCard({
       <div className="step-card-top">
         <div className="step-card-summary">
           <div className="step-card-summary-top">
+            <StepKindIconBadge kind={step.group_kind} label={stepKind.label} tone={stepKind.tone} />
             <strong>Step {step.step_order}</strong>
-            <span className={["step-kind-badge", stepKind.tone === "default" ? "" : `is-${stepKind.tone}`].filter(Boolean).join(" ")}>
-              {stepKind.label}
-            </span>
           </div>
           {step.group_name ? <small className="suite-step-group-note">{step.group_name}</small> : null}
           <span>{step.action || step.expected_result || "Draft step details"}</span>

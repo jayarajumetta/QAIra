@@ -30,7 +30,7 @@ const navigation = [
         children: [
           { id: "requirements", to: "/requirements", label: "Requirements", icon: DocumentIcon },
           { id: "test-cases", to: "/test-cases", label: "Test Cases", icon: PencilIcon },
-          { id: "shared-steps", to: "/shared-steps", label: "Shared Groups", icon: SharedStepsIcon },
+          { id: "shared-steps", to: "/shared-steps", label: "Shared Step Group", icon: SharedStepsIcon },
           { id: "design", to: "/design", label: "Test Suites", icon: LayersIcon }
         ]
       },
@@ -649,7 +649,7 @@ function LayersIcon() {
 }
 
 function SharedStepsIcon() {
-  return <IconFrame><rect x="3" y="5" width="7" height="6" rx="1.5" /><rect x="14" y="13" width="7" height="6" rx="1.5" /><path d="M10 8h2.5A2.5 2.5 0 0 1 15 10.5V13" /><path d="M14 16h-2.5A2.5 2.5 0 0 1 9 13.5V11" /></IconFrame>;
+  return <IconFrame><circle cx="7" cy="8" r="2.5" /><circle cx="17" cy="8" r="2.5" /><circle cx="12" cy="17" r="2.5" /><path d="m9.2 9.4 2 5.2" /><path d="m14.8 9.4-2 5.2" /><path d="M9.5 8h5" /></IconFrame>;
 }
 
 function PlayIcon() {

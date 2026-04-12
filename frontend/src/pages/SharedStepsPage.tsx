@@ -394,7 +394,7 @@ export function SharedStepsPage() {
   return (
     <div className="page-content page-content--library-full">
       <PageHeader
-        eyebrow="Shared Groups"
+        eyebrow="Shared Step Groups"
         title="Reusable Step Groups"
         description="Curate repeatable step blocks once, then insert them into test cases as reusable snapshots."
         meta={[
@@ -426,7 +426,7 @@ export function SharedStepsPage() {
       <WorkspaceMasterDetail
         browseView={(
           <Panel
-            title="Shared group tiles"
+            title="Shared step tiles"
             subtitle={appTypeId ? "Browse reusable groups as tiles first, then open one for editing." : "Choose an app type to begin."}
           >
             <div className="design-list-toolbar test-case-catalog-toolbar">
@@ -512,8 +512,8 @@ export function SharedStepsPage() {
         )}
         detailView={(
           <Panel
-            actions={<WorkspaceBackButton label="Back to shared group tiles" onClick={closeWorkspace} />}
-            title="Shared group workspace"
+            actions={<WorkspaceBackButton label="Back to shared step tiles" onClick={closeWorkspace} />}
+            title="Shared step workspace"
             subtitle={selectedGroupId || isCreating ? "Edit the reusable group and keep its step sequence ready for test case insertion." : "Select a shared step group or create a new one."}
           >
             {selectedGroupId || isCreating ? (
@@ -708,6 +708,19 @@ function SharedGroupStepIconShell({ children }: { children: ReactNode }) {
   );
 }
 
+function SharedStepsIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
+      <circle cx="7" cy="8" r="2.5" />
+      <circle cx="17" cy="8" r="2.5" />
+      <circle cx="12" cy="17" r="2.5" />
+      <path d="m9.2 9.4 2 5.2" />
+      <path d="m14.8 9.4-2 5.2" />
+      <path d="M9.5 8h5" />
+    </svg>
+  );
+}
+
 function SharedGroupStepInsertIcon() {
   return (
     <SharedGroupStepIconShell>
@@ -863,8 +876,10 @@ function SharedGroupDraftStepCard({
       <div className="step-card-top">
         <div className="step-card-summary">
           <div className="step-card-summary-top">
+            <span aria-label="Shared Steps" className="step-kind-badge is-shared" title="Shared Steps">
+              <SharedStepsIcon />
+            </span>
             <strong>Step {stepNumber}</strong>
-            <span className="step-kind-badge is-shared">Shared step</span>
           </div>
           <span>{step.action || step.expected_result || "Shared step details"}</span>
         </div>
