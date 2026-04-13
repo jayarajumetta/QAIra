@@ -21,6 +21,7 @@ import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
+import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { api } from "../lib/api";
 import { appendUniqueImages, parseExternalLinks, readImageFiles } from "../lib/aiDesignStudio";
 import { parseRequirementCsv } from "../lib/requirementImport";
@@ -36,12 +37,12 @@ type RequirementDraft = {
 type RequirementSectionKey = "details" | "linked" | "library";
 type RequirementCoverageFilter = "all" | "linked" | "unlinked";
 
-const EMPTY_REQUIREMENT: RequirementDraft = {
+const createEmptyRequirementDraft = (defaultStatus = "open"): RequirementDraft => ({
   title: "",
   description: "",
   priority: 3,
-  status: "open"
-};
+  status: defaultStatus
+});
 
 const createDefaultRequirementSections = (): Record<RequirementSectionKey, boolean> => ({
   details: true,
@@ -53,6 +54,7 @@ export function RequirementsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { session } = useAuth();
+  const domainMetadataQuery = useDomainMetadata();
   const [projectId, setProjectId] = useCurrentProject();
   const [appTypeId, setAppTypeId] = useState("");
   const [selectedRequirementId, setSelectedRequirementId] = useState("");
@@ -66,9 +68,11 @@ export function RequirementsPage() {
   const [expandedSections, setExpandedSections] = useState<Record<RequirementSectionKey, boolean>>(createDefaultRequirementSections);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
-  const [draft, setDraft] = useState<RequirementDraft>(EMPTY_REQUIREMENT);
+  const defaultRequirementStatus = domainMetadataQuery.data?.requirements.default_status || "open";
+  const emptyRequirementDraft = useMemo(() => createEmptyRequirementDraft(defaultRequirementStatus), [defaultRequirementStatus]);
+  const [draft, setDraft] = useState<RequirementDraft>(() => createEmptyRequirementDraft());
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [createDraft, setCreateDraft] = useState<RequirementDraft>(EMPTY_REQUIREMENT);
+  const [createDraft, setCreateDraft] = useState<RequirementDraft>(() => createEmptyRequirementDraft());
   const [createSelectedTestCaseIds, setCreateSelectedTestCaseIds] = useState<string[]>([]);
   const [isAiStudioOpen, setIsAiStudioOpen] = useState(false);
   const [aiRequirementId, setAiRequirementId] = useState("");
@@ -208,8 +212,8 @@ export function RequirementsPage() {
   );
 
   const requirementStatusOptions = useMemo(
-    () => Array.from(new Set(requirements.map((item) => item.status || "open"))).sort((left, right) => left.localeCompare(right)),
-    [requirements]
+    () => Array.from(new Set(requirements.map((item) => item.status || defaultRequirementStatus))).sort((left, right) => left.localeCompare(right)),
+    [defaultRequirementStatus, requirements]
   );
   const requirementPriorityOptions = useMemo(
     () =>
@@ -227,7 +231,7 @@ export function RequirementsPage() {
         [
           item.title,
           item.description || "",
-          item.status || "open",
+          item.status || defaultRequirementStatus,
           `p${item.priority ?? 3}`,
           `priority ${item.priority ?? 3}`
         ].some((value) => value.toLowerCase().includes(normalizedSearch));
@@ -236,7 +240,7 @@ export function RequirementsPage() {
         return false;
       }
 
-      if (requirementStatusFilter !== "all" && (item.status || "open") !== requirementStatusFilter) {
+      if (requirementStatusFilter !== "all" && (item.status || defaultRequirementStatus) !== requirementStatusFilter) {
         return false;
       }
 
@@ -291,7 +295,7 @@ export function RequirementsPage() {
 
   useEffect(() => {
     if (!selectedRequirement) {
-      setDraft(EMPTY_REQUIREMENT);
+      setDraft(emptyRequirementDraft);
       setSelectedTestCaseIds([]);
       return;
     }
@@ -300,7 +304,7 @@ export function RequirementsPage() {
       title: selectedRequirement.title,
       description: selectedRequirement.description || "",
       priority: selectedRequirement.priority ?? 3,
-      status: selectedRequirement.status || "open"
+      status: selectedRequirement.status || defaultRequirementStatus
     });
     setSelectedTestCaseIds(selectedRequirement.test_case_ids || []);
   }, [selectedRequirement]);
@@ -377,14 +381,14 @@ export function RequirementsPage() {
   };
 
   const openCreateRequirementModal = () => {
-    setCreateDraft(EMPTY_REQUIREMENT);
+    setCreateDraft(emptyRequirementDraft);
     setCreateSelectedTestCaseIds([]);
     setIsCreateModalOpen(true);
   };
 
   const closeRequirementDetail = () => {
     setSelectedRequirementId("");
-    setDraft(EMPTY_REQUIREMENT);
+    setDraft(emptyRequirementDraft);
     setSelectedTestCaseIds([]);
     setExpandedSections(createDefaultRequirementSections());
   };
@@ -435,7 +439,7 @@ export function RequirementsPage() {
       setSelectedRequirementId(response.id);
       setAiRequirementId(response.id);
       setIsCreateModalOpen(false);
-      setCreateDraft(EMPTY_REQUIREMENT);
+      setCreateDraft(emptyRequirementDraft);
       setCreateSelectedTestCaseIds([]);
       showSuccess("Requirement created.");
       await refresh();
@@ -539,7 +543,7 @@ export function RequirementsPage() {
     try {
       await deleteRequirement.mutateAsync(selectedRequirement.id);
       setSelectedRequirementId("");
-      setDraft(EMPTY_REQUIREMENT);
+      setDraft(emptyRequirementDraft);
       setSelectedTestCaseIds([]);
       setPreviewCases([]);
       showSuccess("Requirement deleted.");

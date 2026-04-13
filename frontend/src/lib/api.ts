@@ -4,6 +4,7 @@ import type {
   AuthSetupPayload,
   ApiError,
   AppType,
+  DomainMetadata,
   Execution,
   ExecutionResult,
   Feedback,
@@ -128,6 +129,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  metadata: {
+    domain: () => request<DomainMetadata>("/metadata/domain")
+  },
   auth: {
     setup: () => request<AuthSetupPayload>("/auth/setup"),
     requestSignupCode: (input: { email: string; password: string; name?: string }) =>

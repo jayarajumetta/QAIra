@@ -3,9 +3,10 @@ const { v4: uuid } = require("uuid");
 const requirementTestCaseService = require("./requirementTestCase.service");
 const suiteTestCaseService = require("./suiteTestCase.service");
 const sharedStepSyncService = require("./sharedStepSync.service");
+const { DOMAIN_METADATA, TEST_CASE_STATUS_VALUES } = require("../domain/catalog");
 
 const DEFAULT_PRIORITY = 3;
-const DEFAULT_STATUS = "active";
+const DEFAULT_STATUS = DOMAIN_METADATA.test_cases.default_status;
 
 const selectAppType = db.prepare(`
   SELECT id, project_id
@@ -110,6 +111,20 @@ const normalizePriority = (value) => {
 
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : DEFAULT_PRIORITY;
+};
+
+const normalizeStatus = (value, fallback = DEFAULT_STATUS) => {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  if (!TEST_CASE_STATUS_VALUES.includes(normalized)) {
+    throw new Error(`Test case status must be one of: ${TEST_CASE_STATUS_VALUES.join(", ")}`);
+  }
+
+  return normalized;
 };
 
 const normalizeGroupKind = (value) => {
@@ -328,7 +343,7 @@ const createPersistablePayload = async ({
     title: resolvedTitle,
     description: normalizeText(description),
     priority: normalizePriority(priority),
-    status: normalizeText(status) || DEFAULT_STATUS,
+    status: normalizeStatus(status),
     steps: normalizeSteps(steps)
   };
 };
@@ -456,7 +471,7 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [] })
         title: row?.title,
         description: row?.description,
         priority: row?.priority,
-        status: row?.status || "draft",
+        status: normalizeStatus(row?.status, "draft"),
         requirement_ids: normalizeTextList([defaultRequirementId, row?.requirement_id, row?.requirementId]),
         steps: importedSteps
       });
@@ -573,7 +588,7 @@ exports.updateTestCase = async (id, data) => {
     title: normalizeText(data.title) || existing.title,
     description: data.description !== undefined ? normalizeText(data.description) : existing.description,
     priority: data.priority !== undefined ? normalizePriority(data.priority) : existing.priority ?? DEFAULT_PRIORITY,
-    status: data.status !== undefined ? normalizeText(data.status) || DEFAULT_STATUS : existing.status || DEFAULT_STATUS
+    status: data.status !== undefined ? normalizeStatus(data.status) : existing.status || DEFAULT_STATUS
   };
 
   const executeUpdate = db.transaction(async () => {

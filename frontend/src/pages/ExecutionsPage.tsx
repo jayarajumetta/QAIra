@@ -21,16 +21,19 @@ import {
   deriveCaseStatusFromSteps,
   parseExecutionLogs,
   stringifyExecutionLogs,
+  type ExecutionStepEvidence,
   type ExecutionStepStatus
 } from "../lib/executionLogs";
 import type {
   AppType,
   Execution,
   ExecutionCaseSnapshot,
+  ExecutionDataSetSnapshot,
   ExecutionResult,
   ExecutionStatus,
   ExecutionStepSnapshot,
   Integration,
+  KeyValueEntry,
   Project,
   SmartExecutionImpactCase,
   SmartExecutionPreviewResponse,
@@ -91,6 +94,12 @@ type ExecutionAssigneeOption = {
   caption: string | null;
 };
 
+type ExecutionEvidencePreviewState = {
+  stepLabel: string;
+  fileName: string | null;
+  dataUrl: string;
+};
+
 const EMPTY_EXECUTION_RUN_SUMMARY: ExecutionRunSummary = {
   passed: 0,
   failed: 0,
@@ -104,6 +113,7 @@ const EMPTY_EXECUTION_RUN_SUMMARY: ExecutionRunSummary = {
 };
 
 const DEFAULT_DURATION_LABEL = "0s";
+const MAX_EXECUTION_EVIDENCE_IMAGE_BYTES = 3 * 1024 * 1024;
 
 type BoardStatusTone = ExecutionStatus | ExecutionResult["status"];
 
@@ -235,6 +245,60 @@ function getExecutionStepKindMeta(kind?: TestStep["group_kind"] | null) {
 
   return { label: "Standard step", detail: "Standard step", tone: "default" as const };
 }
+
+const mergeExecutionEvidencePatch = (
+  current: Record<string, ExecutionStepEvidence>,
+  patch?: Record<string, ExecutionStepEvidence | null>
+) => {
+  if (!patch) {
+    return current;
+  }
+
+  const next = { ...current };
+
+  Object.entries(patch).forEach(([stepId, evidence]) => {
+    if (!evidence?.dataUrl) {
+      delete next[stepId];
+      return;
+    }
+
+    next[stepId] = evidence;
+  });
+
+  return next;
+};
+
+const readExecutionEvidenceImage = (file: File) =>
+  new Promise<ExecutionStepEvidence>((resolve, reject) => {
+    if (!file.type.startsWith("image/")) {
+      reject(new Error("Upload a PNG, JPG, WebP, GIF, or another supported image file."));
+      return;
+    }
+
+    if (file.size > MAX_EXECUTION_EVIDENCE_IMAGE_BYTES) {
+      reject(new Error("Evidence images must be 3 MB or smaller because they are stored directly in the execution record."));
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+
+      if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(dataUrl)) {
+        reject(new Error("Unable to encode the selected image for execution evidence."));
+        return;
+      }
+
+      resolve({
+        dataUrl,
+        fileName: file.name || undefined,
+        mimeType: file.type || undefined
+      });
+    };
+    reader.onerror = () => reject(new Error(`Unable to read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
 
 function buildProgressSegments(
   passedCount: number,
@@ -385,6 +449,9 @@ export function ExecutionsPage() {
   const [executionListItemHeight, setExecutionListItemHeight] = useState(236);
   const [caseTimerStartedAtById, setCaseTimerStartedAtById] = useState<Record<string, number>>({});
   const [executionFinalizeAction, setExecutionFinalizeAction] = useState<"complete" | "abort" | null>(null);
+  const [uploadingEvidenceStepId, setUploadingEvidenceStepId] = useState("");
+  const [executionEvidencePreview, setExecutionEvidencePreview] = useState<ExecutionEvidencePreviewState | null>(null);
+  const [isExecutionContextModalOpen, setIsExecutionContextModalOpen] = useState(false);
   const executionCardMeasureRef = useRef<HTMLDivElement | null>(null);
   const deferredExecutionSearch = useDeferredValue(executionSearch);
 
@@ -848,7 +915,12 @@ export function ExecutionsPage() {
   useEffect(() => {
     setBulkSelectedStepIds([]);
     setActiveTab("overview");
+    setExecutionEvidencePreview(null);
   }, [selectedExecutionId, selectedTestCaseId]);
+
+  useEffect(() => {
+    setIsExecutionContextModalOpen(false);
+  }, [selectedExecutionId]);
 
   const resultByCaseId = useMemo(() => {
     const map: Record<string, ExecutionResult> = {};
@@ -865,6 +937,7 @@ export function ExecutionsPage() {
 
   const stepStatuses = selectedCaseLogs.stepStatuses || {};
   const stepNotes = selectedCaseLogs.stepNotes || {};
+  const stepEvidence = selectedCaseLogs.stepEvidence || {};
 
   const caseDerivedStatus = (testCase: ExecutionCaseView): ExecutionResult["status"] | "queued" => {
     const result = resultByCaseId[testCase.id];
@@ -1105,7 +1178,11 @@ export function ExecutionsPage() {
 
   const persistCaseResult = async (
     testCaseId: string,
-    patches: { stepStatusesPatch?: Record<string, ExecutionStepStatus>; stepNotesPatch?: Record<string, string> }
+    patches: {
+      stepStatusesPatch?: Record<string, ExecutionStepStatus>;
+      stepNotesPatch?: Record<string, string>;
+      stepEvidencePatch?: Record<string, ExecutionStepEvidence | null>;
+    }
   ) => {
     const scopedAppTypeId = selectedExecution?.app_type_id;
     const currentCaseSnapshot = snapshotCases.find((snapshot) => snapshot.test_case_id === testCaseId);
@@ -1120,13 +1197,14 @@ export function ExecutionsPage() {
     const prev = parseExecutionLogs(existing?.logs || null);
     const mergedStatuses = { ...(prev.stepStatuses || {}), ...(patches.stepStatusesPatch || {}) };
     const mergedNotes = { ...(prev.stepNotes || {}), ...(patches.stepNotesPatch || {}) };
+    const mergedEvidence = mergeExecutionEvidencePatch(prev.stepEvidence || {}, patches.stepEvidencePatch);
 
     const caseStepIds = (stepsByCaseId[testCaseId] || [])
       .slice()
       .sort((left, right) => left.step_order - right.step_order)
       .map((step) => step.id);
     const aggregateStatus = deriveCaseStatusFromSteps(caseStepIds, mergedStatuses);
-    const logs = stringifyExecutionLogs({ stepStatuses: mergedStatuses, stepNotes: mergedNotes });
+    const logs = stringifyExecutionLogs({ stepStatuses: mergedStatuses, stepNotes: mergedNotes, stepEvidence: mergedEvidence });
     const durationMs = resolvePersistedCaseDurationMs(testCaseId, existing);
 
     if (existing) {
@@ -1156,7 +1234,9 @@ export function ExecutionsPage() {
     }
 
     const shouldCreate =
-      Object.keys(patches.stepStatusesPatch || {}).length > 0 || Object.keys(patches.stepNotesPatch || {}).length > 0;
+      Object.keys(patches.stepStatusesPatch || {}).length > 0
+      || Object.keys(patches.stepNotesPatch || {}).length > 0
+      || Object.keys(patches.stepEvidencePatch || {}).length > 0;
     if (!shouldCreate) {
       return;
     }
@@ -1229,6 +1309,32 @@ export function ExecutionsPage() {
       await persistCaseResult(selectedTestCaseId, { stepNotesPatch: { [stepId]: note } });
     } catch (error) {
       showError(error, "Unable to save step note");
+    }
+  };
+
+  const openExecutionEvidence = (step: TestStep, evidence: ExecutionStepEvidence) => {
+    setExecutionEvidencePreview({
+      stepLabel: `Step ${step.step_order}`,
+      fileName: evidence.fileName || null,
+      dataUrl: evidence.dataUrl
+    });
+  };
+
+  const handleUploadStepEvidence = async (step: TestStep, file: File) => {
+    if (!selectedExecution || !selectedTestCaseId) {
+      return;
+    }
+
+    setUploadingEvidenceStepId(step.id);
+
+    try {
+      const evidence = await readExecutionEvidenceImage(file);
+      await persistCaseResult(selectedTestCaseId, { stepEvidencePatch: { [step.id]: evidence } });
+      showSuccess(stepEvidence[step.id]?.dataUrl ? "Evidence image replaced." : "Evidence image saved.");
+    } catch (error) {
+      showError(error, "Unable to save evidence image");
+    } finally {
+      setUploadingEvidenceStepId((current) => (current === step.id ? "" : current));
     }
   };
 
@@ -1375,6 +1481,11 @@ export function ExecutionsPage() {
     () => Object.values(stepNotes).filter((value) => value.trim()).length,
     [stepNotes]
   );
+  const resolvedStepImageCount = useMemo(
+    () => Object.values(stepEvidence).filter((value) => Boolean(value?.dataUrl)).length,
+    [stepEvidence]
+  );
+  const resolvedEvidenceArtifactCount = resolvedStepNoteCount + resolvedStepImageCount;
 
   const selectedExecutionAppTypeLabel =
     appTypeNameById[selectedExecution?.app_type_id || ""] || "No app type scoped";
@@ -1520,7 +1631,11 @@ export function ExecutionsPage() {
       queryClient.getQueryData<ExecutionResult[]>(["execution-results", selectedExecution.id]) || executionResults;
     const existing = fresh.find((item) => item.test_case_id === testCaseId);
     const prev = parseExecutionLogs(existing?.logs || null);
-    const logs = stringifyExecutionLogs({ stepStatuses: prev.stepStatuses || {}, stepNotes: prev.stepNotes || {} });
+    const logs = stringifyExecutionLogs({
+      stepStatuses: prev.stepStatuses || {},
+      stepNotes: prev.stepNotes || {},
+      stepEvidence: prev.stepEvidence || {}
+    });
     const durationMs = resolvePersistedCaseDurationMs(testCaseId, existing);
 
     if (existing) {
@@ -1781,10 +1896,20 @@ export function ExecutionsPage() {
                           <small>{selectedSteps.length ? `${selectedStepProgress.passedCount + selectedStepProgress.failedCount}/${selectedSteps.length} steps resolved` : "No steps loaded for this case"}</small>
                         </div>
                         <div className="execution-detail-card">
-                          <span>Evidence notes</span>
-                          <strong>{resolvedStepNoteCount}</strong>
-                          <small>{resolvedStepNoteCount ? "Comments captured for this case" : "No comments captured yet"}</small>
+                          <span>Evidence captured</span>
+                          <strong>{resolvedEvidenceArtifactCount}</strong>
+                          <small>
+                            {resolvedEvidenceArtifactCount
+                              ? `${resolvedStepNoteCount} note${resolvedStepNoteCount === 1 ? "" : "s"} · ${resolvedStepImageCount} image${resolvedStepImageCount === 1 ? "" : "s"}`
+                              : "No evidence captured yet"}
+                          </small>
                         </div>
+                      </div>
+
+                      <div className="action-row">
+                        <button className="ghost-button" onClick={() => setIsExecutionContextModalOpen(true)} type="button">
+                          View context snapshot
+                        </button>
                       </div>
                     </div>
 
@@ -1903,7 +2028,7 @@ export function ExecutionsPage() {
                             <span className="execution-step-col-expected" role="columnheader">Expected</span>
                             <span className="execution-step-col-status" role="columnheader">Result</span>
                             <span className="execution-step-col-actions" role="columnheader">Mark</span>
-                            <span className="execution-step-col-note" role="columnheader">Comment / log</span>
+                            <span className="execution-step-col-note" role="columnheader">Evidence</span>
                           </div>
                           <div className="execution-step-table-body">
                             {executionStepBlocks.map((block) => {
@@ -1931,18 +2056,22 @@ export function ExecutionsPage() {
 
                                           return (
                                             <ExecutionCompactStepRow
+                                              evidence={stepEvidence[step.id] || null}
                                               isLocked={!isExecutionStarted || isExecutionLocked}
                                               isSelected={bulkSelectedStepIds.includes(step.id)}
+                                              isUploadingEvidence={uploadingEvidenceStepId === step.id}
                                               key={step.id}
                                               note={stepNotes[step.id] || ""}
                                               onFail={() => void handleRecordStep(step.id, "failed")}
                                               onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
                                               onPass={() => void handleRecordStep(step.id, "passed")}
+                                              onUploadEvidence={(file) => void handleUploadStepEvidence(step, file)}
                                               onToggleSelect={(checked) =>
                                                 setBulkSelectedStepIds((current) =>
                                                   checked ? [...new Set([...current, step.id])] : current.filter((id) => id !== step.id)
                                                 )
                                               }
+                                              onViewEvidence={() => openExecutionEvidence(step, stepEvidence[step.id] as ExecutionStepEvidence)}
                                               status={rowStatus || "queued"}
                                               step={step}
                                             />
@@ -1958,18 +2087,22 @@ export function ExecutionsPage() {
 
                                 return (
                                   <ExecutionCompactStepRow
+                                    evidence={stepEvidence[step.id] || null}
                                     isLocked={!isExecutionStarted || isExecutionLocked}
                                     isSelected={bulkSelectedStepIds.includes(step.id)}
+                                    isUploadingEvidence={uploadingEvidenceStepId === step.id}
                                     key={step.id}
                                     note={stepNotes[step.id] || ""}
                                     onFail={() => void handleRecordStep(step.id, "failed")}
                                     onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
                                     onPass={() => void handleRecordStep(step.id, "passed")}
+                                    onUploadEvidence={(file) => void handleUploadStepEvidence(step, file)}
                                     onToggleSelect={(checked) =>
                                       setBulkSelectedStepIds((current) =>
                                         checked ? [...new Set([...current, step.id])] : current.filter((id) => id !== step.id)
                                       )
                                     }
+                                    onViewEvidence={() => openExecutionEvidence(step, stepEvidence[step.id] as ExecutionStepEvidence)}
                                     status={rowStatus || "queued"}
                                     step={step}
                                   />
@@ -1992,7 +2125,11 @@ export function ExecutionsPage() {
                               <strong>{selectedExecutionResult.test_case_title || selectedExecutionCase.title || "Selected case logs"}</strong>
                               <span>{selectedExecutionResult.error || "Structured evidence and notes for the focused case."}</span>
                             </div>
-                            <ExecutionStructuredLogView logsJson={selectedExecutionResult.logs} steps={selectedSteps} />
+                            <ExecutionStructuredLogView
+                              logsJson={selectedExecutionResult.logs}
+                              onOpenEvidence={openExecutionEvidence}
+                              steps={selectedSteps}
+                            />
                           </div>
                         ) : (
                           <div className="empty-state compact">No logs yet for the selected case.</div>
@@ -2113,7 +2250,7 @@ export function ExecutionsPage() {
                       </div>
                     </div>
 
-                    <ExecutionContextSnapshotSummary execution={selectedExecution} />
+                    <ExecutionContextSnapshotSummary execution={selectedExecution} onViewFull={() => setIsExecutionContextModalOpen(true)} />
 
                     <div className="execution-control-strip">
                       <div className="execution-control-copy">
@@ -2306,6 +2443,40 @@ export function ExecutionsPage() {
         )}
         isDetailOpen={Boolean(selectedExecution)}
       />
+
+      {executionEvidencePreview ? (
+        <div className="modal-backdrop" onClick={() => setExecutionEvidencePreview(null)} role="presentation">
+          <div
+            aria-labelledby="execution-evidence-modal-title"
+            aria-modal="true"
+            className="modal-card execution-evidence-modal"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="execution-evidence-modal-header">
+              <div className="execution-evidence-modal-copy">
+                <p className="eyebrow">Execution Evidence</p>
+                <h3 id="execution-evidence-modal-title">{executionEvidencePreview.fileName || "Evidence image"}</h3>
+                <p>{executionEvidencePreview.stepLabel}</p>
+              </div>
+              <button className="ghost-button" onClick={() => setExecutionEvidencePreview(null)} type="button">
+                Close
+              </button>
+            </div>
+            <div className="execution-evidence-modal-body">
+              <img
+                alt={`${executionEvidencePreview.stepLabel} evidence`}
+                className="execution-evidence-modal-image"
+                src={executionEvidencePreview.dataUrl}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedExecution && isExecutionContextModalOpen ? (
+        <ExecutionContextSnapshotModal execution={selectedExecution} onClose={() => setIsExecutionContextModalOpen(false)} />
+      ) : null}
 
       {isCreateExecutionModalOpen ? (
         <ExecutionCreateModal
@@ -2837,6 +3008,25 @@ function ExecutionStepFailIcon() {
   );
 }
 
+function ExecutionEvidenceImageIcon() {
+  return (
+    <ExecutionIconShell>
+      <rect height="14" rx="2" width="16" x="4" y="5" />
+      <circle cx="9" cy="10" r="1.4" fill="currentColor" stroke="none" />
+      <path d="m7 17 3-3 2.5 2.5 2.5-3 2 3.5" />
+    </ExecutionIconShell>
+  );
+}
+
+function ExecutionEvidencePreviewIcon() {
+  return (
+    <ExecutionIconShell>
+      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+      <circle cx="12" cy="12" r="2.5" />
+    </ExecutionIconShell>
+  );
+}
+
 function ExecutionOverviewOrb({
   passedCount,
   failedCount,
@@ -3000,26 +3190,41 @@ function ExecutionCompactStepRow({
   step,
   status,
   note,
+  evidence,
   isLocked,
   isSelected,
+  isUploadingEvidence,
   onToggleSelect,
   onPass,
   onFail,
-  onNoteBlur
+  onNoteBlur,
+  onUploadEvidence,
+  onViewEvidence
 }: {
   step: TestStep;
   status: ExecutionResult["status"] | "queued";
   note: string;
+  evidence: ExecutionStepEvidence | null;
   isLocked: boolean;
   isSelected: boolean;
+  isUploadingEvidence: boolean;
   onToggleSelect: (checked: boolean) => void;
   onPass: () => void;
   onFail: () => void;
   onNoteBlur: (value: string) => void;
+  onUploadEvidence: (file: File) => void;
+  onViewEvidence: () => void;
 }) {
-  const stepKind = getExecutionStepKindMeta(step.group_name ? step.group_kind || "local" : step.group_kind);
-  const toneClass =
-    status === "passed" ? "execution-step-row is-passed" : status === "failed" ? "execution-step-row is-failed" : "execution-step-row";
+  const evidenceInputRef = useRef<HTMLInputElement | null>(null);
+  const resolvedKind = step.group_name ? step.group_kind || "local" : step.group_kind;
+  const stepKind = getExecutionStepKindMeta(resolvedKind);
+  const toneClass = [
+    "execution-step-row",
+    status === "passed" ? "is-passed" : "",
+    status === "failed" ? "is-failed" : "",
+    stepKind.tone === "shared" ? "is-shared-step" : "",
+    stepKind.tone === "local" ? "is-local-step" : ""
+  ].filter(Boolean).join(" ");
 
   return (
     <div className={toneClass} role="row">
@@ -3036,12 +3241,19 @@ function ExecutionCompactStepRow({
         {step.step_order}
       </span>
       <div className="execution-step-col-action execution-step-copy" role="cell">
-        {step.group_name ? (
-          <div className="execution-step-badges">
-            <StepKindIconBadge kind={step.group_kind} label={stepKind.label} tone={stepKind.tone} />
-            <span className="execution-step-group-chip">{step.group_name}</span>
-          </div>
-        ) : null}
+        <div className="execution-step-badges">
+          <StepKindIconBadge kind={resolvedKind} label={stepKind.label} tone={stepKind.tone} />
+          {step.group_name ? (
+            <span
+              className={[
+                "execution-step-group-chip",
+                stepKind.tone === "shared" ? "is-shared" : stepKind.tone === "local" ? "is-local" : ""
+              ].filter(Boolean).join(" ")}
+            >
+              {step.group_name}
+            </span>
+          ) : null}
+        </div>
         <span className="execution-step-clamp" title={step.action || ""}>
           {step.action || "—"}
         </span>
@@ -3076,32 +3288,83 @@ function ExecutionCompactStepRow({
           </button>
         </div>
       </span>
-      <span className="execution-step-col-note" role="cell">
-        <textarea
-          className="execution-step-note-input"
-          defaultValue={note}
-          disabled={isLocked}
-          key={`${step.id}:${note}`}
-          onBlur={(event) => {
-            const raw = event.target.value;
-            if (raw.trim() !== (note || "").trim()) {
-              onNoteBlur(raw);
-            }
-          }}
-          placeholder="Evidence, defect ID, observations…"
-          rows={2}
-        />
-      </span>
+      <div className="execution-step-col-note" role="cell">
+        <div className="execution-step-evidence-cell">
+          <textarea
+            className="execution-step-note-input"
+            defaultValue={note}
+            disabled={isLocked}
+            key={`${step.id}:${note}`}
+            onBlur={(event) => {
+              const raw = event.target.value;
+              if (raw.trim() !== (note || "").trim()) {
+                onNoteBlur(raw);
+              }
+            }}
+            placeholder="Evidence, defect ID, observations…"
+            rows={2}
+          />
+          <input
+            accept="image/*"
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.currentTarget.value = "";
+
+              if (file) {
+                onUploadEvidence(file);
+              }
+            }}
+            ref={evidenceInputRef}
+            type="file"
+          />
+          <div className="execution-step-evidence-actions">
+            <button
+              className="execution-step-evidence-button"
+              disabled={isLocked || isUploadingEvidence}
+              onClick={() => evidenceInputRef.current?.click()}
+              title={evidence ? "Replace evidence image" : "Upload evidence image"}
+              type="button"
+            >
+              <ExecutionEvidenceImageIcon />
+              <span>{isUploadingEvidence ? "Uploading…" : evidence ? "Replace image" : "Upload image"}</span>
+            </button>
+            {evidence ? (
+              <button
+                className="execution-step-evidence-link"
+                disabled={isUploadingEvidence}
+                onClick={onViewEvidence}
+                title={evidence.fileName || "View saved evidence image"}
+                type="button"
+              >
+                <ExecutionEvidencePreviewIcon />
+                <span>{evidence.fileName || "View image"}</span>
+              </button>
+            ) : (
+              <span className="execution-step-evidence-empty">No image uploaded</span>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-function ExecutionStructuredLogView({ logsJson, steps }: { logsJson: string | null; steps: TestStep[] }) {
+function ExecutionStructuredLogView({
+  logsJson,
+  steps,
+  onOpenEvidence
+}: {
+  logsJson: string | null;
+  steps: TestStep[];
+  onOpenEvidence?: (step: TestStep, evidence: ExecutionStepEvidence) => void;
+}) {
   const parsed = parseExecutionLogs(logsJson);
   const hasNotes = parsed.stepNotes && Object.keys(parsed.stepNotes).length > 0;
   const hasStatuses = parsed.stepStatuses && Object.keys(parsed.stepStatuses).length > 0;
+  const hasEvidence = parsed.stepEvidence && Object.keys(parsed.stepEvidence).length > 0;
 
-  if (!hasNotes && !hasStatuses && !logsJson?.trim()) {
+  if (!hasNotes && !hasStatuses && !hasEvidence && !logsJson?.trim()) {
     return <span className="execution-log-empty">No structured step data recorded yet.</span>;
   }
 
@@ -3109,7 +3372,9 @@ function ExecutionStructuredLogView({ logsJson, steps }: { logsJson: string | nu
     .map((step, index) => {
       const st = parsed.stepStatuses?.[step.id];
       const nt = parsed.stepNotes?.[step.id];
-      if (!st && !nt) {
+      const evidence = parsed.stepEvidence?.[step.id];
+
+      if (!st && !nt && !evidence) {
         if (!isStepGroupStart(steps, index)) {
           return null;
         }
@@ -3129,10 +3394,20 @@ function ExecutionStructuredLogView({ logsJson, steps }: { logsJson: string | nu
               </span>
             </div>
           ) : null}
-          {st || nt ? (
+          {st || nt || evidence ? (
             <div className="execution-structured-log-row">
               <strong>Step {step.step_order}</strong>
               {st ? <StatusBadge value={st} /> : null}
+              {evidence ? (
+                <button
+                  className="execution-structured-evidence-button"
+                  onClick={() => evidence && onOpenEvidence?.(step, evidence)}
+                  type="button"
+                >
+                  <ExecutionEvidencePreviewIcon />
+                  <span>{evidence.fileName || "View image evidence"}</span>
+                </button>
+              ) : null}
               {nt ? <span className="execution-structured-note">{nt}</span> : null}
             </div>
           ) : null}
@@ -3153,14 +3428,17 @@ function ExecutionStructuredLogSummary({ logsJson }: { logsJson: string | null }
   const parsed = parseExecutionLogs(logsJson);
   const noteCount = parsed.stepNotes ? Object.values(parsed.stepNotes).filter(Boolean).length : 0;
   const statusCount = parsed.stepStatuses ? Object.keys(parsed.stepStatuses).length : 0;
-  if (!noteCount && !statusCount) {
+  const evidenceCount = parsed.stepEvidence ? Object.keys(parsed.stepEvidence).length : 0;
+  if (!noteCount && !statusCount && !evidenceCount) {
     return <span className="execution-log-summary-muted">No step details</span>;
   }
   return (
     <span className="execution-log-summary">
       {statusCount ? `${statusCount} step result${statusCount === 1 ? "" : "s"}` : null}
-      {statusCount && noteCount ? " · " : null}
+      {statusCount && (noteCount || evidenceCount) ? " · " : null}
       {noteCount ? `${noteCount} note${noteCount === 1 ? "" : "s"}` : null}
+      {noteCount && evidenceCount ? " · " : null}
+      {evidenceCount ? `${evidenceCount} image${evidenceCount === 1 ? "" : "s"}` : null}
     </span>
   );
 }
@@ -3281,7 +3559,7 @@ function ExecutionCreateModal({
   const areAllSmartCasesSelected = Boolean(smartPreviewCases.length) && selectedSmartCaseCount === smartPreviewCases.length;
 
   return (
-    <div className="modal-backdrop" onClick={() => !isSubmitting && onClose()} role="presentation">
+    <div className="modal-backdrop modal-backdrop--scroll" onClick={() => !isSubmitting && onClose()} role="presentation">
       <div
         aria-labelledby="create-execution-title"
         aria-modal="true"
@@ -3608,7 +3886,13 @@ function ExecutionCreateModal({
   );
 }
 
-function ExecutionContextSnapshotSummary({ execution }: { execution: Execution }) {
+function ExecutionContextSnapshotSummary({
+  execution,
+  onViewFull
+}: {
+  execution: Execution;
+  onViewFull?: () => void;
+}) {
   const environmentSummary = execution.test_environment?.snapshot;
   const configurationSummary = execution.test_configuration?.snapshot;
   const dataSetSummary = execution.test_data_set?.snapshot;
@@ -3619,28 +3903,345 @@ function ExecutionContextSnapshotSummary({ execution }: { execution: Execution }
   ].filter(Boolean).join(" · ");
 
   return (
-    <div className="execution-context-cards">
-      <div className="execution-context-card">
-        <span>Environment</span>
-        <strong>{execution.test_environment?.name || "No environment attached"}</strong>
-        <small>{environmentSummary?.base_url || environmentSummary?.browser || "No environment snapshot details recorded."}</small>
+    <div className="execution-context-summary-shell">
+      <div className="execution-context-summary-head">
+        <div className="execution-context-summary-copy">
+          <strong>Execution context snapshot</strong>
+          <span>Environment, configuration, and test data were frozen when this execution was created.</span>
+        </div>
+        {onViewFull ? (
+          <button className="ghost-button" onClick={onViewFull} type="button">
+            View full context
+          </button>
+        ) : null}
       </div>
-      <div className="execution-context-card">
-        <span>Configuration</span>
-        <strong>{execution.test_configuration?.name || "No configuration attached"}</strong>
-        <small>{configurationTarget || (configurationSummary?.variables?.length ? `${configurationSummary.variables.length} variables available` : "No configuration snapshot details recorded.")}</small>
+
+      <div className="execution-context-cards">
+        <div className="execution-context-card">
+          <span>Environment snapshot</span>
+          <strong>{environmentSummary?.name || execution.test_environment?.name || "No environment attached"}</strong>
+          <small>{environmentSummary?.base_url || environmentSummary?.browser || "No environment snapshot details recorded."}</small>
+        </div>
+        <div className="execution-context-card">
+          <span>Configuration snapshot</span>
+          <strong>{configurationSummary?.name || execution.test_configuration?.name || "No configuration attached"}</strong>
+          <small>{configurationTarget || (configurationSummary?.variables?.length ? `${configurationSummary.variables.length} variables available` : "No configuration snapshot details recorded.")}</small>
+        </div>
+        <div className="execution-context-card">
+          <span>Data snapshot</span>
+          <strong>{dataSetSummary?.name || execution.test_data_set?.name || "No data set attached"}</strong>
+          <small>
+            {dataSetSummary
+              ? dataSetSummary.mode === "table"
+                ? `${dataSetSummary.rows.length} table rows snapped`
+                : `${dataSetSummary.rows.length} key/value pairs snapped`
+              : "No data snapshot details recorded."}
+          </small>
+        </div>
       </div>
-      <div className="execution-context-card">
-        <span>Data set</span>
-        <strong>{execution.test_data_set?.name || "No data set attached"}</strong>
-        <small>
-          {dataSetSummary
-            ? dataSetSummary.mode === "table"
-              ? `${dataSetSummary.rows.length} table rows snapped`
-              : `${dataSetSummary.rows.length} key/value pairs snapped`
-            : "No data snapshot details recorded."}
-        </small>
+    </div>
+  );
+}
+
+function ExecutionContextSnapshotModal({
+  execution,
+  onClose
+}: {
+  execution: Execution;
+  onClose: () => void;
+}) {
+  const environmentSummary = execution.test_environment?.snapshot;
+  const configurationSummary = execution.test_configuration?.snapshot;
+  const dataSetSummary = execution.test_data_set?.snapshot;
+
+  return (
+    <div className="modal-backdrop modal-backdrop--scroll" onClick={onClose} role="presentation">
+      <div
+        aria-labelledby="execution-context-modal-title"
+        aria-modal="true"
+        className="modal-card execution-context-modal"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <div className="execution-context-modal-header">
+          <div className="execution-context-modal-copy">
+            <p className="eyebrow">Execution Context Snapshot</p>
+            <h3 id="execution-context-modal-title">{execution.name || "Selected execution"}</h3>
+            <p>Review the exact environment, configuration, and test data preserved with this run. Later edits to reusable resources do not change this snapshot.</p>
+          </div>
+          <button className="ghost-button" onClick={onClose} type="button">
+            Close
+          </button>
+        </div>
+
+        <div className="execution-context-modal-body">
+          <ExecutionContextSnapshotSummary execution={execution} />
+
+          <div className="execution-context-modal-layout">
+            <ExecutionContextSnapshotSection
+              description="Base URL, browser, notes, and environment variables preserved for this execution."
+              title={environmentSummary?.name || execution.test_environment?.name || "No environment attached"}
+            >
+              {environmentSummary ? (
+                <>
+                  <ExecutionContextMetaGrid
+                    items={[
+                      { label: "Base URL", value: environmentSummary.base_url || "Not set" },
+                      { label: "Browser", value: environmentSummary.browser || "Not set" },
+                      {
+                        label: "Variables",
+                        value: `${environmentSummary.variables.length} variable${environmentSummary.variables.length === 1 ? "" : "s"}`
+                      }
+                    ]}
+                  />
+                  {environmentSummary.description ? (
+                    <ExecutionContextSnapshotCopyBlock label="Description" value={environmentSummary.description} />
+                  ) : null}
+                  {environmentSummary.notes ? (
+                    <ExecutionContextSnapshotCopyBlock label="Notes" value={environmentSummary.notes} />
+                  ) : null}
+                  <ExecutionContextVariableTable
+                    emptyMessage="No environment variables were snapshotted for this run."
+                    entries={environmentSummary.variables}
+                    title="Environment variables"
+                  />
+                </>
+              ) : (
+                <div className="empty-state compact">No environment snapshot details were recorded for this execution.</div>
+              )}
+            </ExecutionContextSnapshotSection>
+
+            <ExecutionContextSnapshotSection
+              description="Browser, mobile target, platform version, and configuration variables preserved with the run."
+              title={configurationSummary?.name || execution.test_configuration?.name || "No configuration attached"}
+            >
+              {configurationSummary ? (
+                <>
+                  <ExecutionContextMetaGrid
+                    items={[
+                      { label: "Browser", value: configurationSummary.browser || "Not set" },
+                      { label: "Mobile OS", value: configurationSummary.mobile_os || "Not set" },
+                      { label: "Platform version", value: configurationSummary.platform_version || "Not set" },
+                      {
+                        label: "Variables",
+                        value: `${configurationSummary.variables.length} variable${configurationSummary.variables.length === 1 ? "" : "s"}`
+                      }
+                    ]}
+                  />
+                  {configurationSummary.description ? (
+                    <ExecutionContextSnapshotCopyBlock label="Description" value={configurationSummary.description} />
+                  ) : null}
+                  <ExecutionContextVariableTable
+                    emptyMessage="No configuration variables were snapshotted for this run."
+                    entries={configurationSummary.variables}
+                    title="Configuration variables"
+                  />
+                </>
+              ) : (
+                <div className="empty-state compact">No configuration snapshot details were recorded for this execution.</div>
+              )}
+            </ExecutionContextSnapshotSection>
+
+            <ExecutionContextSnapshotSection
+              description="The data rows below are the exact execution data snapshot used for this run."
+              title={dataSetSummary?.name || execution.test_data_set?.name || "No data set attached"}
+            >
+              {dataSetSummary ? (
+                <>
+                  <ExecutionContextMetaGrid
+                    items={[
+                      { label: "Mode", value: dataSetSummary.mode === "table" ? "Table data" : "Key/value data" },
+                      { label: "Columns", value: String(dataSetSummary.columns.length) },
+                      { label: "Rows", value: String(dataSetSummary.rows.length) }
+                    ]}
+                  />
+                  {dataSetSummary.description ? (
+                    <ExecutionContextSnapshotCopyBlock label="Description" value={dataSetSummary.description} />
+                  ) : null}
+                  <ExecutionContextDataTable snapshot={dataSetSummary} />
+                </>
+              ) : (
+                <div className="empty-state compact">No test data snapshot details were recorded for this execution.</div>
+              )}
+            </ExecutionContextSnapshotSection>
+          </div>
+        </div>
       </div>
+    </div>
+  );
+}
+
+function ExecutionContextSnapshotSection({
+  title,
+  description,
+  children
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="execution-context-modal-section">
+      <div className="execution-context-modal-section-head">
+        <div className="execution-context-modal-section-copy">
+          <h4>{title}</h4>
+          <p>{description}</p>
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function ExecutionContextMetaGrid({
+  items
+}: {
+  items: Array<{
+    label: string;
+    value: string;
+  }>;
+}) {
+  return (
+    <div className="execution-context-modal-meta">
+      {items.map((item) => (
+        <div className="execution-context-modal-meta-card" key={item.label}>
+          <span>{item.label}</span>
+          <strong>{item.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ExecutionContextSnapshotCopyBlock({
+  label,
+  value
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="execution-context-modal-copy-block">
+      <strong>{label}</strong>
+      <p>{value}</p>
+    </div>
+  );
+}
+
+function ExecutionContextVariableTable({
+  entries,
+  title,
+  emptyMessage
+}: {
+  entries: KeyValueEntry[];
+  title: string;
+  emptyMessage: string;
+}) {
+  return (
+    <div className="resource-table-shell execution-context-table-shell">
+      <div className="resource-table-toolbar">
+        <strong>{title}</strong>
+        <span className="count-pill">{entries.length} item{entries.length === 1 ? "" : "s"}</span>
+      </div>
+      {!entries.length ? <div className="empty-state compact resource-table-empty">{emptyMessage}</div> : null}
+      {entries.length ? (
+        <div className="table-wrap execution-context-table-wrap">
+          <table className="data-table resource-data-table">
+            <thead>
+              <tr>
+                <th>Key</th>
+                <th>Value</th>
+                <th>Visibility</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((entry, index) => (
+                <tr key={entry.id || `${entry.key}-${index}`}>
+                  <td>{entry.key || "Untitled key"}</td>
+                  <td>{entry.is_secret ? <span className="execution-context-hidden-value">{entry.has_stored_value ? "Stored secret" : "Hidden secret"}</span> : entry.value || "—"}</td>
+                  <td>{entry.is_secret ? "Hidden" : "Visible"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ExecutionContextDataTable({
+  snapshot
+}: {
+  snapshot: ExecutionDataSetSnapshot;
+}) {
+  if (snapshot.mode === "table") {
+    return (
+      <div className="resource-table-shell execution-context-table-shell">
+        <div className="resource-table-toolbar">
+          <strong>Table snapshot</strong>
+          <span className="count-pill">{snapshot.rows.length} row{snapshot.rows.length === 1 ? "" : "s"}</span>
+        </div>
+        {!snapshot.columns.length ? <div className="empty-state compact resource-table-empty">No columns were snapshotted for this data set.</div> : null}
+        {snapshot.columns.length ? (
+          <div className="table-wrap execution-context-table-wrap">
+            <table className="data-table resource-data-table">
+              <thead>
+                <tr>
+                  {snapshot.columns.map((column) => (
+                    <th key={column}>{column}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {snapshot.rows.length ? (
+                  snapshot.rows.map((row, rowIndex) => (
+                    <tr key={`row-${rowIndex}`}>
+                      {snapshot.columns.map((column) => (
+                        <td key={`${rowIndex}-${column}`}>{row[column] || "—"}</td>
+                      ))}
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={snapshot.columns.length}>No rows were snapshotted for this data set.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="resource-table-shell execution-context-table-shell">
+      <div className="resource-table-toolbar">
+        <strong>Key/value snapshot</strong>
+        <span className="count-pill">{snapshot.rows.length} pair{snapshot.rows.length === 1 ? "" : "s"}</span>
+      </div>
+      {!snapshot.rows.length ? <div className="empty-state compact resource-table-empty">No key/value rows were snapshotted for this data set.</div> : null}
+      {snapshot.rows.length ? (
+        <div className="table-wrap execution-context-table-wrap">
+          <table className="data-table resource-data-table">
+            <thead>
+              <tr>
+                <th>Key</th>
+                <th>Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {snapshot.rows.map((row, rowIndex) => (
+                <tr key={`row-${rowIndex}`}>
+                  <td>{row.key || `Row ${rowIndex + 1}`}</td>
+                  <td>{row.value || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
     </div>
   );
 }

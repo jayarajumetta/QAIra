@@ -3,6 +3,7 @@ const appTypeService = require("../services/appType.service");
 const projectService = require("../services/project.service");
 const requirementService = require("../services/requirement.service");
 const requirementDesignService = require("../services/requirementDesign.service");
+const { TEST_CASE_STATUS_VALUES } = require("../domain/catalog");
 
 const resolveScopedRequirements = async (requirementIds = [], projectId) => {
   const ids = [...new Set((Array.isArray(requirementIds) ? requirementIds : []).filter(Boolean))];
@@ -35,7 +36,7 @@ module.exports = async function (fastify) {
       title: { required: true, type: "string", minLength: 2 },
       description: { required: false, type: "string" },
       priority: { required: false, type: "number" },
-      status: { required: false, type: "string" },
+      status: { required: false, type: "string", enum: TEST_CASE_STATUS_VALUES },
       requirement_id: { required: false, type: "string" },
       requirement_ids: { required: false, type: "array", items: "string" },
       suite_id: { required: false, type: "string" },
@@ -129,7 +130,7 @@ module.exports = async function (fastify) {
     fastify.validate({
       app_type_id: { required: true, type: "string" },
       requirement_ids: { required: true, type: "array", items: "string" },
-      status: { required: false, type: "string" },
+      status: { required: false, type: "string", enum: TEST_CASE_STATUS_VALUES },
       cases: { required: true, type: "array" }
     }, req.body);
 
@@ -157,7 +158,7 @@ module.exports = async function (fastify) {
       title: { required: false, type: "string", minLength: 2 },
       description: { required: false, type: "string" },
       priority: { required: false, type: "number" },
-      status: { required: false, type: "string" },
+      status: { required: false, type: "string", enum: TEST_CASE_STATUS_VALUES },
       requirement_id: { required: false, type: "string" },
       requirement_ids: { required: false, type: "array", items: "string" },
       suite_id: { required: false, type: "string" },

@@ -27,6 +27,7 @@ import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
+import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { api } from "../lib/api";
 import type { AppType, ExecutionResult, Project, Requirement, TestCase, TestStep, TestSuite } from "../types";
 
@@ -64,14 +65,14 @@ type SuiteCaseStepFilter = "all" | "with-steps" | "no-steps";
 type SuiteCaseRunFilter = "all" | "with-runs" | "no-runs";
 
 const DEFAULT_CASE_STATUS = "active";
-const EMPTY_CASE_DRAFT: CaseDraft = {
+const createEmptyCaseDraft = (defaultStatus = DEFAULT_CASE_STATUS): CaseDraft => ({
   suite_id: "",
   title: "",
   description: "",
   priority: "3",
-  status: DEFAULT_CASE_STATUS,
+  status: defaultStatus,
   requirement_id: ""
-};
+});
 const EMPTY_STEP_DRAFT = {
   action: "",
   expected_result: ""
@@ -163,6 +164,7 @@ export function DesignPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { session } = useAuth();
+  const domainMetadataQuery = useDomainMetadata();
   const [projectId, setProjectId] = useCurrentProject();
   const [appTypeId, setAppTypeId] = useState("");
   const [selectedSuiteId, setSelectedSuiteId] = useState("");
@@ -191,6 +193,9 @@ export function DesignPage() {
   const [isDeletingSelectedSuites, setIsDeletingSelectedSuites] = useState(false);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
+  const defaultCaseStatus = domainMetadataQuery.data?.test_cases.default_status || DEFAULT_CASE_STATUS;
+  const testCaseStatusOptions = domainMetadataQuery.data?.test_cases.statuses || [];
+  const emptyCaseDraft = useMemo(() => createEmptyCaseDraft(defaultCaseStatus), [defaultCaseStatus]);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -304,7 +309,7 @@ export function DesignPage() {
     resetExecutionContextSelection();
   };
 
-  const [caseDraft, setCaseDraft] = useState<CaseDraft>(EMPTY_CASE_DRAFT);
+  const [caseDraft, setCaseDraft] = useState<CaseDraft>(() => createEmptyCaseDraft());
   const [newStepDraft, setNewStepDraft] = useState(EMPTY_STEP_DRAFT);
   const [isStepCreateVisible, setIsStepCreateVisible] = useState(false);
   const [draftSteps, setDraftSteps] = useState<DraftTestStep[]>([]);
@@ -492,7 +497,7 @@ export function DesignPage() {
         new Set(
           appTypeCases.map((testCase) => {
             const history = historyByCaseId[testCase.id] || [];
-            return history[0]?.status || testCase.status || DEFAULT_CASE_STATUS;
+            return history[0]?.status || testCase.status || defaultCaseStatus;
           })
         )
       ).sort((left, right) => left.localeCompare(right)),
@@ -531,7 +536,7 @@ export function DesignPage() {
         (testCase.requirement_ids || [testCase.requirement_id]).map((id) => (id ? requirementTitleById[id] || "" : "")).find(Boolean) || "";
       const history = historyByCaseId[testCase.id] || [];
       const latest = history[0];
-      const caseStatusValue = latest?.status || testCase.status || DEFAULT_CASE_STATUS;
+      const caseStatusValue = latest?.status || testCase.status || defaultCaseStatus;
       const stepCount = stepCountByCaseId[testCase.id] || 0;
       const runCount = history.length;
       const matchesSearch =
@@ -641,7 +646,7 @@ export function DesignPage() {
       return;
     }
 
-    setExpandedStepIds(draftSteps.map((step) => step.id));
+    setExpandedStepIds((current) => current.filter((id) => draftSteps.some((step) => step.id === id)));
   }, [draftSteps, isCreatingCase]);
 
   useEffect(() => {
@@ -667,7 +672,7 @@ export function DesignPage() {
   useEffect(() => {
     if (isCreatingCase || !selectedTestCase) {
       setCaseDraft({
-        ...EMPTY_CASE_DRAFT,
+        ...emptyCaseDraft,
         suite_id: selectedSuiteId || ""
       });
       return;
@@ -678,10 +683,10 @@ export function DesignPage() {
       title: selectedTestCase.title,
       description: selectedTestCase.description || "",
       priority: String(selectedTestCase.priority ?? 3),
-      status: selectedTestCase.status || DEFAULT_CASE_STATUS,
+      status: selectedTestCase.status || defaultCaseStatus,
       requirement_id: selectedTestCase.requirement_id || ""
     });
-  }, [isCreatingCase, selectedSuiteId, selectedTestCase, suites]);
+  }, [defaultCaseStatus, emptyCaseDraft, isCreatingCase, selectedSuiteId, selectedTestCase, suites]);
 
   useEffect(() => {
     const drafts: Record<string, StepDraft> = {};
@@ -730,7 +735,7 @@ export function DesignPage() {
       setIsCreatingCase(false);
       setDraftSteps([]);
       setCaseDraft({
-        ...EMPTY_CASE_DRAFT,
+        ...emptyCaseDraft,
         suite_id: selectedSuiteId || ""
       });
     }
@@ -873,7 +878,7 @@ export function DesignPage() {
           title: caseDraft.title,
           description: caseDraft.description || undefined,
           priority: Number(caseDraft.priority || 3),
-          status: caseDraft.status || DEFAULT_CASE_STATUS,
+          status: caseDraft.status || defaultCaseStatus,
           requirement_id: caseDraft.requirement_id || undefined,
           requirement_ids: caseDraft.requirement_id ? [caseDraft.requirement_id] : [],
           steps: normalizeDraftSteps(draftSteps)
@@ -886,7 +891,7 @@ export function DesignPage() {
           title: caseDraft.title,
           description: caseDraft.description || null,
           priority: Number(caseDraft.priority || 3),
-          status: caseDraft.status || DEFAULT_CASE_STATUS,
+          status: caseDraft.status || defaultCaseStatus,
           requirement_id: caseDraft.requirement_id || null
         };
 
@@ -1439,6 +1444,7 @@ export function DesignPage() {
             statusOptions={caseStatusOptions}
             priorityOptions={casePriorityOptions}
             activeFilterCount={activeCaseFilterCount}
+            defaultCaseStatus={defaultCaseStatus}
             selectedSuite={selectedSuite}
             isLoading={isDesignLoading}
             historyByCaseId={historyByCaseId}
@@ -1467,6 +1473,7 @@ export function DesignPage() {
           appType={selectedAppType}
           caseDraft={caseDraft}
           createPending={createTestCaseMutation.isPending}
+          defaultCaseStatus={defaultCaseStatus}
           deletePending={deleteTestCaseMutation.isPending}
           displaySteps={displaySteps}
           draftSteps={draftSteps}
@@ -1507,6 +1514,7 @@ export function DesignPage() {
           selectedTestCase={selectedTestCase}
           stepDrafts={stepDrafts}
           suites={suites}
+          testCaseStatusOptions={testCaseStatusOptions}
           updatePending={updateTestCaseMutation.isPending || updateStepMutation.isPending}
         />
       ) : null}
@@ -1803,6 +1811,7 @@ function TestCaseList({
   statusOptions,
   priorityOptions,
   activeFilterCount,
+  defaultCaseStatus,
   selectedSuite,
   isLoading,
   historyByCaseId,
@@ -1830,6 +1839,7 @@ function TestCaseList({
   statusOptions: string[];
   priorityOptions: string[];
   activeFilterCount: number;
+  defaultCaseStatus: string;
   selectedSuite: TestSuite | null;
   isLoading: boolean;
   historyByCaseId: Record<string, ExecutionResult[]>;
@@ -1967,7 +1977,7 @@ function TestCaseList({
             const latest = history[0];
             const requirement = requirements.find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id));
             const stepCount = stepCountByCaseId[testCase.id] || 0;
-            const caseStatusValue = latest?.status || testCase.status || DEFAULT_CASE_STATUS;
+            const caseStatusValue = latest?.status || testCase.status || defaultCaseStatus;
             const caseStatusLabel = formatTileCardLabel(caseStatusValue, "Active");
             const caseStatusTone = getTileCardTone(caseStatusValue);
             const suiteCount = (testCase.suite_ids || []).length || 0;
@@ -2067,6 +2077,7 @@ function SuiteCaseEditorModal({
   displaySteps,
   stepDrafts,
   caseDraft,
+  defaultCaseStatus,
   isStepCreateVisible,
   newStepDraft,
   draftSteps,
@@ -2077,6 +2088,7 @@ function SuiteCaseEditorModal({
   createPending,
   updatePending,
   deletePending,
+  testCaseStatusOptions,
   onCaseDraftChange,
   onClose,
   onCreateStep,
@@ -2105,6 +2117,7 @@ function SuiteCaseEditorModal({
   displaySteps: TestStep[];
   stepDrafts: Record<string, StepDraft>;
   caseDraft: CaseDraft;
+  defaultCaseStatus: string;
   isStepCreateVisible: boolean;
   newStepDraft: { action: string; expected_result: string };
   draftSteps: DraftTestStep[];
@@ -2115,6 +2128,7 @@ function SuiteCaseEditorModal({
   createPending: boolean;
   updatePending: boolean;
   deletePending: boolean;
+  testCaseStatusOptions: Array<{ value: string; label: string }>;
   onCaseDraftChange: (value: CaseDraft) => void;
   onClose: () => void;
   onCreateStep: () => void;
@@ -2199,7 +2213,7 @@ function SuiteCaseEditorModal({
 
           <div className="editor-accordion">
             <EditorAccordionSection
-              countLabel={isCreatingCase ? "Draft" : caseDraft.status || DEFAULT_CASE_STATUS}
+              countLabel={isCreatingCase ? "Draft" : caseDraft.status || defaultCaseStatus}
               isExpanded={expandedSections.case}
               onToggle={() => onToggleSection("case")}
               summary={caseSectionSummary}
@@ -2229,10 +2243,9 @@ function SuiteCaseEditorModal({
                   </FormField>
                   <FormField label="Status">
                     <select value={caseDraft.status} onChange={(event) => onCaseDraftChange({ ...caseDraft, status: event.target.value })}>
-                      <option value="active">active</option>
-                      <option value="draft">draft</option>
-                      <option value="ready">ready</option>
-                      <option value="retired">retired</option>
+                      {testCaseStatusOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
                     </select>
                   </FormField>
                   <FormField label="Priority">
@@ -2311,6 +2324,7 @@ function SuiteCaseEditorModal({
                   {isCreatingCase
                     ? draftSteps.map((step, index) => (
                         <DraftStepCard
+                          isExpanded={expandedStepIds.includes(step.id)}
                           canMoveDown={index < draftSteps.length - 1}
                           canMoveUp={index > 0}
                           key={step.id}
@@ -2318,6 +2332,7 @@ function SuiteCaseEditorModal({
                           onDelete={() => onDeleteStep(step.id)}
                           onMoveDown={() => onDraftStepMove(step.id, "down")}
                           onMoveUp={() => onDraftStepMove(step.id, "up")}
+                          onToggle={() => onToggleStep(step.id)}
                           step={{ ...step, step_order: index + 1 }}
                         />
                       ))
@@ -2553,18 +2568,22 @@ function EditableStepCard({
 
 function DraftStepCard({
   step,
+  isExpanded,
   canMoveUp,
   canMoveDown,
   onChange,
   onDelete,
+  onToggle,
   onMoveUp,
   onMoveDown
 }: {
   step: { step_order: number; action: string; expected_result: string; group_id?: string | null; group_name?: string | null; group_kind?: "local" | "reusable" | null; reusable_group_id?: string | null };
+  isExpanded: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
   onChange: (input: StepDraft) => void;
   onDelete: () => void;
+  onToggle: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
 }) {
@@ -2573,41 +2592,54 @@ function DraftStepCard({
   return (
     <article
       className={[
-        "step-card is-expanded",
+        isExpanded ? "step-card is-expanded" : "step-card",
         step.group_kind === "reusable" ? "step-card--shared" : "",
         step.group_kind === "local" ? "step-card--grouped" : ""
       ].filter(Boolean).join(" ")}
     >
       <div className="step-card-top">
-        <div className="step-card-summary">
-          <div className="step-card-summary-top">
-            <StepKindIconBadge kind={step.group_kind} label={stepKind.label} tone={stepKind.tone} />
-            <strong>Step {step.step_order}</strong>
+        <button
+          aria-label={isExpanded ? `Hide step ${step.step_order} details` : `Show step ${step.step_order} details`}
+          className="step-card-toggle"
+          onClick={onToggle}
+          type="button"
+        >
+          <div className="step-card-summary">
+            <div className="step-card-summary-top">
+              <StepKindIconBadge kind={step.group_kind} label={stepKind.label} tone={stepKind.tone} />
+              <strong>Step {step.step_order}</strong>
+            </div>
+            {step.group_name ? <small className="suite-step-group-note">{step.group_name}</small> : null}
+            <span>{step.action || step.expected_result || "Draft step details"}</span>
           </div>
-          {step.group_name ? <small className="suite-step-group-note">{step.group_name}</small> : null}
-          <span>{step.action || step.expected_result || "Draft step details"}</span>
-        </div>
+          <span aria-hidden="true" className="step-card-toggle-state">
+            <StepKebabIcon />
+          </span>
+        </button>
       </div>
-      <div className="step-card-body">
-        <FormField label="Action">
-          <input
-            value={step.action}
-            onChange={(event) => onChange({ action: event.target.value, expected_result: step.expected_result })}
-          />
-        </FormField>
-        <FormField label="Expected result">
-          <textarea
-            rows={3}
-            value={step.expected_result}
-            onChange={(event) => onChange({ action: step.action, expected_result: event.target.value })}
-          />
-        </FormField>
-        <div className="action-row">
-          <button className="ghost-button" disabled={!canMoveUp} onClick={onMoveUp} type="button">Move up</button>
-          <button className="ghost-button" disabled={!canMoveDown} onClick={onMoveDown} type="button">Move down</button>
-          <button className="ghost-button danger" onClick={onDelete} type="button">Delete step</button>
+
+      {isExpanded ? (
+        <div className="step-card-body">
+          <FormField label="Action">
+            <input
+              value={step.action}
+              onChange={(event) => onChange({ action: event.target.value, expected_result: step.expected_result })}
+            />
+          </FormField>
+          <FormField label="Expected result">
+            <textarea
+              rows={3}
+              value={step.expected_result}
+              onChange={(event) => onChange({ action: step.action, expected_result: event.target.value })}
+            />
+          </FormField>
+          <div className="action-row">
+            <button className="ghost-button" disabled={!canMoveUp} onClick={onMoveUp} type="button">Move up</button>
+            <button className="ghost-button" disabled={!canMoveDown} onClick={onMoveDown} type="button">Move down</button>
+            <button className="ghost-button danger" onClick={onDelete} type="button">Delete step</button>
+          </div>
         </div>
-      </div>
+      ) : null}
     </article>
   );
 }

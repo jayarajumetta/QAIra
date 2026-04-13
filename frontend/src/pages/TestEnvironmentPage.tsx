@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState, type ReactNode } from "react";
+import { FormEvent, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { FormField } from "../components/FormField";
@@ -10,6 +10,7 @@ import { TileCardStatusIndicator } from "../components/TileCardPrimitives";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
+import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { useDialogFocus } from "../hooks/useDialogFocus";
 import { api } from "../lib/api";
 import { parseSpreadsheetFile, toKeyValueRows } from "../lib/testDataImport";
@@ -87,10 +88,10 @@ const buildEmptyConfigurationDraft = (): ConfigurationDraft => ({
   variables: []
 });
 
-const buildEmptyDataSetDraft = (): DataSetDraft => ({
+const buildEmptyDataSetDraft = (defaultMode: TestDataSetMode = "table"): DataSetDraft => ({
   name: "",
   description: "",
-  mode: "table",
+  mode: defaultMode,
   columns: [],
   rows: []
 });
@@ -223,6 +224,7 @@ const formatConfigurationTarget = (configuration: Pick<TestConfiguration, "brows
 export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const domainMetadataQuery = useDomainMetadata();
   const [projectId, setProjectId] = useCurrentProject();
   const [appTypeId, setAppTypeId] = useState("");
   const [message, setMessage] = useState("");
@@ -230,12 +232,17 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState("");
   const [selectedConfigurationId, setSelectedConfigurationId] = useState("");
   const [selectedDataSetId, setSelectedDataSetId] = useState("");
+  const browserOptions = domainMetadataQuery.data?.test_environments.browsers || [];
+  const mobileOsOptions = domainMetadataQuery.data?.test_environments.mobile_os || [];
+  const dataSetModeOptions = domainMetadataQuery.data?.test_data_sets.modes || [];
+  const defaultDataSetMode = (domainMetadataQuery.data?.test_data_sets.default_mode || "table") as TestDataSetMode;
+  const emptyDataSetDraft = useMemo(() => buildEmptyDataSetDraft(defaultDataSetMode), [defaultDataSetMode]);
   const [environmentDraft, setEnvironmentDraft] = useState<EnvironmentDraft>(buildEmptyEnvironmentDraft());
   const [configurationDraft, setConfigurationDraft] = useState<ConfigurationDraft>(buildEmptyConfigurationDraft());
-  const [dataSetDraft, setDataSetDraft] = useState<DataSetDraft>(buildEmptyDataSetDraft());
+  const [dataSetDraft, setDataSetDraft] = useState<DataSetDraft>(() => buildEmptyDataSetDraft());
   const [createEnvironmentDraft, setCreateEnvironmentDraft] = useState<EnvironmentDraft>(buildEmptyEnvironmentDraft());
   const [createConfigurationDraft, setCreateConfigurationDraft] = useState<ConfigurationDraft>(buildEmptyConfigurationDraft());
-  const [createDataSetDraft, setCreateDataSetDraft] = useState<DataSetDraft>(buildEmptyDataSetDraft());
+  const [createDataSetDraft, setCreateDataSetDraft] = useState<DataSetDraft>(() => buildEmptyDataSetDraft());
   const [isCreateEnvironmentModalOpen, setIsCreateEnvironmentModalOpen] = useState(false);
   const [isCreateConfigurationModalOpen, setIsCreateConfigurationModalOpen] = useState(false);
   const [isCreateDataSetModalOpen, setIsCreateDataSetModalOpen] = useState(false);
@@ -376,7 +383,7 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
     if (selectedDataSet) {
       setDataSetDraft(dataSetToDraft(selectedDataSet));
     } else {
-      setDataSetDraft(buildEmptyDataSetDraft());
+      setDataSetDraft(emptyDataSetDraft);
     }
   }, [selectedDataSet]);
 
@@ -401,7 +408,7 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
       return;
     }
 
-    setCreateDataSetDraft(buildEmptyDataSetDraft());
+    setCreateDataSetDraft(emptyDataSetDraft);
     setIsCreateDataSetModalOpen(true);
   };
 
@@ -728,8 +735,10 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
             >
               {selectedConfiguration ? (
                 <ConfigurationForm
+                  browserOptions={browserOptions}
                   draft={configurationDraft}
                   isSubmitting={updateConfiguration.isPending}
+                  mobileOsOptions={mobileOsOptions}
                   onChange={setConfigurationDraft}
                   onDelete={handleDeleteConfiguration}
                   onSubmit={handleUpdateConfiguration}
@@ -784,6 +793,7 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
             >
               {selectedDataSet ? (
                 <DataSetForm
+                  dataSetModeOptions={dataSetModeOptions}
                   draft={dataSetDraft}
                   isSubmitting={updateDataSet.isPending}
                   onChange={setDataSetDraft}
@@ -821,8 +831,10 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
           title="Create configuration"
         >
           <ConfigurationForm
+            browserOptions={browserOptions}
             draft={createConfigurationDraft}
             isSubmitting={createConfiguration.isPending}
+            mobileOsOptions={mobileOsOptions}
             onChange={setCreateConfigurationDraft}
             onSubmit={handleCreateConfiguration}
             submitLabel={createConfiguration.isPending ? "Creating…" : "Create configuration"}
@@ -836,6 +848,7 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
           title="Create test data"
         >
           <DataSetForm
+            dataSetModeOptions={dataSetModeOptions}
             draft={createDataSetDraft}
             isSubmitting={createDataSet.isPending}
             onChange={setCreateDataSetDraft}
@@ -955,6 +968,8 @@ function EnvironmentForm({
 
 function ConfigurationForm({
   draft,
+  browserOptions,
+  mobileOsOptions,
   onChange,
   onSubmit,
   onDelete,
@@ -962,6 +977,8 @@ function ConfigurationForm({
   isSubmitting
 }: {
   draft: ConfigurationDraft;
+  browserOptions: Array<{ value: string; label: string }>;
+  mobileOsOptions: Array<{ value: string; label: string }>;
   onChange: (draft: ConfigurationDraft) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onDelete?: () => void;
@@ -978,19 +995,17 @@ function ConfigurationForm({
           <FormField label="Browser">
             <select value={draft.browser} onChange={(event) => onChange({ ...draft, browser: event.target.value })}>
               <option value="">Any browser</option>
-              <option value="Chrome">Chrome</option>
-              <option value="Firefox">Firefox</option>
-              <option value="Safari">Safari</option>
-              <option value="Edge">Edge</option>
-              <option value="Mobile Chrome">Mobile Chrome</option>
-              <option value="Mobile Safari">Mobile Safari</option>
+              {browserOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
             </select>
           </FormField>
           <FormField label="Mobile OS">
             <select value={draft.mobile_os} onChange={(event) => onChange({ ...draft, mobile_os: event.target.value })}>
               <option value="">Any mobile OS</option>
-              <option value="Android">Android</option>
-              <option value="iOS">iOS</option>
+              {mobileOsOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
             </select>
           </FormField>
           <FormField label="Version">
@@ -1021,6 +1036,7 @@ function ConfigurationForm({
 
 function DataSetForm({
   draft,
+  dataSetModeOptions,
   onChange,
   onSubmit,
   onDelete,
@@ -1028,6 +1044,7 @@ function DataSetForm({
   isSubmitting
 }: {
   draft: DataSetDraft;
+  dataSetModeOptions: Array<{ value: string; label: string }>;
   onChange: (draft: DataSetDraft) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onDelete?: () => void;
@@ -1093,8 +1110,9 @@ function DataSetForm({
                 onChange(switchDataSetDraftMode(draft, mode));
               }}
             >
-              <option value="table">Spreadsheet table</option>
-              <option value="key_value">Key / value</option>
+              {dataSetModeOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
             </select>
           </FormField>
           <FormField label={draft.mode === "table" ? "Spreadsheet import" : "Key/value import"}>

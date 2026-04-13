@@ -75,6 +75,55 @@ export type Integration = {
   updated_at?: string;
 };
 
+export type DomainOption = {
+  value: string;
+  label: string;
+  description?: string;
+  icon?: string;
+  defaults?: Record<string, unknown>;
+};
+
+export type DomainMetadata = {
+  app_types: {
+    default_type: string;
+    types: DomainOption[];
+  };
+  integrations: {
+    default_type: string;
+    types: DomainOption[];
+  };
+  requirements: {
+    default_status: string;
+    priority_scale: number[];
+  };
+  test_cases: {
+    default_status: string;
+    statuses: DomainOption[];
+    priority_scale: number[];
+  };
+  test_steps: {
+    group_kinds: DomainOption[];
+  };
+  test_data_sets: {
+    default_mode: string;
+    modes: DomainOption[];
+  };
+  test_environments: {
+    browsers: DomainOption[];
+    mobile_os: DomainOption[];
+  };
+  executions: {
+    statuses: DomainOption[];
+    final_statuses: DomainOption[];
+    result_statuses: DomainOption[];
+    impact_levels: DomainOption[];
+  };
+  feedback: {
+    default_status: string;
+    statuses: DomainOption[];
+  };
+};
+
 export type AiDesignImageInput = {
   name?: string | null;
   url: string;

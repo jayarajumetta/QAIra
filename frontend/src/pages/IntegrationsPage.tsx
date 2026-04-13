@@ -8,6 +8,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { ToastMessage } from "../components/ToastMessage";
 import { TileCardStatusIndicator } from "../components/TileCardPrimitives";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
+import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { api } from "../lib/api";
 import type { Integration } from "../types";
 
@@ -29,65 +30,66 @@ type IntegrationDraft = {
   google_client_id: string;
 };
 
-const DEFAULT_EMAIL_SENDER = "support@qualipal.in";
-const DEFAULT_EMAIL_SENDER_NAME = "QAira Support";
-
-const EMPTY_DRAFT: IntegrationDraft = {
-  type: "llm",
-  name: "",
-  base_url: "https://api.openai.com/v1",
-  api_key: "",
-  model: "",
-  project_key: "",
-  username: "",
-  is_active: true,
-  smtp_host: "",
-  smtp_port: "587",
-  smtp_secure: false,
-  smtp_password: "",
-  sender_email: DEFAULT_EMAIL_SENDER,
-  sender_name: DEFAULT_EMAIL_SENDER_NAME,
-  google_client_id: ""
+type IntegrationTypeDefinition = {
+  value: Integration["type"];
+  label: string;
+  icon?: string;
+  defaults?: Record<string, unknown>;
 };
 
-function getIntegrationTypeLabel(type: Integration["type"]) {
-  if (type === "llm") {
-    return "LLM";
-  }
+const DEFAULT_INTEGRATION_TYPE: Integration["type"] = "llm";
 
-  if (type === "jira") {
-    return "Jira";
-  }
+const getIntegrationTypeDefinition = (type: Integration["type"], definitions: IntegrationTypeDefinition[]) =>
+  definitions.find((definition) => definition.value === type);
 
-  if (type === "email") {
-    return "Email Sender";
-  }
+const buildEmptyDraft = (
+  definitions: IntegrationTypeDefinition[],
+  preferredType: Integration["type"] = DEFAULT_INTEGRATION_TYPE
+): IntegrationDraft => {
+  const defaultType = (
+    getIntegrationTypeDefinition(preferredType, definitions)?.value ||
+    definitions[0]?.value ||
+    DEFAULT_INTEGRATION_TYPE
+  ) as Integration["type"];
+  const llmDefaults = getIntegrationTypeDefinition("llm", definitions)?.defaults || {};
+  const emailDefaults = getIntegrationTypeDefinition("email", definitions)?.defaults || {};
 
-  return "Google Sign-In";
+  return {
+    type: defaultType,
+    name: "",
+    base_url: typeof llmDefaults.base_url === "string" ? llmDefaults.base_url : "",
+    api_key: "",
+    model: "",
+    project_key: "",
+    username: "",
+    is_active: true,
+    smtp_host: "",
+    smtp_port: String(emailDefaults.smtp_port ?? "587"),
+    smtp_secure: false,
+    smtp_password: "",
+    sender_email: typeof emailDefaults.sender_email === "string" ? emailDefaults.sender_email : "",
+    sender_name: typeof emailDefaults.sender_name === "string" ? emailDefaults.sender_name : "",
+    google_client_id: ""
+  };
+};
+
+function getIntegrationTypeLabel(type: Integration["type"], definitions: IntegrationTypeDefinition[]) {
+  return getIntegrationTypeDefinition(type, definitions)?.label || type;
 }
 
-function getIntegrationTypeIcon(type: Integration["type"]) {
-  if (type === "llm") {
-    return "AI";
-  }
-
-  if (type === "jira") {
-    return "JI";
-  }
-
-  if (type === "email") {
-    return "EM";
-  }
-
-  return "GO";
+function getIntegrationTypeIcon(type: Integration["type"], definitions: IntegrationTypeDefinition[]) {
+  return getIntegrationTypeDefinition(type, definitions)?.icon || type.slice(0, 2).toUpperCase();
 }
 
-function applyDraftDefaultsForType(type: Integration["type"], current: IntegrationDraft): IntegrationDraft {
+function applyDraftDefaultsForType(type: Integration["type"], current: IntegrationDraft, definitions: IntegrationTypeDefinition[]): IntegrationDraft {
+  const llmDefaults = getIntegrationTypeDefinition("llm", definitions)?.defaults || {};
+  const emailDefaults = getIntegrationTypeDefinition("email", definitions)?.defaults || {};
+
   if (type === "llm") {
     return {
       ...current,
       type,
-      base_url: current.base_url || "https://api.openai.com/v1"
+      base_url: current.base_url || (typeof llmDefaults.base_url === "string" ? llmDefaults.base_url : "")
     };
   }
 
@@ -95,9 +97,9 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
     return {
       ...current,
       type,
-      smtp_port: current.smtp_port || "587",
-      sender_email: current.sender_email || DEFAULT_EMAIL_SENDER,
-      sender_name: current.sender_name || DEFAULT_EMAIL_SENDER_NAME
+      smtp_port: current.smtp_port || String(emailDefaults.smtp_port ?? "587"),
+      sender_email: current.sender_email || (typeof emailDefaults.sender_email === "string" ? emailDefaults.sender_email : ""),
+      sender_name: current.sender_name || (typeof emailDefaults.sender_name === "string" ? emailDefaults.sender_name : "")
     };
   }
 
@@ -107,14 +109,19 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
   };
 }
 
-function getDraftFromIntegration(integration: Integration): IntegrationDraft {
+function getDraftFromIntegration(
+  integration: Integration,
+  definitions: IntegrationTypeDefinition[],
+  preferredType: Integration["type"] = DEFAULT_INTEGRATION_TYPE
+): IntegrationDraft {
   const config: Record<string, unknown> = integration.config || {};
+  const emptyDraft = buildEmptyDraft(definitions, preferredType);
 
   return applyDraftDefaultsForType(integration.type, {
-    ...EMPTY_DRAFT,
+    ...emptyDraft,
     type: integration.type,
     name: integration.name,
-    base_url: integration.base_url || (integration.type === "llm" ? "https://api.openai.com/v1" : ""),
+    base_url: integration.base_url || (integration.type === "llm" ? emptyDraft.base_url : ""),
     api_key: integration.api_key || "",
     model: integration.model || "",
     project_key: integration.project_key || "",
@@ -126,24 +133,26 @@ function getDraftFromIntegration(integration: Integration): IntegrationDraft {
         ? String(config.port)
         : typeof config.port === "string"
           ? config.port
-          : "587",
+          : emptyDraft.smtp_port,
     smtp_secure: Boolean(config.secure),
     smtp_password: typeof config.password === "string" ? config.password : "",
-    sender_email: typeof config.sender_email === "string" ? config.sender_email : DEFAULT_EMAIL_SENDER,
-    sender_name: typeof config.sender_name === "string" ? config.sender_name : DEFAULT_EMAIL_SENDER_NAME,
+    sender_email: typeof config.sender_email === "string" ? config.sender_email : emptyDraft.sender_email,
+    sender_name: typeof config.sender_name === "string" ? config.sender_name : emptyDraft.sender_name,
     google_client_id: typeof config.client_id === "string" ? config.client_id : ""
-  });
+  }, definitions);
 }
 
-function buildIntegrationConfig(draft: IntegrationDraft): Record<string, unknown> {
+function buildIntegrationConfig(draft: IntegrationDraft, definitions: IntegrationTypeDefinition[]): Record<string, unknown> {
+  const emailDefaults = getIntegrationTypeDefinition("email", definitions)?.defaults || {};
+
   if (draft.type === "email") {
     return {
       host: draft.smtp_host.trim(),
       port: Number.parseInt(draft.smtp_port, 10),
       secure: draft.smtp_secure,
       password: draft.smtp_password,
-      sender_email: draft.sender_email.trim() || DEFAULT_EMAIL_SENDER,
-      sender_name: draft.sender_name.trim() || DEFAULT_EMAIL_SENDER_NAME
+      sender_email: draft.sender_email.trim() || String(emailDefaults.sender_email || ""),
+      sender_name: draft.sender_name.trim() || String(emailDefaults.sender_name || "")
     };
   }
 
@@ -156,8 +165,9 @@ function buildIntegrationConfig(draft: IntegrationDraft): Record<string, unknown
   return {};
 }
 
-function getIntegrationSummary(integration: Integration) {
+function getIntegrationSummary(integration: Integration, definitions: IntegrationTypeDefinition[]) {
   const config: Record<string, unknown> = integration.config || {};
+  const emailDefaults = getIntegrationTypeDefinition("email", definitions)?.defaults || {};
 
   if (integration.type === "llm") {
     return {
@@ -178,7 +188,7 @@ function getIntegrationSummary(integration: Integration) {
     const port = typeof config.port === "number" ? config.port : typeof config.port === "string" ? config.port : "";
 
     return {
-      primary: typeof config.sender_email === "string" ? config.sender_email : DEFAULT_EMAIL_SENDER,
+      primary: typeof config.sender_email === "string" ? config.sender_email : String(emailDefaults.sender_email || ""),
       secondary: host ? `${host}${port ? `:${port}` : ""}` : "SMTP server not set"
     };
   }
@@ -192,11 +202,21 @@ function getIntegrationSummary(integration: Integration) {
 export function IntegrationsPage() {
   const queryClient = useQueryClient();
   const { session } = useAuth();
+  const domainMetadataQuery = useDomainMetadata();
+  const integrationTypeDefinitions = useMemo(
+    () => (domainMetadataQuery.data?.integrations.types || []) as IntegrationTypeDefinition[],
+    [domainMetadataQuery.data]
+  );
+  const defaultIntegrationType = (domainMetadataQuery.data?.integrations.default_type || DEFAULT_INTEGRATION_TYPE) as Integration["type"];
+  const emptyDraft = useMemo(
+    () => buildEmptyDraft(integrationTypeDefinitions, defaultIntegrationType),
+    [defaultIntegrationType, integrationTypeDefinitions]
+  );
   const [selectedIntegrationId, setSelectedIntegrationId] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
-  const [draft, setDraft] = useState<IntegrationDraft>(EMPTY_DRAFT);
+  const [draft, setDraft] = useState<IntegrationDraft>(emptyDraft);
 
   const integrationsQuery = useQuery({
     queryKey: ["integrations"],
@@ -222,6 +242,11 @@ export function IntegrationsPage() {
   const isJira = draft.type === "jira";
   const isEmail = draft.type === "email";
   const isGoogle = draft.type === "google_auth";
+  const emailDefaults = getIntegrationTypeDefinition("email", integrationTypeDefinitions)?.defaults || {};
+  const llmDefaults = getIntegrationTypeDefinition("llm", integrationTypeDefinitions)?.defaults || {};
+  const defaultEmailSender = typeof emailDefaults.sender_email === "string" ? emailDefaults.sender_email : "";
+  const defaultEmailSenderName = typeof emailDefaults.sender_name === "string" ? emailDefaults.sender_name : "";
+  const defaultLlmBaseUrl = typeof llmDefaults.base_url === "string" ? llmDefaults.base_url : "";
 
   const showSuccess = (text: string) => {
     setMessageTone("success");
@@ -239,18 +264,18 @@ export function IntegrationsPage() {
     }
 
     if (!selectedIntegrationId) {
-      setDraft(EMPTY_DRAFT);
+      setDraft(emptyDraft);
       return;
     }
 
     if (selectedIntegration) {
-      setDraft(getDraftFromIntegration(selectedIntegration));
+      setDraft(getDraftFromIntegration(selectedIntegration, integrationTypeDefinitions, defaultIntegrationType));
       return;
     }
 
     setSelectedIntegrationId("");
-    setDraft(EMPTY_DRAFT);
-  }, [isCreating, selectedIntegration, selectedIntegrationId]);
+    setDraft(emptyDraft);
+  }, [defaultIntegrationType, emptyDraft, integrationTypeDefinitions, isCreating, selectedIntegration, selectedIntegrationId]);
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["integrations"] });
@@ -268,7 +293,7 @@ export function IntegrationsPage() {
         model: draft.model.trim() || undefined,
         project_key: draft.project_key.trim() || undefined,
         username: draft.username.trim() || undefined,
-        config: buildIntegrationConfig(draft),
+        config: buildIntegrationConfig(draft, integrationTypeDefinitions),
         is_active: draft.is_active
       };
 
@@ -299,7 +324,7 @@ export function IntegrationsPage() {
     try {
       await deleteIntegration.mutateAsync(selectedIntegration.id);
       setSelectedIntegrationId("");
-      setDraft(EMPTY_DRAFT);
+      setDraft(emptyDraft);
       setIsCreating(false);
       showSuccess("Integration deleted.");
       await refresh();
@@ -311,13 +336,13 @@ export function IntegrationsPage() {
   const openCreateForm = () => {
     setIsCreating(true);
     setSelectedIntegrationId("");
-    setDraft(EMPTY_DRAFT);
+    setDraft(emptyDraft);
   };
 
   const closeIntegrationWorkspace = () => {
     setSelectedIntegrationId("");
     setIsCreating(false);
-    setDraft(EMPTY_DRAFT);
+    setDraft(emptyDraft);
   };
 
   return (
@@ -331,7 +356,7 @@ export function IntegrationsPage() {
         meta={[
           { label: "Configured", value: integrations.length },
           { label: "Active", value: activeIntegrationCount },
-          { label: "Selected type", value: isCreating ? getIntegrationTypeLabel(draft.type) : selectedIntegration ? getIntegrationTypeLabel(selectedIntegration.type) : "None" }
+          { label: "Selected type", value: isCreating ? getIntegrationTypeLabel(draft.type, integrationTypeDefinitions) : selectedIntegration ? getIntegrationTypeLabel(selectedIntegration.type, integrationTypeDefinitions) : "None" }
         ]}
         actions={
           isAdmin ? (
@@ -356,7 +381,7 @@ export function IntegrationsPage() {
             <Panel title="Integration tiles" subtitle="Review configured connections as tiles first, then open one profile into a focused editor.">
               <div className="tile-browser-grid">
                 {integrations.map((integration) => {
-                  const summary = getIntegrationSummary(integration);
+                  const summary = getIntegrationSummary(integration, integrationTypeDefinitions);
 
                   return (
                     <button
@@ -370,10 +395,10 @@ export function IntegrationsPage() {
                     >
                       <div className="tile-card-main">
                         <div className="tile-card-header">
-                          <span className="integration-type-badge">{getIntegrationTypeIcon(integration.type)}</span>
+                          <span className="integration-type-badge">{getIntegrationTypeIcon(integration.type, integrationTypeDefinitions)}</span>
                           <div className="tile-card-title-group">
                             <strong>{integration.name}</strong>
-                            <span className="tile-card-kicker">{getIntegrationTypeLabel(integration.type)}</span>
+                            <span className="tile-card-kicker">{getIntegrationTypeLabel(integration.type, integrationTypeDefinitions)}</span>
                           </div>
                           <TileCardStatusIndicator title={integration.is_active ? "Active" : "Inactive"} tone={integration.is_active ? "success" : "neutral"} />
                         </div>
@@ -404,14 +429,13 @@ export function IntegrationsPage() {
                       value={draft.type}
                       onChange={(event) =>
                         setDraft((current) =>
-                          applyDraftDefaultsForType(event.target.value as Integration["type"], current)
+                          applyDraftDefaultsForType(event.target.value as Integration["type"], current, integrationTypeDefinitions)
                         )
                       }
                     >
-                      <option value="llm">LLM</option>
-                      <option value="jira">Jira</option>
-                      <option value="email">Email Sender</option>
-                      <option value="google_auth">Google Sign-In</option>
+                      {integrationTypeDefinitions.map((definition) => (
+                        <option key={definition.value} value={definition.value}>{definition.label}</option>
+                      ))}
                     </select>
                   </FormField>
 
@@ -425,7 +449,7 @@ export function IntegrationsPage() {
                     <div className="record-grid">
                       <FormField label="Base URL">
                         <input
-                          placeholder={isLlm ? "https://api.openai.com/v1" : "https://your-company.atlassian.net"}
+                          placeholder={isLlm ? defaultLlmBaseUrl || "https://api.openai.com/v1" : "https://your-company.atlassian.net"}
                           value={draft.base_url}
                           onChange={(event) => setDraft((current) => ({ ...current, base_url: event.target.value }))}
                         />
@@ -467,7 +491,7 @@ export function IntegrationsPage() {
                 {isEmail ? (
                   <>
                     <div className="empty-state compact integration-helper">
-                      QAira sends signup and forgot-password verification codes through this SMTP profile. Set the sender email to <strong>{DEFAULT_EMAIL_SENDER}</strong> when that mailbox is configured on your mail provider.
+                      QAira sends signup and forgot-password verification codes through this SMTP profile. Set the sender email to <strong>{defaultEmailSender || "your sender mailbox"}</strong> when that mailbox is configured on your mail provider.
                     </div>
 
                     <div className="record-grid">
@@ -492,7 +516,7 @@ export function IntegrationsPage() {
                     <div className="record-grid">
                       <FormField label="SMTP Username / Email">
                         <input
-                          placeholder="support@qualipal.in"
+                          placeholder={defaultEmailSender}
                           value={draft.username}
                           onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))}
                         />
@@ -510,7 +534,7 @@ export function IntegrationsPage() {
                     <div className="record-grid">
                       <FormField label="Sender Email">
                         <input
-                          placeholder={DEFAULT_EMAIL_SENDER}
+                          placeholder={defaultEmailSender}
                           value={draft.sender_email}
                           onChange={(event) => setDraft((current) => ({ ...current, sender_email: event.target.value }))}
                         />
@@ -518,7 +542,7 @@ export function IntegrationsPage() {
 
                       <FormField label="Sender Name">
                         <input
-                          placeholder={DEFAULT_EMAIL_SENDER_NAME}
+                          placeholder={defaultEmailSenderName}
                           value={draft.sender_name}
                           onChange={(event) => setDraft((current) => ({ ...current, sender_name: event.target.value }))}
                         />

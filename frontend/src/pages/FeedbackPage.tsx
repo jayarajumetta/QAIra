@@ -6,6 +6,7 @@ import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { TileCardStatusIndicator, formatTileCardLabel, getTileCardTone } from "../components/TileCardPrimitives";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
+import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { api } from "../lib/api";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 import type { Feedback } from "../types";
@@ -16,24 +17,28 @@ type FeedbackDraft = {
   status: string;
 };
 
-const EMPTY_DRAFT: FeedbackDraft = {
+const createEmptyFeedbackDraft = (defaultStatus = "open"): FeedbackDraft => ({
   title: "",
   message: "",
-  status: "open"
-};
+  status: defaultStatus
+});
 
 export function FeedbackPage() {
   const queryClient = useQueryClient();
   const { session } = useAuth();
+  const domainMetadataQuery = useDomainMetadata();
   const { feedback } = useWorkspaceData();
+  const defaultFeedbackStatus = domainMetadataQuery.data?.feedback.default_status || "open";
+  const feedbackStatusOptions = domainMetadataQuery.data?.feedback.statuses || [];
+  const emptyDraft = useMemo(() => createEmptyFeedbackDraft(defaultFeedbackStatus), [defaultFeedbackStatus]);
   const [selectedFeedbackId, setSelectedFeedbackId] = useState("");
   const [isCreating, setIsCreating] = useState(false);
-  const [draft, setDraft] = useState<FeedbackDraft>(EMPTY_DRAFT);
+  const [draft, setDraft] = useState<FeedbackDraft>(() => createEmptyFeedbackDraft());
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
 
   const items = feedback.data || [];
-  const openFeedbackCount = items.filter((item) => (item.status || "open") === "open").length;
+  const openFeedbackCount = items.filter((item) => (item.status || defaultFeedbackStatus) === defaultFeedbackStatus).length;
   const selectedItem = useMemo(
     () => items.find((item) => item.id === selectedFeedbackId) || null,
     [items, selectedFeedbackId]
@@ -45,7 +50,7 @@ export function FeedbackPage() {
     }
 
     if (!selectedFeedbackId) {
-      setDraft(EMPTY_DRAFT);
+      setDraft(emptyDraft);
       return;
     }
 
@@ -53,14 +58,14 @@ export function FeedbackPage() {
       setDraft({
         title: selectedItem.title,
         message: selectedItem.message,
-        status: selectedItem.status || "open"
+        status: selectedItem.status || defaultFeedbackStatus
       });
       return;
     }
 
     setSelectedFeedbackId("");
-    setDraft(EMPTY_DRAFT);
-  }, [isCreating, selectedFeedbackId, selectedItem]);
+    setDraft(emptyDraft);
+  }, [defaultFeedbackStatus, emptyDraft, isCreating, selectedFeedbackId, selectedItem]);
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["feedback"] });
@@ -99,7 +104,7 @@ export function FeedbackPage() {
       setMessageTone("success");
       setMessage("Feedback deleted.");
       setSelectedFeedbackId("");
-      setDraft(EMPTY_DRAFT);
+      setDraft(emptyDraft);
       setIsCreating(false);
       await refresh();
     },
@@ -141,7 +146,7 @@ export function FeedbackPage() {
   const closeFeedbackWorkspace = () => {
     setSelectedFeedbackId("");
     setIsCreating(false);
-    setDraft(EMPTY_DRAFT);
+    setDraft(emptyDraft);
   };
 
   return (
@@ -161,7 +166,7 @@ export function FeedbackPage() {
             onClick={() => {
               setIsCreating(true);
               setSelectedFeedbackId("");
-              setDraft(EMPTY_DRAFT);
+              setDraft(emptyDraft);
             }}
             type="button"
           >
@@ -185,7 +190,7 @@ export function FeedbackPage() {
 
             <div className="tile-browser-grid">
               {items.map((item: Feedback) => {
-                const feedbackTone = getTileCardTone(item.status || "open");
+                const feedbackTone = getTileCardTone(item.status || defaultFeedbackStatus);
                 const feedbackStatus = formatTileCardLabel(item.status, "Open");
 
                 return (
@@ -233,10 +238,9 @@ export function FeedbackPage() {
               </FormField>
               <FormField label="Status">
                 <select value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value }))}>
-                  <option value="open">open</option>
-                  <option value="reviewed">reviewed</option>
-                  <option value="planned">planned</option>
-                  <option value="closed">closed</option>
+                  {feedbackStatusOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
               </FormField>
               <FormField label="Message">

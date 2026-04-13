@@ -1,5 +1,6 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
+const { TEST_DATA_SET_MODE_VALUES } = require("../domain/catalog");
 
 const selectProject = db.prepare(`
   SELECT id
@@ -15,7 +16,9 @@ const selectAppType = db.prepare(`
 
 const INVALID_DATA_SET_CHAR_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 
-const normalizeMode = (mode) => (mode === "table" ? "table" : "key_value");
+const DEFAULT_DATA_SET_MODE = TEST_DATA_SET_MODE_VALUES.includes("table") ? "table" : TEST_DATA_SET_MODE_VALUES[0];
+
+const normalizeMode = (mode) => (TEST_DATA_SET_MODE_VALUES.includes(mode) ? mode : DEFAULT_DATA_SET_MODE);
 
 const sanitizeDataSetText = (value) =>
   String(value ?? "")

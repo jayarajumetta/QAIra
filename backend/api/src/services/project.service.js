@@ -1,6 +1,8 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
-const VALID_APP_TYPES = new Set(["web", "api", "android", "ios", "unified"]);
+const { APP_TYPE_VALUES } = require("../domain/catalog");
+
+const VALID_APP_TYPES = new Set(APP_TYPE_VALUES);
 
 const selectRoleByName = db.prepare(`
   SELECT id

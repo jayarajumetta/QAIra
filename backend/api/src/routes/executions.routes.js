@@ -2,6 +2,7 @@ const service = require("../services/execution.service");
 const executionPlanningService = require("../services/executionPlanning.service");
 const appTypeService = require("../services/appType.service");
 const projectService = require("../services/project.service");
+const { EXECUTION_FINAL_STATUS_VALUES } = require("../domain/catalog");
 
 module.exports = async function (fastify) {
 
@@ -102,7 +103,7 @@ module.exports = async function (fastify) {
     await fastify.authenticate(req);
 
     fastify.validate({
-      status: { required: true, enum: ["completed", "failed", "aborted"] }
+      status: { required: true, enum: EXECUTION_FINAL_STATUS_VALUES }
     }, req.body);
 
     const execution = await service.getExecution(req.params.id);

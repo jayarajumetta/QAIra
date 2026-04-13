@@ -1,12 +1,11 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
-
-const VALID_TYPES = ["web", "api", "android", "ios", "unified"];
+const { APP_TYPE_VALUES } = require("../domain/catalog");
 
 // Create
 exports.createAppType = async ({ project_id, name, type, is_unified }) => {
 
-  if (!VALID_TYPES.includes(type)) {
+  if (!APP_TYPE_VALUES.includes(type)) {
     throw new Error("Invalid app type");
   }
 

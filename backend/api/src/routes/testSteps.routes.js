@@ -1,7 +1,9 @@
 const service = require("../services/testStep.service");
+const { TEST_STEP_GROUP_KIND_VALUES } = require("../domain/catalog");
 
 module.exports = async function (fastify) {
   fastify.post("/test-steps", async (req) => {
+    await fastify.authenticate(req);
     fastify.validate({
       test_case_id: { required: true, type: "string" },
       step_order: { required: true, type: "number" },
@@ -9,7 +11,7 @@ module.exports = async function (fastify) {
       expected_result: { required: false, type: "string" },
       group_id: { required: false, type: "string" },
       group_name: { required: false, type: "string" },
-      group_kind: { required: false, enum: ["local", "reusable"] },
+      group_kind: { required: false, enum: TEST_STEP_GROUP_KIND_VALUES },
       reusable_group_id: { required: false, type: "string" }
     }, req.body);
 
@@ -17,15 +19,18 @@ module.exports = async function (fastify) {
   });
 
   fastify.get("/test-steps", async (req) => {
+    await fastify.authenticate(req);
     const { test_case_id } = req.query;
     return service.getTestSteps({ test_case_id });
   });
 
   fastify.get("/test-steps/:id", async (req) => {
+    await fastify.authenticate(req);
     return service.getTestStep(req.params.id);
   });
 
   fastify.put("/test-steps/:id", async (req) => {
+    await fastify.authenticate(req);
     fastify.validate({
       test_case_id: { required: false, type: "string" },
       step_order: { required: false, type: "number" },
@@ -33,7 +38,7 @@ module.exports = async function (fastify) {
       expected_result: { required: false, type: "string" },
       group_id: { required: false, type: "string" },
       group_name: { required: false, type: "string" },
-      group_kind: { required: false, enum: ["local", "reusable"] },
+      group_kind: { required: false, enum: TEST_STEP_GROUP_KIND_VALUES },
       reusable_group_id: { required: false, type: "string" }
     }, req.body);
 
@@ -41,6 +46,7 @@ module.exports = async function (fastify) {
   });
 
   fastify.post("/test-steps/duplicate", async (req) => {
+    await fastify.authenticate(req);
     fastify.validate({
       test_case_id: { required: true, type: "string" },
       step_ids: { required: true, type: "array", items: "string" },
@@ -51,11 +57,12 @@ module.exports = async function (fastify) {
   });
 
   fastify.post("/test-steps/group", async (req) => {
+    await fastify.authenticate(req);
     fastify.validate({
       test_case_id: { required: true, type: "string" },
       step_ids: { required: true, type: "array", items: "string" },
       name: { required: true, type: "string", minLength: 2 },
-      kind: { required: false, enum: ["local", "reusable"] },
+      kind: { required: false, enum: TEST_STEP_GROUP_KIND_VALUES },
       reusable_group_id: { required: false, type: "string" }
     }, req.body);
 
@@ -63,6 +70,7 @@ module.exports = async function (fastify) {
   });
 
   fastify.post("/test-steps/ungroup", async (req) => {
+    await fastify.authenticate(req);
     fastify.validate({
       test_case_id: { required: true, type: "string" },
       group_id: { required: true, type: "string" }
@@ -72,6 +80,7 @@ module.exports = async function (fastify) {
   });
 
   fastify.post("/test-steps/insert-shared-group", async (req) => {
+    await fastify.authenticate(req);
     fastify.validate({
       test_case_id: { required: true, type: "string" },
       shared_step_group_id: { required: true, type: "string" },
@@ -82,6 +91,7 @@ module.exports = async function (fastify) {
   });
 
   fastify.put("/test-cases/:id/test-steps/reorder", async (req) => {
+    await fastify.authenticate(req);
     fastify.validate({
       step_ids: { required: true, type: "array", items: "string" }
     }, req.body);
@@ -90,6 +100,7 @@ module.exports = async function (fastify) {
   });
 
   fastify.put("/test-steps/reorder", async (req) => {
+    await fastify.authenticate(req);
     fastify.validate({
       test_case_id: { required: true, type: "string" },
       step_ids: { required: true, type: "array", items: "string" }
@@ -99,6 +110,7 @@ module.exports = async function (fastify) {
   });
 
   fastify.delete("/test-steps/:id", async (req) => {
+    await fastify.authenticate(req);
     return service.deleteTestStep(req.params.id);
   });
 };

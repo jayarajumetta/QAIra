@@ -1,5 +1,26 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
+const { FEEDBACK_STATUS_VALUES, DOMAIN_METADATA } = require("../domain/catalog");
+
+const DEFAULT_FEEDBACK_STATUS = DOMAIN_METADATA.feedback.default_status;
+
+const normalizeStatus = (value) => {
+  if (value === undefined || value === null || value === "") {
+    return DEFAULT_FEEDBACK_STATUS;
+  }
+
+  const normalized = String(value).trim();
+
+  if (!normalized) {
+    return DEFAULT_FEEDBACK_STATUS;
+  }
+
+  if (!FEEDBACK_STATUS_VALUES.includes(normalized)) {
+    throw new Error("Invalid feedback status");
+  }
+
+  return normalized;
+};
 
 exports.createFeedback = async ({ user_id, title, message, status }) => {
   if (!user_id || !title || !message) {
@@ -21,7 +42,7 @@ exports.createFeedback = async ({ user_id, title, message, status }) => {
   await db.prepare(`
     INSERT INTO feedback (id, user_id, title, message, status)
     VALUES (?, ?, ?, ?, ?)
-  `).run(id, user_id, title, message, status || "open");
+  `).run(id, user_id, title, message, normalizeStatus(status));
 
   return { id };
 };
@@ -88,7 +109,7 @@ exports.updateFeedback = async (id, data) => {
     data.user_id ?? existing.user_id,
     data.title ?? existing.title,
     data.message ?? existing.message,
-    data.status ?? existing.status,
+    data.status !== undefined ? normalizeStatus(data.status) : existing.status,
     id
   );
 

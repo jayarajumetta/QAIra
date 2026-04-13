@@ -1,4 +1,5 @@
 const service = require("../services/integration.service");
+const { INTEGRATION_TYPE_VALUES } = require("../domain/catalog");
 
 const sanitizeIntegration = (integration) => ({
   ...integration,
@@ -11,7 +12,7 @@ module.exports = async function (fastify) {
     await fastify.requireAdmin(req);
 
     fastify.validate({
-      type: { required: true, type: "string", enum: ["llm", "jira", "email", "google_auth"] },
+      type: { required: true, type: "string", enum: INTEGRATION_TYPE_VALUES },
       name: { required: true, type: "string", minLength: 2 },
       base_url: { required: false, type: "string" },
       api_key: { required: false, type: "string" },
@@ -52,7 +53,7 @@ module.exports = async function (fastify) {
     await fastify.requireAdmin(req);
 
     fastify.validate({
-      type: { required: false, type: "string", enum: ["llm", "jira", "email", "google_auth"] },
+      type: { required: false, type: "string", enum: INTEGRATION_TYPE_VALUES },
       name: { required: false, type: "string", minLength: 2 },
       base_url: { required: false, type: "string" },
       api_key: { required: false, type: "string" },

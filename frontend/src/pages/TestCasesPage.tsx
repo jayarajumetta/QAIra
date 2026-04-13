@@ -26,6 +26,7 @@ import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
+import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { useDialogFocus } from "../hooks/useDialogFocus";
 import { parseTestCaseCsv, type ImportedTestCaseRow } from "../lib/testCaseImport";
 import { api } from "../lib/api";
@@ -86,13 +87,13 @@ type CaseRunFilter = "all" | "with-runs" | "no-runs";
 
 type TestCaseEditorSectionKey = "case" | "steps" | "history";
 
-const EMPTY_CASE_DRAFT: TestCaseDraft = {
+const createEmptyCaseDraft = (defaultStatus = "active"): TestCaseDraft => ({
   title: "",
   description: "",
   priority: 3,
-  status: "active",
+  status: defaultStatus,
   requirement_id: ""
-};
+});
 
 const EMPTY_STEP_DRAFT: StepDraft = {
   action: "",
@@ -300,6 +301,7 @@ export function TestCasesPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useAuth();
+  const domainMetadataQuery = useDomainMetadata();
   const [projectId, setProjectId] = useCurrentProject();
   const [appTypeId, setAppTypeId] = useState("");
   const [selectedTestCaseId, setSelectedTestCaseId] = useState("");
@@ -321,7 +323,10 @@ export function TestCasesPage() {
   const [expandedSections, setExpandedSections] = useState<Record<TestCaseEditorSectionKey, boolean>>(createDefaultTestCaseSections);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
-  const [caseDraft, setCaseDraft] = useState<TestCaseDraft>(EMPTY_CASE_DRAFT);
+  const defaultTestCaseStatus = domainMetadataQuery.data?.test_cases.default_status || "active";
+  const testCaseStatusOptions = domainMetadataQuery.data?.test_cases.statuses || [];
+  const emptyCaseDraft = useMemo(() => createEmptyCaseDraft(defaultTestCaseStatus), [defaultTestCaseStatus]);
+  const [caseDraft, setCaseDraft] = useState<TestCaseDraft>(() => createEmptyCaseDraft());
   const [newStepDraft, setNewStepDraft] = useState<StepDraft>(EMPTY_STEP_DRAFT);
   const [stepInsertIndex, setStepInsertIndex] = useState<number | null>(null);
   const [stepInsertGroupContext, setStepInsertGroupContext] = useState<StepInsertionGroupContext | null>(null);
@@ -523,7 +528,7 @@ export function TestCasesPage() {
     setCreateSuiteContextId(suiteContextId);
     setIsCreating(true);
     setSelectedTestCaseId("");
-    setCaseDraft(EMPTY_CASE_DRAFT);
+    setCaseDraft(emptyCaseDraft);
     setDraftSteps([]);
     setNewStepDraft(EMPTY_STEP_DRAFT);
     setStepInsertIndex(null);
@@ -606,7 +611,7 @@ export function TestCasesPage() {
     setIsCreateExecutionModalOpen(false);
     setExecutionName("");
     resetExecutionContextSelection();
-    setCaseDraft(EMPTY_CASE_DRAFT);
+    setCaseDraft(emptyCaseDraft);
     setNewStepDraft(EMPTY_STEP_DRAFT);
     setStepInsertIndex(null);
     setStepInsertGroupContext(null);
@@ -704,7 +709,7 @@ export function TestCasesPage() {
         new Set(
           testCases.map((testCase) => {
             const history = historyByCaseId[testCase.id] || [];
-            return history[0]?.status || testCase.status || "active";
+            return history[0]?.status || testCase.status || defaultTestCaseStatus;
           })
         )
       ).sort((left, right) => left.localeCompare(right)),
@@ -723,7 +728,7 @@ export function TestCasesPage() {
         (testCase.requirement_ids || [testCase.requirement_id]).map((id) => (id ? requirementTitleById[id] || "" : "")).find(Boolean) || "";
       const history = historyByCaseId[testCase.id] || [];
       const latest = history[0];
-      const derivedStatus = latest?.status || testCase.status || "active";
+      const derivedStatus = latest?.status || testCase.status || defaultTestCaseStatus;
       const stepCount = stepCountByCaseId[testCase.id] || 0;
       const runCount = history.length;
 
@@ -801,7 +806,7 @@ export function TestCasesPage() {
     }
 
     if (!selectedTestCaseId) {
-      setCaseDraft(EMPTY_CASE_DRAFT);
+      setCaseDraft(emptyCaseDraft);
       return;
     }
 
@@ -814,7 +819,7 @@ export function TestCasesPage() {
         title: selectedTestCase.title,
         description: selectedTestCase.description || "",
         priority: selectedTestCase.priority ?? 3,
-        status: selectedTestCase.status || "active",
+        status: selectedTestCase.status || defaultTestCaseStatus,
         requirement_id: selectedTestCase.requirement_ids?.[0] || selectedTestCase.requirement_id || ""
       });
       return;
@@ -822,7 +827,7 @@ export function TestCasesPage() {
 
     syncTestCaseSearchParams(null);
     setSelectedTestCaseId("");
-    setCaseDraft(EMPTY_CASE_DRAFT);
+    setCaseDraft(emptyCaseDraft);
   }, [isCreating, selectedTestCase, selectedTestCaseId, testCasesQuery.isFetching, testCasesQuery.isLoading]);
 
   useEffect(() => {
@@ -1100,7 +1105,7 @@ export function TestCasesPage() {
       setSelectedActionTestCaseIds((current) => current.filter((id) => id !== selectedTestCase.id));
       syncTestCaseSearchParams(null);
       setSelectedTestCaseId("");
-      setCaseDraft(EMPTY_CASE_DRAFT);
+      setCaseDraft(emptyCaseDraft);
       setIsCreating(false);
       setSelectedStepIds([]);
       setStepInsertIndex(null);
@@ -1141,7 +1146,7 @@ export function TestCasesPage() {
       if (deletedIds.includes(selectedTestCaseId)) {
         syncTestCaseSearchParams(null);
         setSelectedTestCaseId("");
-        setCaseDraft(EMPTY_CASE_DRAFT);
+        setCaseDraft(emptyCaseDraft);
         setDraftSteps([]);
         setNewStepDraft(EMPTY_STEP_DRAFT);
         setStepInsertIndex(null);
@@ -2108,7 +2113,7 @@ export function TestCasesPage() {
           testCase.title,
           testCase.description || "",
           `P${testCase.priority || 3}`,
-          testCase.status || "active",
+          testCase.status || defaultTestCaseStatus,
           requirement?.title || "",
           suiteCount ? `${suiteCount} suite${suiteCount === 1 ? "" : "s"}` : "",
           scopedSteps.map((step) => step.action || "").join("\n"),
@@ -2494,7 +2499,7 @@ export function TestCasesPage() {
     setCreateSuiteContextId("");
     setIsCreating(false);
     setSelectedTestCaseId("");
-    setCaseDraft(EMPTY_CASE_DRAFT);
+    setCaseDraft(emptyCaseDraft);
     setNewStepDraft(EMPTY_STEP_DRAFT);
     setStepInsertIndex(null);
     setStepInsertGroupContext(null);
@@ -2551,6 +2556,7 @@ export function TestCasesPage() {
           canPaste={Boolean(copiedSteps.length)}
           canMoveDown={canMoveDown}
           canMoveUp={canMoveUp}
+          isExpanded={expandedStepIds.includes(step.id)}
           isSelected={selectedStepIds.includes(step.id)}
           onChange={(input) => handleUpdateDraftStep(step.id, input)}
           onCopy={() => handleCopySteps([step.id])}
@@ -2562,6 +2568,11 @@ export function TestCasesPage() {
           onMoveUp={() => handleReorderDraftStep(step.id, "up")}
           onPasteAbove={() => void handlePasteSteps(insertAboveIndex, groupContext)}
           onPasteBelow={() => void handlePasteSteps(insertBelowIndex, groupContext)}
+          onToggle={() =>
+            setExpandedStepIds((current) =>
+              current.includes(step.id) ? current.filter((id) => id !== step.id) : [...current, step.id]
+            )
+          }
           onToggleSelect={(checked) =>
             setSelectedStepIds((current) =>
               checked ? [...new Set([...current, step.id])] : current.filter((id) => id !== step.id)
@@ -2811,7 +2822,7 @@ export function TestCasesPage() {
                   const requirementTitle =
                     (testCase.requirement_ids || [testCase.requirement_id]).map((id) => (id ? requirementTitleById[id] || "" : "")).find(Boolean) || "";
                   const stepCount = stepCountByCaseId[testCase.id] || 0;
-                  const caseStatusValue = latest?.status || testCase.status || "active";
+                  const caseStatusValue = latest?.status || testCase.status || defaultTestCaseStatus;
                   const caseStatusLabel = formatTileCardLabel(caseStatusValue, "Active");
                   const caseStatusTone = getTileCardTone(caseStatusValue);
                   const suiteCount = (testCase.suite_ids || []).length || 0;
@@ -2921,7 +2932,7 @@ export function TestCasesPage() {
                 <div className="editor-accordion">
                   <div ref={caseSectionRef}>
                     <EditorAccordionSection
-                      countLabel={isCreating ? "Draft" : caseDraft.status || "active"}
+                      countLabel={isCreating ? "Draft" : caseDraft.status || defaultTestCaseStatus}
                       isExpanded={expandedSections.case}
                       onToggle={() => setExpandedSections((current) => ({ ...current, case: !current.case }))}
                       summary={caseSectionSummary}
@@ -2941,10 +2952,9 @@ export function TestCasesPage() {
                               value={caseDraft.status}
                               onChange={(event) => setCaseDraft((current) => ({ ...current, status: event.target.value }))}
                             >
-                              <option value="active">active</option>
-                              <option value="draft">draft</option>
-                              <option value="ready">ready</option>
-                              <option value="retired">retired</option>
+                              {testCaseStatusOptions.map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                              ))}
                             </select>
                           </FormField>
                           <FormField label="Requirement">
@@ -4529,6 +4539,7 @@ function EditableStepCard({
 function DraftStepCard({
   step,
   isSelected,
+  isExpanded,
   canPaste,
   canMoveUp,
   canMoveDown,
@@ -4538,6 +4549,7 @@ function DraftStepCard({
   onDelete,
   onInsertAbove,
   onInsertBelow,
+  onToggle,
   onToggleSelect,
   onMoveUp,
   onMoveDown,
@@ -4546,6 +4558,7 @@ function DraftStepCard({
 }: {
   step: { id: string; step_order: number; action: string; expected_result: string; group_id: string | null; group_name: string | null; group_kind: "local" | "reusable" | null; reusable_group_id: string | null };
   isSelected: boolean;
+  isExpanded: boolean;
   canPaste: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
@@ -4555,6 +4568,7 @@ function DraftStepCard({
   onDelete: () => void;
   onInsertAbove: () => void;
   onInsertBelow: () => void;
+  onToggle: () => void;
   onToggleSelect: (checked: boolean) => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
@@ -4626,7 +4640,7 @@ function DraftStepCard({
   return (
     <article
       className={[
-        "step-card is-expanded",
+        isExpanded ? "step-card is-expanded" : "step-card",
         step.group_kind === "reusable" ? "step-card--shared" : "",
         step.group_kind === "local" ? "step-card--grouped" : ""
       ].filter(Boolean).join(" ")}
@@ -4640,13 +4654,23 @@ function DraftStepCard({
             type="checkbox"
           />
         </label>
-        <div className="step-card-summary">
-          <div className="step-card-summary-top">
-            <StepKindIconBadge kind={step.group_kind} label={stepKind.label} tone={stepKind.tone} />
-            <strong>Step {step.step_order}</strong>
+        <button
+          aria-label={isExpanded ? `Hide step ${step.step_order} details` : `Show step ${step.step_order} details`}
+          className="step-card-toggle"
+          onClick={onToggle}
+          type="button"
+        >
+          <div className="step-card-summary">
+            <div className="step-card-summary-top">
+              <StepKindIconBadge kind={step.group_kind} label={stepKind.label} tone={stepKind.tone} />
+              <strong>Step {step.step_order}</strong>
+            </div>
+            <span>{step.action || step.expected_result || "Draft step details"}</span>
           </div>
-          <span>{step.action || step.expected_result || "Draft step details"}</span>
-        </div>
+          <span aria-hidden="true" className="step-card-toggle-state">
+            <StepKebabIcon />
+          </span>
+        </button>
         <StepActionMenu
           className="step-card-menu--floating"
           label={`Step ${step.step_order} actions`}
@@ -4655,21 +4679,24 @@ function DraftStepCard({
           actions={stepActions}
         />
       </div>
-      <div className="step-card-body">
-        <FormField label="Action">
-          <input
-            value={step.action}
-            onChange={(event) => onChange({ action: event.target.value, expected_result: step.expected_result })}
-          />
-        </FormField>
-        <FormField label="Expected result">
-          <textarea
-            rows={3}
-            value={step.expected_result}
-            onChange={(event) => onChange({ action: step.action, expected_result: event.target.value })}
-          />
-        </FormField>
-      </div>
+
+      {isExpanded ? (
+        <div className="step-card-body">
+          <FormField label="Action">
+            <input
+              value={step.action}
+              onChange={(event) => onChange({ action: event.target.value, expected_result: step.expected_result })}
+            />
+          </FormField>
+          <FormField label="Expected result">
+            <textarea
+              rows={3}
+              value={step.expected_result}
+              onChange={(event) => onChange({ action: step.action, expected_result: event.target.value })}
+            />
+          </FormField>
+        </div>
+      ) : null}
     </article>
   );
 }

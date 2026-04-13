@@ -1,7 +1,6 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
-
-const VALID_TYPES = ["llm", "jira", "email", "google_auth"];
+const { INTEGRATION_TYPE_OPTIONS, INTEGRATION_TYPE_VALUES } = require("../domain/catalog");
 
 const normalizeText = (value) => {
   if (typeof value !== "string") {
@@ -40,14 +39,15 @@ const normalizeInteger = (value) => {
 
 const normalizeConfig = (type, input, username) => {
   const raw = normalizeObject(input);
+  const integrationTypeConfig = INTEGRATION_TYPE_OPTIONS.find((option) => option.value === type)?.defaults || {};
 
   if (type === "email") {
     const host = normalizeText(raw.host);
     const port = normalizeInteger(raw.port);
     const password = normalizeText(raw.password);
     const secure = Boolean(raw.secure);
-    const sender_email = normalizeText(raw.sender_email) || "support@qualipal.in";
-    const sender_name = normalizeText(raw.sender_name) || "QAira Support";
+    const sender_email = normalizeText(raw.sender_email) || integrationTypeConfig.sender_email || null;
+    const sender_name = normalizeText(raw.sender_name) || integrationTypeConfig.sender_name || null;
 
     if (!host) {
       throw new Error("Email integrations require an SMTP host");
@@ -103,7 +103,7 @@ const normalizeIntegration = (integration) => {
 };
 
 const validateType = (type) => {
-  if (!VALID_TYPES.includes(type)) {
+  if (!INTEGRATION_TYPE_VALUES.includes(type)) {
     throw new Error(`Unsupported integration type: ${type}`);
   }
 };

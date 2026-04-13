@@ -1,6 +1,7 @@
 const service = require("../services/testDataSet.service");
 const appTypeService = require("../services/appType.service");
 const projectService = require("../services/project.service");
+const { TEST_DATA_SET_MODE_VALUES } = require("../domain/catalog");
 
 module.exports = async function (fastify) {
   fastify.post("/test-data-sets", async (req) => {
@@ -11,7 +12,7 @@ module.exports = async function (fastify) {
       app_type_id: { required: false, type: "string" },
       name: { required: true, type: "string", minLength: 2 },
       description: { required: false, type: "string" },
-      mode: { required: true, enum: ["key_value", "table"] },
+      mode: { required: true, enum: TEST_DATA_SET_MODE_VALUES },
       columns: { required: false, type: "array" },
       rows: { required: false, type: "array" }
     }, req.body);
@@ -58,7 +59,7 @@ module.exports = async function (fastify) {
       app_type_id: { required: false, type: "string" },
       name: { required: false, type: "string", minLength: 2 },
       description: { required: false, type: "string" },
-      mode: { required: false, enum: ["key_value", "table"] },
+      mode: { required: false, enum: TEST_DATA_SET_MODE_VALUES },
       columns: { required: false, type: "array" },
       rows: { required: false, type: "array" }
     }, req.body);

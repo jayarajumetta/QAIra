@@ -18,6 +18,7 @@ import { SubnavTabs } from "../components/SubnavTabs";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { useCurrentProject } from "../hooks/useCurrentProject";
+import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 import { useAuth } from "../auth/AuthContext";
 import type { AppType } from "../types";
@@ -41,23 +42,24 @@ type ProjectCreateDraft = {
 const createDraftId = () =>
   globalThis.crypto?.randomUUID?.() || `project-draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-const createProjectAppTypeDraft = (): ProjectAppTypeDraft => ({
+const createProjectAppTypeDraft = (defaultType: string): ProjectAppTypeDraft => ({
   id: createDraftId(),
   name: "",
-  type: "web",
+  type: (defaultType || "web") as AppType["type"],
   is_unified: false
 });
 
-const createInitialProjectDraft = (): ProjectCreateDraft => ({
+const createInitialProjectDraft = (defaultType: string): ProjectCreateDraft => ({
   name: "",
   description: "",
   memberIds: [],
-  appTypes: [createProjectAppTypeDraft()]
+  appTypes: [createProjectAppTypeDraft(defaultType)]
 });
 
 export function ProjectsPage() {
   const queryClient = useQueryClient();
   const { session } = useAuth();
+  const domainMetadataQuery = useDomainMetadata();
   const { projects, users, roles, projectMembers, appTypes, requirements, testCases } = useWorkspaceData();
   const [selectedProjectId, setSelectedProjectId] = useCurrentProject();
   const [focusedProjectId, setFocusedProjectId] = useState("");
@@ -65,7 +67,9 @@ export function ProjectsPage() {
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [projectDraft, setProjectDraft] = useState<ProjectCreateDraft>(createInitialProjectDraft);
+  const defaultAppTypeValue = domainMetadataQuery.data?.app_types.default_type || "web";
+  const appTypeTypeOptions = domainMetadataQuery.data?.app_types.types || [];
+  const [projectDraft, setProjectDraft] = useState<ProjectCreateDraft>(() => createInitialProjectDraft(defaultAppTypeValue));
 
   const projectItems = projects.data || [];
 
@@ -223,7 +227,7 @@ export function ProjectsPage() {
       setSelectedProjectId(response.id);
       setFocusedProjectId(response.id);
       setIsCreateModalOpen(false);
-      setProjectDraft(createInitialProjectDraft());
+      setProjectDraft(createInitialProjectDraft(defaultAppTypeValue));
       await invalidate();
     },
     onError: (error) => {
@@ -274,7 +278,7 @@ export function ProjectsPage() {
   });
 
   const openCreateProjectModal = () => {
-    setProjectDraft(createInitialProjectDraft());
+    setProjectDraft(createInitialProjectDraft(defaultAppTypeValue));
     setIsCreateModalOpen(true);
   };
 
@@ -302,7 +306,7 @@ export function ProjectsPage() {
   const addProjectAppTypeRow = () => {
     setProjectDraft((current) => ({
       ...current,
-      appTypes: [...current.appTypes, createProjectAppTypeDraft()]
+      appTypes: [...current.appTypes, createProjectAppTypeDraft(defaultAppTypeValue)]
     }));
   };
 
@@ -318,7 +322,7 @@ export function ProjectsPage() {
       if (current.appTypes.length === 1) {
         return {
           ...current,
-          appTypes: [createProjectAppTypeDraft()]
+          appTypes: [createProjectAppTypeDraft(defaultAppTypeValue)]
         };
       }
 
@@ -578,19 +582,17 @@ export function ProjectsPage() {
                   createAppType.mutate({
                     project_id: projectId,
                     name: String(formData.get("name") || ""),
-                    type: String(formData.get("type") || "web") as AppType["type"],
+                    type: String(formData.get("type") || defaultAppTypeValue) as AppType["type"],
                     is_unified: String(formData.get("is_unified") || "") === "on"
                   });
                   event.currentTarget.reset();
                 }}
               >
                 <input name="name" required placeholder="Web app" />
-                <select name="type" defaultValue="web">
-                  <option value="web">web</option>
-                  <option value="api">api</option>
-                  <option value="android">android</option>
-                  <option value="ios">ios</option>
-                  <option value="unified">unified</option>
+                <select name="type" defaultValue={defaultAppTypeValue}>
+                  {appTypeTypeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
                 <label className="checkbox-field">
                   <input name="is_unified" type="checkbox" />
@@ -716,11 +718,9 @@ export function ProjectsPage() {
                               onChange={(event) => updateProjectAppType(appType.id, { type: event.target.value as AppType["type"] })}
                               value={appType.type}
                             >
-                              <option value="web">web</option>
-                              <option value="api">api</option>
-                              <option value="android">android</option>
-                              <option value="ios">ios</option>
-                              <option value="unified">unified</option>
+                              {appTypeTypeOptions.map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                              ))}
                             </select>
                           </FormField>
                           <label className="checkbox-field project-app-type-checkbox">

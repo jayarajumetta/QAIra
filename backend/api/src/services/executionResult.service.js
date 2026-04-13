@@ -1,7 +1,6 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
-
-const VALID_STATUS = ["passed", "failed", "blocked"];
+const { EXECUTION_RESULT_STATUS_VALUES } = require("../domain/catalog");
 
 const getPrimarySuiteForTestCase = db.prepare(`
   SELECT test_suites.id, test_suites.name
@@ -32,7 +31,7 @@ exports.createExecutionResult = async (data) => {
     executed_by
   } = data;
 
-  if (!VALID_STATUS.includes(status)) {
+  if (!EXECUTION_RESULT_STATUS_VALUES.includes(status)) {
     throw new Error("Invalid status");
   }
 
@@ -160,7 +159,7 @@ exports.updateExecutionResult = async (id, data) => {
 
   const status = data.status || existing.status;
 
-  if (!VALID_STATUS.includes(status)) {
+  if (!EXECUTION_RESULT_STATUS_VALUES.includes(status)) {
     throw new Error("Invalid status");
   }
 

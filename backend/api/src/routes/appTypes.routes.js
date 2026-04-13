@@ -1,5 +1,6 @@
 const service = require("../services/appType.service");
 const projectService = require("../services/project.service");
+const { APP_TYPE_VALUES } = require("../domain/catalog");
 
 module.exports = async function (fastify) {
 
@@ -10,7 +11,7 @@ module.exports = async function (fastify) {
     fastify.validate({
       project_id: { required: true, type: "string" },
       name: { required: true, type: "string", minLength: 2 },
-      type: { required: true, enum: ["web", "api", "android", "ios", "unified"] },
+      type: { required: true, enum: APP_TYPE_VALUES },
       is_unified: { required: false }
     }, req.body);
 

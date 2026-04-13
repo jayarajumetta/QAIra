@@ -1,0 +1,181 @@
+const freezeOptions = (options) => Object.freeze(options.map((option) => Object.freeze({ ...option })));
+const optionValues = (options) => Object.freeze(options.map((option) => option.value));
+
+const APP_TYPE_OPTIONS = freezeOptions([
+  { value: "web", label: "Web", description: "Browser-based application scope." },
+  { value: "api", label: "API", description: "Service and endpoint coverage." },
+  { value: "android", label: "Android", description: "Native or hybrid Android application scope." },
+  { value: "ios", label: "iOS", description: "Native or hybrid iOS application scope." },
+  { value: "unified", label: "Unified", description: "Shared cross-platform coverage scope." }
+]);
+
+const INTEGRATION_TYPE_OPTIONS = freezeOptions([
+  {
+    value: "llm",
+    label: "LLM",
+    description: "Large language model provider.",
+    icon: "AI",
+    defaults: {
+      base_url: "https://api.openai.com/v1"
+    }
+  },
+  {
+    value: "jira",
+    label: "Jira",
+    description: "Issue tracker and release planning integration.",
+    icon: "JI",
+    defaults: {}
+  },
+  {
+    value: "email",
+    label: "Email Sender",
+    description: "SMTP profile for transactional notifications and verification codes.",
+    icon: "EM",
+    defaults: {
+      smtp_port: 587,
+      sender_email: "support@qualipal.in",
+      sender_name: "QAira Support"
+    }
+  },
+  {
+    value: "google_auth",
+    label: "Google Sign-In",
+    description: "OAuth identity provider for Google authentication.",
+    icon: "GO",
+    defaults: {}
+  }
+]);
+
+const TEST_CASE_STATUS_OPTIONS = freezeOptions([
+  { value: "active", label: "Active", description: "Available for reuse in current design and execution flows." },
+  { value: "draft", label: "Draft", description: "Work in progress and not yet considered stable coverage." },
+  { value: "ready", label: "Ready", description: "Prepared for steady reuse and release coverage." },
+  { value: "retired", label: "Retired", description: "Preserved for history but not intended for active reuse." }
+]);
+
+const TEST_STEP_GROUP_KIND_OPTIONS = freezeOptions([
+  { value: "local", label: "Local", description: "Scoped only to the current test case." },
+  { value: "reusable", label: "Reusable", description: "Linked shared group reused across test cases." }
+]);
+
+const TEST_DATA_SET_MODE_OPTIONS = freezeOptions([
+  { value: "table", label: "Spreadsheet table", description: "Column-based row data set." },
+  { value: "key_value", label: "Key / value", description: "Simple variable-style pairs." }
+]);
+
+const TEST_ENVIRONMENT_BROWSER_OPTIONS = freezeOptions([
+  { value: "Chrome", label: "Chrome" },
+  { value: "Firefox", label: "Firefox" },
+  { value: "Safari", label: "Safari" },
+  { value: "Edge", label: "Edge" },
+  { value: "Mobile Chrome", label: "Mobile Chrome" },
+  { value: "Mobile Safari", label: "Mobile Safari" }
+]);
+
+const TEST_ENVIRONMENT_MOBILE_OS_OPTIONS = freezeOptions([
+  { value: "Android", label: "Android" },
+  { value: "iOS", label: "iOS" }
+]);
+
+const EXECUTION_STATUS_OPTIONS = freezeOptions([
+  { value: "queued", label: "Queued" },
+  { value: "running", label: "Running" },
+  { value: "completed", label: "Completed" },
+  { value: "failed", label: "Failed" },
+  { value: "aborted", label: "Aborted" }
+]);
+
+const EXECUTION_FINAL_STATUS_OPTIONS = freezeOptions([
+  { value: "completed", label: "Completed" },
+  { value: "failed", label: "Failed" },
+  { value: "aborted", label: "Aborted" }
+]);
+
+const EXECUTION_RESULT_STATUS_OPTIONS = freezeOptions([
+  { value: "passed", label: "Passed" },
+  { value: "failed", label: "Failed" },
+  { value: "blocked", label: "Blocked" }
+]);
+
+const EXECUTION_IMPACT_LEVEL_OPTIONS = freezeOptions([
+  { value: "critical", label: "Critical" },
+  { value: "high", label: "High" },
+  { value: "medium", label: "Medium" },
+  { value: "low", label: "Low" }
+]);
+
+const FEEDBACK_STATUS_OPTIONS = freezeOptions([
+  { value: "open", label: "Open" },
+  { value: "reviewed", label: "Reviewed" },
+  { value: "planned", label: "Planned" },
+  { value: "closed", label: "Closed" }
+]);
+
+const PRIORITY_SCALE = Object.freeze([1, 2, 3, 4, 5]);
+
+const DOMAIN_METADATA = Object.freeze({
+  app_types: {
+    default_type: "web",
+    types: APP_TYPE_OPTIONS
+  },
+  integrations: {
+    default_type: "llm",
+    types: INTEGRATION_TYPE_OPTIONS
+  },
+  requirements: {
+    default_status: "open",
+    priority_scale: PRIORITY_SCALE
+  },
+  test_cases: {
+    default_status: "active",
+    statuses: TEST_CASE_STATUS_OPTIONS,
+    priority_scale: PRIORITY_SCALE
+  },
+  test_steps: {
+    group_kinds: TEST_STEP_GROUP_KIND_OPTIONS
+  },
+  test_data_sets: {
+    default_mode: "table",
+    modes: TEST_DATA_SET_MODE_OPTIONS
+  },
+  test_environments: {
+    browsers: TEST_ENVIRONMENT_BROWSER_OPTIONS,
+    mobile_os: TEST_ENVIRONMENT_MOBILE_OS_OPTIONS
+  },
+  executions: {
+    statuses: EXECUTION_STATUS_OPTIONS,
+    final_statuses: EXECUTION_FINAL_STATUS_OPTIONS,
+    result_statuses: EXECUTION_RESULT_STATUS_OPTIONS,
+    impact_levels: EXECUTION_IMPACT_LEVEL_OPTIONS
+  },
+  feedback: {
+    default_status: "open",
+    statuses: FEEDBACK_STATUS_OPTIONS
+  }
+});
+
+const cloneDomainMetadata = () => JSON.parse(JSON.stringify(DOMAIN_METADATA));
+
+module.exports = {
+  DOMAIN_METADATA,
+  cloneDomainMetadata,
+  APP_TYPE_OPTIONS,
+  APP_TYPE_VALUES: optionValues(APP_TYPE_OPTIONS),
+  INTEGRATION_TYPE_OPTIONS,
+  INTEGRATION_TYPE_VALUES: optionValues(INTEGRATION_TYPE_OPTIONS),
+  TEST_CASE_STATUS_OPTIONS,
+  TEST_CASE_STATUS_VALUES: optionValues(TEST_CASE_STATUS_OPTIONS),
+  TEST_STEP_GROUP_KIND_OPTIONS,
+  TEST_STEP_GROUP_KIND_VALUES: optionValues(TEST_STEP_GROUP_KIND_OPTIONS),
+  TEST_DATA_SET_MODE_OPTIONS,
+  TEST_DATA_SET_MODE_VALUES: optionValues(TEST_DATA_SET_MODE_OPTIONS),
+  EXECUTION_STATUS_OPTIONS,
+  EXECUTION_STATUS_VALUES: optionValues(EXECUTION_STATUS_OPTIONS),
+  EXECUTION_FINAL_STATUS_OPTIONS,
+  EXECUTION_FINAL_STATUS_VALUES: optionValues(EXECUTION_FINAL_STATUS_OPTIONS),
+  EXECUTION_RESULT_STATUS_OPTIONS,
+  EXECUTION_RESULT_STATUS_VALUES: optionValues(EXECUTION_RESULT_STATUS_OPTIONS),
+  FEEDBACK_STATUS_OPTIONS,
+  FEEDBACK_STATUS_VALUES: optionValues(FEEDBACK_STATUS_OPTIONS),
+  PRIORITY_SCALE
+};
