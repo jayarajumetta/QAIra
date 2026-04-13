@@ -79,92 +79,53 @@ const AUTH_CAPABILITY_SLIDES: Array<{
   theme: CapabilityTheme;
   visual: CapabilityVisual;
   metrics: Array<{ value: string; label: string }>;
-  highlights: Array<{ title: string; detail: string }>;
+  capabilities: string[];
   footer: string;
 }> = [
   {
     id: "design",
-    eyebrow: "AI Design Studio",
-    title: "Convert release notes and requirements into execution-ready test design.",
-    description: "QAira helps teams move from raw change input to structured coverage faster, while still keeping reviewer control, reusable steps, and enterprise-grade consistency.",
+    eyebrow: "AI Test Design",
+    title: "Turn raw requirements into reusable test design in minutes.",
+    description: "Generate review-ready test cases, attach structured steps, and keep human approval in the loop without losing speed.",
     theme: "blue",
     visual: "design",
     metrics: [
-      { value: "3x", label: "faster design cycles" },
-      { value: "126", label: "mapped test steps" },
-      { value: "94%", label: "coverage guidance" }
+      { value: "3x", label: "faster authoring" },
+      { value: "126", label: "steps mapped" },
+      { value: "94%", label: "coverage hints" }
     ],
-    highlights: [
-      {
-        title: "Requirement-aware drafting",
-        detail: "Generate cases with linked priorities, descriptions, and structured step suggestions."
-      },
-      {
-        title: "Reusable quality assets",
-        detail: "Keep suites, shared step groups, and app-type coverage organized as your library grows."
-      },
-      {
-        title: "Human review by default",
-        detail: "AI accelerates authoring without taking reviewers or release owners out of the approval loop."
-      }
-    ],
-    footer: "From requirement changes to execution-ready coverage in one connected workspace."
+    capabilities: ["Requirement-aware drafting", "Reusable suites and steps", "Human-reviewed AI output"],
+    footer: "From requirement changes to execution-ready coverage in one workspace."
   },
   {
     id: "execution",
-    eyebrow: "Smart Execution",
-    title: "Plan, run, and triage execution with live context instead of scattered status updates.",
-    description: "Bring impact-based planning, step-level evidence, assignment, and blocker visibility into a single execution workspace built for fast release decisions.",
+    eyebrow: "Execution Intelligence",
+    title: "Keep live runs, blockers, and failure signals obvious at a glance.",
+    description: "Watch execution status in real time, isolate risky failures faster, and keep logs, reruns, and ownership aligned.",
     theme: "amber",
     visual: "execution",
     metrics: [
-      { value: "48", label: "active run snapshots" },
-      { value: "7", label: "blockers surfaced early" },
+      { value: "48", label: "live runs" },
+      { value: "7", label: "blockers surfaced" },
       { value: "2m", label: "to failure context" }
     ],
-    highlights: [
-      {
-        title: "Impact-based execution",
-        detail: "Use AI Smart Execution to stage the most affected cases from release scope and context."
-      },
-      {
-        title: "Evidence at the step level",
-        detail: "Capture notes, images, and result state exactly where the tester is working."
-      },
-      {
-        title: "Cleaner triage handoff",
-        detail: "Keep ownership, suite status, and execution history connected when teams need to act fast."
-      }
-    ],
-    footer: "Every run, log, screenshot, and rerun decision stays visible for the whole team."
+    capabilities: ["Real-time execution board", "Failure trend clustering", "Faster triage handoff"],
+    footer: "Every run, log, and rerun decision stays connected for the whole team."
   },
   {
     id: "traceability",
     eyebrow: "Release Readiness",
-    title: "Turn traceability into a real release signal, not another reporting chore.",
-    description: "QAira connects requirements, suites, cases, shared steps, and execution evidence so teams can explain coverage, gaps, and risk with confidence.",
+    title: "See what is truly ready to ship with AI-backed traceability.",
+    description: "Connect requirements, suites, test cases, and evidence so release risk is visible before it spreads into production.",
     theme: "teal",
     visual: "traceability",
     metrics: [
-      { value: "100%", label: "lineage connected" },
+      { value: "100%", label: "lineage mapped" },
       { value: "14", label: "gaps highlighted" },
-      { value: "1", label: "release-ready view" }
+      { value: "1", label: "release view" }
     ],
-    highlights: [
-      {
-        title: "Requirement-to-evidence lineage",
-        detail: "Show exactly which requirements are covered, at risk, or still missing proof."
-      },
-      {
-        title: "Audit-friendly history",
-        detail: "Keep execution snapshots and reusable resource context preserved for later review."
-      },
-      {
-        title: "Risk-first release visibility",
-        detail: "Help engineering, QA, and leadership align around what is truly safe to ship."
-      }
-    ],
-    footer: "Confidence comes from linked evidence and execution history, not disconnected status updates."
+    capabilities: ["Requirement-to-evidence graph", "Audit-ready proof trails", "Risk-first release visibility"],
+    footer: "Confidence comes from linked evidence, not disconnected status updates."
   }
 ];
 
@@ -790,46 +751,30 @@ export function AuthPage() {
                 <span className="auth-carousel-status">Autoplay</span>
               </div>
 
-              <div className="auth-carousel-stage" aria-live="polite">
-                <div
-                  className="auth-carousel-track"
-                  style={{ transform: `translateX(-${activeCapabilityIndex * 100}%)` }}
-                >
-                  {AUTH_CAPABILITY_SLIDES.map((slide, index) => (
-                    <article
-                      aria-hidden={index === activeCapabilityIndex ? undefined : true}
-                      className="auth-carousel-slide"
-                      key={slide.id}
-                    >
-                      <div className="auth-carousel-copy-block">
-                        <p className="eyebrow">{slide.eyebrow}</p>
-                        <h1>{slide.title}</h1>
-                        <p className="auth-aside-copy">{slide.description}</p>
+              <div className="auth-carousel-slide" key={activeCapability.id}>
+                <div className="auth-carousel-copy-block">
+                  <p className="eyebrow">{activeCapability.eyebrow}</p>
+                  <h1>{activeCapability.title}</h1>
+                  <p className="auth-aside-copy">{activeCapability.description}</p>
 
-                        <div className="auth-carousel-stat-grid" aria-label={`${slide.eyebrow} highlights`}>
-                          {slide.metrics.map((metric) => (
-                            <div className="auth-carousel-stat-card" key={metric.label}>
-                              <strong>{metric.value}</strong>
-                              <span>{metric.label}</span>
-                            </div>
-                          ))}
-                        </div>
-
-                        <div className="auth-carousel-feature-list" aria-label={`${slide.eyebrow} product capabilities`}>
-                          {slide.highlights.map((highlight) => (
-                            <div className="auth-carousel-feature-card" key={highlight.title}>
-                              <strong>{highlight.title}</strong>
-                              <span>{highlight.detail}</span>
-                            </div>
-                          ))}
-                        </div>
+                  <div className="auth-carousel-stat-grid" aria-label="Capability highlights">
+                    {activeCapability.metrics.map((metric) => (
+                      <div className="auth-carousel-stat-card" key={metric.label}>
+                        <strong>{metric.value}</strong>
+                        <span>{metric.label}</span>
                       </div>
+                    ))}
+                  </div>
 
-                      <div className="auth-carousel-visual-wrap">
-                        <AuthCapabilityGraphic visual={slide.visual} />
-                      </div>
-                    </article>
-                  ))}
+                  <div className="auth-trust-list" aria-label="Core capabilities">
+                    {activeCapability.capabilities.map((capability) => (
+                      <span className="auth-trust-pill" key={capability}>{capability}</span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="auth-carousel-visual-wrap">
+                  <AuthCapabilityGraphic visual={activeCapability.visual} />
                 </div>
               </div>
 
@@ -846,10 +791,6 @@ export function AuthPage() {
                   ))}
                 </div>
                 <p className="auth-aside-footer">{activeCapability.footer}</p>
-                <div className="auth-carousel-counter" aria-label="Current slide">
-                  <strong>{String(activeCapabilityIndex + 1).padStart(2, "0")}</strong>
-                  <span>/ {String(AUTH_CAPABILITY_SLIDES.length).padStart(2, "0")}</span>
-                </div>
               </div>
             </div>
           </div>
