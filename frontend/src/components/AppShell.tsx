@@ -359,6 +359,14 @@ export function AppShell() {
               </div>
             )
           ) : null}
+
+          {!shouldCollapseSidebar ? (
+            <div className="sidebar-context-card" aria-label="Current workspace context">
+              <span className="sidebar-context-kicker">Current Workspace</span>
+              <strong>{currentSection}</strong>
+              <span>{currentProjectName}</span>
+            </div>
+          ) : null}
         </div>
 
         <nav className="nav-list" aria-label="Main navigation">
@@ -578,6 +586,7 @@ export function AppShell() {
 
       <main
         className={`workspace-main main${isWorkspaceWideLibrary ? " main--library-fill" : ""}`}
+        data-route={location.pathname}
         data-section={currentSection}
       >
         {isMobileViewport ? (

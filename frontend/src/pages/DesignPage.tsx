@@ -22,7 +22,7 @@ import {
   formatTileCardLabel,
   getTileCardTone
 } from "../components/TileCardPrimitives";
-import { SuiteCasePicker } from "../components/SuiteCasePicker";
+import { SuiteCasePicker, SuiteScopePicker } from "../components/SuiteCasePicker";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
@@ -590,10 +590,6 @@ export function DesignPage() {
   const executionTargetSuiteIds = useMemo(
     () => selectedSuiteActionIds,
     [selectedSuiteActionIds]
-  );
-  const executionTargetSuites = useMemo(
-    () => suites.filter((suite) => executionTargetSuiteIds.includes(suite.id)),
-    [executionTargetSuiteIds, suites]
   );
   const areAllFilteredSuitesSelected = Boolean(filteredSuites.length) && filteredSuites.every((suite) => selectedSuiteActionIds.includes(suite.id));
   const activeSuiteFilterCount =
@@ -1409,7 +1405,7 @@ export function DesignPage() {
             isLoading={suitesQuery.isLoading && Boolean(appTypeId)}
             selectedAppType={selectedAppType}
             canCreateSuite={Boolean(appTypeId)}
-            canCreateExecution={Boolean(projectId && appTypeId && executionTargetSuiteIds.length && session?.user.id)}
+            canCreateExecution={Boolean(projectId && appTypeId && suites.length && session?.user.id)}
             selectedSuiteCount={selectedSuiteActionIds.length}
             isDeletingSelectedSuites={isDeletingSelectedSuites}
             hasSuiteSearchResults={Boolean(filteredSuites.length)}
@@ -1529,19 +1525,17 @@ export function DesignPage() {
           onDataSetChange={setSelectedExecutionDataSetId}
           onEnvironmentChange={setSelectedExecutionEnvironmentId}
           onExecutionNameChange={setExecutionName}
-          onRemoveSuite={(suiteId) =>
-            setSelectedSuiteActionIds((current) => current.filter((id) => id !== suiteId))
-          }
+          onSuiteSelectionChange={setSelectedSuiteActionIds}
           onSubmit={handleCreateExecution}
           appTypeId={appTypeId}
           projectId={projectId}
           selectedConfigurationId={selectedExecutionConfigurationId}
-          scopeSuiteCount={suites.length}
           selectedAppType={selectedAppType?.name || ""}
           selectedDataSetId={selectedExecutionDataSetId}
           selectedEnvironmentId={selectedExecutionEnvironmentId}
           selectedProject={selectedProject?.name || ""}
-          suites={executionTargetSuites}
+          scopeSuites={suites}
+          selectedSuiteIds={selectedSuiteActionIds}
         />
       ) : null}
 
@@ -2645,12 +2639,12 @@ function DraftStepCard({
 }
 
 function SuiteExecutionModal({
-  suites,
+  scopeSuites,
   selectedProject,
   selectedAppType,
   appTypeId,
   projectId,
-  scopeSuiteCount,
+  selectedSuiteIds,
   executionName,
   selectedEnvironmentId,
   selectedConfigurationId,
@@ -2661,16 +2655,16 @@ function SuiteExecutionModal({
   onConfigurationChange,
   onDataSetChange,
   onExecutionNameChange,
-  onRemoveSuite,
+  onSuiteSelectionChange,
   onClose,
   onSubmit
 }: {
-  suites: TestSuite[];
+  scopeSuites: TestSuite[];
   selectedProject: string;
   selectedAppType: string;
   appTypeId: string;
   projectId: string;
-  scopeSuiteCount: number;
+  selectedSuiteIds: string[];
   executionName: string;
   selectedEnvironmentId: string;
   selectedConfigurationId: string;
@@ -2681,7 +2675,7 @@ function SuiteExecutionModal({
   onConfigurationChange: (value: string) => void;
   onDataSetChange: (value: string) => void;
   onExecutionNameChange: (value: string) => void;
-  onRemoveSuite: (suiteId: string) => void;
+  onSuiteSelectionChange: (nextIds: string[]) => void;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
@@ -2725,7 +2719,7 @@ function SuiteExecutionModal({
             <div className="detail-summary">
               <strong>{selectedProject || "Select a project to continue"}</strong>
               <span>{selectedAppType ? `${selectedAppType} app type selected for this snapshot.` : "Choose an app type to load suite scope."}</span>
-              <span>{scopeSuiteCount ? `${scopeSuiteCount} suites available in the current scope.` : "No suites available in the current scope yet."}</span>
+              <span>{scopeSuites.length ? `${scopeSuites.length} suites available in the current scope.` : "No suites available in the current scope yet."}</span>
             </div>
 
             <ExecutionContextSelector
@@ -2741,27 +2735,19 @@ function SuiteExecutionModal({
             />
 
             <FormField label="Suite scope" required>
-              <div className="selection-summary-card">
-                <div className="selection-summary-header">
-                  <div>
-                    <strong>{suites.length ? `${suites.length} suites selected` : "No suites selected yet"}</strong>
-                    <span>These came from the checkboxes in the Suites panel. Remove any chip here before creating the execution.</span>
-                  </div>
-                </div>
-
-                {suites.length ? (
-                  <div className="selection-chip-row">
-                    {suites.map((suite) => (
-                      <button key={suite.id} className="selection-chip" disabled={isSubmitting} onClick={() => onRemoveSuite(suite.id)} type="button">
-                        {suite.name}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
+              <div className="suite-modal-picker-shell suite-modal-picker-shell--scope">
+                <SuiteScopePicker
+                  description="Select the suites to snapshot for this execution, then adjust their order if you need a different run sequence."
+                  emptyMessage="No suites available for this app type yet."
+                  heading="Available suites"
+                  onChange={onSuiteSelectionChange}
+                  selectedSuiteIds={selectedSuiteIds}
+                  suites={scopeSuites}
+                />
               </div>
             </FormField>
 
-            {!scopeSuiteCount && selectedAppType ? <div className="empty-state compact">No suites available for this app type. Create a suite first.</div> : null}
+            {!scopeSuites.length && selectedAppType ? <div className="empty-state compact">No suites available for this app type. Create a suite first.</div> : null}
           </div>
 
           <div className="action-row execution-create-actions">

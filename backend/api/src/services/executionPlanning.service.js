@@ -3,6 +3,47 @@ const integrationService = require("./integration.service");
 
 const DIRECT_CASE_SUITE_ID = "default";
 const DIRECT_CASE_SUITE_NAME = "Default";
+const SMART_EXECUTION_MAX_OUTPUT_TOKENS = 900;
+const SMART_EXECUTION_CASE_SELECTION_ATTEMPTS = [
+  { csvBudget: 12000, maxCases: 120 },
+  { csvBudget: 8000, maxCases: 72 },
+  { csvBudget: 5600, maxCases: 40 }
+];
+const SMART_EXECUTION_MAX_TITLE_LENGTH = 120;
+const SMART_EXECUTION_MAX_DESCRIPTION_LENGTH = 220;
+const SMART_EXECUTION_MAX_STATUS_LENGTH = 32;
+const SMART_EXECUTION_MAX_LIST_ITEMS = 4;
+const SMART_EXECUTION_MAX_LIST_ITEM_LENGTH = 60;
+const SMART_EXECUTION_MAX_STEP_COUNT_IN_SUMMARY = 5;
+const SMART_EXECUTION_MAX_STEP_FRAGMENT_LENGTH = 96;
+const SMART_EXECUTION_MAX_STEP_SUMMARY_LENGTH = 360;
+const SMART_EXECUTION_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "by",
+  "for",
+  "from",
+  "has",
+  "in",
+  "into",
+  "is",
+  "it",
+  "of",
+  "on",
+  "or",
+  "that",
+  "the",
+  "their",
+  "this",
+  "to",
+  "using",
+  "with"
+]);
 
 const selectTestEnvironment = db.prepare(`
   SELECT id, project_id, app_type_id, name, description, base_url, browser, notes, variables
@@ -65,6 +106,32 @@ const normalizeText = (value) => {
   const normalized = value.trim();
   return normalized ? normalized : null;
 };
+
+const truncateText = (value, maxLength) => {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (!maxLength || normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(maxLength - 1, 1)).trimEnd()}…`;
+};
+
+const tokenizePlanningText = (...values) =>
+  uniqueList(
+    values
+      .flatMap((value) =>
+        String(value || "")
+          .toLowerCase()
+          .split(/[^a-z0-9]+/g)
+          .map((token) => token.trim())
+      )
+      .filter((token) => token.length >= 3 && !SMART_EXECUTION_STOP_WORDS.has(token))
+  );
 
 const extractJsonPayload = (content) => {
   const trimmed = String(content || "").trim();
@@ -145,6 +212,7 @@ const requestChatCompletion = async ({ integration, content }) => {
     body: JSON.stringify({
       model: integration.model,
       temperature: 0.15,
+      max_tokens: SMART_EXECUTION_MAX_OUTPUT_TOKENS,
       messages: [
         {
           role: "system",
@@ -241,6 +309,20 @@ const summarizeDataSet = (resource) => {
     .join(" | ");
 };
 
+const compactPromptList = (values = []) => {
+  const compact = uniqueList(values)
+    .map((value) => truncateText(value, SMART_EXECUTION_MAX_LIST_ITEM_LENGTH))
+    .filter(Boolean);
+
+  if (compact.length <= SMART_EXECUTION_MAX_LIST_ITEMS) {
+    return compact;
+  }
+
+  return compact
+    .slice(0, SMART_EXECUTION_MAX_LIST_ITEMS)
+    .concat(`+${compact.length - SMART_EXECUTION_MAX_LIST_ITEMS} more`);
+};
+
 const buildCaseMaps = ({ cases, suiteMappings, requirementMappings, stepRows }) => {
   const suitesByCaseId = suiteMappings.reduce((accumulator, mapping) => {
     accumulator[mapping.test_case_id] = accumulator[mapping.test_case_id] || [];
@@ -264,17 +346,27 @@ const buildCaseMaps = ({ cases, suiteMappings, requirementMappings, stepRows }) 
     const steps = stepsByCaseId[testCase.id] || [];
     const suite_names = uniqueList(suitesByCaseId[testCase.id] || []);
     const requirement_titles = uniqueList(requirementsByCaseId[testCase.id] || []);
-    const step_summary = steps
+    const summarizedSteps = steps
+      .slice(0, SMART_EXECUTION_MAX_STEP_COUNT_IN_SUMMARY)
       .map((step) => {
         const fragments = [
           Number.isFinite(Number(step.step_order)) ? `${Number(step.step_order)}.` : null,
-          normalizeText(step.group_name) ? `[${step.group_name}]` : null,
-          normalizeText(step.action) || "No action"
+          normalizeText(step.group_name) ? `[${truncateText(step.group_name, 40)}]` : null,
+          truncateText(step.action, SMART_EXECUTION_MAX_STEP_FRAGMENT_LENGTH) || "No action"
         ].filter(Boolean);
-        const expected = normalizeText(step.expected_result);
+        const expected = truncateText(step.expected_result, SMART_EXECUTION_MAX_STEP_FRAGMENT_LENGTH);
         return expected ? `${fragments.join(" ")} => ${expected}` : fragments.join(" ");
-      })
-      .join(" | ");
+      });
+    const remainingStepCount = Math.max(steps.length - summarizedSteps.length, 0);
+    const step_summary = truncateText(
+      [
+        summarizedSteps.join(" | "),
+        remainingStepCount ? `+${remainingStepCount} more step${remainingStepCount === 1 ? "" : "s"}` : null
+      ]
+        .filter(Boolean)
+        .join(" | "),
+      SMART_EXECUTION_MAX_STEP_SUMMARY_LENGTH
+    );
 
     return {
       id: testCase.id,
@@ -289,6 +381,21 @@ const buildCaseMaps = ({ cases, suiteMappings, requirementMappings, stepRows }) 
     };
   });
 };
+
+const buildCaseCsvRow = (testCase) =>
+  [
+    testCase.id,
+    testCase.title,
+    testCase.description || "",
+    testCase.priority ?? "",
+    testCase.status || "",
+    testCase.suite_names.join(" | "),
+    testCase.requirement_titles.join(" | "),
+    testCase.step_count,
+    testCase.step_summary
+  ]
+    .map(toCsvCell)
+    .join(",");
 
 const buildCaseCsv = (cases = []) => {
   const rows = [
@@ -306,19 +413,7 @@ const buildCaseCsv = (cases = []) => {
   ];
 
   cases.forEach((testCase) => {
-    rows.push(
-      [
-        testCase.id,
-        testCase.title,
-        testCase.description || "",
-        testCase.priority ?? "",
-        testCase.status || "",
-        testCase.suite_names.join(" | "),
-        testCase.requirement_titles.join(" | "),
-        testCase.step_count,
-        testCase.step_summary
-      ].map(toCsvCell).join(",")
-    );
+    rows.push(buildCaseCsvRow(testCase));
   });
 
   return rows.join("\n");
@@ -339,10 +434,12 @@ const buildPrompt = ({
   additionalContext,
   executionContext,
   sourceCaseCount,
+  candidateCaseCount,
   caseCsv
 }) => {
+  const isPartialLibrary = candidateCaseCount < sourceCaseCount;
   const prompt = [
-    "Plan a smart QA execution for a release by selecting impacted existing test cases from the provided CSV library.",
+    "Plan a smart QA execution for a release by selecting impacted existing test cases from the provided CSV candidate library.",
     "",
     `Application type: ${appType.name} (${appType.type})`,
     `Execution suite to use when creating the run: ${DIRECT_CASE_SUITE_NAME} (${DIRECT_CASE_SUITE_ID})`,
@@ -366,7 +463,11 @@ const buildPrompt = ({
   }
 
   prompt.push("");
-  prompt.push(`Existing test case library CSV (${sourceCaseCount} cases):`);
+  prompt.push(
+    isPartialLibrary
+      ? `Candidate existing test case library CSV (${candidateCaseCount} ranked cases from ${sourceCaseCount} total existing cases):`
+      : `Existing test case library CSV (${sourceCaseCount} cases):`
+  );
   prompt.push("```csv");
   prompt.push(caseCsv);
   prompt.push("```");
@@ -385,7 +486,10 @@ const buildPrompt = ({
   prompt.push("}");
   prompt.push("");
   prompt.push("Rules:");
-  prompt.push("- Use only exact test_case_id values that exist in the CSV.");
+  prompt.push("- Use only exact test_case_id values that exist in the provided CSV.");
+  if (isPartialLibrary) {
+    prompt.push("- The CSV is a relevance-ranked excerpt of the full library based on the release scope and selected execution context.");
+  }
   prompt.push("- Include every materially impacted case that should be executed for confidence in this release.");
   prompt.push("- Exclude obviously unrelated cases.");
   prompt.push("- Use the reason field to explain why the case belongs in this execution.");
@@ -394,6 +498,175 @@ const buildPrompt = ({
   prompt.push("- Do not include markdown or commentary outside the JSON.");
 
   return prompt.join("\n");
+};
+
+const buildPromptReadyCase = (testCase) => ({
+  id: testCase.id,
+  title: truncateText(testCase.title, SMART_EXECUTION_MAX_TITLE_LENGTH),
+  description: truncateText(testCase.description, SMART_EXECUTION_MAX_DESCRIPTION_LENGTH),
+  priority: testCase.priority ?? "",
+  status: truncateText(testCase.status, SMART_EXECUTION_MAX_STATUS_LENGTH),
+  suite_names: compactPromptList(testCase.suite_names),
+  requirement_titles: compactPromptList(testCase.requirement_titles),
+  step_count: testCase.step_count,
+  step_summary: truncateText(testCase.step_summary, SMART_EXECUTION_MAX_STEP_SUMMARY_LENGTH)
+});
+
+const scoreCaseForPlanning = (testCase, searchTerms) => {
+  const title = `${normalizeText(testCase.title) || ""}`.toLowerCase();
+  const description = `${normalizeText(testCase.description) || ""}`.toLowerCase();
+  const suites = testCase.suite_names.join(" ").toLowerCase();
+  const requirements = testCase.requirement_titles.join(" ").toLowerCase();
+  const steps = `${normalizeText(testCase.step_summary) || ""}`.toLowerCase();
+
+  const keywordScore = searchTerms.reduce((score, term) => {
+    let next = score;
+
+    if (title.includes(term)) {
+      next += 12;
+    }
+
+    if (requirements.includes(term)) {
+      next += 10;
+    }
+
+    if (suites.includes(term)) {
+      next += 7;
+    }
+
+    if (description.includes(term)) {
+      next += 6;
+    }
+
+    if (steps.includes(term)) {
+      next += 4;
+    }
+
+    return next;
+  }, 0);
+
+  const priorityBoost = Number.isFinite(Number(testCase.priority)) ? Math.max(0, 6 - Number(testCase.priority)) : 0;
+  const stepBoost = Math.min(Number(testCase.step_count) || 0, 6);
+  const activeBoost = normalizeText(testCase.status)?.toLowerCase() === "active" ? 1 : 0;
+
+  return keywordScore + priorityBoost + stepBoost + activeBoost;
+};
+
+const selectCasesForPrompt = ({
+  scopedCases,
+  releaseScope,
+  additionalContext,
+  executionContext,
+  appType,
+  csvBudget,
+  maxCases
+}) => {
+  const searchTerms = tokenizePlanningText(
+    releaseScope,
+    additionalContext,
+    executionContext.join(" "),
+    appType.name,
+    appType.type
+  );
+  const rankedCases = [...scopedCases]
+    .map((testCase, index) => ({
+      testCase,
+      index,
+      score: scoreCaseForPlanning(testCase, searchTerms)
+    }))
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+
+      const leftPriority = Number.isFinite(Number(left.testCase.priority)) ? Number(left.testCase.priority) : Number.POSITIVE_INFINITY;
+      const rightPriority = Number.isFinite(Number(right.testCase.priority)) ? Number(right.testCase.priority) : Number.POSITIVE_INFINITY;
+
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority;
+      }
+
+      if (right.testCase.step_count !== left.testCase.step_count) {
+        return right.testCase.step_count - left.testCase.step_count;
+      }
+
+      return left.index - right.index;
+    });
+  const selected = [];
+  let currentLength = buildCaseCsv([]).length;
+
+  rankedCases.some(({ testCase }) => {
+    if (selected.length >= maxCases) {
+      return true;
+    }
+
+    const promptReadyCase = buildPromptReadyCase(testCase);
+    const nextRow = buildCaseCsvRow(promptReadyCase);
+    const separatorLength = selected.length ? 1 : 0;
+
+    if (selected.length && currentLength + separatorLength + nextRow.length > csvBudget) {
+      return true;
+    }
+
+    selected.push(promptReadyCase);
+    currentLength += separatorLength + nextRow.length;
+    return false;
+  });
+
+  return selected.length ? selected : [buildPromptReadyCase(scopedCases[0])];
+};
+
+const isPromptTooLargeError = (error) =>
+  error?.statusCode === 413 || /request too large/i.test(String(error?.message || ""));
+
+const requestSmartExecutionPlan = async ({
+  integration,
+  appType,
+  releaseScope,
+  additionalContext,
+  executionContext,
+  scopedCases
+}) => {
+  let lastSizeError = null;
+
+  for (const attempt of SMART_EXECUTION_CASE_SELECTION_ATTEMPTS) {
+    const promptCases = selectCasesForPrompt({
+      scopedCases,
+      releaseScope,
+      additionalContext,
+      executionContext,
+      appType,
+      csvBudget: attempt.csvBudget,
+      maxCases: attempt.maxCases
+    });
+    const caseCsv = buildCaseCsv(promptCases);
+    const prompt = buildPrompt({
+      appType,
+      releaseScope,
+      additionalContext,
+      executionContext,
+      sourceCaseCount: scopedCases.length,
+      candidateCaseCount: promptCases.length,
+      caseCsv
+    });
+
+    try {
+      const content = await requestChatCompletion({ integration, content: prompt });
+      return { content, promptCaseIds: promptCases.map((testCase) => testCase.id) };
+    } catch (error) {
+      if (!isPromptTooLargeError(error)) {
+        throw error;
+      }
+
+      lastSizeError = error;
+    }
+  }
+
+  const error = new Error(
+    "AI smart execution prompt still exceeds the configured model limit after trimming the candidate case library. Use a higher-capacity LLM integration or narrow the release scope."
+  );
+  error.statusCode = lastSizeError?.statusCode || 413;
+  throw error;
 };
 
 const normalizeImpactLevel = (value) => {
@@ -466,23 +739,24 @@ exports.previewSmartExecution = async ({
     requirementMappings,
     stepRows
   });
-  const caseMap = new Map(scopedCases.map((testCase) => [testCase.id, testCase]));
-  const caseCsv = buildCaseCsv(scopedCases);
   const executionContext = [
     selectedEnvironment ? `Environment: ${selectedEnvironment.summary}` : null,
     selectedConfiguration ? `Configuration: ${selectedConfiguration.summary}` : null,
     selectedDataSet ? `Data set: ${selectedDataSet.summary}` : null
   ].filter(Boolean);
-  const prompt = buildPrompt({
+  const { content, promptCaseIds } = await requestSmartExecutionPlan({
+    integration,
     appType,
     releaseScope,
     additionalContext,
     executionContext,
-    sourceCaseCount: scopedCases.length,
-    caseCsv
+    scopedCases
   });
-
-  const content = await requestChatCompletion({ integration, content: prompt });
+  const caseMap = new Map(
+    scopedCases
+      .filter((testCase) => promptCaseIds.includes(testCase.id))
+      .map((testCase) => [testCase.id, testCase])
+  );
   const payload = extractJsonPayload(content);
   const rawCases = Array.isArray(payload?.cases)
     ? payload.cases

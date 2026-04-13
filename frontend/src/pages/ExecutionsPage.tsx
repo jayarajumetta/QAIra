@@ -11,6 +11,7 @@ import { ProjectDropdown } from "../components/ProjectDropdown";
 import { ProgressMeter } from "../components/ProgressMeter";
 import { StatusBadge } from "../components/StatusBadge";
 import { SubnavTabs } from "../components/SubnavTabs";
+import { SuiteScopePicker } from "../components/SuiteCasePicker";
 import { ToastMessage } from "../components/ToastMessage";
 import { VirtualList } from "../components/VirtualList";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
@@ -415,7 +416,6 @@ export function ExecutionsPage() {
   const [executionCreateMode, setExecutionCreateMode] = useState<ExecutionCreateMode>("manual");
   const [selectedSuiteIds, setSelectedSuiteIds] = useState<string[]>([]);
   const [isCreateExecutionModalOpen, setIsCreateExecutionModalOpen] = useState(false);
-  const [isSuitePickerOpen, setIsSuitePickerOpen] = useState(false);
   const [selectedExecutionId, setSelectedExecutionId] = useState("");
   const [focusedSuiteId, setFocusedSuiteId] = useState("");
   const [expandedExecutionSuiteIds, setExpandedExecutionSuiteIds] = useState<string[]>([]);
@@ -585,7 +585,6 @@ export function ExecutionsPage() {
 
   const closeCreateExecutionModal = () => {
     setIsCreateExecutionModalOpen(false);
-    setIsSuitePickerOpen(false);
   };
 
   const resetExecutionContextSelection = () => {
@@ -615,7 +614,6 @@ export function ExecutionsPage() {
     setAppTypeId("");
     setSelectedSuiteIds([]);
     setSelectedExecutionAssigneeId("");
-    setIsSuitePickerOpen(false);
     resetExecutionContextSelection();
     resetSmartExecutionPreview();
   };
@@ -623,7 +621,6 @@ export function ExecutionsPage() {
   const handleExecutionAppTypeChange = (value: string) => {
     setAppTypeId(value);
     setSelectedSuiteIds([]);
-    setIsSuitePickerOpen(false);
     resetExecutionContextSelection();
     resetSmartExecutionPreview();
   };
@@ -1615,10 +1612,6 @@ export function ExecutionsPage() {
     executionCreateMode === "smart"
       ? Boolean(projectId && appTypeId && selectedSmartExecutionCases.length)
       : Boolean(projectId && appTypeId && selectedSuiteIds.length);
-  const selectedScopeSuites = useMemo(
-    () => scopeSuites.filter((suite) => selectedSuiteIds.includes(suite.id)),
-    [scopeSuites, selectedSuiteIds]
-  );
 
   const persistCaseOutcomeOnly = async (testCaseId: string, status: "passed" | "failed") => {
     const scopedAppTypeId = selectedExecution?.app_type_id;
@@ -1747,14 +1740,12 @@ export function ExecutionsPage() {
         onAppTypeChange={(value) => {
           setAppTypeId(value);
           setSelectedSuiteIds([]);
-          setIsSuitePickerOpen(false);
           resetExecutionContextSelection();
         }}
         onProjectChange={(value) => {
           setProjectId(value);
           setAppTypeId("");
           setSelectedSuiteIds([]);
-          setIsSuitePickerOpen(false);
           resetExecutionContextSelection();
         }}
         projectId={projectId}
@@ -2499,8 +2490,7 @@ export function ExecutionsPage() {
           onExecutionNameChange={setExecutionName}
           onPreviewSmartExecution={() => void handlePreviewSmartExecution()}
           onProjectChange={handleExecutionProjectChange}
-          onRemoveSuite={(suiteId) => setSelectedSuiteIds((current) => current.filter((id) => id !== suiteId))}
-          onSelectSuites={() => setIsSuitePickerOpen(true)}
+          onSuiteSelectionChange={setSelectedSuiteIds}
           onSelectAllSmartExecutionCases={() => setSelectedSmartExecutionCaseIds(smartPreviewCases.map((testCase) => testCase.test_case_id))}
           onClearSmartExecutionCases={() => setSelectedSmartExecutionCaseIds([])}
           onSmartExecutionAdditionalContextChange={handleSmartExecutionAdditionalContextChange}
@@ -2521,7 +2511,7 @@ export function ExecutionsPage() {
           selectedDataSetId={selectedExecutionDataSetId}
           selectedEnvironmentId={selectedExecutionEnvironmentId}
           selectedProject={selectedProject?.name || ""}
-          selectedScopeSuites={selectedScopeSuites}
+          selectedSuiteIds={selectedSuiteIds}
           selectedSmartExecutionCaseIds={selectedSmartExecutionCaseIds}
           smartExecutionAdditionalContext={smartExecutionAdditionalContext}
           smartExecutionIntegrationId={smartExecutionIntegrationId}
@@ -2529,21 +2519,6 @@ export function ExecutionsPage() {
           smartExecutionPreviewMessage={smartExecutionPreviewMessage}
           smartExecutionPreviewTone={smartExecutionPreviewTone}
           smartExecutionReleaseScope={smartExecutionReleaseScope}
-        />
-      ) : null}
-
-      {isSuitePickerOpen ? (
-        <ExecutionSuitePickerModal
-          selectedSuiteIds={selectedSuiteIds}
-          suites={scopeSuites}
-          onClose={() => setIsSuitePickerOpen(false)}
-          onClearSelection={() => setSelectedSuiteIds([])}
-          onSelectAll={() => setSelectedSuiteIds(scopeSuites.map((suite) => suite.id))}
-          onToggleSuite={(suiteId) =>
-            setSelectedSuiteIds((current) =>
-              current.includes(suiteId) ? current.filter((id) => id !== suiteId) : [...current, suiteId]
-            )
-          }
         />
       ) : null}
     </div>
@@ -3472,7 +3447,7 @@ function ExecutionCreateModal({
   selectedProject,
   selectedAppType,
   scopeSuites,
-  selectedScopeSuites,
+  selectedSuiteIds,
   executionName,
   selectedEnvironmentId,
   selectedConfigurationId,
@@ -3492,8 +3467,7 @@ function ExecutionCreateModal({
   onConfigurationChange,
   onDataSetChange,
   onAssigneeChange,
-  onSelectSuites,
-  onRemoveSuite,
+  onSuiteSelectionChange,
   onPreviewSmartExecution,
   onSmartExecutionIntegrationChange,
   onSmartExecutionReleaseScopeChange,
@@ -3518,7 +3492,7 @@ function ExecutionCreateModal({
   selectedProject: string;
   selectedAppType: string;
   scopeSuites: TestSuite[];
-  selectedScopeSuites: TestSuite[];
+  selectedSuiteIds: string[];
   executionName: string;
   selectedEnvironmentId: string;
   selectedConfigurationId: string;
@@ -3538,8 +3512,7 @@ function ExecutionCreateModal({
   onConfigurationChange: (value: string) => void;
   onDataSetChange: (value: string) => void;
   onAssigneeChange: (value: string) => void;
-  onSelectSuites: () => void;
-  onRemoveSuite: (suiteId: string) => void;
+  onSuiteSelectionChange: (nextIds: string[]) => void;
   onPreviewSmartExecution: () => void;
   onSmartExecutionIntegrationChange: (value: string) => void;
   onSmartExecutionReleaseScopeChange: (value: string) => void;
@@ -3844,26 +3817,15 @@ function ExecutionCreateModal({
             ) : (
               <>
                 <FormField label="Suite scope" required>
-                  <div className="selection-summary-card">
-                    <div className="selection-summary-header">
-                      <div>
-                        <strong>{selectedScopeSuites.length ? `${selectedScopeSuites.length} suites selected` : "No suites selected yet"}</strong>
-                        <span>Choose one or more suites. The execution will preserve their cases and steps as a fixed snapshot.</span>
-                      </div>
-                      <button className="ghost-button" disabled={!scopeSuites.length} onClick={onSelectSuites} type="button">
-                        Select suites
-                      </button>
-                    </div>
-
-                    {selectedScopeSuites.length ? (
-                      <div className="selection-chip-row">
-                        {selectedScopeSuites.map((suite) => (
-                          <button key={suite.id} className="selection-chip" onClick={() => onRemoveSuite(suite.id)} type="button">
-                            {suite.name}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
+                  <div className="suite-modal-picker-shell suite-modal-picker-shell--scope">
+                    <SuiteScopePicker
+                      description="Select the suites to snapshot for this execution, then adjust their order if you want a different run sequence."
+                      emptyMessage="No suites available for the current app type."
+                      heading="Available suites"
+                      onChange={onSuiteSelectionChange}
+                      selectedSuiteIds={selectedSuiteIds}
+                      suites={scopeSuites}
+                    />
                   </div>
                 </FormField>
 
@@ -4242,75 +4204,6 @@ function ExecutionContextDataTable({
           </table>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function ExecutionSuitePickerModal({
-  suites,
-  selectedSuiteIds,
-  onClose,
-  onSelectAll,
-  onClearSelection,
-  onToggleSuite
-}: {
-  suites: TestSuite[];
-  selectedSuiteIds: string[];
-  onClose: () => void;
-  onSelectAll: () => void;
-  onClearSelection: () => void;
-  onToggleSuite: (suiteId: string) => void;
-}) {
-  const selectedCount = selectedSuiteIds.length;
-  const areAllSuitesSelected = Boolean(suites.length) && selectedCount === suites.length;
-
-  return (
-    <div className="modal-backdrop" role="presentation">
-      <div className="modal-card selection-modal-card" aria-label="Select execution suites" aria-modal="true" role="dialog">
-        <div className="panel-head">
-          <div>
-            <h3>Select suite scope</h3>
-            <p>Choose the suites to include in this execution. QAira snapshots them immediately when the run is created.</p>
-          </div>
-          <div className="panel-head-actions">
-            <button className="ghost-button" disabled={!suites.length || areAllSuitesSelected} onClick={onSelectAll} type="button">
-              Select all
-            </button>
-            <button className="ghost-button" disabled={!selectedCount} onClick={onClearSelection} type="button">
-              Clear selection
-            </button>
-          </div>
-        </div>
-
-        <div className="detail-stack">
-          <div className="detail-summary">
-            <strong>{selectedCount ? `${selectedCount} suites selected` : "No suites selected"}</strong>
-            <span>{selectedCount ? "You can remove any selection here before creating the execution." : "Pick one or more suites to build the execution scope."}</span>
-          </div>
-
-          <div className="modal-case-picker selection-picker-grid">
-            {suites.map((suite) => (
-              <label className="modal-case-option selection-option" key={suite.id}>
-                <input
-                  checked={selectedSuiteIds.includes(suite.id)}
-                  onChange={() => onToggleSuite(suite.id)}
-                  type="checkbox"
-                />
-                <div>
-                  <strong>{suite.name}</strong>
-                  <span>{suite.parent_id ? "Nested suite" : "Root suite"}</span>
-                </div>
-              </label>
-            ))}
-            {!suites.length ? <div className="empty-state compact">No suites available for the current app type.</div> : null}
-          </div>
-
-          <div className="action-row">
-            <button className="primary-button" onClick={onClose} type="button">Done</button>
-            <button className="ghost-button" onClick={onClose} type="button">Close</button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

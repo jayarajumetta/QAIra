@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { TestCase } from "../types";
+import type { TestCase, TestSuite } from "../types";
 
 type SuiteCasePickerProps = {
   cases: TestCase[];
@@ -8,6 +8,34 @@ type SuiteCasePickerProps = {
   heading: string;
   description: string;
   emptyMessage: string;
+};
+
+type SuiteScopePickerProps = {
+  suites: TestSuite[];
+  selectedSuiteIds: string[];
+  onChange: (nextIds: string[]) => void;
+  heading: string;
+  description: string;
+  emptyMessage: string;
+};
+
+type OrderedSelectionPickerItem = {
+  id: string;
+  title: string;
+  description: string;
+  meta?: string;
+};
+
+type OrderedSelectionPickerProps = {
+  items: OrderedSelectionPickerItem[];
+  selectedIds: string[];
+  onChange: (nextIds: string[]) => void;
+  heading: string;
+  description: string;
+  emptyMessage: string;
+  itemLabel: string;
+  selectedHint: string;
+  emptyHint: string;
 };
 
 const moveItem = <T,>(items: T[], fromIndex: number, toIndex: number) => {
@@ -29,40 +57,110 @@ export function SuiteCasePicker({
   description,
   emptyMessage
 }: SuiteCasePickerProps) {
-  const caseById = useMemo(() => new Map(cases.map((testCase) => [testCase.id, testCase])), [cases]);
-  const allCaseIds = useMemo(() => cases.map((testCase) => testCase.id), [cases]);
-  const selectedCases = useMemo(
-    () => selectedCaseIds.map((id) => caseById.get(id)).filter((testCase): testCase is TestCase => Boolean(testCase)),
-    [caseById, selectedCaseIds]
+  const items = useMemo<OrderedSelectionPickerItem[]>(
+    () =>
+      cases.map((testCase) => ({
+        id: testCase.id,
+        title: testCase.title,
+        description: testCase.description || "No description yet for this test case."
+      })),
+    [cases]
   );
-  const orderedCases = useMemo(
-    () => [
-      ...selectedCases,
-      ...cases.filter((testCase) => !selectedCaseIds.includes(testCase.id))
-    ],
-    [cases, selectedCaseIds, selectedCases]
-  );
-  const selectedIdSet = useMemo(() => new Set(selectedCaseIds), [selectedCaseIds]);
-  const areAllCasesSelected = Boolean(cases.length) && selectedCases.length === cases.length;
 
-  const toggleCase = (testCaseId: string) => {
-    if (selectedIdSet.has(testCaseId)) {
-      onChange(selectedCaseIds.filter((id) => id !== testCaseId));
+  return (
+    <OrderedSelectionPicker
+      description={description}
+      emptyHint="Select cases to assign them into this suite."
+      emptyMessage={emptyMessage}
+      heading={heading}
+      itemLabel="test case"
+      items={items}
+      onChange={onChange}
+      selectedHint="Checked cases stay pinned to the top and will be saved in this order."
+      selectedIds={selectedCaseIds}
+    />
+  );
+}
+
+export function SuiteScopePicker({
+  suites,
+  selectedSuiteIds,
+  onChange,
+  heading,
+  description,
+  emptyMessage
+}: SuiteScopePickerProps) {
+  const items = useMemo<OrderedSelectionPickerItem[]>(
+    () =>
+      suites.map((suite) => ({
+        id: suite.id,
+        title: suite.name,
+        description: suite.parent_id ? "Nested suite" : "Root suite",
+        meta: suite.parent_id ? "Captured with its parent hierarchy preserved." : "Captured as a top-level suite snapshot."
+      })),
+    [suites]
+  );
+
+  return (
+    <OrderedSelectionPicker
+      description={description}
+      emptyHint="Select one or more suites to build the execution scope."
+      emptyMessage={emptyMessage}
+      heading={heading}
+      itemLabel="suite"
+      items={items}
+      onChange={onChange}
+      selectedHint="Checked suites stay pinned to the top and will be used in this order for the execution snapshot."
+      selectedIds={selectedSuiteIds}
+    />
+  );
+}
+
+function OrderedSelectionPicker({
+  items,
+  selectedIds,
+  onChange,
+  heading,
+  description,
+  emptyMessage,
+  itemLabel,
+  selectedHint,
+  emptyHint
+}: OrderedSelectionPickerProps) {
+  const itemById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+  const allItemIds = useMemo(() => items.map((item) => item.id), [items]);
+  const selectedItems = useMemo(
+    () => selectedIds.map((id) => itemById.get(id)).filter((item): item is OrderedSelectionPickerItem => Boolean(item)),
+    [itemById, selectedIds]
+  );
+  const orderedItems = useMemo(
+    () => [
+      ...selectedItems,
+      ...items.filter((item) => !selectedIds.includes(item.id))
+    ],
+    [items, selectedIds, selectedItems]
+  );
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const areAllItemsSelected = Boolean(items.length) && selectedItems.length === items.length;
+
+  const toggleItem = (itemId: string) => {
+    if (selectedIdSet.has(itemId)) {
+      onChange(selectedIds.filter((id) => id !== itemId));
       return;
     }
 
-    onChange([...selectedCaseIds, testCaseId]);
+    onChange([...selectedIds, itemId]);
   };
 
-  const moveSelectedCase = (testCaseId: string, direction: "up" | "down") => {
-    const currentIndex = selectedCaseIds.indexOf(testCaseId);
+  const moveSelectedItem = (itemId: string, direction: "up" | "down") => {
+    const currentIndex = selectedIds.indexOf(itemId);
 
     if (currentIndex === -1) {
       return;
     }
 
     const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
-    onChange(moveItem(selectedCaseIds, currentIndex, targetIndex));
+    onChange(moveItem(selectedIds, currentIndex, targetIndex));
   };
 
   return (
@@ -73,65 +171,64 @@ export function SuiteCasePicker({
           <span>{description}</span>
         </div>
         <div className="suite-case-picker-actions">
-          <button className="ghost-button" disabled={!cases.length || areAllCasesSelected} onClick={() => onChange(allCaseIds)} type="button">
+          <button className="ghost-button" disabled={!items.length || areAllItemsSelected} onClick={() => onChange(allItemIds)} type="button">
             Select all
           </button>
-          <button className="ghost-button" disabled={!selectedCaseIds.length} onClick={() => onChange([])} type="button">
+          <button className="ghost-button" disabled={!selectedIds.length} onClick={() => onChange([])} type="button">
             Clear selection
           </button>
         </div>
       </div>
 
       <div className="detail-summary suite-case-picker-summary">
-        <strong>{selectedCases.length} test case{selectedCases.length === 1 ? "" : "s"} selected</strong>
+        <strong>{selectedItems.length} {itemLabel}{selectedItems.length === 1 ? "" : "s"} selected</strong>
         <span>
-          {selectedCases.length
-            ? "Checked cases stay pinned to the top and will be saved in this order."
-            : "Select cases to assign them into this suite."}
+          {selectedItems.length ? selectedHint : emptyHint}
         </span>
       </div>
 
-      {!cases.length ? <div className="empty-state compact">{emptyMessage}</div> : null}
+      {!items.length ? <div className="empty-state compact">{emptyMessage}</div> : null}
 
-      {cases.length ? (
+      {items.length ? (
         <div className="suite-case-picker-list suite-case-picker-list--ordered">
-          {orderedCases.map((testCase) => {
-            const selectedIndex = selectedCaseIds.indexOf(testCase.id);
+          {orderedItems.map((item) => {
+            const selectedIndex = selectedIds.indexOf(item.id);
             const isSelected = selectedIndex >= 0;
 
             return (
-              <div className={isSelected ? "suite-case-picker-option is-selected" : "suite-case-picker-option"} key={testCase.id}>
+              <div className={isSelected ? "suite-case-picker-option is-selected" : "suite-case-picker-option"} key={item.id}>
                 <label className="suite-case-picker-option-label">
-                  <input checked={isSelected} onChange={() => toggleCase(testCase.id)} type="checkbox" />
+                  <input checked={isSelected} onChange={() => toggleItem(item.id)} type="checkbox" />
                   <div className="suite-case-picker-option-copy">
                     <div className="suite-case-picker-option-title">
                       {isSelected ? <span className="suite-case-picker-order">{selectedIndex + 1}</span> : null}
-                      <strong>{testCase.title}</strong>
+                      <strong>{item.title}</strong>
                     </div>
-                    <span>{testCase.description || "No description yet for this test case."}</span>
+                    <span>{item.description}</span>
+                    {item.meta ? <span className="suite-case-picker-option-meta">{item.meta}</span> : null}
                   </div>
                 </label>
 
-                <div className="suite-case-picker-option-actions" role="group" aria-label={`${testCase.title} ordering controls`}>
+                <div className="suite-case-picker-option-actions" role="group" aria-label={`${item.title} ordering controls`}>
                   <button
-                    aria-label={`Move ${testCase.title} up`}
+                    aria-label={`Move ${item.title} up`}
                     className="ghost-button suite-case-picker-move"
                     disabled={!isSelected || selectedIndex === 0}
                     onClick={(event) => {
                       event.preventDefault();
-                      moveSelectedCase(testCase.id, "up");
+                      moveSelectedItem(item.id, "up");
                     }}
                     type="button"
                   >
                     <SuiteCasePickerArrowIcon direction="up" />
                   </button>
                   <button
-                    aria-label={`Move ${testCase.title} down`}
+                    aria-label={`Move ${item.title} down`}
                     className="ghost-button suite-case-picker-move"
-                    disabled={!isSelected || selectedIndex === selectedCases.length - 1}
+                    disabled={!isSelected || selectedIndex === selectedItems.length - 1}
                     onClick={(event) => {
                       event.preventDefault();
-                      moveSelectedCase(testCase.id, "down");
+                      moveSelectedItem(item.id, "down");
                     }}
                     type="button"
                   >
