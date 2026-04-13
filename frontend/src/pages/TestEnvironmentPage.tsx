@@ -5,6 +5,7 @@ import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { SubnavTabs } from "../components/SubnavTabs";
+import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
 import { TileCardStatusIndicator } from "../components/TileCardPrimitives";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
@@ -643,31 +644,34 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
         <WorkspaceMasterDetail
           browseView={(
             <Panel title="Environment tiles" subtitle="Browse execution targets as tiles first, then open one environment into a focused editor.">
-              <div className="tile-browser-grid test-environment-list">
-                {environments.map((environment) => (
-                  <button
-                    className={selectedEnvironmentId === environment.id ? "record-card tile-card is-active" : "record-card tile-card"}
-                    key={environment.id}
-                    onClick={() => setSelectedEnvironmentId(environment.id)}
-                    type="button"
-                  >
-                    <div className="tile-card-main">
-                      <div className="tile-card-header">
-                        <span className="resource-card-badge">URL</span>
-                        <div className="tile-card-title-group">
-                          <strong>{environment.name}</strong>
-                          <span className="tile-card-kicker">{selectedAppTypeName}</span>
+              {environmentsQuery.isLoading ? <TileCardSkeletonGrid className="test-environment-list" /> : null}
+              {!environmentsQuery.isLoading ? (
+                <div className="tile-browser-grid test-environment-list">
+                  {environments.map((environment) => (
+                    <button
+                      className={selectedEnvironmentId === environment.id ? "record-card tile-card is-active" : "record-card tile-card"}
+                      key={environment.id}
+                      onClick={() => setSelectedEnvironmentId(environment.id)}
+                      type="button"
+                    >
+                      <div className="tile-card-main">
+                        <div className="tile-card-header">
+                          <span className="resource-card-badge">URL</span>
+                          <div className="tile-card-title-group">
+                            <strong>{environment.name}</strong>
+                            <span className="tile-card-kicker">{selectedAppTypeName}</span>
+                          </div>
+                          <TileCardStatusIndicator title={environment.base_url ? "Base URL configured" : "Draft target"} tone={environment.base_url ? "success" : "neutral"} />
                         </div>
-                        <TileCardStatusIndicator title={environment.base_url ? "Base URL configured" : "Draft target"} tone={environment.base_url ? "success" : "neutral"} />
+                        <p className="tile-card-description">{environment.base_url || environment.description || "No environment URL or summary defined yet."}</p>
+                        <div className="resource-card-footer">
+                          <span className="count-pill">{environment.variables.length} variable{environment.variables.length === 1 ? "" : "s"}</span>
+                        </div>
                       </div>
-                      <p className="tile-card-description">{environment.base_url || environment.description || "No environment URL or summary defined yet."}</p>
-                      <div className="resource-card-footer">
-                        <span className="count-pill">{environment.variables.length} variable{environment.variables.length === 1 ? "" : "s"}</span>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               {!environmentsQuery.isLoading && !environments.length ? <div className="empty-state compact">No test environments defined for this scope yet.</div> : null}
             </Panel>
           )}
@@ -699,31 +703,34 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
         <WorkspaceMasterDetail
           browseView={(
             <Panel title="Configuration tiles" subtitle="Browse reusable browser and device profiles as cards before opening one into the editor.">
-              <div className="tile-browser-grid test-environment-list">
-                {configurations.map((configuration) => (
-                  <button
-                    className={selectedConfigurationId === configuration.id ? "record-card tile-card is-active" : "record-card tile-card"}
-                    key={configuration.id}
-                    onClick={() => setSelectedConfigurationId(configuration.id)}
-                    type="button"
-                  >
-                    <div className="tile-card-main">
-                      <div className="tile-card-header">
-                        <span className="resource-card-badge">CFG</span>
-                        <div className="tile-card-title-group">
-                          <strong>{configuration.name}</strong>
-                          <span className="tile-card-kicker">{selectedAppTypeName}</span>
+              {configurationsQuery.isLoading ? <TileCardSkeletonGrid className="test-environment-list" /> : null}
+              {!configurationsQuery.isLoading ? (
+                <div className="tile-browser-grid test-environment-list">
+                  {configurations.map((configuration) => (
+                    <button
+                      className={selectedConfigurationId === configuration.id ? "record-card tile-card is-active" : "record-card tile-card"}
+                      key={configuration.id}
+                      onClick={() => setSelectedConfigurationId(configuration.id)}
+                      type="button"
+                    >
+                      <div className="tile-card-main">
+                        <div className="tile-card-header">
+                          <span className="resource-card-badge">CFG</span>
+                          <div className="tile-card-title-group">
+                            <strong>{configuration.name}</strong>
+                            <span className="tile-card-kicker">{selectedAppTypeName}</span>
+                          </div>
+                          <TileCardStatusIndicator title={formatConfigurationTarget(configuration) ? "Target configured" : "Draft profile"} tone={formatConfigurationTarget(configuration) ? "success" : "neutral"} />
                         </div>
-                        <TileCardStatusIndicator title={formatConfigurationTarget(configuration) ? "Target configured" : "Draft profile"} tone={formatConfigurationTarget(configuration) ? "success" : "neutral"} />
+                        <p className="tile-card-description">{formatConfigurationTarget(configuration) || configuration.description || "No browser, mobile OS, or version defined yet."}</p>
+                        <div className="resource-card-footer">
+                          <span className="count-pill">{configuration.variables.length} variable{configuration.variables.length === 1 ? "" : "s"}</span>
+                        </div>
                       </div>
-                      <p className="tile-card-description">{formatConfigurationTarget(configuration) || configuration.description || "No browser, mobile OS, or version defined yet."}</p>
-                      <div className="resource-card-footer">
-                        <span className="count-pill">{configuration.variables.length} variable{configuration.variables.length === 1 ? "" : "s"}</span>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               {!configurationsQuery.isLoading && !configurations.length ? <div className="empty-state compact">No test configurations defined for this scope yet.</div> : null}
             </Panel>
           )}
@@ -757,31 +764,34 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
         <WorkspaceMasterDetail
           browseView={(
             <Panel title="Test data tiles" subtitle="Review reusable data sets as cards first, then open one source into a focused editor.">
-              <div className="tile-browser-grid test-environment-list">
-                {dataSets.map((dataSet) => (
-                  <button
-                    className={selectedDataSetId === dataSet.id ? "record-card tile-card is-active" : "record-card tile-card"}
-                    key={dataSet.id}
-                    onClick={() => setSelectedDataSetId(dataSet.id)}
-                    type="button"
-                  >
-                    <div className="tile-card-main">
-                      <div className="tile-card-header">
-                        <span className="resource-card-badge">DATA</span>
-                        <div className="tile-card-title-group">
-                          <strong>{dataSet.name}</strong>
-                          <span className="tile-card-kicker">{dataSet.mode === "table" ? "Table mode" : "Key/value mode"}</span>
+              {dataSetsQuery.isLoading ? <TileCardSkeletonGrid className="test-environment-list" /> : null}
+              {!dataSetsQuery.isLoading ? (
+                <div className="tile-browser-grid test-environment-list">
+                  {dataSets.map((dataSet) => (
+                    <button
+                      className={selectedDataSetId === dataSet.id ? "record-card tile-card is-active" : "record-card tile-card"}
+                      key={dataSet.id}
+                      onClick={() => setSelectedDataSetId(dataSet.id)}
+                      type="button"
+                    >
+                      <div className="tile-card-main">
+                        <div className="tile-card-header">
+                          <span className="resource-card-badge">DATA</span>
+                          <div className="tile-card-title-group">
+                            <strong>{dataSet.name}</strong>
+                            <span className="tile-card-kicker">{dataSet.mode === "table" ? "Table mode" : "Key/value mode"}</span>
+                          </div>
+                          <TileCardStatusIndicator title={dataSet.mode === "table" ? "Table data set" : "Key/value data set"} tone={dataSet.rows.length ? "success" : "neutral"} />
                         </div>
-                        <TileCardStatusIndicator title={dataSet.mode === "table" ? "Table data set" : "Key/value data set"} tone={dataSet.rows.length ? "success" : "neutral"} />
+                        <p className="tile-card-description">{dataSet.description || "No test data summary defined yet."}</p>
+                        <div className="resource-card-footer">
+                          <span className="count-pill">{dataSet.mode === "table" ? `${dataSet.rows.length} rows · ${dataSet.columns.length} columns` : `${dataSet.rows.length} key/value pairs`}</span>
+                        </div>
                       </div>
-                      <p className="tile-card-description">{dataSet.description || "No test data summary defined yet."}</p>
-                      <div className="resource-card-footer">
-                        <span className="count-pill">{dataSet.mode === "table" ? `${dataSet.rows.length} rows · ${dataSet.columns.length} columns` : `${dataSet.rows.length} key/value pairs`}</span>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               {!dataSetsQuery.isLoading && !dataSets.length ? <div className="empty-state compact">No test data sets defined for this scope yet.</div> : null}
             </Panel>
           )}

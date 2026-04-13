@@ -4,6 +4,7 @@ import { useAuth } from "../auth/AuthContext";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { TileCardStatusIndicator, formatTileCardLabel, getTileCardTone } from "../components/TileCardPrimitives";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { useDomainMetadata } from "../hooks/useDomainMetadata";
@@ -181,11 +182,7 @@ export function FeedbackPage() {
         browseView={(
           <Panel title="Feedback tiles" subtitle="Open one thread at a time from a card-first stream without keeping a split panel on screen.">
             {feedback.isLoading ? (
-              <div className="tile-browser-grid">
-                <div className="skeleton-block" />
-                <div className="skeleton-block" />
-                <div className="skeleton-block" />
-              </div>
+              <TileCardSkeletonGrid />
             ) : null}
 
             <div className="tile-browser-grid">

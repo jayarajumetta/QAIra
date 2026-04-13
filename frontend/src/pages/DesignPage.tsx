@@ -23,6 +23,7 @@ import {
   getTileCardTone
 } from "../components/TileCardPrimitives";
 import { SuiteCasePicker, SuiteScopePicker } from "../components/SuiteCasePicker";
+import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
@@ -1710,13 +1711,7 @@ function SuiteSidebar({
             <span>Checkbox selections power bulk delete and execution creation. Click a card body to keep curating one suite at a time.</span>
           </div>
         ) : null}
-        {isLoading ? (
-          <div className="tile-browser-grid test-case-library-scroll suite-tile-browser">
-            <div className="skeleton-block" />
-            <div className="skeleton-block" />
-            <div className="skeleton-block" />
-          </div>
-        ) : null}
+        {isLoading ? <TileCardSkeletonGrid className="test-case-library-scroll suite-tile-browser" /> : null}
         {!isLoading && !hasAnySuites ? (
           <div className="empty-state compact">
             <div>No suites yet. Create your first suite to start organizing reusable cases.</div>
@@ -1962,17 +1957,18 @@ function TestCaseList({
           </div>
         ) : null}
 
-        {isLoading ? <div className="empty-state compact">Loading test cases…</div> : null}
+        {isLoading ? <TileCardSkeletonGrid className="test-case-library-scroll" /> : null}
         {!isLoading && !cases.length ? <div className="empty-state compact">No test cases match this scope yet.</div> : null}
 
-        <div className="tile-browser-grid test-case-library-scroll">
-          {cases.map((testCase) => {
-            const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
-            const latest = history[0];
-            const requirement = requirements.find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id));
-            const stepCount = stepCountByCaseId[testCase.id] || 0;
-            const caseStatusValue = latest?.status || testCase.status || defaultCaseStatus;
-            const caseStatusLabel = formatTileCardLabel(caseStatusValue, "Active");
+        {!isLoading ? (
+          <div className="tile-browser-grid test-case-library-scroll">
+            {cases.map((testCase) => {
+              const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
+              const latest = history[0];
+              const requirement = requirements.find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id));
+              const stepCount = stepCountByCaseId[testCase.id] || 0;
+              const caseStatusValue = latest?.status || testCase.status || defaultCaseStatus;
+              const caseStatusLabel = formatTileCardLabel(caseStatusValue, "Active");
             const caseStatusTone = getTileCardTone(caseStatusValue);
             const suiteCount = (testCase.suite_ids || []).length || 0;
 
@@ -2053,8 +2049,9 @@ function TestCaseList({
                 </div>
               </button>
             );
-          })}
-        </div>
+            })}
+          </div>
+        ) : null}
       </div>
     </Panel>
   );

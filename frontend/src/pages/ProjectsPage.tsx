@@ -15,6 +15,7 @@ import {
   TileCardUsersIcon
 } from "../components/TileCardPrimitives";
 import { SubnavTabs } from "../components/SubnavTabs";
+import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { useCurrentProject } from "../hooks/useCurrentProject";
@@ -72,6 +73,12 @@ export function ProjectsPage() {
   const [projectDraft, setProjectDraft] = useState<ProjectCreateDraft>(() => createInitialProjectDraft(defaultAppTypeValue));
 
   const projectItems = projects.data || [];
+  const isProjectCatalogLoading =
+    projects.isPending ||
+    projectMembers.isPending ||
+    appTypes.isPending ||
+    requirements.isPending ||
+    testCases.isPending;
 
   useEffect(() => {
     if (projects.isPending) {
@@ -417,57 +424,60 @@ export function ProjectsPage() {
       <WorkspaceMasterDetail
         browseView={(
           <Panel title="Project tiles" subtitle="Browse workspace scope as tiles first, then open a focused project workspace when you want to edit members or app types.">
-            <div className="catalog-grid compact">
-              {projectItems.map((project) => {
-                const isSelected = selectedProject?.id === project.id;
-                const memberCount = memberCountByProjectId[project.id] || 0;
-                const appTypeCount = appTypeCountByProjectId[project.id] || 0;
-                const requirementCount = requirementCountByProjectId[project.id] || 0;
-                const testCaseCount = testCaseCountByProjectId[project.id] || 0;
+            {isProjectCatalogLoading ? <TileCardSkeletonGrid className="catalog-grid compact" /> : null}
+            {!isProjectCatalogLoading ? (
+              <div className="catalog-grid compact">
+                {projectItems.map((project) => {
+                  const isSelected = selectedProject?.id === project.id;
+                  const memberCount = memberCountByProjectId[project.id] || 0;
+                  const appTypeCount = appTypeCountByProjectId[project.id] || 0;
+                  const requirementCount = requirementCountByProjectId[project.id] || 0;
+                  const testCaseCount = testCaseCountByProjectId[project.id] || 0;
 
-                return (
-                  <button
-                    key={project.id}
-                    aria-pressed={isSelected}
-                    className={isSelected ? "catalog-card tile-card project-catalog-card is-active" : "catalog-card tile-card project-catalog-card"}
-                    onClick={() => {
-                      setSelectedProjectId(project.id);
-                      setFocusedProjectId(project.id);
-                    }}
-                    type="button"
-                  >
-                    <div className="tile-card-main">
-                      <div className="tile-card-header">
-                        <TileCardIconFrame className="project-card-icon" tone={isSelected ? "success" : "info"}>
-                          <TileCardProjectIcon />
-                        </TileCardIconFrame>
-                        <div className="tile-card-title-group">
-                          <strong>{project.name}</strong>
-                          <span className="tile-card-kicker">{appTypeCount} app type{appTypeCount === 1 ? "" : "s"} in scope</span>
+                  return (
+                    <button
+                      key={project.id}
+                      aria-pressed={isSelected}
+                      className={isSelected ? "catalog-card tile-card project-catalog-card is-active" : "catalog-card tile-card project-catalog-card"}
+                      onClick={() => {
+                        setSelectedProjectId(project.id);
+                        setFocusedProjectId(project.id);
+                      }}
+                      type="button"
+                    >
+                      <div className="tile-card-main">
+                        <div className="tile-card-header">
+                          <TileCardIconFrame className="project-card-icon" tone={isSelected ? "success" : "info"}>
+                            <TileCardProjectIcon />
+                          </TileCardIconFrame>
+                          <div className="tile-card-title-group">
+                            <strong>{project.name}</strong>
+                            <span className="tile-card-kicker">{appTypeCount} app type{appTypeCount === 1 ? "" : "s"} in scope</span>
+                          </div>
+                          <TileCardStatusIndicator title={isSelected ? "Current project" : "Available project"} tone={isSelected ? "success" : "neutral"} />
                         </div>
-                        <TileCardStatusIndicator title={isSelected ? "Current project" : "Available project"} tone={isSelected ? "success" : "neutral"} />
+                        <p className="tile-card-description">{project.description || "No description yet."}</p>
+                        <div className="tile-card-facts" aria-label={`${project.name} facts`}>
+                          <TileCardFact label={String(memberCount)} title={`${memberCount} member${memberCount === 1 ? "" : "s"}`} tone={memberCount ? "info" : "neutral"}>
+                            <TileCardUsersIcon />
+                          </TileCardFact>
+                          <TileCardFact label={String(appTypeCount)} title={`${appTypeCount} app type${appTypeCount === 1 ? "" : "s"}`} tone={appTypeCount ? "success" : "neutral"}>
+                            <TileCardAppTypesIcon />
+                          </TileCardFact>
+                          <TileCardFact label={String(requirementCount)} title={`${requirementCount} requirement${requirementCount === 1 ? "" : "s"}`} tone={requirementCount ? "warning" : "neutral"}>
+                            <TileCardRequirementIcon />
+                          </TileCardFact>
+                          <TileCardFact label={String(testCaseCount)} title={`${testCaseCount} test case${testCaseCount === 1 ? "" : "s"}`} tone={testCaseCount ? "success" : "neutral"}>
+                            <TileCardCaseIcon />
+                          </TileCardFact>
+                        </div>
                       </div>
-                      <p className="tile-card-description">{project.description || "No description yet."}</p>
-                      <div className="tile-card-facts" aria-label={`${project.name} facts`}>
-                        <TileCardFact label={String(memberCount)} title={`${memberCount} member${memberCount === 1 ? "" : "s"}`} tone={memberCount ? "info" : "neutral"}>
-                          <TileCardUsersIcon />
-                        </TileCardFact>
-                        <TileCardFact label={String(appTypeCount)} title={`${appTypeCount} app type${appTypeCount === 1 ? "" : "s"}`} tone={appTypeCount ? "success" : "neutral"}>
-                          <TileCardAppTypesIcon />
-                        </TileCardFact>
-                        <TileCardFact label={String(requirementCount)} title={`${requirementCount} requirement${requirementCount === 1 ? "" : "s"}`} tone={requirementCount ? "warning" : "neutral"}>
-                          <TileCardRequirementIcon />
-                        </TileCardFact>
-                        <TileCardFact label={String(testCaseCount)} title={`${testCaseCount} test case${testCaseCount === 1 ? "" : "s"}`} tone={testCaseCount ? "success" : "neutral"}>
-                          <TileCardCaseIcon />
-                        </TileCardFact>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            {!projectItems.length ? <div className="empty-state compact">No projects yet. Create the first project to add scope, app types, and the initial team in one flow.</div> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+            {!isProjectCatalogLoading && !projectItems.length ? <div className="empty-state compact">No projects yet. Create the first project to add scope, app types, and the initial team in one flow.</div> : null}
           </Panel>
         )}
         detailView={(

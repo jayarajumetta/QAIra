@@ -12,6 +12,7 @@ import { ProgressMeter } from "../components/ProgressMeter";
 import { StatusBadge } from "../components/StatusBadge";
 import { SubnavTabs } from "../components/SubnavTabs";
 import { SuiteScopePicker } from "../components/SuiteCasePicker";
+import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
 import { VirtualList } from "../components/VirtualList";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
@@ -762,6 +763,7 @@ export function ExecutionsPage() {
   const selectedExecutionSuiteIds = selectedExecution?.suite_ids || [];
   const selectedExecutionSuites = selectedExecution?.suite_snapshots || [];
   const currentExecutionStatus = normalizeExecutionStatus(selectedExecution?.status);
+  const isExecutionScopeReadOnly = Boolean(selectedExecution);
   const isExecutionStarted = currentExecutionStatus === "running";
   const isExecutionLocked =
     currentExecutionStatus === "completed" || currentExecutionStatus === "failed" || currentExecutionStatus === "aborted";
@@ -788,6 +790,20 @@ export function ExecutionsPage() {
   useEffect(() => {
     setExpandedExecutionSuiteIds([]);
   }, [selectedExecutionId]);
+
+  useEffect(() => {
+    if (!selectedExecution) {
+      return;
+    }
+
+    if (selectedExecution.project_id && selectedExecution.project_id !== projectId) {
+      setProjectId(selectedExecution.project_id);
+    }
+
+    if (selectedExecution.app_type_id && selectedExecution.app_type_id !== appTypeId) {
+      setAppTypeId(selectedExecution.app_type_id);
+    }
+  }, [appTypeId, projectId, selectedExecution, setProjectId]);
 
   useEffect(() => {
     setExpandedExecutionStepGroupIds([]);
@@ -1485,7 +1501,12 @@ export function ExecutionsPage() {
   const resolvedEvidenceArtifactCount = resolvedStepNoteCount + resolvedStepImageCount;
 
   const selectedExecutionAppTypeLabel =
-    appTypeNameById[selectedExecution?.app_type_id || ""] || "No app type scoped";
+    appTypeNameById[selectedExecution?.app_type_id || ""] || selectedExecution?.app_type_id || "No app type scoped";
+  const selectedExecutionProjectLabel =
+    projectNameById[selectedExecution?.project_id || ""] ||
+    projects.find((project) => project.id === selectedExecution?.project_id)?.name ||
+    selectedExecution?.project_id ||
+    "No project scoped";
   const remainingCaseCount = Math.max(executionProgress.totalCases - executionProgress.completedCases, 0);
   const selectedCaseStatusLabel = selectedExecutionCase ? caseDerivedStatus(selectedExecutionCase) : executionProgress.derivedStatus;
   const activeExecutionStage = selectedExecutionCase ? "case" : selectedExecution ? "suites" : "executions";
@@ -1735,8 +1756,10 @@ export function ExecutionsPage() {
       <ToastMessage message={message} onDismiss={() => setMessage("")} tone={messageTone} />
 
       <WorkspaceScopeBar
-        appTypeId={appTypeId}
+        appTypeId={selectedExecution?.app_type_id || appTypeId}
         appTypes={appTypes}
+        appTypeValueLabel={selectedExecution ? selectedExecutionAppTypeLabel : undefined}
+        disabled={isExecutionScopeReadOnly}
         onAppTypeChange={(value) => {
           setAppTypeId(value);
           setSelectedSuiteIds([]);
@@ -1748,7 +1771,8 @@ export function ExecutionsPage() {
           setSelectedSuiteIds([]);
           resetExecutionContextSelection();
         }}
-        projectId={projectId}
+        projectId={selectedExecution?.project_id || projectId}
+        projectValueLabel={selectedExecution ? selectedExecutionProjectLabel : undefined}
         projects={projects}
       />
 
@@ -1829,11 +1853,7 @@ export function ExecutionsPage() {
             </div>
 
             {executionsQuery.isLoading ? (
-              <div className="tile-browser-grid">
-                <div className="skeleton-block" />
-                <div className="skeleton-block" />
-                <div className="skeleton-block" />
-              </div>
+              <TileCardSkeletonGrid />
             ) : null}
 
             {!executionsQuery.isLoading ? (
@@ -2191,7 +2211,7 @@ export function ExecutionsPage() {
                         blockedCount={executionStatusCounts.blocked}
                         failedCount={executionStatusCounts.failed}
                         passedCount={executionStatusCounts.passed}
-                        percent={executionProgress.percent}
+                        passPercent={executionProgress.totalCases ? Math.round((executionStatusCounts.passed / executionProgress.totalCases) * 100) : 0}
                         totalCount={executionProgress.totalCases}
                       />
 
@@ -2209,7 +2229,7 @@ export function ExecutionsPage() {
                         </div>
 
                         <ProgressMeter
-                          detail={`${executionStatusCounts.passed} passed · ${executionStatusCounts.failed} failed · ${executionStatusCounts.blocked} blocked · ${remainingCaseCount} remaining`}
+                          detail={`${executionProgress.totalCases} total · ${executionStatusCounts.passed} passed · ${executionStatusCounts.failed} failed · ${executionStatusCounts.blocked} blocked · ${remainingCaseCount} remaining`}
                           label="Run completion"
                           segments={buildProgressSegments(
                             executionStatusCounts.passed,
@@ -2223,6 +2243,10 @@ export function ExecutionsPage() {
                     </div>
 
                     <div className="metric-strip">
+                      <div className="mini-card">
+                        <strong>{executionProgress.totalCases}</strong>
+                        <span>Total cases</span>
+                      </div>
                       <div className="mini-card">
                         <strong>{formatExecutionTimestamp(selectedExecution.started_at, currentExecutionStatus === "queued" ? "Not started yet" : "Waiting to start")}</strong>
                         <span>Started</span>
@@ -3007,13 +3031,13 @@ function ExecutionOverviewOrb({
   failedCount,
   blockedCount,
   totalCount,
-  percent
+  passPercent
 }: {
   passedCount: number;
   failedCount: number;
   blockedCount: number;
   totalCount: number;
-  percent: number;
+  passPercent: number;
 }) {
   const safeTotal = Math.max(totalCount, 1);
   const pendingCount = Math.max(totalCount - passedCount - failedCount - blockedCount, 0);
@@ -3031,11 +3055,12 @@ function ExecutionOverviewOrb({
     <div className="execution-overview-orb-shell">
       <div className="execution-overview-orb" style={{ background: orbBackground }}>
         <div className="execution-overview-orb-core">
-          <strong>{percent}%</strong>
-          <span>Run complete</span>
+          <strong>{passPercent}%</strong>
+          <span>Pass rate</span>
         </div>
       </div>
       <div className="execution-overview-legend">
+        <span className="execution-legend-item tone-total">{totalCount} total</span>
         <span className="execution-legend-item tone-passed">{passedCount} passed</span>
         <span className="execution-legend-item tone-failed">{failedCount} failed</span>
         <span className="execution-legend-item tone-blocked">{blockedCount} blocked</span>

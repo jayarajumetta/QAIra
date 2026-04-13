@@ -5,6 +5,7 @@ import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StatusBadge } from "../components/StatusBadge";
+import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
 import { TileCardStatusIndicator } from "../components/TileCardPrimitives";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
@@ -232,6 +233,7 @@ export function IntegrationsPage() {
   const deleteIntegration = useMutation({ mutationFn: api.integrations.delete });
 
   const integrations = integrationsQuery.data || [];
+  const isIntegrationCatalogLoading = integrationsQuery.isLoading;
   const selectedIntegration = useMemo(
     () => integrations.find((item) => item.id === selectedIntegrationId) || null,
     [integrations, selectedIntegrationId]
@@ -379,40 +381,43 @@ export function IntegrationsPage() {
         <WorkspaceMasterDetail
           browseView={(
             <Panel title="Integration tiles" subtitle="Review configured connections as tiles first, then open one profile into a focused editor.">
-              <div className="tile-browser-grid">
-                {integrations.map((integration) => {
-                  const summary = getIntegrationSummary(integration, integrationTypeDefinitions);
+              {isIntegrationCatalogLoading ? <TileCardSkeletonGrid /> : null}
+              {!isIntegrationCatalogLoading ? (
+                <div className="tile-browser-grid">
+                  {integrations.map((integration) => {
+                    const summary = getIntegrationSummary(integration, integrationTypeDefinitions);
 
-                  return (
-                    <button
-                      key={integration.id}
-                      className={selectedIntegrationId === integration.id ? "record-card tile-card is-active" : "record-card tile-card"}
-                      onClick={() => {
-                        setSelectedIntegrationId(integration.id);
-                        setIsCreating(false);
-                      }}
-                      type="button"
-                    >
-                      <div className="tile-card-main">
-                        <div className="tile-card-header">
-                          <span className="integration-type-badge">{getIntegrationTypeIcon(integration.type, integrationTypeDefinitions)}</span>
-                          <div className="tile-card-title-group">
-                            <strong>{integration.name}</strong>
-                            <span className="tile-card-kicker">{getIntegrationTypeLabel(integration.type, integrationTypeDefinitions)}</span>
+                    return (
+                      <button
+                        key={integration.id}
+                        className={selectedIntegrationId === integration.id ? "record-card tile-card is-active" : "record-card tile-card"}
+                        onClick={() => {
+                          setSelectedIntegrationId(integration.id);
+                          setIsCreating(false);
+                        }}
+                        type="button"
+                      >
+                        <div className="tile-card-main">
+                          <div className="tile-card-header">
+                            <span className="integration-type-badge">{getIntegrationTypeIcon(integration.type, integrationTypeDefinitions)}</span>
+                            <div className="tile-card-title-group">
+                              <strong>{integration.name}</strong>
+                              <span className="tile-card-kicker">{getIntegrationTypeLabel(integration.type, integrationTypeDefinitions)}</span>
+                            </div>
+                            <TileCardStatusIndicator title={integration.is_active ? "Active" : "Inactive"} tone={integration.is_active ? "success" : "neutral"} />
                           </div>
-                          <TileCardStatusIndicator title={integration.is_active ? "Active" : "Inactive"} tone={integration.is_active ? "success" : "neutral"} />
+                          <p className="tile-card-description">{summary.primary}</p>
+                          <div className="integration-card-footer">
+                            <StatusBadge value={integration.is_active ? "active" : "inactive"} />
+                            <span className="count-pill">{summary.secondary}</span>
+                          </div>
                         </div>
-                        <p className="tile-card-description">{summary.primary}</p>
-                        <div className="integration-card-footer">
-                          <StatusBadge value={integration.is_active ? "active" : "inactive"} />
-                          <span className="count-pill">{summary.secondary}</span>
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-              {!integrations.length ? <div className="empty-state compact">No integrations configured yet.</div> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {!isIntegrationCatalogLoading && !integrations.length ? <div className="empty-state compact">No integrations configured yet.</div> : null}
             </Panel>
           )}
           detailView={(

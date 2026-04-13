@@ -22,6 +22,7 @@ import {
   getTileCardTone
 } from "../components/TileCardPrimitives";
 import { SuiteCasePicker } from "../components/SuiteCasePicker";
+import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
@@ -160,6 +161,12 @@ const normalizeImportedGroupKind = (value?: string) => {
 
   return "";
 };
+
+const normalizeSharedGroupComparableText = (value?: string | null) =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
 
 const buildImportedStepPreview = (row: ImportedTestCaseRow) => {
   const actions = splitImportedStepSequence(row.action);
@@ -1008,9 +1015,31 @@ export function TestCasesPage() {
     };
   };
 
-  const createReusableGroupRecord = async (name: string, selectedSteps: Array<{ action: string | null; expected_result: string | null }>) => {
+  const getOrCreateSharedGroupRecord = async (name: string, selectedSteps: Array<{ action: string | null; expected_result: string | null }>) => {
     if (!appTypeId) {
-      throw new Error("Select an app type before creating a reusable step group.");
+      throw new Error("Select an app type before creating a shared group.");
+    }
+
+    const matchingGroup = sharedStepGroups.find((group) => {
+      if (normalizeSharedGroupComparableText(group.name) !== normalizeSharedGroupComparableText(name)) {
+        return false;
+      }
+
+      if ((group.steps || []).length !== selectedSteps.length) {
+        return false;
+      }
+
+      return group.steps.every((step, index) => {
+        const candidate = selectedSteps[index];
+        return (
+          normalizeSharedGroupComparableText(step.action) === normalizeSharedGroupComparableText(candidate?.action) &&
+          normalizeSharedGroupComparableText(step.expected_result) === normalizeSharedGroupComparableText(candidate?.expected_result)
+        );
+      });
+    });
+
+    if (matchingGroup) {
+      return matchingGroup.id;
     }
 
     const response = await createSharedStepGroup.mutateAsync({
@@ -1024,6 +1053,94 @@ export function TestCasesPage() {
     });
 
     return response.id;
+  };
+
+  const hasUnsavedStepGroupDrafts = (groupItems: TestStep[]) =>
+    !isCreating &&
+    groupItems.some((step) => {
+      const draft = stepDrafts[step.id];
+
+      if (!draft) {
+        return false;
+      }
+
+      return (
+        (draft.action || "").trim() !== (step.action || "").trim() ||
+        (draft.expected_result || "").trim() !== (step.expected_result || "").trim()
+      );
+    });
+
+  const handleConvertStepGroup = async (
+    groupId: string,
+    groupName: string,
+    groupItems: TestStep[],
+    targetKind: "local" | "reusable"
+  ) => {
+    if (!groupItems.length) {
+      return;
+    }
+
+    if (hasUnsavedStepGroupDrafts(groupItems)) {
+      showError(
+        new Error("Save or discard the inline edits inside this group before changing how it is linked."),
+        targetKind === "reusable" ? "Unable to convert to shared group" : "Unable to convert to local group"
+      );
+      return;
+    }
+
+    const resolvedName = groupName.trim() || groupItems[0]?.group_name?.trim() || "Step group";
+
+    try {
+      const reusableGroupId =
+        targetKind === "reusable"
+          ? await getOrCreateSharedGroupRecord(
+              resolvedName,
+              groupItems.map((step) => ({
+                action: step.action,
+                expected_result: step.expected_result
+              }))
+            )
+          : null;
+
+      if (isCreating) {
+        setDraftSteps((current) =>
+          current.map((step) =>
+            step.group_id === groupId
+              ? {
+                  ...step,
+                  group_name: resolvedName,
+                  group_kind: targetKind,
+                  reusable_group_id: reusableGroupId
+                }
+              : step
+          )
+        );
+      } else if (selectedTestCaseId) {
+        const response = await groupSteps.mutateAsync({
+          test_case_id: selectedTestCaseId,
+          step_ids: groupItems.map((step) => step.id),
+          name: resolvedName,
+          kind: targetKind,
+          reusable_group_id: reusableGroupId || undefined
+        });
+        setExpandedStepGroupIds((current) =>
+          current.includes(groupId) ? [...current.filter((id) => id !== groupId), response.group_id] : current
+        );
+        await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+      }
+
+      if (targetKind === "reusable" || groupItems.some((step) => step.reusable_group_id)) {
+        await refreshSharedGroups();
+      }
+
+      showSuccess(
+        targetKind === "reusable"
+          ? `Converted "${resolvedName}" to a shared group.`
+          : `Converted "${resolvedName}" to a local step group.`
+      );
+    } catch (error) {
+      showError(error, targetKind === "reusable" ? "Unable to convert to shared group" : "Unable to convert to local group");
+    }
   };
 
   const activateStepInsert = (index: number, groupContext: StepInsertionGroupContext | null = null) => {
@@ -1828,7 +1945,7 @@ export function TestCasesPage() {
 
     try {
       const reusableGroupId = saveAsReusableGroup
-        ? await createReusableGroupRecord(
+        ? await getOrCreateSharedGroupRecord(
             name,
             selectedStepsForGrouping.map((step) => ({
               action: step.action,
@@ -1872,7 +1989,7 @@ export function TestCasesPage() {
         await refreshSharedGroups();
       }
 
-      showSuccess(saveAsReusableGroup ? "Reusable step group created." : "Step group created.");
+      showSuccess(saveAsReusableGroup ? "Shared group created." : "Step group created.");
     } catch (error) {
       showError(error, "Unable to group steps");
     }
@@ -2805,11 +2922,7 @@ export function TestCasesPage() {
             ) : null}
 
             {isLibraryLoading ? (
-              <div className="tile-browser-grid test-case-library-scroll">
-                <div className="skeleton-block" />
-                <div className="skeleton-block" />
-                <div className="skeleton-block" />
-              </div>
+              <TileCardSkeletonGrid className="test-case-library-scroll" />
             ) : null}
 
             {!isLibraryLoading ? (
@@ -3115,6 +3228,22 @@ export function TestCasesPage() {
                                     name={block.group_name || "Step group"}
                                     canMoveUp={canMoveGroupUp}
                                     canMoveDown={canMoveGroupDown}
+                                    onConvertToLocal={() =>
+                                      void handleConvertStepGroup(
+                                        block.group_id as string,
+                                        block.group_name || "Step group",
+                                        block.steps,
+                                        "local"
+                                      )
+                                    }
+                                    onConvertToShared={() =>
+                                      void handleConvertStepGroup(
+                                        block.group_id as string,
+                                        block.group_name || "Step group",
+                                        block.steps,
+                                        "reusable"
+                                      )
+                                    }
                                     onToggle={() =>
                                       setExpandedStepGroupIds((current) =>
                                         current.includes(block.group_id as string)
@@ -4037,7 +4166,7 @@ function SharedStepsIcon() {
 
 function getStepKindMeta(groupKind?: TestStep["group_kind"] | null) {
   if (groupKind === "reusable") {
-    return { label: "Shared Steps", tone: "shared" as const };
+    return { label: "Shared group step", tone: "shared" as const };
   }
 
   if (groupKind === "local") {
@@ -4060,9 +4189,9 @@ function StepKindIconBadge({
 
   return (
     <span
-      aria-label={kind === "reusable" ? "Shared Steps" : label}
+      aria-label={label}
       className={["step-kind-badge", tone === "default" ? "" : `is-${tone}`].filter(Boolean).join(" ")}
-      title={kind === "reusable" ? "Shared Steps" : label}
+      title={label}
     >
       {icon}
     </span>
@@ -4082,6 +4211,8 @@ function StepUngroupIcon() {
   );
 }
 
+const STEP_ACTION_HOVER_EXIT_DELAY_MS = 1000;
+
 function StepActionMenu({
   className = "",
   label,
@@ -4099,6 +4230,37 @@ function StepActionMenu({
   const [isHovering, setIsHovering] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const hoverExitTimeoutRef = useRef<number | null>(null);
+
+  const clearHoverExitTimeout = () => {
+    if (hoverExitTimeoutRef.current === null) {
+      return;
+    }
+
+    window.clearTimeout(hoverExitTimeoutRef.current);
+    hoverExitTimeoutRef.current = null;
+  };
+
+  const handleHoverEnter = () => {
+    if (!openOnHover) {
+      return;
+    }
+
+    clearHoverExitTimeout();
+    setIsHovering(true);
+  };
+
+  const handleHoverLeave = () => {
+    if (!openOnHover) {
+      return;
+    }
+
+    clearHoverExitTimeout();
+    hoverExitTimeoutRef.current = window.setTimeout(() => {
+      setIsHovering(false);
+      hoverExitTimeoutRef.current = null;
+    }, STEP_ACTION_HOVER_EXIT_DELAY_MS);
+  };
 
   useEffect(() => {
     if (!isOpen) {
@@ -4127,19 +4289,20 @@ function StepActionMenu({
     };
   }, [isOpen]);
 
+  useEffect(
+    () => () => {
+      if (hoverExitTimeoutRef.current !== null) {
+        window.clearTimeout(hoverExitTimeoutRef.current);
+      }
+    },
+    []
+  );
+
   return (
     <div
       className={["step-card-menu", className].filter(Boolean).join(" ")}
-      onMouseEnter={() => {
-        if (openOnHover) {
-          setIsHovering(true);
-        }
-      }}
-      onMouseLeave={() => {
-        if (openOnHover) {
-          setIsHovering(false);
-        }
-      }}
+      onMouseEnter={handleHoverEnter}
+      onMouseLeave={handleHoverLeave}
     >
       <button
         aria-expanded={isOpen}
@@ -4161,7 +4324,10 @@ function StepActionMenu({
               className={["step-card-menu-item", action.tone ? `is-${action.tone}` : ""].filter(Boolean).join(" ")}
               disabled={action.disabled}
               key={action.label}
-              onClick={() => action.onClick()}
+              onClick={() => {
+                action.onClick();
+                setIsHovering(false);
+              }}
               role="menuitem"
               title={action.label}
               type="button"
@@ -4255,6 +4421,8 @@ function StepGroupHeader({
   canMoveUp,
   canMoveDown,
   selectionState,
+  onConvertToLocal,
+  onConvertToShared,
   onToggle,
   onMoveUp,
   onMoveDown,
@@ -4269,6 +4437,8 @@ function StepGroupHeader({
   canMoveUp: boolean;
   canMoveDown: boolean;
   selectionState: "all" | "some" | "none";
+  onConvertToLocal: () => void;
+  onConvertToShared: () => void;
   onToggle: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
@@ -4345,6 +4515,17 @@ function StepGroupHeader({
               onClick: onMoveDown,
               disabled: !canMoveDown
             },
+            ...(isSharedGroup
+              ? [{
+                  label: "Convert to local group",
+                  icon: <StepGroupIcon />,
+                  onClick: onConvertToLocal
+                }]
+              : [{
+                  label: "Convert to shared group",
+                  icon: <StepSharedGroupIcon />,
+                  onClick: onConvertToShared
+                }]),
             {
               label: unlinkTitle,
               icon: <StepUngroupIcon />,
@@ -4754,18 +4935,18 @@ function StepGroupModal({
 
           <label className="checkbox-field">
             <input checked={reusable} onChange={(event) => setReusable(event.target.checked)} type="checkbox" />
-            Save as reusable group
+            Save as shared group
           </label>
 
           <div className="detail-summary">
             <strong>{selectedCount} step{selectedCount === 1 ? "" : "s"} selected</strong>
-            <span>{reusable ? "Reusable groups stay linked across every test case that references them." : "Local groups only organize the current case."}</span>
+            <span>{reusable ? "Shared groups stay linked across every test case that references them." : "Local groups only organize the current case."}</span>
           </div>
         </div>
 
         <div className="action-row">
           <button className="primary-button" disabled={isSaving} onClick={onSave} type="button">
-            {isSaving ? "Saving…" : reusable ? "Create reusable group" : "Create group"}
+            {isSaving ? "Saving…" : reusable ? "Create shared group" : "Create group"}
           </button>
           <button className="ghost-button" disabled={isSaving} onClick={onClose} type="button">
             Cancel
@@ -4812,7 +4993,7 @@ function SharedGroupPickerModal({
         <div className="suite-create-header">
           <div className="suite-create-title">
             <h3>Insert Shared Group</h3>
-            <p>Choose a reusable group to insert into this case. Edits inside the shared block stay linked across every referencing test case.</p>
+            <p>Choose a shared group to insert into this case. Edits inside the shared block stay linked across every referencing test case.</p>
           </div>
           <button className="ghost-button" onClick={onClose} type="button">
             Close

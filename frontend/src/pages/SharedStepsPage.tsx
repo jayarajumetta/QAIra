@@ -5,6 +5,7 @@ import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StatusBadge } from "../components/StatusBadge";
+import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
@@ -395,8 +396,8 @@ export function SharedStepsPage() {
     <div className="page-content page-content--library-full">
       <PageHeader
         eyebrow="Shared Step Groups"
-        title="Reusable Step Groups"
-        description="Curate repeatable step blocks once, then keep linked shared groups aligned across every referenced test case."
+        title="Shared Step Groups"
+        description="Curate repeatable step blocks once. Shared groups promoted from test cases and groups created here land in the same reusable library."
         meta={[
           { label: "Groups", value: coverageMeta.total },
           { label: "Reusable steps", value: coverageMeta.totalSteps },
@@ -427,7 +428,7 @@ export function SharedStepsPage() {
         browseView={(
           <Panel
             title="Shared step tiles"
-            subtitle={appTypeId ? "Browse reusable groups as tiles first, then open one for editing." : "Choose an app type to begin."}
+            subtitle={appTypeId ? "Browse shared groups as tiles first, including ones promoted from test cases, then open one for editing." : "Choose an app type to begin."}
           >
             <div className="design-list-toolbar test-case-catalog-toolbar">
               <CatalogSearchFilter
@@ -435,7 +436,7 @@ export function SharedStepsPage() {
                 ariaLabel="Search shared step groups"
                 onChange={setSearchTerm}
                 placeholder="Search group name, description, or step text"
-                subtitle="Find reusable groups by intent, summary, or step content."
+                subtitle="Find shared groups by intent, summary, or step content."
                 title="Filter shared step groups"
                 value={searchTerm}
               >
@@ -453,11 +454,7 @@ export function SharedStepsPage() {
             </div>
 
             {sharedGroupsQuery.isLoading ? (
-              <div className="tile-browser-grid test-case-library-scroll">
-                <div className="skeleton-block" />
-                <div className="skeleton-block" />
-                <div className="skeleton-block" />
-              </div>
+              <TileCardSkeletonGrid className="test-case-library-scroll" />
             ) : (
               <div className="tile-browser-grid test-case-library-scroll">
                 {filteredGroups.map((group) => {
@@ -514,7 +511,7 @@ export function SharedStepsPage() {
           <Panel
             actions={<WorkspaceBackButton label="Back to shared step tiles" onClick={closeWorkspace} />}
             title="Shared step workspace"
-            subtitle={selectedGroupId || isCreating ? "Edit the reusable group and keep its step sequence ready for test case insertion." : "Select a shared step group or create a new one."}
+            subtitle={selectedGroupId || isCreating ? "Edit the shared group and keep its step sequence ready for test case insertion." : "Select a shared step group or create a new one."}
           >
             {selectedGroupId || isCreating ? (
               <form className="detail-stack" onSubmit={(event) => void handleSaveGroup(event)}>
@@ -645,7 +642,7 @@ export function SharedStepsPage() {
                 </div>
 
                 <div className="detail-summary">
-                  <strong>How reusable groups behave</strong>
+                  <strong>How shared groups behave</strong>
                   <span>When you insert this group into a test case, the shared block stays linked. Editing its steps updates every linked test case while existing execution history remains preserved.</span>
                 </div>
 

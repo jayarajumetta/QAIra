@@ -17,6 +17,7 @@ import {
   formatTileCardLabel,
   getTileCardTone
 } from "../components/TileCardPrimitives";
+import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
@@ -139,6 +140,7 @@ export function RequirementsPage() {
   const requirements = requirementsQuery.data || [];
   const testCases = testCasesQuery.data || [];
   const integrations = integrationsQuery.data || [];
+  const isRequirementCatalogLoading = projectsQuery.isLoading || (Boolean(projectId) && requirementsQuery.isLoading);
 
   const showSuccess = (text: string) => {
     setMessageTone("success");
@@ -852,77 +854,81 @@ export function RequirementsPage() {
               </div>
             ) : null}
 
-            <div className="tile-browser-grid requirement-card-list">
-              {filteredRequirements.map((item) => {
-                const isSelectedForDelete = deleteSelectedRequirementIds.includes(item.id);
-                const isActive = selectedRequirement?.id === item.id;
-                const requirementStatusLabel = formatTileCardLabel(item.status, "Open");
-                const requirementStatusTone = getTileCardTone(item.status);
-                const linkedCaseCount = (item.test_case_ids || []).length;
+            {isRequirementCatalogLoading ? <TileCardSkeletonGrid className="requirement-card-list" /> : null}
 
-                return (
-                  <button
-                    key={item.id}
-                    className={[
-                      "record-card tile-card requirement-catalog-card",
-                      isActive ? "is-active" : "",
-                      isSelectedForDelete ? "is-marked-for-delete" : ""
-                    ].filter(Boolean).join(" ")}
-                    onClick={() => setSelectedRequirementId(item.id)}
-                    type="button"
-                  >
-                    <div className="tile-card-main">
-                      <div className="tile-card-select-row">
-                        <label className="checkbox-field requirement-delete-checkbox" onClick={(event) => event.stopPropagation()}>
-                          <input
-                            checked={isSelectedForDelete}
-                            onChange={(event) =>
-                              setDeleteSelectedRequirementIds((current) =>
-                                event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id)
-                              )
-                            }
-                            type="checkbox"
-                          />
-                          Mark for delete
-                        </label>
-                      </div>
-                      <div className="tile-card-header">
-                        <TileCardIconFrame tone={requirementStatusTone}>
-                          <TileCardRequirementIcon />
-                        </TileCardIconFrame>
-                        <div className="tile-card-title-group">
-                          <strong>{item.title}</strong>
-                          <span className="tile-card-kicker">{currentAppTypeName}</span>
+            {!isRequirementCatalogLoading ? (
+              <div className="tile-browser-grid requirement-card-list">
+                {filteredRequirements.map((item) => {
+                  const isSelectedForDelete = deleteSelectedRequirementIds.includes(item.id);
+                  const isActive = selectedRequirement?.id === item.id;
+                  const requirementStatusLabel = formatTileCardLabel(item.status, "Open");
+                  const requirementStatusTone = getTileCardTone(item.status);
+                  const linkedCaseCount = (item.test_case_ids || []).length;
+
+                  return (
+                    <button
+                      key={item.id}
+                      className={[
+                        "record-card tile-card requirement-catalog-card",
+                        isActive ? "is-active" : "",
+                        isSelectedForDelete ? "is-marked-for-delete" : ""
+                      ].filter(Boolean).join(" ")}
+                      onClick={() => setSelectedRequirementId(item.id)}
+                      type="button"
+                    >
+                      <div className="tile-card-main">
+                        <div className="tile-card-select-row">
+                          <label className="checkbox-field requirement-delete-checkbox" onClick={(event) => event.stopPropagation()}>
+                            <input
+                              checked={isSelectedForDelete}
+                              onChange={(event) =>
+                                setDeleteSelectedRequirementIds((current) =>
+                                  event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id)
+                                )
+                              }
+                              type="checkbox"
+                            />
+                            Mark for delete
+                          </label>
                         </div>
-                        <TileCardStatusIndicator title={requirementStatusLabel} tone={requirementStatusTone} />
+                        <div className="tile-card-header">
+                          <TileCardIconFrame tone={requirementStatusTone}>
+                            <TileCardRequirementIcon />
+                          </TileCardIconFrame>
+                          <div className="tile-card-title-group">
+                            <strong>{item.title}</strong>
+                            <span className="tile-card-kicker">{currentAppTypeName}</span>
+                          </div>
+                          <TileCardStatusIndicator title={requirementStatusLabel} tone={requirementStatusTone} />
+                        </div>
+                        <p className="tile-card-description">{item.description || "No description yet."}</p>
+                        <div className="tile-card-facts" aria-label={`${item.title} facts`}>
+                          <TileCardFact label={requirementStatusLabel} title={`Requirement status ${requirementStatusLabel}`} tone={requirementStatusTone}>
+                            <TileCardRequirementIcon />
+                          </TileCardFact>
+                          <TileCardFact
+                            label={`P${item.priority ?? 3}`}
+                            title={`Priority P${item.priority ?? 3}`}
+                            tone={(item.priority ?? 3) <= 2 ? "danger" : "info"}
+                          >
+                            <TileCardPriorityIcon />
+                          </TileCardFact>
+                          <TileCardFact
+                            label={String(linkedCaseCount)}
+                            title={`${linkedCaseCount} linked test case${linkedCaseCount === 1 ? "" : "s"}`}
+                            tone={linkedCaseCount ? "success" : "neutral"}
+                          >
+                            <TileCardLinkIcon />
+                          </TileCardFact>
+                        </div>
                       </div>
-                      <p className="tile-card-description">{item.description || "No description yet."}</p>
-                      <div className="tile-card-facts" aria-label={`${item.title} facts`}>
-                        <TileCardFact label={requirementStatusLabel} title={`Requirement status ${requirementStatusLabel}`} tone={requirementStatusTone}>
-                          <TileCardRequirementIcon />
-                        </TileCardFact>
-                        <TileCardFact
-                          label={`P${item.priority ?? 3}`}
-                          title={`Priority P${item.priority ?? 3}`}
-                          tone={(item.priority ?? 3) <= 2 ? "danger" : "info"}
-                        >
-                          <TileCardPriorityIcon />
-                        </TileCardFact>
-                        <TileCardFact
-                          label={String(linkedCaseCount)}
-                          title={`${linkedCaseCount} linked test case${linkedCaseCount === 1 ? "" : "s"}`}
-                          tone={linkedCaseCount ? "success" : "neutral"}
-                        >
-                          <TileCardLinkIcon />
-                        </TileCardFact>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            {!requirements.length ? <div className="empty-state compact">No requirements yet for this project.</div> : null}
-            {requirements.length && !filteredRequirements.length ? <div className="empty-state compact">No requirements match the current search.</div> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+            {!isRequirementCatalogLoading && !requirements.length ? <div className="empty-state compact">No requirements yet for this project.</div> : null}
+            {!isRequirementCatalogLoading && requirements.length && !filteredRequirements.length ? <div className="empty-state compact">No requirements match the current search.</div> : null}
           </Panel>
         )}
         detailView={(

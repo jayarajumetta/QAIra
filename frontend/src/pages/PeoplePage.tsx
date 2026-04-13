@@ -6,6 +6,7 @@ import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { SubnavTabs } from "../components/SubnavTabs";
+import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { TileCardFact, TileCardIconFrame, TileCardStatusIndicator, TileCardUsersIcon } from "../components/TileCardPrimitives";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { useAuth } from "../auth/AuthContext";
@@ -36,6 +37,8 @@ export function PeoplePage() {
 
   const userItems = users.data || [];
   const roleItems = roles.data || [];
+  const isUserCatalogLoading = users.isPending;
+  const isRoleCatalogLoading = roles.isPending || users.isPending;
   const selectedUser = useMemo(
     () => userItems.find((item) => item.id === selectedUserId) || null,
     [selectedUserId, userItems]
@@ -411,34 +414,37 @@ export function PeoplePage() {
         <WorkspaceMasterDetail
           browseView={(
             <Panel title="User tiles" subtitle="Scan the directory in card form first, then open one person into a focused access editor.">
-              <div className="tile-browser-grid">
-                {userItems.map((user) => (
-                  <button
-                    className={selectedUser?.id === user.id ? "record-card tile-card is-active" : "record-card tile-card"}
-                    key={user.id}
-                    onClick={() => openUserWorkspace(user.id)}
-                    type="button"
-                  >
-                    <div className="tile-card-main">
-                      <div className="tile-card-header">
-                        <TileCardIconFrame tone={user.role === "admin" ? "info" : "success"}>
-                          <TileCardUsersIcon />
-                        </TileCardIconFrame>
-                        <div className="tile-card-title-group">
-                          <strong>{user.name || "Unnamed user"}</strong>
-                          <span className="tile-card-kicker">{user.email}</span>
+              {isUserCatalogLoading ? <TileCardSkeletonGrid /> : null}
+              {!isUserCatalogLoading ? (
+                <div className="tile-browser-grid">
+                  {userItems.map((user) => (
+                    <button
+                      className={selectedUser?.id === user.id ? "record-card tile-card is-active" : "record-card tile-card"}
+                      key={user.id}
+                      onClick={() => openUserWorkspace(user.id)}
+                      type="button"
+                    >
+                      <div className="tile-card-main">
+                        <div className="tile-card-header">
+                          <TileCardIconFrame tone={user.role === "admin" ? "info" : "success"}>
+                            <TileCardUsersIcon />
+                          </TileCardIconFrame>
+                          <div className="tile-card-title-group">
+                            <strong>{user.name || "Unnamed user"}</strong>
+                            <span className="tile-card-kicker">{user.email}</span>
+                          </div>
+                          <TileCardStatusIndicator title={user.role === "admin" ? "Admin access" : "Member access"} tone={user.role === "admin" ? "info" : "success"} />
                         </div>
-                        <TileCardStatusIndicator title={user.role === "admin" ? "Admin access" : "Member access"} tone={user.role === "admin" ? "info" : "success"} />
+                        <p className="tile-card-description">{user.role === "admin" ? "Workspace administrator with directory controls." : "Active workspace member with assigned project access."}</p>
+                        <div className="people-card-footer">
+                          <span className="count-pill">{user.role === "admin" ? "Org Admin" : "Member"}</span>
+                        </div>
                       </div>
-                      <p className="tile-card-description">{user.role === "admin" ? "Workspace administrator with directory controls." : "Active workspace member with assigned project access."}</p>
-                      <div className="people-card-footer">
-                        <span className="count-pill">{user.role === "admin" ? "Org Admin" : "Member"}</span>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-              {!userItems.length ? <div className="empty-state compact">No users found yet.</div> : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {!isUserCatalogLoading && !userItems.length ? <div className="empty-state compact">No users found yet.</div> : null}
             </Panel>
           )}
           detailView={(
@@ -530,36 +536,39 @@ export function PeoplePage() {
         <WorkspaceMasterDetail
           browseView={(
             <Panel title="Role tiles" subtitle="Keep role definitions scannable, then open one label into a focused editor when needed.">
-              <div className="tile-browser-grid">
-                {roleItems.map((role) => (
-                  <button
-                    key={role.id}
-                    className={selectedRole?.id === role.id ? "record-card tile-card is-active" : "record-card tile-card"}
-                    onClick={() => openRoleWorkspace(role.id)}
-                    type="button"
-                  >
-                    <div className="tile-card-main">
-                      <div className="tile-card-header">
-                        <TileCardIconFrame tone={role.name === "admin" ? "info" : "success"}>
-                          <TileCardUsersIcon />
-                        </TileCardIconFrame>
-                        <div className="tile-card-title-group">
-                          <strong>{role.name}</strong>
-                          <span className="tile-card-kicker">{userCountByRoleName[role.name] || 0} assigned</span>
+              {isRoleCatalogLoading ? <TileCardSkeletonGrid /> : null}
+              {!isRoleCatalogLoading ? (
+                <div className="tile-browser-grid">
+                  {roleItems.map((role) => (
+                    <button
+                      key={role.id}
+                      className={selectedRole?.id === role.id ? "record-card tile-card is-active" : "record-card tile-card"}
+                      onClick={() => openRoleWorkspace(role.id)}
+                      type="button"
+                    >
+                      <div className="tile-card-main">
+                        <div className="tile-card-header">
+                          <TileCardIconFrame tone={role.name === "admin" ? "info" : "success"}>
+                            <TileCardUsersIcon />
+                          </TileCardIconFrame>
+                          <div className="tile-card-title-group">
+                            <strong>{role.name}</strong>
+                            <span className="tile-card-kicker">{userCountByRoleName[role.name] || 0} assigned</span>
+                          </div>
+                          <TileCardStatusIndicator title="Reusable role" tone={role.name === "admin" ? "info" : "success"} />
                         </div>
-                        <TileCardStatusIndicator title="Reusable role" tone={role.name === "admin" ? "info" : "success"} />
+                        <p className="tile-card-description">Project membership label used across assignments and access views.</p>
+                        <div className="tile-card-facts" aria-label={`${role.name} facts`}>
+                          <TileCardFact label={String(userCountByRoleName[role.name] || 0)} title={`${userCountByRoleName[role.name] || 0} user${(userCountByRoleName[role.name] || 0) === 1 ? "" : "s"} assigned`} tone={(userCountByRoleName[role.name] || 0) ? "success" : "neutral"}>
+                            <TileCardUsersIcon />
+                          </TileCardFact>
+                        </div>
                       </div>
-                      <p className="tile-card-description">Project membership label used across assignments and access views.</p>
-                      <div className="tile-card-facts" aria-label={`${role.name} facts`}>
-                        <TileCardFact label={String(userCountByRoleName[role.name] || 0)} title={`${userCountByRoleName[role.name] || 0} user${(userCountByRoleName[role.name] || 0) === 1 ? "" : "s"} assigned`} tone={(userCountByRoleName[role.name] || 0) ? "success" : "neutral"}>
-                          <TileCardUsersIcon />
-                        </TileCardFact>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-              {!roleItems.length ? <div className="empty-state compact">No roles defined yet.</div> : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {!isRoleCatalogLoading && !roleItems.length ? <div className="empty-state compact">No roles defined yet.</div> : null}
             </Panel>
           )}
           detailView={(
