@@ -141,6 +141,7 @@ const statements = [
   `ALTER TABLE executions ADD COLUMN IF NOT EXISTS test_data_set_id TEXT`,
   `ALTER TABLE executions ADD COLUMN IF NOT EXISTS test_data_set_name TEXT`,
   `ALTER TABLE executions ADD COLUMN IF NOT EXISTS test_data_set_snapshot JSONB`,
+  `ALTER TABLE executions ADD COLUMN IF NOT EXISTS assigned_to TEXT`,
   `
     CREATE TABLE IF NOT EXISTS execution_case_snapshots (
       execution_id TEXT NOT NULL,

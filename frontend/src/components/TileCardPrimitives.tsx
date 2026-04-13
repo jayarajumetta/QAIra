@@ -148,9 +148,9 @@ function TileCardIconShell({ children }: { children: ReactNode }) {
 export function TileCardSuiteIcon() {
   return (
     <TileCardIconShell>
-      <rect height="6" rx="1.2" width="7" x="3" y="4" />
-      <rect height="6" rx="1.2" width="7" x="14" y="4" />
-      <rect height="6" rx="1.2" width="7" x="8.5" y="14" />
+      <path d="m12 4 8 4-8 4-8-4Z" />
+      <path d="m4 12 8 4 8-4" />
+      <path d="m4 16 8 4 8-4" />
     </TileCardIconShell>
   );
 }

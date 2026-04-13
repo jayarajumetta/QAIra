@@ -1,5 +1,6 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
+const sharedStepSyncService = require("./sharedStepSync.service");
 
 const selectTestCase = db.prepare(`
   SELECT id, app_type_id
@@ -188,6 +189,18 @@ const listStepsForCase = async (testCaseId) => {
   return selectStepsForCase.all(testCaseId);
 };
 
+const syncSharedGroupFromStep = async (step) => {
+  if (!step?.reusable_group_id || !step?.group_id) {
+    return;
+  }
+
+  await sharedStepSyncService.syncSharedGroupFromReference(
+    step.reusable_group_id,
+    step.test_case_id,
+    step.group_id
+  );
+};
+
 exports.createTestStep = async ({
   test_case_id,
   step_order,
@@ -225,6 +238,11 @@ exports.createTestStep = async ({
   });
 
   await transaction();
+  await syncSharedGroupFromStep({
+    test_case_id,
+    group_id: normalizeText(group_id),
+    reusable_group_id: normalizeText(reusable_group_id)
+  });
   return { id };
 };
 
@@ -294,6 +312,7 @@ exports.updateTestStep = async (id, data = {}) => {
   });
 
   await transaction();
+  await syncSharedGroupFromStep(await ensureStep(id));
   return { updated: true };
 };
 
@@ -305,6 +324,32 @@ exports.reorderTestSteps = async (testCaseId, stepIds = []) => {
   }
 
   const existingSteps = await listStepsForCase(testCaseId);
+  const sharedGroupSyncTargets = existingSteps
+    .filter((step) => step.reusable_group_id && step.group_id)
+    .reduce((targets, step) => {
+      const key = `${step.reusable_group_id}::${step.group_id}`;
+
+      if (targets.some((target) => target.key === key)) {
+        return targets;
+      }
+
+      const previousSequence = existingSteps
+        .filter((item) => item.reusable_group_id === step.reusable_group_id && item.group_id === step.group_id)
+        .map((item) => item.id);
+      const nextSequence = [...previousSequence].sort((left, right) => stepIds.indexOf(left) - stepIds.indexOf(right));
+
+      if (previousSequence.every((item, index) => item === nextSequence[index])) {
+        return targets;
+      }
+
+      targets.push({
+        key,
+        reusable_group_id: step.reusable_group_id,
+        test_case_id: step.test_case_id,
+        group_id: step.group_id
+      });
+      return targets;
+    }, []);
 
   if (existingSteps.length !== stepIds.length) {
     throw new Error("step_ids must include every step in the test case");
@@ -324,6 +369,13 @@ exports.reorderTestSteps = async (testCaseId, stepIds = []) => {
   });
 
   await transaction();
+  for (const target of sharedGroupSyncTargets) {
+    await sharedStepSyncService.syncSharedGroupFromReference(
+      target.reusable_group_id,
+      target.test_case_id,
+      target.group_id
+    );
+  }
   return { reordered: true };
 };
 
@@ -417,6 +469,13 @@ exports.groupTestSteps = async ({ test_case_id, step_ids = [], name, kind = "loc
   });
 
   await transaction();
+  if (resolvedKind === "reusable" && normalizeText(reusable_group_id)) {
+    await sharedStepSyncService.syncSharedGroupFromReference(
+      normalizeText(reusable_group_id),
+      test_case_id,
+      groupId
+    );
+  }
   return { grouped: true, group_id: groupId };
 };
 
@@ -495,5 +554,6 @@ exports.deleteTestStep = async (id) => {
   });
 
   await transaction();
+  await syncSharedGroupFromStep(step);
   return { deleted: true };
 };

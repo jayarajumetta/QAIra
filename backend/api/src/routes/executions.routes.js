@@ -1,7 +1,42 @@
 const service = require("../services/execution.service");
+const executionPlanningService = require("../services/executionPlanning.service");
+const appTypeService = require("../services/appType.service");
 const projectService = require("../services/project.service");
 
 module.exports = async function (fastify) {
+
+  fastify.post("/executions/smart-plan-preview", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      project_id: { required: true, type: "string" },
+      app_type_id: { required: true, type: "string" },
+      integration_id: { required: false, type: "string" },
+      release_scope: { required: true, type: "string", minLength: 2 },
+      additional_context: { required: false, type: "string" },
+      test_environment_id: { required: false, type: "string" },
+      test_configuration_id: { required: false, type: "string" },
+      test_data_set_id: { required: false, type: "string" }
+    }, req.body);
+
+    await projectService.getProject(req.body.project_id, req.user.id);
+    const appType = await appTypeService.getAppType(req.body.app_type_id);
+
+    if (appType.project_id !== req.body.project_id) {
+      throw new Error("App type must belong to the selected project");
+    }
+
+    return executionPlanningService.previewSmartExecution({
+      project_id: req.body.project_id,
+      appType,
+      integration_id: req.body.integration_id,
+      release_scope: req.body.release_scope,
+      additional_context: req.body.additional_context,
+      test_environment_id: req.body.test_environment_id,
+      test_configuration_id: req.body.test_configuration_id,
+      test_data_set_id: req.body.test_data_set_id
+    });
+  });
 
   // CREATE EXECUTION
   fastify.post("/executions", async (req) => {
@@ -15,6 +50,7 @@ module.exports = async function (fastify) {
       test_environment_id: { required: false, type: "string" },
       test_configuration_id: { required: false, type: "string" },
       test_data_set_id: { required: false, type: "string" },
+      assigned_to: { required: false, type: "string" },
       name: { required: false, type: "string" },
       created_by: { required: true, type: "string" }
     }, req.body);
@@ -66,7 +102,7 @@ module.exports = async function (fastify) {
     await fastify.authenticate(req);
 
     fastify.validate({
-      status: { required: true, enum: ["completed", "failed"] }
+      status: { required: true, enum: ["completed", "failed", "aborted"] }
     }, req.body);
 
     const execution = await service.getExecution(req.params.id);

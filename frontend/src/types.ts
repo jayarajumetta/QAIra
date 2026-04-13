@@ -114,6 +114,41 @@ export type AiDesignPreviewResponse = {
   };
 };
 
+export type SmartExecutionImpactCase = {
+  test_case_id: string;
+  title: string;
+  description: string | null;
+  priority: number | null;
+  status: string | null;
+  suite_names: string[];
+  requirement_titles: string[];
+  step_count: number;
+  reason: string;
+  impact_level: "critical" | "high" | "medium" | "low";
+};
+
+export type SmartExecutionPreviewResponse = {
+  integration: {
+    id: string;
+    name: string;
+    type: string;
+    model?: string | null;
+  };
+  app_type: {
+    id: string;
+    name: string;
+  };
+  default_suite: {
+    id: string;
+    name: string;
+  };
+  source_case_count: number;
+  matched_case_count: number;
+  execution_name: string;
+  summary: string;
+  cases: SmartExecutionImpactCase[];
+};
+
 export type TestSuite = {
   id: string;
   app_type_id: string;
@@ -278,6 +313,12 @@ export type Execution = {
     id: string | null;
     name: string;
     snapshot: ExecutionDataSetSnapshot | null;
+  } | null;
+  assigned_to?: string | null;
+  assigned_user?: {
+    id: string;
+    email: string;
+    name: string | null;
   } | null;
   created_by: string | null;
   started_at: string | null;

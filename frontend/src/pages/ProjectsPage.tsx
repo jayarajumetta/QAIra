@@ -190,6 +190,16 @@ export function ProjectsPage() {
       }),
     [session?.user.id, users.data]
   );
+  const selectableProjectMemberIds = useMemo(
+    () =>
+      projectMemberOptions
+        .filter((user) => user.id !== session?.user.id && user.role !== "admin")
+        .map((user) => user.id),
+    [projectMemberOptions, session?.user.id]
+  );
+  const areAllSelectableProjectMembersSelected =
+    Boolean(selectableProjectMemberIds.length) &&
+    selectableProjectMemberIds.every((userId) => projectDraft.memberIds.includes(userId));
 
   const selectedProjectRequirementCount = projectId ? requirementCountByProjectId[projectId] || 0 : 0;
   const selectedProjectTestCaseCount = projectId ? testCaseCountByProjectId[projectId] || 0 : 0;
@@ -736,7 +746,25 @@ export function ProjectsPage() {
                       <h4>Project members</h4>
                       <p>All existing users are listed here. Admins are auto-added, your account is auto-added as a member, and any other users can be selected now.</p>
                     </div>
-                    <span className="status-pill tone-neutral">{projectDraft.memberIds.length} selected</span>
+                    <div className="panel-head-actions">
+                      <span className="status-pill tone-neutral">{projectDraft.memberIds.length} selected</span>
+                      <button
+                        className="ghost-button"
+                        disabled={!selectableProjectMemberIds.length || areAllSelectableProjectMembersSelected}
+                        onClick={() => updateProjectDraft({ memberIds: selectableProjectMemberIds })}
+                        type="button"
+                      >
+                        Select all
+                      </button>
+                      <button
+                        className="ghost-button"
+                        disabled={!projectDraft.memberIds.length}
+                        onClick={() => updateProjectDraft({ memberIds: [] })}
+                        type="button"
+                      >
+                        Clear selection
+                      </button>
+                    </div>
                   </div>
 
                   {projectMemberOptions.length ? (

@@ -112,6 +112,18 @@ const selectTestDataSet = db.prepare(`
   WHERE id = ?
 `);
 
+const selectExecutionAssignee = db.prepare(`
+  SELECT id, email, name
+  FROM users
+  WHERE id = ?
+`);
+
+const selectProjectMember = db.prepare(`
+  SELECT id
+  FROM project_members
+  WHERE project_id = ? AND user_id = ?
+`);
+
 const selectStepsForCase = db.prepare(`
   SELECT id, step_order, action, expected_result, group_id, group_name, group_kind, reusable_group_id
   FROM test_steps
@@ -175,6 +187,32 @@ function attachExecutionContext(execution) {
           id: execution.test_data_set_id || dataSetSnapshot?.id || null,
           name: execution.test_data_set_name || dataSetSnapshot?.name || "Deleted data set",
           snapshot: dataSetSnapshot
+        }
+      : null
+  };
+}
+
+async function attachExecutionAssignee(execution) {
+  if (!execution) {
+    return execution;
+  }
+
+  if (!execution.assigned_to) {
+    return {
+      ...execution,
+      assigned_user: null
+    };
+  }
+
+  const assignedUser = await selectExecutionAssignee.get(execution.assigned_to);
+
+  return {
+    ...execution,
+    assigned_user: assignedUser
+      ? {
+          id: assignedUser.id,
+          email: assignedUser.email,
+          name: assignedUser.name || null
         }
       : null
   };
@@ -312,11 +350,12 @@ async function attachScope(execution) {
     return execution;
   }
 
+  const executionWithMetadata = await attachExecutionAssignee(attachExecutionContext(execution));
   const suiteRows = await getSuiteIdsForExecution.all(execution.id);
   const suite_ids = suiteRows.map((row) => row.suite_id);
 
   return {
-    ...attachExecutionContext(execution),
+    ...executionWithMetadata,
     suite_ids,
     suite_snapshots: suiteRows.map((row) => ({ id: row.suite_id, name: row.suite_name || "Deleted Suite" }))
   };
@@ -363,6 +402,7 @@ exports.createExecution = async ({
   test_environment_id,
   test_configuration_id,
   test_data_set_id,
+  assigned_to,
   name,
   created_by
 }) => {
@@ -381,6 +421,20 @@ exports.createExecution = async ({
   `).get(created_by);
 
   if (!user) throw new Error("Invalid user");
+
+  if (assigned_to) {
+    const assignedUser = await selectExecutionAssignee.get(assigned_to);
+
+    if (!assignedUser) {
+      throw new Error("Assigned user not found");
+    }
+
+    const member = await selectProjectMember.get(project_id, assigned_to);
+
+    if (!member) {
+      throw new Error("Assigned user must be a member of the selected project");
+    }
+  }
 
   if (app_type_id) {
     const appType = await db.prepare(`
@@ -512,9 +566,10 @@ exports.createExecution = async ({
         test_data_set_id,
         test_data_set_name,
         test_data_set_snapshot,
+        assigned_to,
         created_by
       )
-      VALUES (?, ?, ?, ?, 'manual', 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, 'manual', 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       project_id,
@@ -529,6 +584,7 @@ exports.createExecution = async ({
       selectedDataSet?.id || null,
       selectedDataSet?.name || null,
       selectedDataSet?.snapshot || null,
+      assigned_to || null,
       created_by
     );
 

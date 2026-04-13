@@ -2,6 +2,7 @@ const db = require("../db");
 const { v4: uuid } = require("uuid");
 const requirementTestCaseService = require("./requirementTestCase.service");
 const suiteTestCaseService = require("./suiteTestCase.service");
+const sharedStepSyncService = require("./sharedStepSync.service");
 
 const DEFAULT_PRIORITY = 3;
 const DEFAULT_STATUS = "active";
@@ -367,7 +368,34 @@ const createOne = db.transaction(async (payload) => {
 });
 
 exports.createTestCase = async (input) => {
-  return createOne(await createPersistablePayload(input));
+  const payload = await createPersistablePayload(input);
+  const response = await createOne(payload);
+  const sharedGroupTargets = payload.steps
+    .filter((step) => step.reusable_group_id && step.group_id)
+    .reduce((targets, step) => {
+      const key = `${step.reusable_group_id}::${step.group_id}`;
+
+      if (targets.some((target) => target.key === key)) {
+        return targets;
+      }
+
+      targets.push({
+        key,
+        reusable_group_id: step.reusable_group_id,
+        group_id: step.group_id
+      });
+      return targets;
+    }, []);
+
+  for (const target of sharedGroupTargets) {
+    await sharedStepSyncService.syncSharedGroupFromReference(
+      target.reusable_group_id,
+      response.id,
+      target.group_id
+    );
+  }
+
+  return response;
 };
 
 exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [] }) => {

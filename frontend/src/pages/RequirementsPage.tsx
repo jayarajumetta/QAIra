@@ -404,6 +404,12 @@ export function RequirementsPage() {
   ) => {
     setter((current) => (checked ? [...new Set([...current, testCaseId])] : current.filter((id) => id !== testCaseId)));
   };
+  const allReusableTestCaseIds = useMemo(
+    () => testCases.map((testCase) => testCase.id),
+    [testCases]
+  );
+  const areAllCreateRequirementCasesSelected =
+    Boolean(allReusableTestCaseIds.length) && createSelectedTestCaseIds.length === allReusableTestCaseIds.length;
 
   const handleCreateRequirement = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -862,6 +868,20 @@ export function RequirementsPage() {
                     type="button"
                   >
                     <div className="tile-card-main">
+                      <div className="tile-card-select-row">
+                        <label className="checkbox-field requirement-delete-checkbox" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            checked={isSelectedForDelete}
+                            onChange={(event) =>
+                              setDeleteSelectedRequirementIds((current) =>
+                                event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id)
+                              )
+                            }
+                            type="checkbox"
+                          />
+                          Mark for delete
+                        </label>
+                      </div>
                       <div className="tile-card-header">
                         <TileCardIconFrame tone={requirementStatusTone}>
                           <TileCardRequirementIcon />
@@ -892,18 +912,6 @@ export function RequirementsPage() {
                           <TileCardLinkIcon />
                         </TileCardFact>
                       </div>
-                      <label className="checkbox-field requirement-delete-checkbox" onClick={(event) => event.stopPropagation()}>
-                        <input
-                          checked={isSelectedForDelete}
-                          onChange={(event) =>
-                            setDeleteSelectedRequirementIds((current) =>
-                              event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id)
-                            )
-                          }
-                          type="checkbox"
-                        />
-                        Mark for delete
-                      </label>
                     </div>
                   </button>
                 );
@@ -1082,6 +1090,24 @@ export function RequirementsPage() {
                     <div>
                       <h3>Existing test cases</h3>
                       <p>{appTypeId ? `Select reusable cases from ${currentAppTypeName} to link immediately.` : "Select an app type first to link existing reusable test cases."}</p>
+                    </div>
+                    <div className="panel-head-actions">
+                      <button
+                        className="ghost-button"
+                        disabled={!allReusableTestCaseIds.length || areAllCreateRequirementCasesSelected}
+                        onClick={() => setCreateSelectedTestCaseIds(allReusableTestCaseIds)}
+                        type="button"
+                      >
+                        Select all
+                      </button>
+                      <button
+                        className="ghost-button"
+                        disabled={!createSelectedTestCaseIds.length}
+                        onClick={() => setCreateSelectedTestCaseIds([])}
+                        type="button"
+                      >
+                        Clear selection
+                      </button>
                     </div>
                   </div>
 

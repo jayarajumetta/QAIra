@@ -23,7 +23,21 @@ import {
   stringifyExecutionLogs,
   type ExecutionStepStatus
 } from "../lib/executionLogs";
-import type { AppType, Execution, ExecutionCaseSnapshot, ExecutionResult, ExecutionStatus, ExecutionStepSnapshot, Project, TestStep, TestSuite } from "../types";
+import type {
+  AppType,
+  Execution,
+  ExecutionCaseSnapshot,
+  ExecutionResult,
+  ExecutionStatus,
+  ExecutionStepSnapshot,
+  Integration,
+  Project,
+  SmartExecutionImpactCase,
+  SmartExecutionPreviewResponse,
+  TestStep,
+  TestSuite,
+  User
+} from "../types";
 
 type ExecutionTab = "overview" | "logs" | "failures" | "history";
 
@@ -57,8 +71,25 @@ type ExecutionRunSummary = {
   totalDurationMs: number;
 };
 
+type ExecutionStepBlock = {
+  key: string;
+  groupId: string | null;
+  groupName: string | null;
+  groupKind: TestStep["group_kind"];
+  steps: TestStep[];
+};
+
 type ExecutionIssueFilter = "all" | "with-issues" | "clean";
 type ExecutionEvidenceFilter = "all" | "with-evidence" | "no-evidence";
+type ExecutionCreateMode = "manual" | "smart";
+
+type ExecutionAssigneeOption = {
+  id: string;
+  name: string | null;
+  email: string;
+  label: string;
+  caption: string | null;
+};
 
 const EMPTY_EXECUTION_RUN_SUMMARY: ExecutionRunSummary = {
   passed: 0,
@@ -283,6 +314,24 @@ function formatDuration(ms?: number | null, fallback = DEFAULT_DURATION_LABEL) {
   return `${seconds}s`;
 }
 
+function resolveUserPrimaryLabel(user?: { name?: string | null; email?: string | null } | null) {
+  const trimmedName = user?.name?.trim();
+  return trimmedName || user?.email || "Unassigned";
+}
+
+function resolveUserSecondaryLabel(user?: { name?: string | null; email?: string | null } | null) {
+  const trimmedName = user?.name?.trim();
+  if (trimmedName && user?.email) {
+    return user.email;
+  }
+
+  return null;
+}
+
+function executionImpactLevelLabel(level: SmartExecutionImpactCase["impact_level"]) {
+  return level.charAt(0).toUpperCase() + level.slice(1);
+}
+
 function averageDuration(values: Array<number | null | undefined>) {
   const scoped = values.filter((value): value is number => typeof value === "number" && !Number.isNaN(value));
 
@@ -299,17 +348,28 @@ export function ExecutionsPage() {
   const { session } = useAuth();
   const [projectId, setProjectId] = useCurrentProject();
   const [appTypeId, setAppTypeId] = useState("");
+  const [executionCreateMode, setExecutionCreateMode] = useState<ExecutionCreateMode>("manual");
   const [selectedSuiteIds, setSelectedSuiteIds] = useState<string[]>([]);
   const [isCreateExecutionModalOpen, setIsCreateExecutionModalOpen] = useState(false);
   const [isSuitePickerOpen, setIsSuitePickerOpen] = useState(false);
   const [selectedExecutionId, setSelectedExecutionId] = useState("");
   const [focusedSuiteId, setFocusedSuiteId] = useState("");
+  const [expandedExecutionSuiteIds, setExpandedExecutionSuiteIds] = useState<string[]>([]);
   const [selectedTestCaseId, setSelectedTestCaseId] = useState("");
+  const [expandedExecutionStepGroupIds, setExpandedExecutionStepGroupIds] = useState<string[]>([]);
   const [bulkSelectedStepIds, setBulkSelectedStepIds] = useState<string[]>([]);
   const [executionName, setExecutionName] = useState("");
   const [selectedExecutionEnvironmentId, setSelectedExecutionEnvironmentId] = useState("");
   const [selectedExecutionConfigurationId, setSelectedExecutionConfigurationId] = useState("");
   const [selectedExecutionDataSetId, setSelectedExecutionDataSetId] = useState("");
+  const [selectedExecutionAssigneeId, setSelectedExecutionAssigneeId] = useState("");
+  const [smartExecutionIntegrationId, setSmartExecutionIntegrationId] = useState("");
+  const [smartExecutionReleaseScope, setSmartExecutionReleaseScope] = useState("");
+  const [smartExecutionAdditionalContext, setSmartExecutionAdditionalContext] = useState("");
+  const [smartExecutionPreview, setSmartExecutionPreview] = useState<SmartExecutionPreviewResponse | null>(null);
+  const [selectedSmartExecutionCaseIds, setSelectedSmartExecutionCaseIds] = useState<string[]>([]);
+  const [smartExecutionPreviewMessage, setSmartExecutionPreviewMessage] = useState("");
+  const [smartExecutionPreviewTone, setSmartExecutionPreviewTone] = useState<"success" | "error">("success");
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const [activeTab, setActiveTab] = useState<ExecutionTab>("overview");
@@ -331,6 +391,16 @@ export function ExecutionsPage() {
   const projectsQuery = useQuery({
     queryKey: ["projects"],
     queryFn: api.projects.list
+  });
+  const usersQuery = useQuery({
+    queryKey: ["users"],
+    queryFn: api.users.list,
+    enabled: Boolean(session)
+  });
+  const projectMembersQuery = useQuery({
+    queryKey: ["project-members", projectId],
+    queryFn: () => api.projectMembers.list({ project_id: projectId }),
+    enabled: Boolean(projectId && session)
   });
   const executionsQuery = useQuery({
     queryKey: ["executions", projectId],
@@ -360,8 +430,14 @@ export function ExecutionsPage() {
     queryKey: ["execution-results"],
     queryFn: () => api.executionResults.list()
   });
+  const integrationsQuery = useQuery({
+    queryKey: ["integrations", "llm"],
+    queryFn: () => api.integrations.list({ type: "llm", is_active: true }),
+    enabled: Boolean(session)
+  });
 
   const createExecution = useMutation({ mutationFn: api.executions.create });
+  const previewSmartExecution = useMutation({ mutationFn: api.executions.previewSmartPlan });
   const startExecution = useMutation({ mutationFn: api.executions.start });
   const completeExecution = useMutation({
     mutationFn: ({ id, status }: { id: string; status: "completed" | "failed" | "aborted" }) => api.executions.complete(id, { status })
@@ -373,13 +449,39 @@ export function ExecutionsPage() {
   });
 
   const projects = projectsQuery.data || [];
+  const users = usersQuery.data || [];
+  const projectMembers = projectMembersQuery.data || [];
   const executions = executionsQuery.data || [];
   const appTypes = appTypesQuery.data || [];
   const scopeSuites = scopedSuitesQuery.data || [];
   const executionResults = executionResultsQuery.data || [];
   const allExecutionResults = allExecutionResultsQuery.data || [];
+  const integrations = integrationsQuery.data || [];
   const selectedProject = projects.find((project) => project.id === projectId) || null;
   const selectedAppType = appTypes.find((appType) => appType.id === appTypeId) || null;
+  const userById = useMemo(
+    () =>
+      users.reduce<Record<string, User>>((accumulator, user) => {
+        accumulator[user.id] = user;
+        return accumulator;
+      }, {}),
+    [users]
+  );
+  const assigneeOptions = useMemo<ExecutionAssigneeOption[]>(
+    () =>
+      projectMembers
+        .map((member) => userById[member.user_id])
+        .filter((user): user is User => Boolean(user))
+        .map((user) => ({
+          id: user.id,
+          name: user.name || null,
+          email: user.email,
+          label: resolveUserPrimaryLabel(user),
+          caption: resolveUserSecondaryLabel(user)
+        }))
+        .sort((left, right) => left.label.localeCompare(right.label)),
+    [projectMembers, userById]
+  );
   const projectNameById = useMemo(
     () =>
       projects.reduce<Record<string, string>>((accumulator, project) => {
@@ -407,6 +509,13 @@ export function ExecutionsPage() {
     setMessage(error instanceof Error ? error.message : fallback);
   };
 
+  const resetSmartExecutionPreview = () => {
+    setSmartExecutionPreview(null);
+    setSelectedSmartExecutionCaseIds([]);
+    setSmartExecutionPreviewMessage("");
+    setSmartExecutionPreviewTone("success");
+  };
+
   const closeCreateExecutionModal = () => {
     setIsCreateExecutionModalOpen(false);
     setIsSuitePickerOpen(false);
@@ -418,10 +527,68 @@ export function ExecutionsPage() {
     setSelectedExecutionDataSetId("");
   };
 
+  const resetSmartExecutionBuilder = () => {
+    setExecutionCreateMode("manual");
+    setSelectedExecutionAssigneeId("");
+    setSmartExecutionIntegrationId("");
+    setSmartExecutionReleaseScope("");
+    setSmartExecutionAdditionalContext("");
+    resetSmartExecutionPreview();
+  };
+
   const closeExecutionBuilder = () => {
     closeCreateExecutionModal();
     setExecutionName("");
     resetExecutionContextSelection();
+    resetSmartExecutionBuilder();
+  };
+
+  const handleExecutionProjectChange = (value: string) => {
+    setProjectId(value);
+    setAppTypeId("");
+    setSelectedSuiteIds([]);
+    setSelectedExecutionAssigneeId("");
+    setIsSuitePickerOpen(false);
+    resetExecutionContextSelection();
+    resetSmartExecutionPreview();
+  };
+
+  const handleExecutionAppTypeChange = (value: string) => {
+    setAppTypeId(value);
+    setSelectedSuiteIds([]);
+    setIsSuitePickerOpen(false);
+    resetExecutionContextSelection();
+    resetSmartExecutionPreview();
+  };
+
+  const handleExecutionEnvironmentChange = (value: string) => {
+    setSelectedExecutionEnvironmentId(value);
+    resetSmartExecutionPreview();
+  };
+
+  const handleExecutionConfigurationChange = (value: string) => {
+    setSelectedExecutionConfigurationId(value);
+    resetSmartExecutionPreview();
+  };
+
+  const handleExecutionDataSetChange = (value: string) => {
+    setSelectedExecutionDataSetId(value);
+    resetSmartExecutionPreview();
+  };
+
+  const handleSmartExecutionIntegrationChange = (value: string) => {
+    setSmartExecutionIntegrationId(value);
+    resetSmartExecutionPreview();
+  };
+
+  const handleSmartExecutionReleaseScopeChange = (value: string) => {
+    setSmartExecutionReleaseScope(value);
+    resetSmartExecutionPreview();
+  };
+
+  const handleSmartExecutionAdditionalContextChange = (value: string) => {
+    setSmartExecutionAdditionalContext(value);
+    resetSmartExecutionPreview();
   };
 
   const syncExecutionSearchParams = (executionId: string, testCaseId?: string | null) => {
@@ -479,6 +646,7 @@ export function ExecutionsPage() {
       setAppTypeId("");
       setSelectedSuiteIds([]);
       resetExecutionContextSelection();
+      resetSmartExecutionPreview();
       return;
     }
 
@@ -486,8 +654,30 @@ export function ExecutionsPage() {
       setAppTypeId(appTypes[0].id);
       setSelectedSuiteIds([]);
       resetExecutionContextSelection();
+      resetSmartExecutionPreview();
     }
   }, [appTypeId, appTypes]);
+
+  useEffect(() => {
+    if (!integrations.length) {
+      setSmartExecutionIntegrationId("");
+      return;
+    }
+
+    if (!integrations.some((integration) => integration.id === smartExecutionIntegrationId)) {
+      setSmartExecutionIntegrationId(integrations[0].id);
+    }
+  }, [integrations, smartExecutionIntegrationId]);
+
+  useEffect(() => {
+    if (usersQuery.isPending || projectMembersQuery.isPending) {
+      return;
+    }
+
+    if (selectedExecutionAssigneeId && !assigneeOptions.some((option) => option.id === selectedExecutionAssigneeId)) {
+      setSelectedExecutionAssigneeId("");
+    }
+  }, [assigneeOptions, projectMembersQuery.isPending, selectedExecutionAssigneeId, usersQuery.isPending]);
 
   useEffect(() => {
     const requestedExecutionId = searchParams.get("execution");
@@ -531,6 +721,14 @@ export function ExecutionsPage() {
     setCaseTimerStartedAtById({});
   }, [selectedExecutionId]);
 
+  useEffect(() => {
+    setExpandedExecutionSuiteIds([]);
+  }, [selectedExecutionId]);
+
+  useEffect(() => {
+    setExpandedExecutionStepGroupIds([]);
+  }, [selectedExecutionId, selectedTestCaseId]);
+
   const executionSuites = useMemo<ExecutionSuiteNode[]>(
     () => selectedExecutionSuites.map((suite) => ({ id: suite.id, name: suite.name })),
     [selectedExecutionSuites]
@@ -561,6 +759,32 @@ export function ExecutionsPage() {
   const selectedSteps = useMemo(
     () => (stepsByCaseId[selectedTestCaseId] || []).slice().sort((left, right) => left.step_order - right.step_order),
     [selectedTestCaseId, stepsByCaseId]
+  );
+  const executionStepBlocks = useMemo<ExecutionStepBlock[]>(
+    () =>
+      selectedSteps.reduce<ExecutionStepBlock[]>((blocks, step) => {
+        const previousBlock = blocks[blocks.length - 1];
+
+        if (step.group_id && previousBlock?.groupId === step.group_id) {
+          previousBlock.steps.push(step);
+          return blocks;
+        }
+
+        blocks.push({
+          key: step.group_id ? `group-${step.group_id}` : `step-${step.id}`,
+          groupId: step.group_id || null,
+          groupName: step.group_name || null,
+          groupKind: step.group_kind || null,
+          steps: [step]
+        });
+
+        return blocks;
+      }, []),
+    [selectedSteps]
+  );
+  const executionStepGroupIds = useMemo(
+    () => executionStepBlocks.map((block) => block.groupId).filter((groupId): groupId is string => Boolean(groupId)),
+    [executionStepBlocks]
   );
 
   useEffect(() => {
@@ -600,6 +824,26 @@ export function ExecutionsPage() {
 
     setFocusedSuiteId((current) => (current && executionSuites.some((suite) => suite.id === current) ? current : ""));
   }, [executionSuites]);
+
+  useEffect(() => {
+    const validSuiteIds = new Set(executionSuites.map((suite) => suite.id));
+    setExpandedExecutionSuiteIds((current) => current.filter((suiteId) => validSuiteIds.has(suiteId)));
+  }, [executionSuites]);
+
+  useEffect(() => {
+    const validGroupIds = new Set(executionStepGroupIds);
+    setExpandedExecutionStepGroupIds((current) => current.filter((groupId) => validGroupIds.has(groupId)));
+  }, [executionStepGroupIds]);
+
+  useEffect(() => {
+    if (!selectedTestCaseId || !focusedSuiteId) {
+      return;
+    }
+
+    setExpandedExecutionSuiteIds((current) =>
+      current.includes(focusedSuiteId) ? current : [...current, focusedSuiteId]
+    );
+  }, [focusedSuiteId, selectedTestCaseId]);
 
   useEffect(() => {
     setBulkSelectedStepIds([]);
@@ -688,16 +932,6 @@ export function ExecutionsPage() {
     [executionSuites, focusedSuiteId]
   );
 
-  const focusedSuiteCases = useMemo(
-    () => (focusedSuiteId ? displayCasesBySuiteId[focusedSuiteId] || [] : []),
-    [displayCasesBySuiteId, focusedSuiteId]
-  );
-
-  const focusedSuiteMetric = useMemo(
-    () => suiteMetrics.find((suite) => suite.suiteId === focusedSuiteId) || null,
-    [focusedSuiteId, suiteMetrics]
-  );
-
   const executionSummaryById = useMemo(() => {
     const summary: Record<string, ExecutionRunSummary> = {};
 
@@ -783,6 +1017,47 @@ export function ExecutionsPage() {
     }
   };
 
+  const handlePreviewSmartExecution = async () => {
+    if (!projectId || !appTypeId) {
+      setSmartExecutionPreviewTone("error");
+      setSmartExecutionPreviewMessage("Choose a project and app type before generating an AI smart execution.");
+      return;
+    }
+
+    if (!smartExecutionReleaseScope.trim()) {
+      setSmartExecutionPreviewTone("error");
+      setSmartExecutionPreviewMessage("Add the release scope so AI can identify impacted test coverage.");
+      return;
+    }
+
+    try {
+      const response = await previewSmartExecution.mutateAsync({
+        project_id: projectId,
+        app_type_id: appTypeId,
+        integration_id: smartExecutionIntegrationId || undefined,
+        release_scope: smartExecutionReleaseScope,
+        additional_context: smartExecutionAdditionalContext || undefined,
+        test_environment_id: selectedExecutionEnvironmentId || undefined,
+        test_configuration_id: selectedExecutionConfigurationId || undefined,
+        test_data_set_id: selectedExecutionDataSetId || undefined
+      });
+
+      setSmartExecutionPreview(response);
+      setSelectedSmartExecutionCaseIds(response.cases.map((testCase) => testCase.test_case_id));
+      setExecutionName(response.execution_name || executionName);
+      setSmartExecutionPreviewTone("success");
+      setSmartExecutionPreviewMessage(
+        response.cases.length
+          ? `${response.matched_case_count} impacted case${response.matched_case_count === 1 ? "" : "s"} identified from ${response.source_case_count} existing cases using ${response.integration.name}.`
+          : `No impacted cases were identified using ${response.integration.name}. Refine the release scope or add more context and try again.`
+      );
+    } catch (error) {
+      resetSmartExecutionPreview();
+      setSmartExecutionPreviewTone("error");
+      setSmartExecutionPreviewMessage(error instanceof Error ? error.message : "Unable to generate a smart execution preview");
+    }
+  };
+
   const handleCreateExecution = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -792,14 +1067,24 @@ export function ExecutionsPage() {
       return;
     }
 
+    const selectedSmartCaseIds = selectedSmartExecutionCases.map((testCase) => testCase.test_case_id);
+
+    if (executionCreateMode === "smart" && !selectedSmartCaseIds.length) {
+      setMessageTone("error");
+      setMessage("Select at least one impacted test case before creating an AI smart execution.");
+      return;
+    }
+
     try {
       const response = await createExecution.mutateAsync({
         project_id: projectId,
         app_type_id: appTypeId || undefined,
-        suite_ids: selectedSuiteIds,
+        suite_ids: executionCreateMode === "manual" ? selectedSuiteIds : undefined,
+        test_case_ids: executionCreateMode === "smart" ? selectedSmartCaseIds : undefined,
         test_environment_id: selectedExecutionEnvironmentId || undefined,
         test_configuration_id: selectedExecutionConfigurationId || undefined,
         test_data_set_id: selectedExecutionDataSetId || undefined,
+        assigned_to: selectedExecutionAssigneeId || undefined,
         name: executionName || undefined,
         created_by: session.user.id
       });
@@ -807,7 +1092,11 @@ export function ExecutionsPage() {
       closeExecutionBuilder();
       focusExecution(response.id);
       setFocusedSuiteId("");
-      showSuccess("Execution created from a snapshot of the selected suites.");
+      showSuccess(
+        executionCreateMode === "smart"
+          ? `AI smart execution created with ${selectedSmartCaseIds.length} impacted case${selectedSmartCaseIds.length === 1 ? "" : "s"} under Default.`
+          : "Execution created from a snapshot of the selected suites."
+      );
       await refreshExecutionScope(response.id);
     } catch (error) {
       showError(error, "Unable to create execution");
@@ -1091,7 +1380,8 @@ export function ExecutionsPage() {
     appTypeNameById[selectedExecution?.app_type_id || ""] || "No app type scoped";
   const remainingCaseCount = Math.max(executionProgress.totalCases - executionProgress.completedCases, 0);
   const selectedCaseStatusLabel = selectedExecutionCase ? caseDerivedStatus(selectedExecutionCase) : executionProgress.derivedStatus;
-  const activeExecutionStage = selectedExecutionCase ? "case" : focusedExecutionSuite ? "cases" : selectedExecution ? "suites" : "executions";
+  const activeExecutionStage = selectedExecutionCase ? "case" : selectedExecution ? "suites" : "executions";
+  const showExecutionListHeader = !selectedExecution;
   const executionControlTitle =
     currentExecutionStatus === "running"
       ? "Execution is live"
@@ -1116,21 +1406,18 @@ export function ExecutionsPage() {
     syncExecutionSearchParams("", null);
   };
 
-  const openSuiteDrilldown = (suiteId: string) => {
-    setFocusedSuiteId(suiteId);
-    setSelectedTestCaseId("");
-    syncExecutionSearchParams(selectedExecutionId, null);
-  };
-
-  const closeSuiteDrilldown = () => {
-    setFocusedSuiteId("");
-    setSelectedTestCaseId("");
-    syncExecutionSearchParams(selectedExecutionId, null);
-  };
-
   const closeCaseDrilldown = () => {
     setSelectedTestCaseId("");
     syncExecutionSearchParams(selectedExecutionId, null);
+  };
+
+  const toggleSuiteGroup = (suiteId: string) => {
+    setFocusedSuiteId(suiteId);
+    setExpandedExecutionSuiteIds((current) =>
+      current.includes(suiteId)
+        ? current.filter((id) => id !== suiteId)
+        : [...current, suiteId]
+    );
   };
 
   const executionStatusOptions = useMemo(
@@ -1143,11 +1430,12 @@ export function ExecutionsPage() {
 
     return executions.filter((execution) => {
       const projectName = projectNameById[execution.project_id] || "";
+      const assigneeLabel = execution.assigned_user ? resolveUserPrimaryLabel(execution.assigned_user) : "";
       const summary = executionSummaryById[execution.id] || EMPTY_EXECUTION_RUN_SUMMARY;
       const executionStatus = normalizeExecutionStatus(execution.status);
       const hasIssues = summary.failed + summary.blocked > 0;
       const hasEvidence = summary.total > 0;
-      const matchesSearch = !search || [execution.name || "", projectName].some((value) => value.toLowerCase().includes(search));
+      const matchesSearch = !search || [execution.name || "", projectName, assigneeLabel].some((value) => value.toLowerCase().includes(search));
 
       if (!matchesSearch) {
         return false;
@@ -1207,7 +1495,15 @@ export function ExecutionsPage() {
     return () => observer.disconnect();
   }, [executionCardMeasureTarget?.id]);
 
-  const canCreateExecution = Boolean(projectId && appTypeId && selectedSuiteIds.length);
+  const smartPreviewCases = smartExecutionPreview?.cases || [];
+  const selectedSmartExecutionCases = useMemo(
+    () => smartPreviewCases.filter((testCase) => selectedSmartExecutionCaseIds.includes(testCase.test_case_id)),
+    [selectedSmartExecutionCaseIds, smartPreviewCases]
+  );
+  const canCreateExecution =
+    executionCreateMode === "smart"
+      ? Boolean(projectId && appTypeId && selectedSmartExecutionCases.length)
+      : Boolean(projectId && appTypeId && selectedSuiteIds.length);
   const selectedScopeSuites = useMemo(
     () => scopeSuites.filter((suite) => selectedSuiteIds.includes(suite.id)),
     [scopeSuites, selectedSuiteIds]
@@ -1310,21 +1606,23 @@ export function ExecutionsPage() {
 
   return (
     <div className="page-content page-content--executions-full">
-      <PageHeader
-        eyebrow="Executions"
-        title="Test Executions"
-        description="Launch scoped runs, monitor live progress, and capture failure evidence without losing the surrounding suite and case context."
-        meta={[
-          { label: "Runs", value: executions.length },
-          { label: "Blocking cases", value: blockingCases.length },
-          { label: "Completion", value: `${executionProgress.percent}%` }
-        ]}
-        actions={
-          <button className="primary-button" onClick={() => setIsCreateExecutionModalOpen(true)} type="button">
-            Create Execution
-          </button>
-        }
-      />
+      {showExecutionListHeader ? (
+        <PageHeader
+          eyebrow="Executions"
+          title="Test Executions"
+          description="Launch scoped runs, monitor live progress, and capture failure evidence without losing the surrounding suite and case context."
+          meta={[
+            { label: "Runs", value: executions.length },
+            { label: "Blocking cases", value: blockingCases.length },
+            { label: "Completion", value: `${executionProgress.percent}%` }
+          ]}
+          actions={
+            <button className="primary-button" onClick={() => setIsCreateExecutionModalOpen(true)} type="button">
+              Create Execution
+            </button>
+          }
+        />
+      ) : null}
 
       <ToastMessage message={message} onDismiss={() => setMessage("")} tone={messageTone} />
 
@@ -1453,7 +1751,7 @@ export function ExecutionsPage() {
           activeExecutionStage === "case" ? (
             <Panel
               className="execution-panel execution-panel--detail"
-              actions={<WorkspaceBackButton label={`Back to ${focusedExecutionSuite?.name || "suite cases"}`} onClick={closeCaseDrilldown} />}
+              actions={<WorkspaceBackButton label={`Back to ${focusedExecutionSuite?.name || "execution suites"}`} onClick={closeCaseDrilldown} />}
               title="Execution console"
               subtitle="Run the selected case, capture evidence, and inspect logs and history without the rest of the workspace crowding the screen."
             >
@@ -1571,6 +1869,28 @@ export function ExecutionsPage() {
                                 <TestCaseBoardIcon />
                                 <span>TC Fail</span>
                               </button>
+                              {executionStepGroupIds.length ? (
+                                <>
+                                  <button
+                                    className="ghost-button execution-steps-bulk-action"
+                                    disabled={expandedExecutionStepGroupIds.length === executionStepGroupIds.length}
+                                    onClick={() => setExpandedExecutionStepGroupIds(executionStepGroupIds)}
+                                    type="button"
+                                  >
+                                    <ExecutionAccordionChevronIcon />
+                                    <span>Expand groups</span>
+                                  </button>
+                                  <button
+                                    className="ghost-button execution-steps-bulk-action"
+                                    disabled={!expandedExecutionStepGroupIds.length}
+                                    onClick={() => setExpandedExecutionStepGroupIds([])}
+                                    type="button"
+                                  >
+                                    <ExecutionAccordionChevronIcon />
+                                    <span>Collapse groups</span>
+                                  </button>
+                                </>
+                              ) : null}
                             </div>
                           </div>
                         ) : null}
@@ -1586,16 +1906,61 @@ export function ExecutionsPage() {
                             <span className="execution-step-col-note" role="columnheader">Comment / log</span>
                           </div>
                           <div className="execution-step-table-body">
-                            {selectedSteps.map((step, index) => {
-                              const rowStatus = stepStatuses[step.id];
-                              return (
-                                <Fragment key={step.id}>
-                                  {isStepGroupStart(selectedSteps, index) ? (
-                                    <ExecutionStepGroupRow kind={step.group_kind} name={step.group_name || "Step group"} />
-                                  ) : null}
+                            {executionStepBlocks.map((block) => {
+                              if (block.groupId) {
+                                const isExpanded = expandedExecutionStepGroupIds.includes(block.groupId);
+
+                                return (
+                                  <Fragment key={block.key}>
+                                    <ExecutionStepGroupRow
+                                      isExpanded={isExpanded}
+                                      kind={block.groupKind}
+                                      name={block.groupName || "Step group"}
+                                      onToggle={() =>
+                                        setExpandedExecutionStepGroupIds((current) =>
+                                          current.includes(block.groupId as string)
+                                            ? current.filter((groupId) => groupId !== block.groupId)
+                                            : [...current, block.groupId as string]
+                                        )
+                                      }
+                                      stepCount={block.steps.length}
+                                    />
+                                    {isExpanded
+                                      ? block.steps.map((step) => {
+                                          const rowStatus = stepStatuses[step.id];
+
+                                          return (
+                                            <ExecutionCompactStepRow
+                                              isLocked={!isExecutionStarted || isExecutionLocked}
+                                              isSelected={bulkSelectedStepIds.includes(step.id)}
+                                              key={step.id}
+                                              note={stepNotes[step.id] || ""}
+                                              onFail={() => void handleRecordStep(step.id, "failed")}
+                                              onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
+                                              onPass={() => void handleRecordStep(step.id, "passed")}
+                                              onToggleSelect={(checked) =>
+                                                setBulkSelectedStepIds((current) =>
+                                                  checked ? [...new Set([...current, step.id])] : current.filter((id) => id !== step.id)
+                                                )
+                                              }
+                                              status={rowStatus || "queued"}
+                                              step={step}
+                                            />
+                                          );
+                                        })
+                                      : null}
+                                  </Fragment>
+                                );
+                              }
+
+                              return block.steps.map((step) => {
+                                const rowStatus = stepStatuses[step.id];
+
+                                return (
                                   <ExecutionCompactStepRow
                                     isLocked={!isExecutionStarted || isExecutionLocked}
                                     isSelected={bulkSelectedStepIds.includes(step.id)}
+                                    key={step.id}
                                     note={stepNotes[step.id] || ""}
                                     onFail={() => void handleRecordStep(step.id, "failed")}
                                     onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
@@ -1608,8 +1973,8 @@ export function ExecutionsPage() {
                                     status={rowStatus || "queued"}
                                     step={step}
                                   />
-                                </Fragment>
-                              );
+                                );
+                              });
                             })}
                           </div>
                         </div>
@@ -1666,7 +2031,7 @@ export function ExecutionsPage() {
                               <div>
                                 <strong>{linkedExecution?.name || result.test_case_title || "Execution record"}</strong>
                                 <span>{result.suite_name || "Recorded case evidence"} · {formatExecutionTimestamp(result.created_at, "Timestamp unavailable")}</span>
-                                <small>{formatDuration(result.duration_ms, DEFAULT_DURATION_LABEL)} · {isCurrentExecution ? "Current run" : "Open this execution"}</small>
+                                <small>{formatDuration(result.duration_ms, DEFAULT_DURATION_LABEL)} · {isCurrentExecution ? "Current run" : "Switch to this execution"}</small>
                               </div>
                               <StatusBadge value={result.status} />
                             </button>
@@ -1683,127 +2048,12 @@ export function ExecutionsPage() {
                 </div>
               )}
             </Panel>
-          ) : activeExecutionStage === "cases" ? (
-            <Panel
-              className="execution-panel execution-panel--tree"
-              actions={<WorkspaceBackButton label={`Back to ${selectedExecution?.name || "execution suites"}`} onClick={closeSuiteDrilldown} />}
-              title={focusedExecutionSuite ? `${focusedExecutionSuite.name} cases` : "Suite cases"}
-              subtitle="Review every snapped case in this suite, then open a single case into its full execution console."
-            >
-              <div className="detail-stack">
-                {focusedExecutionSuite && focusedSuiteMetric ? (
-                  <>
-                    <div className="detail-summary">
-                      <strong>{focusedExecutionSuite.name}</strong>
-                      <span>{focusedSuiteMetric.count} cases snapped into this suite for the selected execution.</span>
-                      <span>{focusedSuiteMetric.passedCount} passed · {focusedSuiteMetric.failedCount} failed · {focusedSuiteMetric.blockedCount} blocked</span>
-                    </div>
-
-                    <ProgressMeter
-                      detail={`${focusedSuiteMetric.passedCount} passed · ${focusedSuiteMetric.failedCount} failed · ${focusedSuiteMetric.blockedCount} blocked`}
-                      label="Suite completion"
-                      segments={buildProgressSegments(
-                        focusedSuiteMetric.passedCount,
-                        focusedSuiteMetric.failedCount,
-                        focusedSuiteMetric.blockedCount,
-                        focusedSuiteMetric.count
-                      )}
-                      value={focusedSuiteMetric.percent}
-                    />
-
-                    <div className="action-row">
-                      <button
-                        className="ghost-button suite-bulk-pass"
-                        disabled={!isExecutionStarted || isExecutionLocked}
-                        onClick={() => void handleSuiteBulkStatus(focusedExecutionSuite.id, "passed")}
-                        type="button"
-                      >
-                        <SuiteBoardIcon />
-                        <span>Suite Pass</span>
-                      </button>
-                      <button
-                        className="ghost-button danger suite-bulk-fail"
-                        disabled={!isExecutionStarted || isExecutionLocked}
-                        onClick={() => void handleSuiteBulkStatus(focusedExecutionSuite.id, "failed")}
-                        type="button"
-                      >
-                        <SuiteBoardIcon />
-                        <span>Suite Fail</span>
-                      </button>
-                    </div>
-                  </>
-                ) : null}
-
-                <div className="tile-browser-grid">
-                  {focusedSuiteCases.map((testCase) => {
-                    const caseStatus = caseDerivedStatus(testCase);
-
-                    return (
-                      <button
-                        key={testCase.id}
-                        className={
-                          selectedTestCaseId === testCase.id
-                            ? "record-card tile-card test-case-card execution-case-card execution-board-case-card is-active"
-                            : nextFocusCase?.id === testCase.id
-                              ? "record-card tile-card test-case-card execution-case-card execution-board-case-card is-next"
-                              : "record-card tile-card test-case-card execution-case-card execution-board-case-card"
-                        }
-                        onClick={() => focusExecutionCase(testCase.id)}
-                        type="button"
-                      >
-                        <div className="tile-card-main">
-                          <div className="tile-card-header">
-                            <div
-                              aria-hidden="true"
-                              className={`record-card-icon execution-board-icon status-${caseStatus}`}
-                              title={boardStatusTooltip(caseStatus)}
-                            >
-                              <TestCaseBoardIcon />
-                            </div>
-                            <div className="tile-card-title-group">
-                              <strong>{testCase.title}</strong>
-                              <span className="tile-card-kicker">{nextFocusCase?.id === testCase.id ? "Next recommended case" : focusedExecutionSuite?.name || "Suite case"}</span>
-                            </div>
-                            <ExecutionStatusIndicator status={caseStatus} />
-                          </div>
-                          <div className="execution-card-facts" aria-label={`${testCase.title} facts`}>
-                            <ExecutionCardFact
-                              ariaLabel={`Priority P${testCase.priority || 3}`}
-                              label={`P${testCase.priority || 3}`}
-                              title={`Priority P${testCase.priority || 3}`}
-                            >
-                              <ExecutionPriorityIcon />
-                            </ExecutionCardFact>
-                            <ExecutionCardFact
-                              ariaLabel={`${(stepsByCaseId[testCase.id] || []).length} steps`}
-                              label={String((stepsByCaseId[testCase.id] || []).length)}
-                              title={`${(stepsByCaseId[testCase.id] || []).length} steps`}
-                            >
-                              <ExecutionStepsIcon />
-                            </ExecutionCardFact>
-                            <ExecutionCardFact
-                              ariaLabel={`Case duration ${formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}`}
-                              label={formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}
-                              title={`Case duration ${formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}`}
-                              tone={caseStatus === "blocked" ? "warning" : "neutral"}
-                            >
-                              <ExecutionTimeIcon />
-                            </ExecutionCardFact>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                  {!focusedSuiteCases.length ? <div className="empty-state compact">No test cases were snapped into this suite.</div> : null}
-                </div>
-              </div>
-            </Panel>
           ) : (
             <Panel
               className="execution-panel execution-panel--tree"
               actions={<WorkspaceBackButton label="Back to execution tiles" onClick={closeExecutionDrilldown} />}
               title={selectedExecution?.name || "Execution suites"}
-              subtitle="Open any suite tile to continue into its snapped cases. This run summary stays visible without the old three-column crowding."
+              subtitle="Expand suite groups to review snapped test cases inline and jump straight into the execution console."
             >
               {selectedExecution ? (
                 <div className="detail-stack">
@@ -1821,6 +2071,7 @@ export function ExecutionsPage() {
                         <div className="execution-health-status-row">
                           <StatusBadge value={currentExecutionStatus} />
                           <span className="count-pill">{selectedExecutionAppTypeLabel}</span>
+                          {selectedExecution?.assigned_user ? <span className="count-pill">Assigned: {resolveUserPrimaryLabel(selectedExecution.assigned_user)}</span> : null}
                           <span className="execution-health-trigger">{(selectedExecution.trigger || "manual").toUpperCase()} trigger</span>
                         </div>
 
@@ -1900,7 +2151,7 @@ export function ExecutionsPage() {
                       </div>
                     </div>
 
-                    <div className="tile-browser-grid">
+                    <div className="suite-tree">
                       {executionSuites.map((suite) => {
                         const suiteCases = displayCasesBySuiteId[suite.id] || [];
                         const suiteMetric = suiteMetrics.find((item) => item.suiteId === suite.id);
@@ -1909,77 +2160,138 @@ export function ExecutionsPage() {
                           (suiteMetric?.passedCount || 0) +
                           (suiteMetric?.failedCount || 0) +
                           (suiteMetric?.blockedCount || 0);
+                        const isExpanded = expandedExecutionSuiteIds.includes(suite.id);
+                        const isFocusedSuite = focusedSuiteId === suite.id;
 
                         return (
-                          <button
-                            key={suite.id}
-                            className={focusedSuiteId === suite.id ? "record-card tile-card execution-suite-card is-active" : "record-card tile-card execution-suite-card"}
-                            onClick={() => openSuiteDrilldown(suite.id)}
-                            type="button"
-                          >
-                            <div className="tile-card-main">
-                              <div className="tile-card-header">
-                                <div
-                                  aria-hidden="true"
-                                  className={`record-card-icon execution-board-icon status-${suiteStatus}`}
-                                  title={boardStatusTooltip(suiteStatus)}
+                          <div className={["tree-suite", isExpanded ? "is-expanded" : ""].filter(Boolean).join(" ")} key={suite.id}>
+                            <div
+                              className={[
+                                "record-card tile-card execution-suite-card",
+                                isFocusedSuite ? "is-active" : "",
+                                isExpanded ? "is-expanded" : ""
+                              ].filter(Boolean).join(" ")}
+                            >
+                              <div className="tree-suite-row">
+                                <button
+                                  aria-expanded={isExpanded}
+                                  className="tree-suite-expand"
+                                  onClick={() => toggleSuiteGroup(suite.id)}
+                                  type="button"
                                 >
-                                  <SuiteBoardIcon />
-                                </div>
-                                <div className="tile-card-title-group">
-                                  <strong>{suite.name}</strong>
-                                  <span className="tile-card-kicker">{suiteResolvedCount}/{suiteMetric?.count || 0} resolved</span>
-                                </div>
-                                <ExecutionStatusIndicator status={suiteStatus} />
-                              </div>
+                                  <div className="tile-card-main">
+                                    <div className="tile-card-header">
+                                      <div className="execution-suite-card-actions">
+                                        <span aria-hidden="true" className={isExpanded ? "tree-suite-chevron is-expanded" : "tree-suite-chevron"}>
+                                          <ExecutionAccordionChevronIcon />
+                                        </span>
+                                        <div
+                                          aria-hidden="true"
+                                          className={`record-card-icon execution-board-icon status-${suiteStatus}`}
+                                          title={boardStatusTooltip(suiteStatus)}
+                                        >
+                                          <ExecutionSuiteIcon />
+                                        </div>
+                                      </div>
+                                      <div className="tile-card-title-group">
+                                        <strong>{suite.name}</strong>
+                                        <span className="tile-card-kicker">{suiteResolvedCount}/{suiteMetric?.count || 0} resolved</span>
+                                      </div>
+                                      <ExecutionStatusIndicator status={suiteStatus} />
+                                    </div>
 
-                              <div className="execution-card-facts" aria-label={`${suite.name} facts`}>
-                                <ExecutionCardFact
-                                  ariaLabel={`${suiteCases.length} cases in suite`}
-                                  label={String(suiteCases.length)}
-                                  title={`${suiteCases.length} cases in suite`}
-                                >
-                                  <ExecutionScopeIcon />
-                                </ExecutionCardFact>
-                                <ExecutionCardFact
-                                  ariaLabel={`${suiteResolvedCount} of ${suiteMetric?.count || 0} cases resolved`}
-                                  label={`${suiteResolvedCount}/${suiteMetric?.count || 0}`}
-                                  title={`${suiteResolvedCount}/${suiteMetric?.count || 0} cases resolved`}
-                                >
-                                  <ExecutionProgressFactsIcon />
-                                </ExecutionCardFact>
-                                <ExecutionCardFact
-                                  ariaLabel={`${(suiteMetric?.failedCount || 0) + (suiteMetric?.blockedCount || 0)} failing or blocked cases`}
-                                  label={String((suiteMetric?.failedCount || 0) + (suiteMetric?.blockedCount || 0))}
-                                  title={`${suiteMetric?.failedCount || 0} failed · ${suiteMetric?.blockedCount || 0} blocked`}
-                                  tone={suiteMetric?.failedCount ? "danger" : suiteMetric?.blockedCount ? "warning" : "success"}
-                                >
-                                  <ExecutionRiskIcon />
-                                </ExecutionCardFact>
-                                <ExecutionCardFact
-                                  ariaLabel={`Suite duration ${formatDuration(suiteDurationById[suite.id], DEFAULT_DURATION_LABEL)}`}
-                                  label={formatDuration(suiteDurationById[suite.id], DEFAULT_DURATION_LABEL)}
-                                  title={`Total recorded suite duration ${formatDuration(suiteDurationById[suite.id], DEFAULT_DURATION_LABEL)}`}
-                                  tone={suiteStatus === "blocked" ? "warning" : "neutral"}
-                                >
-                                  <ExecutionTimeIcon />
-                                </ExecutionCardFact>
-                              </div>
+                                    <div className="execution-card-facts" aria-label={`${suite.name} facts`}>
+                                      <ExecutionCardFact
+                                        ariaLabel={`${suiteCases.length} cases in suite`}
+                                        label={String(suiteCases.length)}
+                                        title={`${suiteCases.length} cases in suite`}
+                                      >
+                                        <ExecutionScopeIcon />
+                                      </ExecutionCardFact>
+                                      <ExecutionCardFact
+                                        ariaLabel={`${suiteResolvedCount} of ${suiteMetric?.count || 0} cases resolved`}
+                                        label={`${suiteResolvedCount}/${suiteMetric?.count || 0}`}
+                                        title={`${suiteResolvedCount}/${suiteMetric?.count || 0} cases resolved`}
+                                      >
+                                        <ExecutionProgressFactsIcon />
+                                      </ExecutionCardFact>
+                                      <ExecutionCardFact
+                                        ariaLabel={`${(suiteMetric?.failedCount || 0) + (suiteMetric?.blockedCount || 0)} failing or blocked cases`}
+                                        label={String((suiteMetric?.failedCount || 0) + (suiteMetric?.blockedCount || 0))}
+                                        title={`${suiteMetric?.failedCount || 0} failed · ${suiteMetric?.blockedCount || 0} blocked`}
+                                        tone={suiteMetric?.failedCount ? "danger" : suiteMetric?.blockedCount ? "warning" : "success"}
+                                      >
+                                        <ExecutionRiskIcon />
+                                      </ExecutionCardFact>
+                                      <ExecutionCardFact
+                                        ariaLabel={`Suite duration ${formatDuration(suiteDurationById[suite.id], DEFAULT_DURATION_LABEL)}`}
+                                        label={formatDuration(suiteDurationById[suite.id], DEFAULT_DURATION_LABEL)}
+                                        title={`Total recorded suite duration ${formatDuration(suiteDurationById[suite.id], DEFAULT_DURATION_LABEL)}`}
+                                        tone={suiteStatus === "blocked" ? "warning" : "neutral"}
+                                      >
+                                        <ExecutionTimeIcon />
+                                      </ExecutionCardFact>
+                                    </div>
 
-                              <ProgressMeter
-                                detail={`${suiteMetric?.passedCount || 0} passed · ${suiteMetric?.failedCount || 0} failed · ${suiteMetric?.blockedCount || 0} blocked`}
-                                hideCopy
-                                label="Suite completion"
-                                segments={buildProgressSegments(
-                                  suiteMetric?.passedCount || 0,
-                                  suiteMetric?.failedCount || 0,
-                                  suiteMetric?.blockedCount || 0,
-                                  suiteMetric?.count || 0
-                                )}
-                                value={suiteMetric?.percent || 0}
-                              />
+                                    <ProgressMeter
+                                      detail={`${suiteMetric?.passedCount || 0} passed · ${suiteMetric?.failedCount || 0} failed · ${suiteMetric?.blockedCount || 0} blocked`}
+                                      hideCopy
+                                      label="Suite completion"
+                                      segments={buildProgressSegments(
+                                        suiteMetric?.passedCount || 0,
+                                        suiteMetric?.failedCount || 0,
+                                        suiteMetric?.blockedCount || 0,
+                                        suiteMetric?.count || 0
+                                      )}
+                                      value={suiteMetric?.percent || 0}
+                                    />
+                                  </div>
+                                </button>
+
+                                {isExpanded ? (
+                                  <div className="tree-suite-body">
+                                    <div className="tree-suite-bulk-actions">
+                                      <button
+                                        className="ghost-button suite-bulk-pass"
+                                        disabled={!isExecutionStarted || isExecutionLocked}
+                                        onClick={() => void handleSuiteBulkStatus(suite.id, "passed")}
+                                        type="button"
+                                      >
+                                        <ExecutionSuiteIcon />
+                                        <span>Suite Pass</span>
+                                      </button>
+                                      <button
+                                        className="ghost-button danger suite-bulk-fail"
+                                        disabled={!isExecutionStarted || isExecutionLocked}
+                                        onClick={() => void handleSuiteBulkStatus(suite.id, "failed")}
+                                        type="button"
+                                      >
+                                        <ExecutionSuiteIcon />
+                                        <span>Suite Fail</span>
+                                      </button>
+                                    </div>
+
+                                    <div className="tree-children">
+                                      {suiteCases.map((testCase) => (
+                                        <ExecutionSuiteCaseCard
+                                          caseStatus={caseDerivedStatus(testCase)}
+                                          durationLabel={formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}
+                                          isActive={selectedTestCaseId === testCase.id}
+                                          isNext={nextFocusCase?.id === testCase.id}
+                                          key={testCase.id}
+                                          onSelect={() => focusExecutionCase(testCase.id)}
+                                          stepCount={(stepsByCaseId[testCase.id] || []).length}
+                                          suiteName={suite.name}
+                                          testCase={testCase}
+                                        />
+                                      ))}
+                                      {!suiteCases.length ? <div className="empty-state compact">No test cases were snapped into this suite.</div> : null}
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </div>
                             </div>
-                          </button>
+                          </div>
                         );
                       })}
                       {!executionSuites.length ? <div className="empty-state compact">No suites were selected for this execution.</div> : null}
@@ -1999,39 +2311,53 @@ export function ExecutionsPage() {
         <ExecutionCreateModal
           appTypeId={appTypeId}
           appTypes={appTypes}
+          assigneeOptions={assigneeOptions}
           canCreateExecution={canCreateExecution}
+          executionCreateMode={executionCreateMode}
           executionName={executionName}
+          integrations={integrations}
+          isPreviewingSmartExecution={previewSmartExecution.isPending}
           isSubmitting={createExecution.isPending}
-          onConfigurationChange={setSelectedExecutionConfigurationId}
-          onDataSetChange={setSelectedExecutionDataSetId}
-          onEnvironmentChange={setSelectedExecutionEnvironmentId}
-          onAppTypeChange={(value) => {
-            setAppTypeId(value);
-            setSelectedSuiteIds([]);
-            setIsSuitePickerOpen(false);
-            resetExecutionContextSelection();
-          }}
+          onAssigneeChange={setSelectedExecutionAssigneeId}
+          onConfigurationChange={handleExecutionConfigurationChange}
+          onDataSetChange={handleExecutionDataSetChange}
+          onEnvironmentChange={handleExecutionEnvironmentChange}
+          onAppTypeChange={handleExecutionAppTypeChange}
           onClose={closeExecutionBuilder}
+          onExecutionCreateModeChange={setExecutionCreateMode}
           onExecutionNameChange={setExecutionName}
-          onProjectChange={(value) => {
-            setProjectId(value);
-            setAppTypeId("");
-            setSelectedSuiteIds([]);
-            setIsSuitePickerOpen(false);
-            resetExecutionContextSelection();
-          }}
+          onPreviewSmartExecution={() => void handlePreviewSmartExecution()}
+          onProjectChange={handleExecutionProjectChange}
           onRemoveSuite={(suiteId) => setSelectedSuiteIds((current) => current.filter((id) => id !== suiteId))}
           onSelectSuites={() => setIsSuitePickerOpen(true)}
+          onSelectAllSmartExecutionCases={() => setSelectedSmartExecutionCaseIds(smartPreviewCases.map((testCase) => testCase.test_case_id))}
+          onClearSmartExecutionCases={() => setSelectedSmartExecutionCaseIds([])}
+          onSmartExecutionAdditionalContextChange={handleSmartExecutionAdditionalContextChange}
+          onSmartExecutionIntegrationChange={handleSmartExecutionIntegrationChange}
+          onSmartExecutionReleaseScopeChange={handleSmartExecutionReleaseScopeChange}
           onSubmit={(event) => void handleCreateExecution(event)}
+          onToggleSmartExecutionCase={(testCaseId) =>
+            setSelectedSmartExecutionCaseIds((current) =>
+              current.includes(testCaseId) ? current.filter((id) => id !== testCaseId) : [...current, testCaseId]
+            )
+          }
           projectId={projectId}
           projects={projects}
           selectedConfigurationId={selectedExecutionConfigurationId}
+          selectedExecutionAssigneeId={selectedExecutionAssigneeId}
           scopeSuites={scopeSuites}
           selectedAppType={selectedAppType?.name || ""}
           selectedDataSetId={selectedExecutionDataSetId}
           selectedEnvironmentId={selectedExecutionEnvironmentId}
           selectedProject={selectedProject?.name || ""}
           selectedScopeSuites={selectedScopeSuites}
+          selectedSmartExecutionCaseIds={selectedSmartExecutionCaseIds}
+          smartExecutionAdditionalContext={smartExecutionAdditionalContext}
+          smartExecutionIntegrationId={smartExecutionIntegrationId}
+          smartExecutionPreview={smartExecutionPreview}
+          smartExecutionPreviewMessage={smartExecutionPreviewMessage}
+          smartExecutionPreviewTone={smartExecutionPreviewTone}
+          smartExecutionReleaseScope={smartExecutionReleaseScope}
         />
       ) : null}
 
@@ -2040,6 +2366,8 @@ export function ExecutionsPage() {
           selectedSuiteIds={selectedSuiteIds}
           suites={scopeSuites}
           onClose={() => setIsSuitePickerOpen(false)}
+          onClearSelection={() => setSelectedSuiteIds([])}
+          onSelectAll={() => setSelectedSuiteIds(scopeSuites.map((suite) => suite.id))}
           onToggleSuite={(suiteId) =>
             setSelectedSuiteIds((current) =>
               current.includes(suiteId) ? current.filter((id) => id !== suiteId) : [...current, suiteId]
@@ -2169,6 +2497,8 @@ function ExecutionListCard({
   const latestEvidenceLabel = summary.latestActivityAt
     ? formatExecutionTimestamp(summary.latestActivityAt)
     : "No evidence yet";
+  const assigneeLabel = execution.assigned_user ? resolveUserPrimaryLabel(execution.assigned_user) : "Unassigned";
+  const assigneeDetail = execution.assigned_user ? resolveUserSecondaryLabel(execution.assigned_user) : null;
   const progressDetail = resolvedTotal
     ? `${summary.total}/${resolvedTotal} touched · ${summary.failed} failed · ${summary.blocked} blocked`
     : "No evidence recorded yet";
@@ -2191,6 +2521,9 @@ function ExecutionListCard({
           </div>
           <div className="tile-card-title-group">
             <strong>{execution.name || "Unnamed execution"}</strong>
+            <span className="execution-card-assignee" title={assigneeDetail || assigneeLabel}>
+              {execution.assigned_user ? `Assigned to ${assigneeLabel}` : "Unassigned"}
+            </span>
           </div>
           <ExecutionStatusIndicator status={executionStatus} />
         </div>
@@ -2376,16 +2709,6 @@ function ExecutionIconShell({ children }: { children: ReactNode }) {
   return <svg aria-hidden="true" fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width="14">{children}</svg>;
 }
 
-function SuiteBoardIcon() {
-  return (
-    <ExecutionIconShell>
-      <rect height="6" rx="1.2" width="7" x="3" y="4" />
-      <rect height="6" rx="1.2" width="7" x="14" y="4" />
-      <rect height="6" rx="1.2" width="7" x="8.5" y="14" />
-    </ExecutionIconShell>
-  );
-}
-
 function TestCaseBoardIcon() {
   return (
     <ExecutionIconShell>
@@ -2398,7 +2721,11 @@ function TestCaseBoardIcon() {
 
 function ExecutionSuiteIcon() {
   return (
-    <SuiteBoardIcon />
+    <ExecutionIconShell>
+      <path d="m12 4 8 4-8 4-8-4Z" />
+      <path d="m4 12 8 4 8-4" />
+      <path d="m4 16 8 4 8-4" />
+    </ExecutionIconShell>
   );
 }
 
@@ -2553,24 +2880,118 @@ function ExecutionOverviewOrb({
   );
 }
 
+function ExecutionSuiteCaseCard({
+  testCase,
+  suiteName,
+  stepCount,
+  durationLabel,
+  caseStatus,
+  isActive,
+  isNext,
+  onSelect
+}: {
+  testCase: ExecutionCaseView;
+  suiteName: string;
+  stepCount: number;
+  durationLabel: string;
+  caseStatus: ExecutionResult["status"] | "queued";
+  isActive: boolean;
+  isNext: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      className={[
+        "record-card tile-card test-case-card execution-case-card execution-board-case-card",
+        isActive ? "is-active" : "",
+        !isActive && isNext ? "is-next" : ""
+      ].filter(Boolean).join(" ")}
+      onClick={onSelect}
+      type="button"
+    >
+      <div className="tile-card-main">
+        <div className="tile-card-header">
+          <div
+            aria-hidden="true"
+            className={`record-card-icon execution-board-icon status-${caseStatus}`}
+            title={boardStatusTooltip(caseStatus)}
+          >
+            <TestCaseBoardIcon />
+          </div>
+          <div className="tile-card-title-group">
+            <strong>{testCase.title}</strong>
+            <span className="tile-card-kicker">{isNext ? "Next recommended case" : suiteName || "Suite case"}</span>
+          </div>
+          <ExecutionStatusIndicator status={caseStatus} />
+        </div>
+        <div className="execution-card-facts" aria-label={`${testCase.title} facts`}>
+          <ExecutionCardFact
+            ariaLabel={`Priority P${testCase.priority || 3}`}
+            label={`P${testCase.priority || 3}`}
+            title={`Priority P${testCase.priority || 3}`}
+          >
+            <ExecutionPriorityIcon />
+          </ExecutionCardFact>
+          <ExecutionCardFact
+            ariaLabel={`${stepCount} steps`}
+            label={String(stepCount)}
+            title={`${stepCount} steps`}
+          >
+            <ExecutionStepsIcon />
+          </ExecutionCardFact>
+          <ExecutionCardFact
+            ariaLabel={`Case duration ${durationLabel}`}
+            label={durationLabel}
+            title={`Case duration ${durationLabel}`}
+            tone={caseStatus === "blocked" ? "warning" : "neutral"}
+          >
+            <ExecutionTimeIcon />
+          </ExecutionCardFact>
+        </div>
+      </div>
+    </button>
+  );
+}
+
 function ExecutionStepGroupRow({
   name,
-  kind
+  kind,
+  isExpanded,
+  stepCount,
+  onToggle
 }: {
   name: string;
   kind: TestStep["group_kind"];
+  isExpanded: boolean;
+  stepCount: number;
+  onToggle: () => void;
 }) {
   const stepKind = getExecutionStepKindMeta(kind || "local");
 
   return (
     <div className={["execution-step-group-row", kind === "reusable" ? "is-shared-group" : "is-local-group"].join(" ")} role="row">
-      <span className="execution-step-group-label" role="cell">
-        <span className="execution-step-group-label-main">
-          <strong>{name}</strong>
-          <StepKindIconBadge kind={kind} label={stepKind.label} tone={stepKind.tone} />
+      <button
+        aria-expanded={isExpanded}
+        className="execution-step-group-toggle-button"
+        onClick={onToggle}
+        type="button"
+      >
+        <span className="execution-step-group-label" role="cell">
+          <span className="execution-step-group-label-main">
+            <span className="execution-step-group-toggle">
+              <span aria-hidden="true" className={isExpanded ? "execution-step-group-chevron is-expanded" : "execution-step-group-chevron"}>
+                <ExecutionAccordionChevronIcon />
+              </span>
+              <strong>{name}</strong>
+            </span>
+            <span className="execution-step-group-meta">
+              <span className="execution-step-group-count">{stepCount} step{stepCount === 1 ? "" : "s"}</span>
+              <StepKindIconBadge kind={kind} label={stepKind.label} tone={stepKind.tone} />
+            </span>
+          </span>
+          <span>{stepKind.detail} · {isExpanded ? "Expanded" : "Collapsed"}</span>
         </span>
-        <span>{stepKind.detail}</span>
-      </span>
+      </button>
     </div>
   );
 }
@@ -2768,6 +3189,8 @@ function ExecutionCreateModal({
   appTypes,
   appTypeId,
   onAppTypeChange,
+  executionCreateMode,
+  onExecutionCreateModeChange,
   selectedProject,
   selectedAppType,
   scopeSuites,
@@ -2776,13 +3199,32 @@ function ExecutionCreateModal({
   selectedEnvironmentId,
   selectedConfigurationId,
   selectedDataSetId,
+  selectedExecutionAssigneeId,
+  assigneeOptions,
+  integrations,
+  smartExecutionIntegrationId,
+  smartExecutionReleaseScope,
+  smartExecutionAdditionalContext,
+  smartExecutionPreview,
+  selectedSmartExecutionCaseIds,
+  smartExecutionPreviewMessage,
+  smartExecutionPreviewTone,
   onExecutionNameChange,
   onEnvironmentChange,
   onConfigurationChange,
   onDataSetChange,
+  onAssigneeChange,
   onSelectSuites,
   onRemoveSuite,
+  onPreviewSmartExecution,
+  onSmartExecutionIntegrationChange,
+  onSmartExecutionReleaseScopeChange,
+  onSmartExecutionAdditionalContextChange,
+  onToggleSmartExecutionCase,
+  onSelectAllSmartExecutionCases,
+  onClearSmartExecutionCases,
   canCreateExecution,
+  isPreviewingSmartExecution,
   isSubmitting,
   onClose,
   onSubmit
@@ -2793,6 +3235,8 @@ function ExecutionCreateModal({
   appTypes: AppType[];
   appTypeId: string;
   onAppTypeChange: (value: string) => void;
+  executionCreateMode: ExecutionCreateMode;
+  onExecutionCreateModeChange: (value: ExecutionCreateMode) => void;
   selectedProject: string;
   selectedAppType: string;
   scopeSuites: TestSuite[];
@@ -2801,17 +3245,41 @@ function ExecutionCreateModal({
   selectedEnvironmentId: string;
   selectedConfigurationId: string;
   selectedDataSetId: string;
+  selectedExecutionAssigneeId: string;
+  assigneeOptions: ExecutionAssigneeOption[];
+  integrations: Integration[];
+  smartExecutionIntegrationId: string;
+  smartExecutionReleaseScope: string;
+  smartExecutionAdditionalContext: string;
+  smartExecutionPreview: SmartExecutionPreviewResponse | null;
+  selectedSmartExecutionCaseIds: string[];
+  smartExecutionPreviewMessage: string;
+  smartExecutionPreviewTone: "success" | "error";
   onExecutionNameChange: (value: string) => void;
   onEnvironmentChange: (value: string) => void;
   onConfigurationChange: (value: string) => void;
   onDataSetChange: (value: string) => void;
+  onAssigneeChange: (value: string) => void;
   onSelectSuites: () => void;
   onRemoveSuite: (suiteId: string) => void;
+  onPreviewSmartExecution: () => void;
+  onSmartExecutionIntegrationChange: (value: string) => void;
+  onSmartExecutionReleaseScopeChange: (value: string) => void;
+  onSmartExecutionAdditionalContextChange: (value: string) => void;
+  onToggleSmartExecutionCase: (testCaseId: string) => void;
+  onSelectAllSmartExecutionCases: () => void;
+  onClearSmartExecutionCases: () => void;
   canCreateExecution: boolean;
+  isPreviewingSmartExecution: boolean;
   isSubmitting: boolean;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const isSmartMode = executionCreateMode === "smart";
+  const smartPreviewCases = smartExecutionPreview?.cases || [];
+  const selectedSmartCaseCount = selectedSmartExecutionCaseIds.length;
+  const areAllSmartCasesSelected = Boolean(smartPreviewCases.length) && selectedSmartCaseCount === smartPreviewCases.length;
+
   return (
     <div className="modal-backdrop" onClick={() => !isSubmitting && onClose()} role="presentation">
       <div
@@ -2826,7 +3294,7 @@ function ExecutionCreateModal({
             <div className="execution-create-title">
               <p className="eyebrow">Executions</p>
               <h3 id="create-execution-title">Create execution</h3>
-              <p>Choose the project, app type, and suite scope to snapshot into a new run.</p>
+              <p>Choose a manual suite snapshot or let AI plan an impact-based run from your release scope and existing library.</p>
             </div>
             <button
               aria-label="Close create execution dialog"
@@ -2862,14 +3330,62 @@ function ExecutionCreateModal({
               </FormField>
             </div>
 
-            <FormField label="Execution name">
-              <input value={executionName} onChange={(event) => onExecutionNameChange(event.target.value)} />
-            </FormField>
+            <div className="execution-create-grid">
+              <FormField label="Execution name">
+                <input value={executionName} onChange={(event) => onExecutionNameChange(event.target.value)} />
+              </FormField>
+
+              <FormField label="Assign to">
+                <select
+                  disabled={!projectId || !assigneeOptions.length}
+                  value={selectedExecutionAssigneeId}
+                  onChange={(event) => onAssigneeChange(event.target.value)}
+                >
+                  <option value="">
+                    {!projectId ? "Select a project first" : assigneeOptions.length ? "Unassigned" : "No project members available"}
+                  </option>
+                  {assigneeOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.caption ? `${option.label} · ${option.caption}` : option.label}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+            </div>
+
+            <div className="execution-mode-switch" aria-label="Execution creation mode" role="group">
+              <button
+                aria-pressed={!isSmartMode}
+                className={!isSmartMode ? "execution-mode-button is-active" : "execution-mode-button"}
+                onClick={() => onExecutionCreateModeChange("manual")}
+                type="button"
+              >
+                <strong>Manual snapshot</strong>
+                <span>Create a run from selected suites.</span>
+              </button>
+              <button
+                aria-pressed={isSmartMode}
+                className={isSmartMode ? "execution-mode-button is-active" : "execution-mode-button"}
+                onClick={() => onExecutionCreateModeChange("smart")}
+                type="button"
+              >
+                <strong>AI Smart Execution</strong>
+                <span>Pick impacted cases from release scope.</span>
+              </button>
+            </div>
 
             <div className="detail-summary">
               <strong>{selectedProject || "Select a project to continue"}</strong>
-              <span>{selectedAppType ? `${selectedAppType} app type selected for this snapshot.` : "Choose an app type to load suite scope."}</span>
-              <span>{scopeSuites.length ? `${scopeSuites.length} suites available in the current scope.` : "No suites available in the current scope yet."}</span>
+              <span>{selectedAppType ? `${selectedAppType} app type selected for this execution.` : "Choose an app type to continue."}</span>
+              <span>
+                {isSmartMode
+                  ? smartExecutionPreview
+                    ? `${smartExecutionPreview.source_case_count} existing cases are available for impact analysis in this app type.`
+                    : "AI smart execution screens the current app type's existing cases exported as CSV."
+                  : scopeSuites.length
+                    ? `${scopeSuites.length} suites available in the current scope.`
+                    : "No suites available in the current scope yet."}
+              </span>
             </div>
 
             <ExecutionContextSelector
@@ -2884,36 +3400,203 @@ function ExecutionCreateModal({
               selectedEnvironmentId={selectedEnvironmentId}
             />
 
-            <FormField label="Suite scope" required>
-              <div className="selection-summary-card">
-                <div className="selection-summary-header">
-                  <div>
-                    <strong>{selectedScopeSuites.length ? `${selectedScopeSuites.length} suites selected` : "No suites selected yet"}</strong>
-                    <span>Choose one or more suites. The execution will preserve their cases and steps as a fixed snapshot.</span>
-                  </div>
-                  <button className="ghost-button" disabled={!scopeSuites.length} onClick={onSelectSuites} type="button">
-                    Select suites
-                  </button>
+            {isSmartMode ? (
+              <div className="ai-studio-shell execution-smart-shell">
+                <div className="ai-studio-sidebar">
+                  <section className="ai-studio-panel">
+                    <div className="panel-head">
+                      <div>
+                        <h3>Release impact prompt</h3>
+                        <p>Shape the AI prompt with release scope and any extra risk context before previewing impacted coverage.</p>
+                      </div>
+                    </div>
+
+                    <FormField label="LLM integration">
+                      <select value={smartExecutionIntegrationId} onChange={(event) => onSmartExecutionIntegrationChange(event.target.value)}>
+                        <option value="">Default active integration</option>
+                        {integrations.map((integration) => (
+                          <option key={integration.id} value={integration.id}>
+                            {integration.name}
+                          </option>
+                        ))}
+                      </select>
+                    </FormField>
+
+                    <FormField label="Release scope" required>
+                      <textarea
+                        placeholder="Summarize the release changes, touched modules, high-risk workflows, integrations, data movement, and regression concerns..."
+                        rows={7}
+                        value={smartExecutionReleaseScope}
+                        onChange={(event) => onSmartExecutionReleaseScopeChange(event.target.value)}
+                      />
+                    </FormField>
+
+                    <FormField label="Additional context">
+                      <textarea
+                        placeholder="Environment notes, rollout risks, known gaps, customer impact, compliance focus..."
+                        rows={5}
+                        value={smartExecutionAdditionalContext}
+                        onChange={(event) => onSmartExecutionAdditionalContextChange(event.target.value)}
+                      />
+                    </FormField>
+
+                    <div className="detail-summary compact-summary">
+                      <strong>{smartExecutionPreview?.default_suite.name || "Default"} suite target</strong>
+                      <span>AI-selected cases are staged under the built-in Default suite so the run stays focused on impacted coverage instead of suite hierarchy.</span>
+                    </div>
+                  </section>
                 </div>
 
-                {selectedScopeSuites.length ? (
-                  <div className="selection-chip-row">
-                    {selectedScopeSuites.map((suite) => (
-                      <button key={suite.id} className="selection-chip" onClick={() => onRemoveSuite(suite.id)} type="button">
-                        {suite.name}
-                      </button>
-                    ))}
+                <div className="ai-studio-main">
+                  <div className="detail-summary">
+                    <strong>{smartExecutionPreview ? `${selectedSmartCaseCount} impacted cases selected` : "AI Smart Execution"}</strong>
+                    <span>{smartExecutionPreview ? smartExecutionPreview.summary : "Generate an impact-based execution plan from the current release scope."}</span>
+                    <span>
+                      {smartExecutionPreview
+                        ? `${smartExecutionPreview.source_case_count} existing cases were screened and ${smartExecutionPreview.matched_case_count} cases were suggested for this run.`
+                        : "AI uses the selected project, app type, execution context, and existing cases exported as CSV."}
+                    </span>
                   </div>
-                ) : null}
-              </div>
-            </FormField>
 
-            {!scopeSuites.length && appTypeId ? <div className="empty-state compact">No suites available for this app type. Create a suite first.</div> : null}
+                  {smartExecutionPreviewMessage ? (
+                    <p className={smartExecutionPreviewTone === "error" ? "inline-message error-message" : "inline-message success-message"}>
+                      {smartExecutionPreviewMessage}
+                    </p>
+                  ) : null}
+
+                  {!integrations.length ? (
+                    <div className="inline-message error-message">
+                      No active LLM integrations are available yet. Create one in Integrations to use AI smart execution.
+                    </div>
+                  ) : null}
+
+                  <div className="action-row">
+                    <button
+                      className="primary-button"
+                      disabled={!projectId || !appTypeId || !smartExecutionReleaseScope.trim() || isPreviewingSmartExecution || isSubmitting || !integrations.length}
+                      onClick={onPreviewSmartExecution}
+                      type="button"
+                    >
+                      {isPreviewingSmartExecution ? "Planning…" : "Generate impact preview"}
+                    </button>
+                    <button
+                      className="ghost-button"
+                      disabled={!smartPreviewCases.length || areAllSmartCasesSelected}
+                      onClick={onSelectAllSmartExecutionCases}
+                      type="button"
+                    >
+                      Select all
+                    </button>
+                    <button
+                      className="ghost-button"
+                      disabled={!selectedSmartCaseCount}
+                      onClick={onClearSmartExecutionCases}
+                      type="button"
+                    >
+                      Clear selection
+                    </button>
+                  </div>
+
+                  {smartExecutionPreview ? (
+                    <div className="selection-summary-card execution-smart-summary-card">
+                      <div className="selection-summary-header">
+                        <div>
+                          <strong>{smartExecutionPreview.execution_name}</strong>
+                          <span>{smartExecutionPreview.summary}</span>
+                        </div>
+                        <span className="count-pill">{selectedSmartCaseCount}/{smartExecutionPreview.matched_case_count} selected</span>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="execution-smart-impact-list">
+                    {smartPreviewCases.map((testCase) => {
+                      const isSelected = selectedSmartExecutionCaseIds.includes(testCase.test_case_id);
+
+                      return (
+                        <label
+                          className={isSelected ? "execution-smart-impact-card is-selected" : "execution-smart-impact-card"}
+                          key={testCase.test_case_id}
+                        >
+                          <input
+                            checked={isSelected}
+                            onChange={() => onToggleSmartExecutionCase(testCase.test_case_id)}
+                            type="checkbox"
+                          />
+                          <div className="execution-smart-impact-body">
+                            <div className="execution-smart-impact-top">
+                              <div className="execution-smart-impact-heading">
+                                <strong>{testCase.title}</strong>
+                                <span>{testCase.description || "No description available."}</span>
+                              </div>
+                              <div className="execution-smart-impact-facts">
+                                <span className={`execution-smart-impact-level is-${testCase.impact_level}`}>
+                                  {executionImpactLevelLabel(testCase.impact_level)}
+                                </span>
+                                <span className="count-pill">
+                                  {testCase.step_count} step{testCase.step_count === 1 ? "" : "s"}
+                                </span>
+                              </div>
+                            </div>
+
+                            <p className="execution-smart-impact-reason">{testCase.reason}</p>
+
+                            <div className="detail-summary compact-summary">
+                              <strong>{testCase.suite_names.length ? testCase.suite_names.join(" · ") : "No suite mapping"}</strong>
+                              <span>
+                                {testCase.requirement_titles.length
+                                  ? `Requirements: ${testCase.requirement_titles.join(" · ")}`
+                                  : "No linked requirements"}
+                              </span>
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
+
+                    {smartExecutionPreview && !smartPreviewCases.length ? (
+                      <div className="empty-state compact">No impacted cases were identified for the current release scope.</div>
+                    ) : null}
+                    {!smartExecutionPreview ? (
+                      <div className="empty-state compact">Generate a preview to review the impacted cases that will be staged under Default.</div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <FormField label="Suite scope" required>
+                  <div className="selection-summary-card">
+                    <div className="selection-summary-header">
+                      <div>
+                        <strong>{selectedScopeSuites.length ? `${selectedScopeSuites.length} suites selected` : "No suites selected yet"}</strong>
+                        <span>Choose one or more suites. The execution will preserve their cases and steps as a fixed snapshot.</span>
+                      </div>
+                      <button className="ghost-button" disabled={!scopeSuites.length} onClick={onSelectSuites} type="button">
+                        Select suites
+                      </button>
+                    </div>
+
+                    {selectedScopeSuites.length ? (
+                      <div className="selection-chip-row">
+                        {selectedScopeSuites.map((suite) => (
+                          <button key={suite.id} className="selection-chip" onClick={() => onRemoveSuite(suite.id)} type="button">
+                            {suite.name}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </FormField>
+
+                {!scopeSuites.length && appTypeId ? <div className="empty-state compact">No suites available for this app type. Create a suite first.</div> : null}
+              </>
+            )}
           </div>
 
           <div className="action-row execution-create-actions">
-            <button className="primary-button" disabled={!canCreateExecution || isSubmitting} type="submit">
-              {isSubmitting ? "Creating…" : "Create execution"}
+            <button className="primary-button" disabled={!canCreateExecution || isSubmitting || (isSmartMode && isPreviewingSmartExecution)} type="submit">
+              {isSubmitting ? "Creating…" : isSmartMode ? "Create AI smart execution" : "Create execution"}
             </button>
             <button className="ghost-button" disabled={isSubmitting} onClick={onClose} type="button">
               Cancel
@@ -2966,14 +3649,19 @@ function ExecutionSuitePickerModal({
   suites,
   selectedSuiteIds,
   onClose,
+  onSelectAll,
+  onClearSelection,
   onToggleSuite
 }: {
   suites: TestSuite[];
   selectedSuiteIds: string[];
   onClose: () => void;
+  onSelectAll: () => void;
+  onClearSelection: () => void;
   onToggleSuite: (suiteId: string) => void;
 }) {
   const selectedCount = selectedSuiteIds.length;
+  const areAllSuitesSelected = Boolean(suites.length) && selectedCount === suites.length;
 
   return (
     <div className="modal-backdrop" role="presentation">
@@ -2982,6 +3670,14 @@ function ExecutionSuitePickerModal({
           <div>
             <h3>Select suite scope</h3>
             <p>Choose the suites to include in this execution. QAira snapshots them immediately when the run is created.</p>
+          </div>
+          <div className="panel-head-actions">
+            <button className="ghost-button" disabled={!suites.length || areAllSuitesSelected} onClick={onSelectAll} type="button">
+              Select all
+            </button>
+            <button className="ghost-button" disabled={!selectedCount} onClick={onClearSelection} type="button">
+              Clear selection
+            </button>
           </div>
         </div>
 

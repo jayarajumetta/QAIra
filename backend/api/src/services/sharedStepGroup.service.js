@@ -1,5 +1,6 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
+const sharedStepSyncService = require("./sharedStepSync.service");
 
 const selectAppType = db.prepare(`
   SELECT id, project_id
@@ -206,11 +207,14 @@ exports.updateSharedStepGroup = async (id, data = {}) => {
     id
   );
 
+  await sharedStepSyncService.syncSharedGroupReferences(id);
+
   return { updated: true };
 };
 
 exports.deleteSharedStepGroup = async (id) => {
   await exports.getSharedStepGroup(id);
+  await sharedStepSyncService.unlinkSharedGroupReferences(id);
   await deleteSharedStepGroup.run(id);
   return { deleted: true };
 };

@@ -353,7 +353,7 @@ export function SharedStepsPage() {
 
         showSuccess(
           selectedGroup.usage_count
-            ? `Shared step group updated. ${selectedGroup.usage_count} existing case snapshot${selectedGroup.usage_count === 1 ? "" : "s"} stay unchanged.`
+            ? `Shared step group updated. ${selectedGroup.usage_count} linked test case${selectedGroup.usage_count === 1 ? "" : "s"} refreshed.`
             : "Shared step group updated."
         );
       }
@@ -369,7 +369,7 @@ export function SharedStepsPage() {
       return;
     }
 
-    if (!window.confirm(`Delete shared step group "${selectedGroup.name}"? Existing test cases that already copied it will stay unchanged.`)) {
+    if (!window.confirm(`Delete shared step group "${selectedGroup.name}"? Linked test cases will keep their steps as local groups.`)) {
       return;
     }
 
@@ -378,7 +378,7 @@ export function SharedStepsPage() {
       setSelectedGroupId("");
       setGroupDraft(EMPTY_GROUP_DRAFT);
       resetStepComposer();
-      showSuccess("Shared step group deleted.");
+      showSuccess("Shared step group deleted. Linked test cases kept their steps as local groups.");
       await refreshGroups();
     } catch (error) {
       showError(error, "Unable to delete shared step group");
@@ -396,7 +396,7 @@ export function SharedStepsPage() {
       <PageHeader
         eyebrow="Shared Step Groups"
         title="Reusable Step Groups"
-        description="Curate repeatable step blocks once, then insert them into test cases as reusable snapshots."
+        description="Curate repeatable step blocks once, then keep linked shared groups aligned across every referenced test case."
         meta={[
           { label: "Groups", value: coverageMeta.total },
           { label: "Reusable steps", value: coverageMeta.totalSteps },
@@ -542,7 +542,7 @@ export function SharedStepsPage() {
                 <div className="step-editor step-editor--embedded">
                   <div className="detail-summary">
                     <strong>{groupDraft.steps.length} step{groupDraft.steps.length === 1 ? "" : "s"}</strong>
-                    <span>These steps become the reusable snapshot copied into any test case that inserts this shared group.</span>
+                    <span>These steps stay linked anywhere this shared group is referenced.</span>
                   </div>
 
                   {!isCreating && selectedGroup ? (
@@ -554,8 +554,8 @@ export function SharedStepsPage() {
                       </strong>
                       <span>
                         {selectedGroup.usage_count
-                          ? "Editing this shared group changes future insertions only. The cases below already keep their own copied snapshots."
-                          : "Once this group is inserted into a test case, the case reference count will appear here."}
+                          ? "Editing this shared group updates every linked test case while preserving execution history snapshots."
+                          : "Once this group is inserted into a test case, linked case usage will appear here."}
                       </span>
                     </div>
                   ) : null}
@@ -646,7 +646,7 @@ export function SharedStepsPage() {
 
                 <div className="detail-summary">
                   <strong>How reusable groups behave</strong>
-                  <span>When you insert this group into a test case, the case receives its own snapshot copy of these steps. Future edits here do not rewrite older cases or execution history.</span>
+                  <span>When you insert this group into a test case, the shared block stays linked. Editing its steps updates every linked test case while existing execution history remains preserved.</span>
                 </div>
 
                 {!isCreating && selectedGroup?.used_test_cases?.length ? (

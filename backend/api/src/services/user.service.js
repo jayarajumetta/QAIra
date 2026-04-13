@@ -153,6 +153,7 @@ exports.deleteUser = async (id) => {
   const dependencies = [
     { table: "projects", field: "created_by", message: "Cannot delete user with created projects" },
     { table: "executions", field: "created_by", message: "Cannot delete user with executions" },
+    { table: "executions", field: "assigned_to", message: "Cannot delete user assigned to executions" },
     { table: "execution_results", field: "executed_by", message: "Cannot delete user with execution results" }
   ];
 

@@ -743,17 +743,18 @@ export function DesignPage() {
       return;
     }
 
-    setSelectedTestCaseId("");
-    setIsCreatingCase(true);
-    setDraftSteps([]);
-    setCaseDraft({
-      ...EMPTY_CASE_DRAFT,
-      suite_id: selectedSuiteId
-    });
-    setExpandedSections(createDefaultSuiteCaseSections());
-    setExpandedStepIds([]);
-    setNewStepDraft(EMPTY_STEP_DRAFT);
-    setIsTestCaseEditorModalOpen(true);
+    const params = new URLSearchParams();
+
+    if (projectId) {
+      params.set("project", projectId);
+    }
+    if (appTypeId) {
+      params.set("appType", appTypeId);
+    }
+    params.set("create", "1");
+    params.set("suite", selectedSuiteId);
+
+    navigate(`/test-cases?${params.toString()}`);
   };
 
   const openSelectedCaseEditor = () => {
@@ -1326,34 +1327,37 @@ export function DesignPage() {
       totalSteps
     };
   }, [appTypeCases, historyByCaseId, stepCountByCaseId, suites.length]);
+  const showSuiteTilesHeader = !selectedSuiteId;
 
   return (
     <div className="page-content page-content--library-full">
-      <PageHeader
-        eyebrow="Test Design"
-        title="Test Suites"
-        description="Shape suite structure, assign reusable cases, and keep executable design tidy enough for fast execution handoff."
-        meta={[
-          { label: "Suites", value: designMetrics.totalSuites },
-          { label: "Cases", value: designMetrics.totalCases },
-          { label: "Steps", value: designMetrics.totalSteps }
-        ]}
-        actions={
-          <>
-            <button className="ghost-button" disabled={!selectedSuiteId} onClick={beginCreateCase} type="button">
-              New Test Case
-            </button>
-            <button
-              className="primary-button"
-              disabled={!appTypeId}
-              onClick={openCreateSuiteModal}
-              type="button"
-            >
-              Create Suite
-            </button>
-          </>
-        }
-      />
+      {showSuiteTilesHeader ? (
+        <PageHeader
+          eyebrow="Test Design"
+          title="Test Suites"
+          description="Shape suite structure, assign reusable cases, and keep executable design tidy enough for fast execution handoff."
+          meta={[
+            { label: "Suites", value: designMetrics.totalSuites },
+            { label: "Cases", value: designMetrics.totalCases },
+            { label: "Steps", value: designMetrics.totalSteps }
+          ]}
+          actions={
+            <>
+              <button className="ghost-button" disabled={!selectedSuiteId} onClick={beginCreateCase} type="button">
+                New Test Case
+              </button>
+              <button
+                className="primary-button"
+                disabled={!appTypeId}
+                onClick={openCreateSuiteModal}
+                type="button"
+              >
+                Create Suite
+              </button>
+            </>
+          }
+        />
+      ) : null}
 
       <ToastMessage message={message} onDismiss={() => setMessage("")} tone={messageTone} />
 
@@ -1739,6 +1743,16 @@ function SuiteSidebar({
                   type="button"
                 >
                   <div className="tile-card-main">
+                    <div className="tile-card-select-row">
+                      <label className="checkbox-field suite-card-action-checkbox" onClick={(event) => event.stopPropagation()}>
+                        <input
+                          checked={selectedSuiteActionIds.includes(suite.id)}
+                          onChange={() => onToggleSuiteSelection(suite.id)}
+                          type="checkbox"
+                        />
+                        Select suite
+                      </label>
+                    </div>
                     <div className="tile-card-header">
                       <TileCardIconFrame tone={suiteTone}>
                         <TileCardSuiteIcon />
@@ -1766,14 +1780,6 @@ function SuiteSidebar({
                         <TileCardHierarchyIcon />
                       </TileCardFact>
                     </div>
-                    <label className="checkbox-field suite-card-action-checkbox" onClick={(event) => event.stopPropagation()}>
-                      <input
-                        checked={selectedSuiteActionIds.includes(suite.id)}
-                        onChange={() => onToggleSuiteSelection(suite.id)}
-                        type="checkbox"
-                      />
-                      Select suite
-                    </label>
                   </div>
                 </button>
               );
@@ -2294,7 +2300,7 @@ function SuiteCaseEditorModal({
                 {groupedStepCount ? (
                   <div className="detail-summary">
                     <strong>{groupedStepCount} grouped step{groupedStepCount === 1 ? "" : "s"} in this case</strong>
-                    <span>{sharedGroupCount ? `${sharedGroupCount} shared group snapshot${sharedGroupCount === 1 ? "" : "s"} are preserved in this suite editor.` : "Local step group metadata is preserved in this suite editor."}</span>
+                    <span>{sharedGroupCount ? `${sharedGroupCount} linked shared group${sharedGroupCount === 1 ? "" : "s"} appear in this suite editor.` : "Local step group metadata is preserved in this suite editor."}</span>
                   </div>
                 ) : null}
 
@@ -2759,9 +2765,13 @@ function SuiteModal({
   onSubmit: (input: { name: string; parent_id?: string; selectedIds: string[] }) => void;
   isSaving: boolean;
 }) {
+  const availableCaseIdSet = useMemo(
+    () => new Set(appTypeCases.map((testCase) => testCase.id)),
+    [appTypeCases]
+  );
   const initialSelectedIds = useMemo(
-    () => selectedCaseIds.filter((testCaseId) => appTypeCases.some((testCase) => testCase.id === testCaseId)),
-    [appTypeCases, selectedCaseIds]
+    () => selectedCaseIds.filter((testCaseId) => availableCaseIdSet.has(testCaseId)),
+    [availableCaseIdSet, selectedCaseIds]
   );
 
   const [name, setName] = useState(() => (mode === "edit" && suite ? suite.name : ""));
@@ -2769,8 +2779,13 @@ function SuiteModal({
   const [localSelectedIds, setLocalSelectedIds] = useState<string[]>(() => initialSelectedIds);
 
   useEffect(() => {
-    setLocalSelectedIds(initialSelectedIds);
-  }, [initialSelectedIds]);
+    if (mode === "edit") {
+      setLocalSelectedIds(initialSelectedIds);
+      return;
+    }
+
+    setLocalSelectedIds((current) => current.filter((testCaseId) => availableCaseIdSet.has(testCaseId)));
+  }, [availableCaseIdSet, initialSelectedIds, mode]);
 
   return (
     <div className="modal-backdrop" onClick={() => !isSaving && onClose()} role="presentation">

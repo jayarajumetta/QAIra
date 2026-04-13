@@ -72,6 +72,15 @@ type CutStepSource = {
   isDraft: boolean;
 };
 
+type StepActionMenuAction = {
+  label: string;
+  description?: string;
+  icon: ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  tone?: "default" | "danger" | "primary";
+};
+
 type CaseStepFilter = "all" | "with-steps" | "no-steps";
 type CaseRunFilter = "all" | "with-runs" | "no-runs";
 
@@ -100,6 +109,12 @@ const executionHistoryDateFormatter = new Intl.DateTimeFormat(undefined, {
 
 const createDefaultTestCaseSections = (): Record<TestCaseEditorSectionKey, boolean> => ({
   case: false,
+  steps: true,
+  history: false
+});
+
+const createCreateModeTestCaseSections = (): Record<TestCaseEditorSectionKey, boolean> => ({
+  case: true,
   steps: true,
   history: false
 });
@@ -326,6 +341,7 @@ export function TestCasesPage() {
   const [sharedGroupSearchTerm, setSharedGroupSearchTerm] = useState("");
   const caseSectionRef = useRef<HTMLDivElement | null>(null);
   const suppressCaseSelectionFromUrlRef = useRef(false);
+  const [createSuiteContextId, setCreateSuiteContextId] = useState("");
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [importFileName, setImportFileName] = useState("");
   const [importRows, setImportRows] = useState<ImportedTestCaseRow[]>([]);
@@ -502,8 +518,9 @@ export function TestCasesPage() {
     resetExecutionContextSelection();
   };
 
-  const beginCreateCase = () => {
+  const beginCreateCase = (suiteContextId = "") => {
     syncTestCaseSearchParams(null);
+    setCreateSuiteContextId(suiteContextId);
     setIsCreating(true);
     setSelectedTestCaseId("");
     setCaseDraft(EMPTY_CASE_DRAFT);
@@ -545,6 +562,30 @@ export function TestCasesPage() {
   }, [appTypeId, appTypes]);
 
   useEffect(() => {
+    const requestedProjectId = searchParams.get("project");
+
+    if (!requestedProjectId || requestedProjectId === projectId) {
+      return;
+    }
+
+    if (projects.some((project) => project.id === requestedProjectId)) {
+      setProjectId(requestedProjectId);
+    }
+  }, [projectId, projects, searchParams, setProjectId]);
+
+  useEffect(() => {
+    const requestedAppTypeId = searchParams.get("appType");
+
+    if (!requestedAppTypeId || requestedAppTypeId === appTypeId) {
+      return;
+    }
+
+    if (appTypes.some((appType) => appType.id === requestedAppTypeId)) {
+      setAppTypeId(requestedAppTypeId);
+    }
+  }, [appTypeId, appTypes, searchParams]);
+
+  useEffect(() => {
     if (!integrations.length) {
       setIntegrationId("");
       return;
@@ -557,6 +598,7 @@ export function TestCasesPage() {
 
   useEffect(() => {
     syncTestCaseSearchParams(null);
+    setCreateSuiteContextId("");
     setSelectedTestCaseId("");
     setIsCreating(false);
     setIsImportModalOpen(false);
@@ -591,6 +633,27 @@ export function TestCasesPage() {
     setAiPreviewCases([]);
     setAiPreviewMessage("");
   }, [appTypeId]);
+
+  useEffect(() => {
+    if (searchParams.get("create") !== "1") {
+      return;
+    }
+
+    if (isCreating || selectedTestCaseId || !appTypeId) {
+      return;
+    }
+
+    const requestedSuiteId = searchParams.get("suite") || "";
+    beginCreateCase(requestedSuiteId);
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("create");
+    nextParams.delete("suite");
+
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [appTypeId, isCreating, searchParams, selectedTestCaseId, setSearchParams]);
 
   useEffect(() => {
     setSelectedActionTestCaseIds((current) => current.filter((id) => testCases.some((item) => item.id === id)));
@@ -797,7 +860,7 @@ export function TestCasesPage() {
     setExpandedStepIds([]);
     setExpandedStepGroupIds([]);
     setStepDrafts({});
-    setExpandedSections(createDefaultTestCaseSections());
+    setExpandedSections(isCreating ? createCreateModeTestCaseSections() : createDefaultTestCaseSections());
   }, [isCreating, selectedTestCaseId]);
 
   useEffect(() => {
@@ -955,7 +1018,6 @@ export function TestCasesPage() {
       }))
     });
 
-    await refreshSharedGroups();
     return response.id;
   };
 
@@ -971,21 +1033,28 @@ export function TestCasesPage() {
     setNewStepDraft(EMPTY_STEP_DRAFT);
   };
 
+  const clearStepSelectionIfClipboardActive = () => {
+    if (copiedSteps.length || cutStepSource?.stepIds.length) {
+      setSelectedStepIds([]);
+    }
+  };
+
   const handleSaveCaseDirect = async () => {
     try {
       if (isCreating) {
         const response = await createTestCase.mutateAsync({
           app_type_id: appTypeId,
+          suite_ids: createSuiteContextId ? [createSuiteContextId] : [],
           title: caseDraft.title,
           description: caseDraft.description || undefined,
           priority: Number(caseDraft.priority),
           status: caseDraft.status,
           requirement_ids: caseDraft.requirement_id ? [caseDraft.requirement_id] : [],
-          suite_ids: [],
           steps: normalizeDraftSteps(draftSteps)
         });
 
         syncTestCaseSearchParams(response.id);
+        setCreateSuiteContextId("");
         setSelectedTestCaseId(response.id);
         setIsCreating(false);
         setDraftSteps([]);
@@ -1006,6 +1075,7 @@ export function TestCasesPage() {
           }
         });
 
+        clearStepSelectionIfClipboardActive();
         showSuccess("Test case updated.");
       }
 
@@ -1250,6 +1320,9 @@ export function TestCasesPage() {
       setSelectedStepIds([response.id]);
       showSuccess("Step added.");
       await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+      if (insertionGroupContext?.reusable_group_id) {
+        await refreshSharedGroups();
+      }
     } catch (error) {
       showError(error, "Unable to add step");
     }
@@ -1278,6 +1351,10 @@ export function TestCasesPage() {
       }));
       showSuccess("Step updated.");
       await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+      if (step.reusable_group_id) {
+        await refreshSharedGroups();
+      }
+      clearStepSelectionIfClipboardActive();
     } catch (error) {
       showError(error, "Unable to update step");
     }
@@ -1296,21 +1373,23 @@ export function TestCasesPage() {
         .map((id) => displaySteps.find((step) => step.id === id))
         .filter((step): step is TestStep => Boolean(step));
 
-      await Promise.all(
-        resolvedSteps.map((step) => {
-          const draft = stepDrafts[step.id] || { action: step.action || "", expected_result: step.expected_result || "" };
-          return updateStep.mutateAsync({
-            id: step.id,
-            input: {
-              action: draft.action,
-              expected_result: draft.expected_result
-            }
-          });
-        })
-      );
+      for (const step of resolvedSteps) {
+        const draft = stepDrafts[step.id] || { action: step.action || "", expected_result: step.expected_result || "" };
+        await updateStep.mutateAsync({
+          id: step.id,
+          input: {
+            action: draft.action,
+            expected_result: draft.expected_result
+          }
+        });
+      }
 
       showSuccess(`${label} saved.`);
       await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+      if (resolvedSteps.some((step) => step.reusable_group_id)) {
+        await refreshSharedGroups();
+      }
+      clearStepSelectionIfClipboardActive();
     } catch (error) {
       showError(error, "Unable to save steps");
     }
@@ -1365,6 +1444,9 @@ export function TestCasesPage() {
       });
       showSuccess("Step order updated.");
       await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+      if (currentStep.reusable_group_id) {
+        await refreshSharedGroups();
+      }
     } catch (error) {
       showError(error, "Unable to reorder steps");
     }
@@ -1415,9 +1497,15 @@ export function TestCasesPage() {
   };
 
   const handleDeleteStep = async (stepId: string) => {
+    const targetStep = displaySteps.find((step) => step.id === stepId) || null;
+
     if (isCreating) {
       setDraftSteps((current) => current.filter((step) => step.id !== stepId));
-      setSelectedStepIds((current) => current.filter((id) => id !== stepId));
+      if (copiedSteps.length || cutStepSource?.stepIds.length) {
+        setSelectedStepIds([]);
+      } else {
+        setSelectedStepIds((current) => current.filter((id) => id !== stepId));
+      }
       setExpandedStepIds((current) => current.filter((id) => id !== stepId));
       showSuccess("Draft step removed.");
       return;
@@ -1429,10 +1517,17 @@ export function TestCasesPage() {
 
     try {
       await deleteStep.mutateAsync(stepId);
-      setSelectedStepIds((current) => current.filter((id) => id !== stepId));
+      if (copiedSteps.length || cutStepSource?.stepIds.length) {
+        setSelectedStepIds([]);
+      } else {
+        setSelectedStepIds((current) => current.filter((id) => id !== stepId));
+      }
       setExpandedStepIds((current) => current.filter((id) => id !== stepId));
       showSuccess("Step deleted.");
       await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+      if (targetStep?.reusable_group_id) {
+        await refreshSharedGroups();
+      }
     } catch (error) {
       showError(error, "Unable to delete step");
     }
@@ -1466,12 +1561,20 @@ export function TestCasesPage() {
     }
 
     try {
-      await Promise.all(targetIds.map((stepId) => deleteStep.mutateAsync(stepId)));
+      const targetSteps = displaySteps.filter((step) => targetIds.includes(step.id));
+
+      for (const stepId of targetIds) {
+        await deleteStep.mutateAsync(stepId);
+      }
+
       setSelectedStepIds([]);
       setExpandedStepIds((current) => current.filter((id) => !targetIds.includes(id)));
       cancelStepInsert();
       showSuccess(`${countLabel} deleted.`);
       await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+      if (targetSteps.some((step) => step.reusable_group_id)) {
+        await refreshSharedGroups();
+      }
     } catch (error) {
       showError(error, "Unable to delete selected steps");
     }
@@ -1629,7 +1732,6 @@ export function TestCasesPage() {
           return next;
         });
         setExpandedStepIds((current) => [...new Set([...current, ...pastedDraftSteps.map((step) => step.id)])]);
-        setSelectedStepIds(pastedDraftSteps.map((step) => step.id));
       } else if (selectedTestCaseId) {
         const createdStepIds: string[] = [];
 
@@ -1648,7 +1750,6 @@ export function TestCasesPage() {
         }
 
         setExpandedStepIds((current) => [...new Set([...current, ...createdStepIds])]);
-        setSelectedStepIds(createdStepIds);
         await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
       }
 
@@ -1656,7 +1757,11 @@ export function TestCasesPage() {
         if (cutStepSource.isDraft) {
           setDraftSteps((current) => current.filter((step) => !cutStepSource.stepIds.includes(step.id)));
         } else {
-          await Promise.all(cutStepSource.stepIds.map((stepId) => deleteStep.mutateAsync(stepId)));
+          const cutSourceSteps = displaySteps.filter((step) => cutStepSource.stepIds.includes(step.id));
+
+          for (const stepId of cutStepSource.stepIds) {
+            await deleteStep.mutateAsync(stepId);
+          }
 
           if (cutStepSource.testCaseId && cutStepSource.testCaseId !== selectedTestCaseId) {
             await queryClient.invalidateQueries({ queryKey: ["test-case-steps", cutStepSource.testCaseId] });
@@ -1664,6 +1769,10 @@ export function TestCasesPage() {
 
           if (selectedTestCaseId) {
             await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+          }
+
+          if (cutSourceSteps.some((step) => step.reusable_group_id) || stepsToPaste.some((step) => step.reusable_group_id)) {
+            await refreshSharedGroups();
           }
         }
 
@@ -1675,6 +1784,7 @@ export function TestCasesPage() {
 
       setStepInsertIndex(null);
       setStepInsertGroupContext(null);
+      setSelectedStepIds([]);
       showSuccess(`${copiedStepMode === "cut" ? "Moved" : "Pasted"} ${stepsToPaste.length} step${stepsToPaste.length === 1 ? "" : "s"}.`);
     } catch (error) {
       showError(error, "Unable to paste steps");
@@ -1749,13 +1859,14 @@ export function TestCasesPage() {
         await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
       }
 
+      setIsStepGroupModalOpen(false);
+      setStepGroupName("");
+      setSaveAsReusableGroup(false);
+
       if (reusableGroupId) {
         await refreshSharedGroups();
       }
 
-      setIsStepGroupModalOpen(false);
-      setStepGroupName("");
-      setSaveAsReusableGroup(false);
       showSuccess(saveAsReusableGroup ? "Reusable step group created." : "Step group created.");
     } catch (error) {
       showError(error, "Unable to group steps");
@@ -1799,6 +1910,9 @@ export function TestCasesPage() {
       cancelStepInsert();
       showSuccess(successMessage);
       await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+      if (kind === "reusable") {
+        await refreshSharedGroups();
+      }
     } catch (error) {
       showError(error, "Unable to ungroup steps");
     }
@@ -1836,13 +1950,18 @@ export function TestCasesPage() {
     }
 
     try {
-      await Promise.all(targetIds.map((stepId) => deleteStep.mutateAsync(stepId)));
+      for (const stepId of targetIds) {
+        await deleteStep.mutateAsync(stepId);
+      }
       setSelectedStepIds((current) => current.filter((id) => !targetIds.includes(id)));
       setExpandedStepIds((current) => current.filter((id) => !targetIds.includes(id)));
       setExpandedStepGroupIds((current) => current.filter((id) => id !== groupId));
       cancelStepInsert();
       showSuccess(isSharedGroup ? "Shared group removed from this test case." : "Step group and its steps removed.");
       await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+      if (isSharedGroup) {
+        await refreshSharedGroups();
+      }
     } catch (error) {
       showError(error, "Unable to remove step group");
     }
@@ -1887,6 +2006,7 @@ export function TestCasesPage() {
           insert_after_step_id: insertAfterStepId
         });
         await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+        await refreshSharedGroups();
       }
 
       setIsSharedGroupPickerOpen(false);
@@ -2122,6 +2242,28 @@ export function TestCasesPage() {
   const isLibraryLoading = testCasesQuery.isLoading || executionResultsQuery.isLoading || allTestStepsQuery.isLoading;
 
   const selectedRequirement = requirements.find((item) => item.id === caseDraft.requirement_id) || null;
+  const selectedSuiteContext = suites.find((suite) => suite.id === createSuiteContextId) || null;
+  const selectedCaseSuites = useMemo(() => {
+    if (isCreating) {
+      return selectedSuiteContext ? [selectedSuiteContext] : [];
+    }
+
+    if (!selectedTestCase) {
+      return [];
+    }
+
+    const suiteIds = [
+      ...(selectedTestCase.suite_ids || []),
+      ...(selectedTestCase.suite_id ? [selectedTestCase.suite_id] : [])
+    ].filter(Boolean);
+
+    if (!suiteIds.length) {
+      return [];
+    }
+
+    const suiteIdSet = new Set(suiteIds);
+    return suites.filter((suite) => suiteIdSet.has(suite.id));
+  }, [isCreating, selectedSuiteContext, selectedTestCase, suites]);
   const selectedHistory = selectedTestCase ? historyByCaseId[selectedTestCase.id] || [] : [];
   const selectedEditorSteps = useMemo(
     () => displaySteps.filter((step) => selectedStepIds.includes(step.id)),
@@ -2191,20 +2333,134 @@ export function TestCasesPage() {
         .map((step) => step.id),
     [displaySteps, stepDrafts]
   );
-  const hasDirtySteps = Boolean(dirtyStepIds.length);
   const dirtySelectedStepIds = selectedEditorSteps.map((step) => step.id).filter((id) => dirtyStepIds.includes(id));
-  const hasDirtySelection = Boolean(dirtySelectedStepIds.length);
   const selectionIsContinuous = isContinuousStepSelection(displaySteps, selectedStepIds);
   const selectionGroupId = selectedEditorSteps.length && selectedEditorSteps.every((step) => step.group_id && step.group_id === selectedEditorSteps[0]?.group_id)
     ? (selectedEditorSteps[0]?.group_id as string)
     : "";
   const selectionGroupKind = selectionGroupId ? (selectedEditorSteps[0]?.group_kind || null) : null;
   const canUngroupSelection = Boolean(selectionGroupId && selectionIsContinuous);
-  const canGroupSelection = Boolean(selectedEditorSteps.length && selectionIsContinuous && !canUngroupSelection);
   const selectionMinOrder = selectedEditorSteps.length ? Math.min(...selectedEditorSteps.map((step) => step.step_order)) : null;
   const selectionMaxOrder = selectedEditorSteps.length ? Math.max(...selectedEditorSteps.map((step) => step.step_order)) : null;
   const selectionPasteAboveIndex = selectionMinOrder ? Math.max(0, selectionMinOrder - 1) : null;
   const selectionPasteBelowIndex = selectionMaxOrder ? selectionMaxOrder : null;
+  const editorStepActions: StepActionMenuAction[] = [
+    {
+      label: isCreating ? "Create test case" : "Save test case",
+      description: isCreating ? "Create this test case and keep the current draft steps." : "Save the case title, metadata, and requirement mapping.",
+      icon: <StepSaveIcon />,
+      onClick: () => void handleSaveCaseDirect(),
+      tone: "primary",
+      disabled: createTestCase.isPending || updateTestCase.isPending
+    },
+    {
+      label: "Save selected steps",
+      description: "Persist the current edits for the selected steps only.",
+      icon: <StepSaveIcon />,
+      onClick: () => void handleSaveMultipleSteps(dirtySelectedStepIds.length ? dirtySelectedStepIds : selectedEditorSteps.map((step) => step.id), "Selected steps"),
+      disabled: isCreating || !selectedEditorSteps.length
+    },
+    {
+      label: "Save all steps",
+      description: "Persist every pending step change in this test case.",
+      icon: <StepSaveIcon />,
+      onClick: () => void handleSaveMultipleSteps(dirtyStepIds.length ? dirtyStepIds : displaySteps.map((step) => step.id), "All steps"),
+      disabled: isCreating || !displaySteps.length
+    },
+    {
+      label: "Expand all steps",
+      description: "Open every step editor in the current case.",
+      icon: <StepExpandAllIcon />,
+      onClick: () => {
+        setExpandedStepIds(displaySteps.map((step) => step.id));
+        setExpandedStepGroupIds(stepGroupIds);
+      },
+      disabled: !displaySteps.length
+    },
+    {
+      label: "Collapse all steps",
+      description: "Close all expanded step editors.",
+      icon: <StepCollapseAllIcon />,
+      onClick: () => {
+        setExpandedStepIds([]);
+        setExpandedStepGroupIds([]);
+      },
+      disabled: !displaySteps.length
+    },
+    {
+      label: "Copy selected steps",
+      description: "Place the selected steps in the clipboard for reuse.",
+      icon: <StepCopyIcon />,
+      onClick: () => handleCopySteps(),
+      disabled: !selectedEditorSteps.length
+    },
+    {
+      label: "Cut selected steps",
+      description: "Move the selected steps after you paste them into a new position.",
+      icon: <StepCutIcon />,
+      onClick: () => handleCutSteps(),
+      disabled: !selectedEditorSteps.length
+    },
+    ...(copiedSteps.length && selectionPasteAboveIndex !== null
+      ? [{
+          label: "Paste above selection",
+          description: "Insert the clipboard steps before the current selection.",
+          icon: <StepPasteAboveIcon />,
+          onClick: () => void handlePasteSteps(selectionPasteAboveIndex)
+        }, {
+          label: "Paste below selection",
+          description: "Insert the clipboard steps after the current selection.",
+          icon: <StepPasteBelowIcon />,
+          onClick: () => void handlePasteSteps(selectionPasteBelowIndex as number)
+        }]
+      : copiedSteps.length
+        ? [{
+            label: copiedStepMode === "cut" ? "Paste cut steps" : "Paste copied steps",
+            description: "Insert the clipboard steps at the active step insertion point.",
+            icon: <StepPasteIcon />,
+            onClick: () => void handlePasteSteps()
+          }]
+        : []),
+    ...(canUngroupSelection
+      ? [{
+          label: "Ungroup selected",
+          description: "Remove the current selection from its group while keeping the steps in place.",
+          icon: <StepUngroupIcon />,
+          onClick: () => void handleUngroupStepGroup(selectionGroupId, selectionGroupKind || undefined)
+        }]
+      : [{
+          label: "Group selected steps",
+          description: "Turn the current continuous selection into one local or shared group.",
+          icon: <StepGroupIcon />,
+          onClick: handleOpenStepGroupModal,
+          disabled: !selectedEditorSteps.length || !selectionIsContinuous
+        }]),
+    {
+      label: "Delete selected steps",
+      description: "Remove the selected steps from this test case.",
+      icon: <StepDeleteIcon />,
+      onClick: () => void handleDeleteSelectedSteps(),
+      disabled: !selectedEditorSteps.length,
+      tone: "danger"
+    },
+    {
+      label: "Insert shared group",
+      description: "Add a linked shared step group into this test case.",
+      icon: <StepSharedGroupIcon />,
+      onClick: () => {
+        setIsSharedGroupPickerOpen(true);
+        setSelectedSharedGroupId((current) => current || sharedStepGroups[0]?.id || "");
+      },
+      disabled: !appTypeId
+    },
+    {
+      label: "Clear step selection",
+      description: "Reset the current multi-step selection.",
+      icon: <StepClearSelectionIcon />,
+      onClick: () => setSelectedStepIds([]),
+      disabled: !selectedEditorSteps.length
+    }
+  ];
   const firstStepPreview = displaySteps[0]?.action || displaySteps[0]?.expected_result || "";
   const caseSectionSummary = isCreating
     ? caseDraft.title.trim() || "Start defining the reusable case before saving it."
@@ -2235,6 +2491,7 @@ export function TestCasesPage() {
 
   const closeCaseWorkspace = () => {
     syncTestCaseSearchParams(null);
+    setCreateSuiteContextId("");
     setIsCreating(false);
     setSelectedTestCaseId("");
     setCaseDraft(EMPTY_CASE_DRAFT);
@@ -2386,7 +2643,7 @@ export function TestCasesPage() {
               <button className="ghost-button" disabled={!filteredCases.length} onClick={() => void handleExportCsv()} type="button">
                 Export CSV
               </button>
-              <button className="primary-button" disabled={!appTypeId} onClick={beginCreateCase} type="button">
+              <button className="primary-button" disabled={!appTypeId} onClick={() => beginCreateCase()} type="button">
                 New Test Case
               </button>
             </>
@@ -2524,7 +2781,7 @@ export function TestCasesPage() {
               >
                 {isDeletingSelectedTestCases ? "Deleting…" : `Delete selected${selectedActionTestCaseIds.length ? ` (${selectedActionTestCaseIds.length})` : ""}`}
               </button>
-              <button className="ghost-button" disabled={!appTypeId} onClick={beginCreateCase} type="button">
+              <button className="ghost-button" disabled={!appTypeId} onClick={() => beginCreateCase()} type="button">
                 New case
               </button>
             </div>
@@ -2576,6 +2833,20 @@ export function TestCasesPage() {
                       type="button"
                     >
                       <div className="tile-card-main">
+                        <div className="tile-card-select-row">
+                          <label className="checkbox-field test-case-delete-checkbox" onClick={(event) => event.stopPropagation()}>
+                            <input
+                              checked={isSelectedForAction}
+                              onChange={(event) =>
+                                setSelectedActionTestCaseIds((current) =>
+                                  event.target.checked ? [...new Set([...current, testCase.id])] : current.filter((id) => id !== testCase.id)
+                                )
+                              }
+                              type="checkbox"
+                            />
+                            Select case
+                          </label>
+                        </div>
                         <div className="tile-card-header">
                           <TileCardIconFrame tone={caseStatusTone}>
                           <TileCardCaseIcon />
@@ -2628,18 +2899,6 @@ export function TestCasesPage() {
                             )) : <span className="history-bar" />}
                           </div>
                         </div>
-                        <label className="checkbox-field test-case-delete-checkbox" onClick={(event) => event.stopPropagation()}>
-                          <input
-                            checked={isSelectedForAction}
-                            onChange={(event) =>
-                              setSelectedActionTestCaseIds((current) =>
-                                event.target.checked ? [...new Set([...current, testCase.id])] : current.filter((id) => id !== testCase.id)
-                              )
-                            }
-                            type="checkbox"
-                          />
-                          Select case
-                        </label>
                       </div>
                     </button>
                   );
@@ -2717,6 +2976,29 @@ export function TestCasesPage() {
                           />
                         </FormField>
 
+                        {selectedCaseSuites.length ? (
+                          <div className="detail-summary">
+                            <strong>{isCreating ? "Suite link ready" : "Suite references"}</strong>
+                            <span>
+                              {isCreating
+                                ? `This new test case will open in the full editor and save into the "${selectedCaseSuites[0].name}" suite.`
+                                : `This test case is currently referenced in ${selectedCaseSuites.length} suite${selectedCaseSuites.length === 1 ? "" : "s"}.`}
+                            </span>
+                            <div className="selection-chip-row">
+                              {selectedCaseSuites.map((suite) => (
+                                <span className="selection-chip" key={suite.id}>
+                                  {suite.name}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ) : !isCreating && selectedTestCase ? (
+                          <div className="detail-summary">
+                            <strong>Suite references</strong>
+                            <span>This test case is not linked to any suite yet.</span>
+                          </div>
+                        ) : null}
+
                         <div className="action-row">
                           <button className="primary-button" disabled={createTestCase.isPending || updateTestCase.isPending} type="submit">
                             {isCreating ? (createTestCase.isPending ? "Creating…" : "Create test case") : (updateTestCase.isPending ? "Saving…" : "Save test case")}
@@ -2725,6 +3007,7 @@ export function TestCasesPage() {
                             <button
                               className="ghost-button"
                               onClick={() => {
+                                setCreateSuiteContextId("");
                                 setIsCreating(false);
                                 setDraftSteps([]);
                                 setNewStepDraft(EMPTY_STEP_DRAFT);
@@ -2771,149 +3054,8 @@ export function TestCasesPage() {
                           className="step-card-menu--inline step-card-menu--inline-right"
                           label="Test step actions"
                           openOnHover
-                          previewActions={[
-                            hasDirtySelection
-                              ? {
-                                  label: "Save steps",
-                                  icon: <StepSaveIcon />,
-                                  onClick: () => void handleSaveMultipleSteps(dirtySelectedStepIds, "Selected steps"),
-                                  disabled: isCreating || !dirtySelectedStepIds.length
-                                }
-                              : null,
-                            !hasDirtySelection && hasDirtySteps
-                              ? {
-                                  label: "Save all",
-                                  icon: <StepSaveIcon />,
-                                  onClick: () => void handleSaveMultipleSteps(dirtyStepIds, "All steps"),
-                                  disabled: isCreating || !dirtyStepIds.length
-                                }
-                              : null,
-                            selectedEditorSteps.length
-                              ? { label: "Copy", icon: <StepCopyIcon />, onClick: () => handleCopySteps() }
-                              : null,
-                            selectedEditorSteps.length
-                              ? { label: "Cut", icon: <StepCutIcon />, onClick: () => handleCutSteps() }
-                              : null,
-                            canUngroupSelection
-                              ? { label: "Ungroup", icon: <StepUngroupIcon />, onClick: () => void handleUngroupStepGroup(selectionGroupId, selectionGroupKind || undefined) }
-                              : null,
-                            canGroupSelection
-                              ? { label: "Group", icon: <StepGroupIcon />, onClick: handleOpenStepGroupModal }
-                              : null,
-                            copiedSteps.length
-                              ? {
-                                  label: "Paste",
-                                  icon: <StepPasteIcon />,
-                                  onClick: () =>
-                                    selectionPasteBelowIndex !== null
-                                      ? void handlePasteSteps(selectionPasteBelowIndex)
-                                      : void handlePasteSteps()
-                                }
-                              : null
-                          ].filter(Boolean) as Array<{ label: string; icon: ReactNode; onClick: () => void; disabled?: boolean; tone?: "default" | "danger" | "primary"; }>}
-                          actions={[
-                            {
-                              label: isCreating ? "Create test case" : "Save test case",
-                              icon: <StepSaveIcon />,
-                              onClick: () => void handleSaveCaseDirect(),
-                              tone: "primary",
-                              disabled: createTestCase.isPending || updateTestCase.isPending
-                            },
-                            {
-                              label: "Save selected steps",
-                              icon: <StepSaveIcon />,
-                              onClick: () => void handleSaveMultipleSteps(dirtySelectedStepIds.length ? dirtySelectedStepIds : selectedEditorSteps.map((step) => step.id), "Selected steps"),
-                              disabled: isCreating || !selectedEditorSteps.length
-                            },
-                            {
-                              label: "Save all steps",
-                              icon: <StepSaveIcon />,
-                              onClick: () => void handleSaveMultipleSteps(dirtyStepIds.length ? dirtyStepIds : displaySteps.map((step) => step.id), "All steps"),
-                              disabled: isCreating || !displaySteps.length
-                            },
-                            {
-                              label: "Expand all steps",
-                              icon: <StepExpandAllIcon />,
-                              onClick: () => {
-                                setExpandedStepIds(displaySteps.map((step) => step.id));
-                                setExpandedStepGroupIds(stepGroupIds);
-                              },
-                              disabled: !displaySteps.length
-                            },
-                            {
-                              label: "Collapse all steps",
-                              icon: <StepCollapseAllIcon />,
-                              onClick: () => {
-                                setExpandedStepIds([]);
-                                setExpandedStepGroupIds([]);
-                              },
-                              disabled: !displaySteps.length
-                            },
-                            {
-                              label: "Copy selected steps",
-                              icon: <StepCopyIcon />,
-                              onClick: () => handleCopySteps(),
-                              disabled: !selectedEditorSteps.length
-                            },
-                            {
-                              label: "Cut selected steps",
-                              icon: <StepCutIcon />,
-                              onClick: () => handleCutSteps(),
-                              disabled: !selectedEditorSteps.length
-                            },
-                            ...(copiedSteps.length && selectionPasteAboveIndex !== null
-                              ? [{
-                                  label: "Paste above selection",
-                                  icon: <StepPasteAboveIcon />,
-                                  onClick: () => void handlePasteSteps(selectionPasteAboveIndex)
-                                },
-                                {
-                                  label: "Paste below selection",
-                                  icon: <StepPasteBelowIcon />,
-                                  onClick: () => void handlePasteSteps(selectionPasteBelowIndex as number)
-                                }]
-                              : copiedSteps.length
-                                ? [{
-                                    label: copiedStepMode === "cut" ? "Paste cut steps" : "Paste copied steps",
-                                    icon: <StepPasteIcon />,
-                                    onClick: () => void handlePasteSteps()
-                                  }]
-                                : []),
-                            canUngroupSelection
-                              ? {
-                                  label: "Ungroup selected",
-                                  icon: <StepUngroupIcon />,
-                                  onClick: () => void handleUngroupStepGroup(selectionGroupId, selectionGroupKind || undefined)
-                                }
-                              : {
-                                  label: "Group selected steps",
-                                  icon: <StepGroupIcon />,
-                                  onClick: handleOpenStepGroupModal,
-                                  disabled: !selectedEditorSteps.length || !selectionIsContinuous
-                                },
-                            {
-                              label: "Delete selected steps",
-                              icon: <StepDeleteIcon />,
-                              onClick: () => void handleDeleteSelectedSteps(),
-                              disabled: !selectedEditorSteps.length,
-                              tone: "danger"
-                            },
-                            {
-                              label: "Insert shared group",
-                              icon: <StepSharedGroupIcon />,
-                              onClick: () => {
-                                setIsSharedGroupPickerOpen(true);
-                                setSelectedSharedGroupId((current) => current || sharedStepGroups[0]?.id || "");
-                              },
-                              disabled: !appTypeId
-                            },
-                            {
-                              label: "Clear step selection",
-                              icon: <StepClearSelectionIcon />,
-                              onClick: () => setSelectedStepIds([]),
-                              disabled: !selectedEditorSteps.length
-                            }
-                          ]}
+                          previewActions={editorStepActions}
+                          actions={editorStepActions}
                         />
                       </div>
 
@@ -3190,7 +3332,7 @@ export function TestCasesPage() {
               <div className="import-modal-title">
                 <p className="eyebrow">Bulk Import</p>
                 <h3 id="bulk-import-title">Import test cases from CSV</h3>
-                <p>Upload reusable cases in bulk. Action and Expected Result create attached steps automatically, while optional step group names preserve step grouping snapshots.</p>
+                <p>Upload reusable cases in bulk. Action and Expected Result create attached steps automatically, while optional step group fields preserve local and shared grouping metadata.</p>
               </div>
               <button aria-label="Close bulk import dialog" className="ghost-button" disabled={importTestCases.isPending} onClick={() => setIsImportModalOpen(false)} type="button">
                 Close
@@ -3226,7 +3368,7 @@ export function TestCasesPage() {
 
               <div className="detail-summary">
                 <strong>{importFileName || "No CSV loaded yet"}</strong>
-                <span>Use new lines or the `|` character in Action and Expected Result to create multiple steps. Optional `Step Group Name` keeps grouped snapshots aligned step-by-step.</span>
+                <span>Use new lines or the `|` character in Action and Expected Result to create multiple steps. Optional group columns keep shared and local step blocks aligned step-by-step.</span>
               </div>
 
               {importWarnings.length ? (
@@ -3939,20 +4081,8 @@ function StepActionMenu({
 }: {
   className?: string;
   label: string;
-  actions: Array<{
-    label: string;
-    icon: ReactNode;
-    onClick: () => void;
-    disabled?: boolean;
-    tone?: "default" | "danger" | "primary";
-  }>;
-  previewActions?: Array<{
-    label: string;
-    icon: ReactNode;
-    onClick: () => void;
-    disabled?: boolean;
-    tone?: "default" | "danger" | "primary";
-  }>;
+  actions: StepActionMenuAction[];
+  previewActions?: StepActionMenuAction[];
   openOnHover?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -4017,15 +4147,16 @@ function StepActionMenu({
         <div className="step-card-menu-panel is-horizontal" role="menu">
           {previewActions.map((action) => (
             <button
+              aria-label={action.label}
               className={["step-card-menu-item", action.tone ? `is-${action.tone}` : ""].filter(Boolean).join(" ")}
               disabled={action.disabled}
               key={action.label}
               onClick={() => action.onClick()}
               role="menuitem"
+              title={action.label}
               type="button"
             >
               {action.icon}
-              <span>{action.label}</span>
             </button>
           ))}
         </div>
@@ -4042,10 +4173,14 @@ function StepActionMenu({
                 setIsOpen(false);
               }}
               role="menuitem"
+              title={action.label}
               type="button"
             >
               {action.icon}
-              <span>{action.label}</span>
+              <span className="step-card-menu-item-content">
+                <span className="step-card-menu-item-label">{action.label}</span>
+                {action.description ? <span className="step-card-menu-item-description">{action.description}</span> : null}
+              </span>
             </button>
           ))}
         </div>
@@ -4262,6 +4397,77 @@ function EditableStepCard({
   onPasteBelow: () => void;
 }) {
   const stepKind = getStepKindMeta(step.group_kind);
+  const isDirty =
+    (draft.action || "").trim() !== (step.action || "").trim()
+    || (draft.expected_result || "").trim() !== (step.expected_result || "").trim();
+  const stepActions: StepActionMenuAction[] = [
+    {
+      label: "Insert above",
+      description: "Open a new step slot right above this step.",
+      icon: <StepInsertAboveIcon />,
+      onClick: onInsertAbove
+    },
+    {
+      label: "Insert below",
+      description: "Open a new step slot right below this step.",
+      icon: <StepInsertBelowIcon />,
+      onClick: onInsertBelow
+    },
+    ...(canPaste
+      ? [{
+          label: "Paste above",
+          description: "Insert the clipboard steps before this step.",
+          icon: <StepPasteAboveIcon />,
+          onClick: onPasteAbove
+        }, {
+          label: "Paste below",
+          description: "Insert the clipboard steps after this step.",
+          icon: <StepPasteBelowIcon />,
+          onClick: onPasteBelow
+        }]
+      : []),
+    {
+      label: "Copy step",
+      description: "Place this step in the clipboard.",
+      icon: <StepCopyIcon />,
+      onClick: onCopy
+    },
+    {
+      label: "Cut step",
+      description: "Move this step after you paste it somewhere else.",
+      icon: <StepCutIcon />,
+      onClick: onCut
+    },
+    {
+      label: "Move up",
+      description: "Shift this step earlier in its current order.",
+      icon: <StepMoveUpIcon />,
+      onClick: onMoveUp,
+      disabled: !canMoveUp
+    },
+    {
+      label: "Move down",
+      description: "Shift this step later in its current order.",
+      icon: <StepMoveDownIcon />,
+      onClick: onMoveDown,
+      disabled: !canMoveDown
+    },
+    {
+      label: "Save step",
+      description: "Persist the current edits on this step.",
+      icon: <StepSaveIcon />,
+      onClick: () => onSave(draft),
+      tone: "primary",
+      disabled: !isDirty
+    },
+    {
+      label: "Delete step",
+      description: "Remove this step from the current test case.",
+      icon: <StepDeleteIcon />,
+      onClick: onDelete,
+      tone: "danger"
+    }
+  ];
 
   return (
     <article
@@ -4301,40 +4507,8 @@ function EditableStepCard({
           className="step-card-menu--floating"
           label={`Step ${step.step_order} actions`}
           openOnHover
-          previewActions={[
-            ((draft.action || "").trim() !== (step.action || "").trim() || (draft.expected_result || "").trim() !== (step.expected_result || "").trim())
-              ? { label: "Save", icon: <StepSaveIcon />, onClick: () => onSave(draft), tone: "primary" }
-              : null,
-            { label: "Copy", icon: <StepCopyIcon />, onClick: onCopy },
-            { label: "Cut", icon: <StepCutIcon />, onClick: onCut }
-          ].filter(Boolean) as Array<{ label: string; icon: ReactNode; onClick: () => void; disabled?: boolean; tone?: "default" | "danger" | "primary"; }>}
-          actions={[
-            {
-              label: "Insert above",
-              icon: <StepInsertAboveIcon />,
-              onClick: onInsertAbove
-            },
-            {
-              label: "Insert below",
-              icon: <StepInsertBelowIcon />,
-              onClick: onInsertBelow
-            },
-            ...(canPaste ? [{
-              label: "Paste above",
-              icon: <StepPasteAboveIcon />,
-              onClick: onPasteAbove
-            }, {
-              label: "Paste below",
-              icon: <StepPasteBelowIcon />,
-              onClick: onPasteBelow
-            }] : []),
-            { label: "Copy step", icon: <StepCopyIcon />, onClick: onCopy },
-            { label: "Cut step", icon: <StepCutIcon />, onClick: onCut },
-            { label: "Move up", icon: <StepMoveUpIcon />, onClick: onMoveUp, disabled: !canMoveUp },
-            { label: "Move down", icon: <StepMoveDownIcon />, onClick: onMoveDown, disabled: !canMoveDown },
-            { label: "Save step", icon: <StepSaveIcon />, onClick: () => onSave(draft), tone: "primary" },
-            { label: "Delete step", icon: <StepDeleteIcon />, onClick: onDelete, tone: "danger" }
-          ]}
+          previewActions={stepActions}
+          actions={stepActions}
         />
       </div>
 
@@ -4388,6 +4562,66 @@ function DraftStepCard({
   onPasteBelow: () => void;
 }) {
   const stepKind = getStepKindMeta(step.group_kind);
+  const stepActions: StepActionMenuAction[] = [
+    {
+      label: "Insert above",
+      description: "Open a new step slot right above this draft step.",
+      icon: <StepInsertAboveIcon />,
+      onClick: onInsertAbove
+    },
+    {
+      label: "Insert below",
+      description: "Open a new step slot right below this draft step.",
+      icon: <StepInsertBelowIcon />,
+      onClick: onInsertBelow
+    },
+    ...(canPaste
+      ? [{
+          label: "Paste above",
+          description: "Insert the clipboard steps before this draft step.",
+          icon: <StepPasteAboveIcon />,
+          onClick: onPasteAbove
+        }, {
+          label: "Paste below",
+          description: "Insert the clipboard steps after this draft step.",
+          icon: <StepPasteBelowIcon />,
+          onClick: onPasteBelow
+        }]
+      : []),
+    {
+      label: "Copy step",
+      description: "Place this draft step in the clipboard.",
+      icon: <StepCopyIcon />,
+      onClick: onCopy
+    },
+    {
+      label: "Cut step",
+      description: "Move this draft step after you paste it somewhere else.",
+      icon: <StepCutIcon />,
+      onClick: onCut
+    },
+    {
+      label: "Move up",
+      description: "Shift this draft step earlier in its current order.",
+      icon: <StepMoveUpIcon />,
+      onClick: onMoveUp,
+      disabled: !canMoveUp
+    },
+    {
+      label: "Move down",
+      description: "Shift this draft step later in its current order.",
+      icon: <StepMoveDownIcon />,
+      onClick: onMoveDown,
+      disabled: !canMoveDown
+    },
+    {
+      label: "Delete step",
+      description: "Remove this draft step from the test case.",
+      icon: <StepDeleteIcon />,
+      onClick: onDelete,
+      tone: "danger"
+    }
+  ];
 
   return (
     <article
@@ -4417,37 +4651,8 @@ function DraftStepCard({
           className="step-card-menu--floating"
           label={`Step ${step.step_order} actions`}
           openOnHover
-          previewActions={[
-            { label: "Copy", icon: <StepCopyIcon />, onClick: onCopy },
-            { label: "Cut", icon: <StepCutIcon />, onClick: onCut },
-            { label: "Delete", icon: <StepDeleteIcon />, onClick: onDelete, tone: "danger" }
-          ]}
-          actions={[
-            {
-              label: "Insert above",
-              icon: <StepInsertAboveIcon />,
-              onClick: onInsertAbove
-            },
-            {
-              label: "Insert below",
-              icon: <StepInsertBelowIcon />,
-              onClick: onInsertBelow
-            },
-            ...(canPaste ? [{
-              label: "Paste above",
-              icon: <StepPasteAboveIcon />,
-              onClick: onPasteAbove
-            }, {
-              label: "Paste below",
-              icon: <StepPasteBelowIcon />,
-              onClick: onPasteBelow
-            }] : []),
-            { label: "Copy step", icon: <StepCopyIcon />, onClick: onCopy },
-            { label: "Cut step", icon: <StepCutIcon />, onClick: onCut },
-            { label: "Move up", icon: <StepMoveUpIcon />, onClick: onMoveUp, disabled: !canMoveUp },
-            { label: "Move down", icon: <StepMoveDownIcon />, onClick: onMoveDown, disabled: !canMoveDown },
-            { label: "Delete step", icon: <StepDeleteIcon />, onClick: onDelete, tone: "danger" }
-          ]}
+          previewActions={stepActions}
+          actions={stepActions}
         />
       </div>
       <div className="step-card-body">
@@ -4503,7 +4708,7 @@ function StepGroupModal({
         <div className="suite-create-header">
           <div className="suite-create-title">
             <h3>Create Step Group</h3>
-            <p>Name this group and decide whether it should stay local to this case or be reusable in other cases.</p>
+            <p>Name this group and decide whether it should stay local to this case or become a linked shared group used in other cases.</p>
           </div>
           <button className="ghost-button" disabled={isSaving} onClick={onClose} type="button">
             Close
@@ -4527,7 +4732,7 @@ function StepGroupModal({
 
           <div className="detail-summary">
             <strong>{selectedCount} step{selectedCount === 1 ? "" : "s"} selected</strong>
-            <span>{reusable ? "Reusable groups can be inserted into other test cases as snapshots." : "Local groups only organize the current case."}</span>
+            <span>{reusable ? "Reusable groups stay linked across every test case that references them." : "Local groups only organize the current case."}</span>
           </div>
         </div>
 
@@ -4580,7 +4785,7 @@ function SharedGroupPickerModal({
         <div className="suite-create-header">
           <div className="suite-create-title">
             <h3>Insert Shared Group</h3>
-            <p>Choose a reusable group to insert into this case. The case receives a snapshot copy of its current steps.</p>
+            <p>Choose a reusable group to insert into this case. Edits inside the shared block stay linked across every referencing test case.</p>
           </div>
           <button className="ghost-button" onClick={onClose} type="button">
             Close
