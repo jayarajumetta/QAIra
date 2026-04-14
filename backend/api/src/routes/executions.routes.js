@@ -15,6 +15,7 @@ module.exports = async function (fastify) {
       integration_id: { required: false, type: "string" },
       release_scope: { required: true, type: "string", minLength: 2 },
       additional_context: { required: false, type: "string" },
+      impacted_requirement_ids: { required: false, type: "array", items: "string" },
       test_environment_id: { required: false, type: "string" },
       test_configuration_id: { required: false, type: "string" },
       test_data_set_id: { required: false, type: "string" }
@@ -33,6 +34,7 @@ module.exports = async function (fastify) {
       integration_id: req.body.integration_id,
       release_scope: req.body.release_scope,
       additional_context: req.body.additional_context,
+      impacted_requirement_ids: req.body.impacted_requirement_ids,
       test_environment_id: req.body.test_environment_id,
       test_configuration_id: req.body.test_configuration_id,
       test_data_set_id: req.body.test_data_set_id

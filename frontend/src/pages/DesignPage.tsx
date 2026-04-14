@@ -23,6 +23,7 @@ import {
   getTileCardTone
 } from "../components/TileCardPrimitives";
 import { SuiteCasePicker, SuiteScopePicker } from "../components/SuiteCasePicker";
+import { TileBrowserPane } from "../components/TileBrowserPane";
 import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
@@ -1711,78 +1712,80 @@ function SuiteSidebar({
             <span>Checkbox selections power bulk delete and execution creation. Click a card body to keep curating one suite at a time.</span>
           </div>
         ) : null}
-        {isLoading ? <TileCardSkeletonGrid className="test-case-library-scroll suite-tile-browser" /> : null}
-        {!isLoading && !hasAnySuites ? (
-          <div className="empty-state compact">
-            <div>No suites yet. Create your first suite to start organizing reusable cases.</div>
-            <button className="primary-button" disabled={!canCreateSuite} onClick={onCreateSuite} type="button">Create first suite</button>
-          </div>
-        ) : null}
-        {!isLoading && hasAnySuites && !hasSuiteSearchResults ? <div className="empty-state compact">No suites match the current search.</div> : null}
+        <TileBrowserPane className="test-case-library-scroll suite-tile-browser">
+          {isLoading ? <TileCardSkeletonGrid /> : null}
+          {!isLoading && !hasAnySuites ? (
+            <div className="empty-state compact">
+              <div>No suites yet. Create your first suite to start organizing reusable cases.</div>
+              <button className="primary-button" disabled={!canCreateSuite} onClick={onCreateSuite} type="button">Create first suite</button>
+            </div>
+          ) : null}
+          {!isLoading && hasAnySuites && !hasSuiteSearchResults ? <div className="empty-state compact">No suites match the current search.</div> : null}
 
-        {!isLoading && hasSuiteSearchResults ? (
-          <div className="tile-browser-grid test-case-library-scroll suite-tile-browser">
-            {suites.map((suite) => {
-              const suitePlacementLabel = suite.parent_id ? "Nested suite" : "Root suite";
-              const mappedCaseCount = counts[suite.id] || 0;
-              const childSuiteCount = childCounts[suite.id] || 0;
-              const suiteTone = suite.parent_id ? "info" : "success";
+          {!isLoading && hasSuiteSearchResults ? (
+            <div className="tile-browser-grid">
+              {suites.map((suite) => {
+                const suitePlacementLabel = suite.parent_id ? "Nested suite" : "Root suite";
+                const mappedCaseCount = counts[suite.id] || 0;
+                const childSuiteCount = childCounts[suite.id] || 0;
+                const suiteTone = suite.parent_id ? "info" : "success";
 
-              return (
-                <button
-                  key={suite.id}
-                  className={[
-                    "record-card tile-card test-suite-card",
-                    activeSuiteId === suite.id ? "is-active" : "",
-                    selectedSuiteActionIds.includes(suite.id) ? "is-marked-for-delete" : ""
-                  ].filter(Boolean).join(" ")}
-                  onClick={() => onSelectSuite(suite.id)}
-                  type="button"
-                >
-                  <div className="tile-card-main">
-                    <div className="tile-card-select-row">
-                      <label className="checkbox-field suite-card-action-checkbox" onClick={(event) => event.stopPropagation()}>
-                        <input
-                          checked={selectedSuiteActionIds.includes(suite.id)}
-                          onChange={() => onToggleSuiteSelection(suite.id)}
-                          type="checkbox"
-                        />
-                        Select suite
-                      </label>
-                    </div>
-                    <div className="tile-card-header">
-                      <TileCardIconFrame tone={suiteTone}>
-                        <TileCardSuiteIcon />
-                      </TileCardIconFrame>
-                      <div className="tile-card-title-group">
-                        <strong>{suite.name}</strong>
-                        <span className="tile-card-kicker">{suitePlacementLabel}</span>
+                return (
+                  <button
+                    key={suite.id}
+                    className={[
+                      "record-card tile-card test-suite-card",
+                      activeSuiteId === suite.id ? "is-active" : "",
+                      selectedSuiteActionIds.includes(suite.id) ? "is-marked-for-delete" : ""
+                    ].filter(Boolean).join(" ")}
+                    onClick={() => onSelectSuite(suite.id)}
+                    type="button"
+                  >
+                    <div className="tile-card-main">
+                      <div className="tile-card-select-row">
+                        <label className="checkbox-field suite-card-action-checkbox" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            checked={selectedSuiteActionIds.includes(suite.id)}
+                            onChange={() => onToggleSuiteSelection(suite.id)}
+                            type="checkbox"
+                          />
+                          Select suite
+                        </label>
                       </div>
-                      <TileCardStatusIndicator icon={<TileCardHierarchyIcon />} title={suitePlacementLabel} tone={suite.parent_id ? "info" : "neutral"} />
+                      <div className="tile-card-header">
+                        <TileCardIconFrame tone={suiteTone}>
+                          <TileCardSuiteIcon />
+                        </TileCardIconFrame>
+                        <div className="tile-card-title-group">
+                          <strong>{suite.name}</strong>
+                          <span className="tile-card-kicker">{suitePlacementLabel}</span>
+                        </div>
+                        <TileCardStatusIndicator icon={<TileCardHierarchyIcon />} title={suitePlacementLabel} tone={suite.parent_id ? "info" : "neutral"} />
+                      </div>
+                      <p className="tile-card-description">{selectedAppType ? `${selectedAppType.name} workspace suite` : "No app type selected"}</p>
+                      <div className="tile-card-facts" aria-label={`${suite.name} facts`}>
+                        <TileCardFact
+                          label={String(mappedCaseCount)}
+                          title={`${mappedCaseCount} mapped case${mappedCaseCount === 1 ? "" : "s"}`}
+                          tone={mappedCaseCount ? "success" : "neutral"}
+                        >
+                          <TileCardCaseIcon />
+                        </TileCardFact>
+                        <TileCardFact
+                          label={String(childSuiteCount)}
+                          title={`${childSuiteCount} child suite${childSuiteCount === 1 ? "" : "s"}`}
+                          tone={childSuiteCount ? "info" : "neutral"}
+                        >
+                          <TileCardHierarchyIcon />
+                        </TileCardFact>
+                      </div>
                     </div>
-                    <p className="tile-card-description">{selectedAppType ? `${selectedAppType.name} workspace suite` : "No app type selected"}</p>
-                    <div className="tile-card-facts" aria-label={`${suite.name} facts`}>
-                      <TileCardFact
-                        label={String(mappedCaseCount)}
-                        title={`${mappedCaseCount} mapped case${mappedCaseCount === 1 ? "" : "s"}`}
-                        tone={mappedCaseCount ? "success" : "neutral"}
-                      >
-                        <TileCardCaseIcon />
-                      </TileCardFact>
-                      <TileCardFact
-                        label={String(childSuiteCount)}
-                        title={`${childSuiteCount} child suite${childSuiteCount === 1 ? "" : "s"}`}
-                        tone={childSuiteCount ? "info" : "neutral"}
-                      >
-                        <TileCardHierarchyIcon />
-                      </TileCardFact>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </TileBrowserPane>
       </div>
     </Panel>
   );
@@ -1957,101 +1960,103 @@ function TestCaseList({
           </div>
         ) : null}
 
-        {isLoading ? <TileCardSkeletonGrid className="test-case-library-scroll" /> : null}
-        {!isLoading && !cases.length ? <div className="empty-state compact">No test cases match this scope yet.</div> : null}
+        <TileBrowserPane className="test-case-library-scroll">
+          {isLoading ? <TileCardSkeletonGrid /> : null}
+          {!isLoading && !cases.length ? <div className="empty-state compact">No test cases match this scope yet.</div> : null}
 
-        {!isLoading ? (
-          <div className="tile-browser-grid test-case-library-scroll">
-            {cases.map((testCase) => {
-              const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
-              const latest = history[0];
-              const requirement = requirements.find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id));
-              const stepCount = stepCountByCaseId[testCase.id] || 0;
-              const caseStatusValue = latest?.status || testCase.status || defaultCaseStatus;
-              const caseStatusLabel = formatTileCardLabel(caseStatusValue, "Active");
-            const caseStatusTone = getTileCardTone(caseStatusValue);
-            const suiteCount = (testCase.suite_ids || []).length || 0;
+          {!isLoading && cases.length ? (
+            <div className="tile-browser-grid">
+              {cases.map((testCase) => {
+                const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
+                const latest = history[0];
+                const requirement = requirements.find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id));
+                const stepCount = stepCountByCaseId[testCase.id] || 0;
+                const caseStatusValue = latest?.status || testCase.status || defaultCaseStatus;
+                const caseStatusLabel = formatTileCardLabel(caseStatusValue, "Active");
+                const caseStatusTone = getTileCardTone(caseStatusValue);
+                const suiteCount = (testCase.suite_ids || []).length || 0;
 
-            return (
-              <button
-                key={testCase.id}
-                className={[
-                  "record-card tile-card test-case-card test-case-catalog-card suite-case-workspace-card",
-                  activeCaseId === testCase.id ? "is-active" : ""
-                ].filter(Boolean).join(" ")}
-                onClick={() => onSelectCase(testCase.id)}
-                draggable={Boolean(selectedSuite)}
-                onDragStart={() => setDraggedCaseId(testCase.id)}
-                onDragOver={(event: DragEvent<HTMLButtonElement>) => event.preventDefault()}
-                onDrop={() => {
-                  if (selectedSuite && draggedCaseId) {
-                    void onReorderCases(draggedCaseId, testCase.id);
-                  }
-                  setDraggedCaseId("");
-                }}
-                onDragEnd={() => setDraggedCaseId("")}
-                type="button"
-              >
-                {selectedSuite ? <span className="drag-handle" aria-hidden="true">::</span> : null}
-                <div className="tile-card-main">
-                  <div className="tile-card-header">
-                    <TileCardIconFrame tone={caseStatusTone}>
-                      <TileCardCaseIcon />
-                    </TileCardIconFrame>
-                    <div className="tile-card-title-group">
-                      <strong>{testCase.title}</strong>
-                      <span className="tile-card-kicker">{requirement?.title || "No requirement linked"}</span>
+                return (
+                  <button
+                    key={testCase.id}
+                    className={[
+                      "record-card tile-card test-case-card test-case-catalog-card suite-case-workspace-card",
+                      activeCaseId === testCase.id ? "is-active" : ""
+                    ].filter(Boolean).join(" ")}
+                    onClick={() => onSelectCase(testCase.id)}
+                    draggable={Boolean(selectedSuite)}
+                    onDragStart={() => setDraggedCaseId(testCase.id)}
+                    onDragOver={(event: DragEvent<HTMLButtonElement>) => event.preventDefault()}
+                    onDrop={() => {
+                      if (selectedSuite && draggedCaseId) {
+                        void onReorderCases(draggedCaseId, testCase.id);
+                      }
+                      setDraggedCaseId("");
+                    }}
+                    onDragEnd={() => setDraggedCaseId("")}
+                    type="button"
+                  >
+                    {selectedSuite ? <span className="drag-handle" aria-hidden="true">::</span> : null}
+                    <div className="tile-card-main">
+                      <div className="tile-card-header">
+                        <TileCardIconFrame tone={caseStatusTone}>
+                          <TileCardCaseIcon />
+                        </TileCardIconFrame>
+                        <div className="tile-card-title-group">
+                          <strong>{testCase.title}</strong>
+                          <span className="tile-card-kicker">{requirement?.title || "No requirement linked"}</span>
+                        </div>
+                        <TileCardStatusIndicator title={caseStatusLabel} tone={caseStatusTone} />
+                      </div>
+                      <p className="tile-card-description">{testCase.description || "No description yet for this test case."}</p>
+                      <div className="tile-card-facts" aria-label={`${testCase.title} facts`}>
+                        <TileCardFact
+                          label={`P${testCase.priority || 3}`}
+                          title={`Priority P${testCase.priority || 3}`}
+                          tone={(testCase.priority || 3) <= 2 ? "danger" : "info"}
+                        >
+                          <TileCardPriorityIcon />
+                        </TileCardFact>
+                        <TileCardFact
+                          label={String(stepCount)}
+                          title={`${stepCount} step${stepCount === 1 ? "" : "s"}`}
+                          tone={stepCount ? "info" : "neutral"}
+                        >
+                          <TileCardStepsIcon />
+                        </TileCardFact>
+                        <TileCardFact
+                          label={String(suiteCount)}
+                          title={`${suiteCount} linked suite${suiteCount === 1 ? "" : "s"}`}
+                          tone={suiteCount ? "success" : "neutral"}
+                        >
+                          <TileCardLinkIcon />
+                        </TileCardFact>
+                        <TileCardFact
+                          label={String(history.length)}
+                          title={`${history.length} recent run${history.length === 1 ? "" : "s"}`}
+                          tone={history.length ? getTileCardTone(latest?.status || caseStatusValue) : "neutral"}
+                        >
+                          <TileCardRunsIcon />
+                        </TileCardFact>
+                      </div>
+                      <div className="tile-card-footer">
+                        <div className="history-bars" aria-label="Execution history">
+                          {history.length ? history.map((result) => (
+                            <span
+                              key={result.id}
+                              className={result.status === "passed" ? "history-bar is-passed" : result.status === "failed" ? "history-bar is-failed" : "history-bar is-blocked"}
+                              title={`${result.status} · ${result.created_at || "recent"}`}
+                            />
+                          )) : <span className="history-bar" />}
+                        </div>
+                      </div>
                     </div>
-                    <TileCardStatusIndicator title={caseStatusLabel} tone={caseStatusTone} />
-                  </div>
-                  <p className="tile-card-description">{testCase.description || "No description yet for this test case."}</p>
-                  <div className="tile-card-facts" aria-label={`${testCase.title} facts`}>
-                    <TileCardFact
-                      label={`P${testCase.priority || 3}`}
-                      title={`Priority P${testCase.priority || 3}`}
-                      tone={(testCase.priority || 3) <= 2 ? "danger" : "info"}
-                    >
-                      <TileCardPriorityIcon />
-                    </TileCardFact>
-                    <TileCardFact
-                      label={String(stepCount)}
-                      title={`${stepCount} step${stepCount === 1 ? "" : "s"}`}
-                      tone={stepCount ? "info" : "neutral"}
-                    >
-                      <TileCardStepsIcon />
-                    </TileCardFact>
-                    <TileCardFact
-                      label={String(suiteCount)}
-                      title={`${suiteCount} linked suite${suiteCount === 1 ? "" : "s"}`}
-                      tone={suiteCount ? "success" : "neutral"}
-                    >
-                      <TileCardLinkIcon />
-                    </TileCardFact>
-                    <TileCardFact
-                      label={String(history.length)}
-                      title={`${history.length} recent run${history.length === 1 ? "" : "s"}`}
-                      tone={history.length ? getTileCardTone(latest?.status || caseStatusValue) : "neutral"}
-                    >
-                      <TileCardRunsIcon />
-                    </TileCardFact>
-                  </div>
-                  <div className="tile-card-footer">
-                    <div className="history-bars" aria-label="Execution history">
-                      {history.length ? history.map((result) => (
-                        <span
-                          key={result.id}
-                          className={result.status === "passed" ? "history-bar is-passed" : result.status === "failed" ? "history-bar is-failed" : "history-bar is-blocked"}
-                          title={`${result.status} · ${result.created_at || "recent"}`}
-                        />
-                      )) : <span className="history-bar" />}
-                    </div>
-                  </div>
-                </div>
-              </button>
-            );
-            })}
-          </div>
-        ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </TileBrowserPane>
       </div>
     </Panel>
   );

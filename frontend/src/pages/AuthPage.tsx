@@ -45,7 +45,8 @@ type FormValues = Record<FieldName, string>;
 type FieldErrors = Partial<Record<FieldName, string>>;
 type TouchedFields = Partial<Record<FieldName, boolean>>;
 type CapabilityTheme = "blue" | "amber" | "teal";
-type CapabilityVisual = "design" | "execution" | "traceability";
+type CapabilityVisual = "marketplace" | "playbooks" | "evidence";
+type CapabilityLayout = "wide" | "balanced" | "portrait";
 type PendingVerification = {
   type: "signup" | "forgot";
   email: string;
@@ -83,49 +84,49 @@ const AUTH_CAPABILITY_SLIDES: Array<{
   footer: string;
 }> = [
   {
-    id: "design",
-    eyebrow: "AI Test Design",
-    title: "Turn raw requirements into reusable test design in minutes.",
-    description: "Generate review-ready test cases, attach structured steps, and keep human approval in the loop without losing speed.",
+    id: "marketplace",
+    eyebrow: "Marketplace Tools",
+    title: "Browse QA marketplace packs without leaving the workspace.",
+    description: "Preview the tool packs QAira can activate across smart planning, secure access, notifications, and defect handoff instead of scattering the team across tabs.",
     theme: "blue",
-    visual: "design",
+    visual: "marketplace",
     metrics: [
-      { value: "3x", label: "faster authoring" },
-      { value: "126", label: "steps mapped" },
-      { value: "94%", label: "coverage hints" }
+      { value: "12", label: "live tools" },
+      { value: "4", label: "ready packs" },
+      { value: "1", label: "workspace" }
     ],
-    capabilities: ["Requirement-aware drafting", "Reusable suites and steps", "Human-reviewed AI output"],
-    footer: "From requirement changes to execution-ready coverage in one workspace."
+    capabilities: ["LLM planning packs", "Google and email access", "Jira-ready handoff"],
+    footer: "One marketplace surface for the tools that power release work."
   },
   {
-    id: "execution",
-    eyebrow: "Execution Intelligence",
-    title: "Keep live runs, blockers, and failure signals obvious at a glance.",
-    description: "Watch execution status in real time, isolate risky failures faster, and keep logs, reruns, and ownership aligned.",
+    id: "playbooks",
+    eyebrow: "Execution Packs",
+    title: "Turn impacted requirements into execution-ready packs in a few clicks.",
+    description: "Blend selected requirements, linked cases, shared step groups, and the Default suite into a focused run without rebuilding scope by hand.",
     theme: "amber",
-    visual: "execution",
+    visual: "playbooks",
     metrics: [
-      { value: "48", label: "live runs" },
-      { value: "7", label: "blockers surfaced" },
-      { value: "2m", label: "to failure context" }
+      { value: "18", label: "reqs scoped" },
+      { value: "42", label: "cases linked" },
+      { value: "1", label: "default suite" }
     ],
-    capabilities: ["Real-time execution board", "Failure trend clustering", "Faster triage handoff"],
-    footer: "Every run, log, and rerun decision stays connected for the whole team."
+    capabilities: ["Impact-based runs", "Shared step packs", "Grouped flow coverage"],
+    footer: "Execution planning stays deliberate, fast, and tied to real product change."
   },
   {
-    id: "traceability",
-    eyebrow: "Release Readiness",
-    title: "See what is truly ready to ship with AI-backed traceability.",
-    description: "Connect requirements, suites, test cases, and evidence so release risk is visible before it spreads into production.",
+    id: "evidence",
+    eyebrow: "Evidence Exchange",
+    title: "Keep execution proof connected to every tool and team that needs it.",
+    description: "Bundle screenshots, notes, failures, and release signals into a clean handoff path for audit, product, and engineering conversations.",
     theme: "teal",
-    visual: "traceability",
+    visual: "evidence",
     metrics: [
-      { value: "100%", label: "lineage mapped" },
-      { value: "14", label: "gaps highlighted" },
-      { value: "1", label: "release view" }
+      { value: "100%", label: "proof linked" },
+      { value: "3", label: "handoff lanes" },
+      { value: "0", label: "orphan runs" }
     ],
-    capabilities: ["Requirement-to-evidence graph", "Audit-ready proof trails", "Risk-first release visibility"],
-    footer: "Confidence comes from linked evidence, not disconnected status updates."
+    capabilities: ["Audit-ready evidence", "Defect sync summaries", "Release-ready signals"],
+    footer: "Evidence stays readable, reusable, and ready for the next decision."
   }
 ];
 
@@ -133,6 +134,22 @@ let googleScriptPromise: Promise<void> | null = null;
 
 function mergeIds(...values: Array<string | undefined>) {
   return values.filter(Boolean).join(" ") || undefined;
+}
+
+function getCapabilityLayout(width: number, height: number): CapabilityLayout {
+  const safeWidth = Math.max(width, 1);
+  const safeHeight = Math.max(height, 1);
+  const ratio = safeWidth / safeHeight;
+
+  if (ratio >= 1.28 && safeWidth >= 34 * 16) {
+    return "wide";
+  }
+
+  if (ratio >= 0.98 && safeWidth >= 27 * 16) {
+    return "balanced";
+  }
+
+  return "portrait";
 }
 
 function getFieldsForMode(mode: FormMode): FieldName[] {
@@ -332,6 +349,7 @@ export function AuthPage() {
   const navigate = useNavigate();
   const emailInputRef = useRef<HTMLInputElement>(null);
   const googleButtonRef = useRef<HTMLDivElement>(null);
+  const carouselPanelRef = useRef<HTMLDivElement>(null);
   const {
     login,
     loginWithGoogle,
@@ -353,6 +371,7 @@ export function AuthPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [activeCapabilityIndex, setActiveCapabilityIndex] = useState(0);
+  const [capabilityLayout, setCapabilityLayout] = useState<CapabilityLayout>("wide");
   const [pendingVerification, setPendingVerification] = useState<PendingVerification | null>(null);
 
   const isSuccessMode = mode === "signup-success" || mode === "reset-success";
@@ -411,6 +430,35 @@ export function AuthPage() {
     }, 4800);
 
     return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    const node = carouselPanelRef.current;
+
+    if (!node) {
+      return;
+    }
+
+    const syncLayout = () => {
+      const { height, width } = node.getBoundingClientRect();
+      const nextLayout = getCapabilityLayout(width, height);
+      setCapabilityLayout((current) => current === nextLayout ? current : nextLayout);
+    };
+
+    syncLayout();
+
+    const observer =
+      typeof ResizeObserver === "function"
+        ? new ResizeObserver(() => syncLayout())
+        : null;
+
+    observer?.observe(node);
+    window.addEventListener("resize", syncLayout);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", syncLayout);
+    };
   }, []);
 
   useEffect(() => {
@@ -738,7 +786,11 @@ export function AuthPage() {
 
       <div className="container auth-shell">
         <section className="left auth-aside" aria-label="QAira product overview">
-          <div className={`auth-aside-panel auth-carousel-panel theme-${activeCapability.theme}`}>
+          <div
+            className={`auth-aside-panel auth-carousel-panel theme-${activeCapability.theme}`}
+            data-carousel-layout={capabilityLayout}
+            ref={carouselPanelRef}
+          >
             <div className="auth-carousel-grid">
               <div className="auth-carousel-head">
                 <div className="auth-carousel-brand">
@@ -751,7 +803,7 @@ export function AuthPage() {
                 <span className="auth-carousel-status">Autoplay</span>
               </div>
 
-              <div className="auth-carousel-slide" key={activeCapability.id}>
+              <div className="auth-carousel-slide" key={`${activeCapability.id}-${capabilityLayout}`}>
                 <div className="auth-carousel-copy-block">
                   <p className="eyebrow">{activeCapability.eyebrow}</p>
                   <h1>{activeCapability.title}</h1>
@@ -774,7 +826,7 @@ export function AuthPage() {
                 </div>
 
                 <div className="auth-carousel-visual-wrap">
-                  <AuthCapabilityGraphic visual={activeCapability.visual} />
+                  <AuthCapabilityGraphic layout={capabilityLayout} visual={activeCapability.visual} />
                 </div>
               </div>
 
@@ -1111,78 +1163,111 @@ export function AuthPage() {
   );
 }
 
-function AuthCapabilityGraphic({ visual }: { visual: CapabilityVisual }) {
-  if (visual === "design") {
+function AuthCapabilityGraphic({
+  visual,
+  layout
+}: {
+  visual: CapabilityVisual;
+  layout: CapabilityLayout;
+}) {
+  if (visual === "marketplace") {
     return (
-      <div className="auth-capability-visual auth-visual-design" aria-hidden="true">
-        <div className="auth-visual-halo auth-visual-halo-one" />
-        <div className="auth-visual-halo auth-visual-halo-two" />
-        <div className="auth-visual-command">
-          <span className="auth-visual-command-label">AI prompt</span>
-          <strong>Generate release-ready checkout coverage from updated requirements.</strong>
+      <div className={`auth-capability-visual auth-marketplace-visual is-${layout}`} aria-hidden="true">
+        <div className="auth-marketplace-banner">
+          <span className="auth-visual-command-label">Featured packs</span>
+          <span className="auth-marketplace-status">4 live</span>
         </div>
-        <div className="auth-visual-floating-chip">Steps attached automatically</div>
-        <div className="auth-visual-design-grid">
-          <div className="auth-visual-column">
-            <span>Requirements</span>
-            <strong>12 signals</strong>
-            <div className="auth-visual-bar"><span style={{ width: "82%" }} /></div>
+
+        <div className="auth-marketplace-stack">
+          <div className="auth-marketplace-card is-primary">
+            <span className="auth-marketplace-badge">AI</span>
+            <div className="auth-marketplace-copy">
+              <strong>LLM Planner Pack</strong>
+              <span>Smart execution previews, AI case drafting, impact scoring</span>
+            </div>
+            <span className="auth-marketplace-pill">Active</span>
           </div>
-          <div className="auth-visual-column">
-            <span>Reusable cases</span>
-            <strong>24 drafted</strong>
-            <div className="auth-visual-bar"><span style={{ width: "74%" }} /></div>
+
+          <div className="auth-marketplace-card">
+            <span className="auth-marketplace-badge is-amber">ID</span>
+            <div className="auth-marketplace-copy">
+              <strong>Access Pack</strong>
+              <span>Google sign-in, email verification, secure workspace entry</span>
+            </div>
+            <span className="auth-marketplace-pill is-muted">Configured</span>
           </div>
-          <div className="auth-visual-column">
-            <span>Review confidence</span>
-            <strong>Ready to refine</strong>
-            <div className="auth-visual-bar"><span style={{ width: "91%" }} /></div>
+
+          <div className="auth-marketplace-card">
+            <span className="auth-marketplace-badge is-teal">DX</span>
+            <div className="auth-marketplace-copy">
+              <strong>Delivery Sync Pack</strong>
+              <span>Defect routing, release summaries, evidence-ready notifications</span>
+            </div>
+            <span className="auth-marketplace-pill is-muted">Ready</span>
+          </div>
+        </div>
+
+        <div className="auth-marketplace-strip">
+          <div className="auth-marketplace-stat">
+            <strong>OpenAI</strong>
+            <span>Primary planning model</span>
+          </div>
+          <div className="auth-marketplace-stat">
+            <strong>Google Auth</strong>
+            <span>Workspace access pack</span>
+          </div>
+          <div className="auth-marketplace-stat">
+            <strong>Email Sender</strong>
+            <span>Verification handoff</span>
           </div>
         </div>
       </div>
     );
   }
 
-  if (visual === "execution") {
+  if (visual === "playbooks") {
     return (
-      <div className="auth-capability-visual auth-visual-execution" aria-hidden="true">
-        <div className="auth-visual-halo auth-visual-halo-one" />
-        <div className="auth-visual-dashboard">
-          <div className="auth-visual-kpi-row">
-            <div className="auth-visual-kpi">
-              <strong>31</strong>
-              <span>Passing</span>
-            </div>
-            <div className="auth-visual-kpi">
-              <strong>07</strong>
-              <span>Blocked</span>
-            </div>
-            <div className="auth-visual-kpi">
-              <strong>10</strong>
-              <span>Needs triage</span>
-            </div>
+      <div className={`auth-capability-visual auth-marketplace-visual auth-marketplace-visual--flow is-${layout}`} aria-hidden="true">
+        <div className="auth-marketplace-banner">
+          <span className="auth-visual-command-label">Execution flow</span>
+          <span className="auth-marketplace-status is-amber">Guided</span>
+        </div>
+
+        <div className="auth-marketplace-flow">
+          <div className="auth-marketplace-flow-card">
+            <span>Impacted requirements</span>
+            <strong>Payments + role sync</strong>
           </div>
-          <div className="auth-visual-chart">
-            <span className="auth-visual-chart-bar is-muted" style={{ height: "42%" }} />
-            <span className="auth-visual-chart-bar" style={{ height: "58%" }} />
-            <span className="auth-visual-chart-bar" style={{ height: "76%" }} />
-            <span className="auth-visual-chart-bar" style={{ height: "48%" }} />
-            <span className="auth-visual-chart-bar" style={{ height: "88%" }} />
-            <span className="auth-visual-chart-bar" style={{ height: "62%" }} />
+          <div className="auth-marketplace-flow-card">
+            <span>Linked cases</span>
+            <strong>18 scoped</strong>
           </div>
-          <div className="auth-visual-log-stream">
-            <div className="auth-visual-log is-success">
-              <span>Checkout smoke</span>
-              <strong>passed</strong>
+          <div className="auth-marketplace-flow-card">
+            <span>Step packs</span>
+            <strong>Shared + local groups</strong>
+          </div>
+          <div className="auth-marketplace-flow-card is-primary">
+            <span>Run target</span>
+            <strong>Default suite</strong>
+          </div>
+        </div>
+
+        <div className="auth-marketplace-row auth-marketplace-row--two-up">
+          <div className="auth-marketplace-card">
+            <span className="auth-marketplace-badge">SG</span>
+            <div className="auth-marketplace-copy">
+              <strong>Shared Step Group Pack</strong>
+              <span>Reusable setup, role switching, and environment prep</span>
             </div>
-            <div className="auth-visual-log is-warning">
-              <span>Payments fallback</span>
-              <strong>blocked</strong>
+            <span className="auth-marketplace-pill">Reusable</span>
+          </div>
+          <div className="auth-marketplace-card">
+            <span className="auth-marketplace-badge is-amber">LG</span>
+            <div className="auth-marketplace-copy">
+              <strong>Local Group Pack</strong>
+              <span>Case-specific branching kept close to the impacted release path</span>
             </div>
-            <div className="auth-visual-log is-danger">
-              <span>Role matrix sync</span>
-              <strong>failed</strong>
-            </div>
+            <span className="auth-marketplace-pill is-muted">Focused</span>
           </div>
         </div>
       </div>
@@ -1190,36 +1275,53 @@ function AuthCapabilityGraphic({ visual }: { visual: CapabilityVisual }) {
   }
 
   return (
-    <div className="auth-capability-visual auth-visual-traceability" aria-hidden="true">
-      <div className="auth-visual-halo auth-visual-halo-one" />
-      <div className="auth-visual-halo auth-visual-halo-two" />
-      <div className="auth-visual-trace-grid">
-        <div className="auth-visual-network">
-          <span className="auth-network-line" style={{ top: "28%", left: "32%", width: "34%", transform: "rotate(10deg)" }} />
-          <span className="auth-network-line" style={{ top: "46%", left: "31%", width: "36%", transform: "rotate(-7deg)" }} />
-          <span className="auth-network-line" style={{ top: "52%", left: "18%", width: "28%", transform: "rotate(38deg)" }} />
-          <span className="auth-network-line" style={{ top: "38%", left: "55%", width: "22%", transform: "rotate(42deg)" }} />
-          <div className="auth-network-node is-primary" style={{ top: "34%", left: "36%" }}>Release</div>
-          <div className="auth-network-node" style={{ top: "12%", left: "10%" }}>Requirement</div>
-          <div className="auth-network-node" style={{ top: "14%", right: "8%" }}>Suite</div>
-          <div className="auth-network-node" style={{ bottom: "14%", left: "12%" }}>Case</div>
-          <div className="auth-network-node" style={{ bottom: "12%", right: "10%" }}>Evidence</div>
+    <div className={`auth-capability-visual auth-marketplace-visual auth-marketplace-visual--evidence is-${layout}`} aria-hidden="true">
+      <div className="auth-marketplace-banner">
+        <span className="auth-visual-command-label">Evidence lanes</span>
+        <span className="auth-marketplace-status is-teal">Audit-ready</span>
+      </div>
+
+      <div className="auth-marketplace-stack">
+        <div className="auth-marketplace-card">
+          <span className="auth-marketplace-badge">EV</span>
+          <div className="auth-marketplace-copy">
+            <strong>Evidence Vault</strong>
+            <span>Upload images, notes, and structured results without losing step context</span>
+          </div>
+          <span className="auth-marketplace-pill">Synced</span>
         </div>
 
-        <div className="auth-visual-sidecard">
-          <span className="auth-visual-command-label">Risk lens</span>
-          <div className="auth-risk-row">
-            <span>Coverage gap</span>
-            <strong>4 flows</strong>
+        <div className="auth-marketplace-card">
+          <span className="auth-marketplace-badge is-teal">RS</span>
+          <div className="auth-marketplace-copy">
+            <strong>Release Summary Pack</strong>
+            <span>Pull impacted cases, outcomes, and blockers into one readable handoff</span>
           </div>
-          <div className="auth-risk-row">
-            <span>Orphan evidence</span>
-            <strong>0</strong>
+          <span className="auth-marketplace-pill is-muted">Exportable</span>
+        </div>
+
+        <div className="auth-marketplace-card">
+          <span className="auth-marketplace-badge is-amber">DF</span>
+          <div className="auth-marketplace-copy">
+            <strong>Defect Handoff Pack</strong>
+            <span>Bundle proof, linked steps, and impact notes for faster engineering triage</span>
           </div>
-          <div className="auth-risk-row">
-            <span>Ready for release</span>
-            <strong>Yes</strong>
-          </div>
+          <span className="auth-marketplace-pill is-muted">Ready</span>
+        </div>
+      </div>
+
+      <div className="auth-marketplace-strip">
+        <div className="auth-marketplace-stat">
+          <strong>0 orphan runs</strong>
+          <span>Every result stays linked</span>
+        </div>
+        <div className="auth-marketplace-stat">
+          <strong>3 handoff lanes</strong>
+          <span>QA, product, engineering</span>
+        </div>
+        <div className="auth-marketplace-stat">
+          <strong>Proof first</strong>
+          <span>Images, notes, and status together</span>
         </div>
       </div>
     </div>

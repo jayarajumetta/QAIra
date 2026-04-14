@@ -5,6 +5,7 @@ import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StatusBadge } from "../components/StatusBadge";
+import { TileBrowserPane } from "../components/TileBrowserPane";
 import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
@@ -453,58 +454,59 @@ export function SharedStepsPage() {
               </button>
             </div>
 
-            {sharedGroupsQuery.isLoading ? (
-              <TileCardSkeletonGrid className="test-case-library-scroll" />
-            ) : (
-              <div className="tile-browser-grid test-case-library-scroll">
-                {filteredGroups.map((group) => {
-                  const isActive = !isCreating && selectedGroupId === group.id;
-                  const stepCount = group.step_count || group.steps.length;
-                  const usageCount = group.usage_count || 0;
-                  const preview = group.steps[0]?.action || group.steps[0]?.expected_result || "No step preview yet";
+            <TileBrowserPane className="test-case-library-scroll">
+              {sharedGroupsQuery.isLoading ? <TileCardSkeletonGrid /> : null}
+              {!sharedGroupsQuery.isLoading && filteredGroups.length ? (
+                <div className="tile-browser-grid">
+                  {filteredGroups.map((group) => {
+                    const isActive = !isCreating && selectedGroupId === group.id;
+                    const stepCount = group.step_count || group.steps.length;
+                    const usageCount = group.usage_count || 0;
+                    const preview = group.steps[0]?.action || group.steps[0]?.expected_result || "No step preview yet";
 
-                  return (
-                    <button
-                      className={["record-card tile-card test-case-card test-case-catalog-card", isActive ? "is-active" : ""].filter(Boolean).join(" ")}
-                      key={group.id}
-                      onClick={() => {
-                        setSelectedGroupId(group.id);
-                        setIsCreating(false);
-                        resetStepComposer();
-                      }}
-                      type="button"
-                    >
-                      <div className="tile-card-main">
-                        <div className="tile-card-header">
-                          <div className="tile-card-title-group">
-                            <strong>{group.name}</strong>
-                            <span className="tile-card-kicker">{formatSharedStepDate(group.updated_at)}</span>
+                    return (
+                      <button
+                        className={["record-card tile-card test-case-card test-case-catalog-card", isActive ? "is-active" : ""].filter(Boolean).join(" ")}
+                        key={group.id}
+                        onClick={() => {
+                          setSelectedGroupId(group.id);
+                          setIsCreating(false);
+                          resetStepComposer();
+                        }}
+                        type="button"
+                      >
+                        <div className="tile-card-main">
+                          <div className="tile-card-header">
+                            <div className="tile-card-title-group">
+                              <strong>{group.name}</strong>
+                              <span className="tile-card-kicker">{formatSharedStepDate(group.updated_at)}</span>
+                            </div>
+                          </div>
+                          <p className="tile-card-description">{group.description || preview}</p>
+                          <div className="tile-card-facts" aria-label={`${group.name} facts`}>
+                            <span className="tile-card-fact">
+                              <strong>{stepCount}</strong>
+                              <small>steps</small>
+                            </span>
+                            <span className="tile-card-fact">
+                              <strong>{usageCount}</strong>
+                              <small>{usageCount === 1 ? "case" : "cases"}</small>
+                            </span>
+                            <span className="tile-card-fact">
+                              <strong>{selectedAppType?.name || "App type"}</strong>
+                              <small>scope</small>
+                            </span>
                           </div>
                         </div>
-                        <p className="tile-card-description">{group.description || preview}</p>
-                        <div className="tile-card-facts" aria-label={`${group.name} facts`}>
-                          <span className="tile-card-fact">
-                            <strong>{stepCount}</strong>
-                            <small>steps</small>
-                          </span>
-                          <span className="tile-card-fact">
-                            <strong>{usageCount}</strong>
-                            <small>{usageCount === 1 ? "case" : "cases"}</small>
-                          </span>
-                          <span className="tile-card-fact">
-                            <strong>{selectedAppType?.name || "App type"}</strong>
-                            <small>scope</small>
-                          </span>
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-                {!filteredGroups.length ? (
-                  <div className="empty-state compact">{sharedGroups.length ? "No shared groups match the current search." : "No shared step groups exist for this app type yet."}</div>
-                ) : null}
-              </div>
-            )}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {!sharedGroupsQuery.isLoading && !filteredGroups.length ? (
+                <div className="empty-state compact">{sharedGroups.length ? "No shared groups match the current search." : "No shared step groups exist for this app type yet."}</div>
+              ) : null}
+            </TileBrowserPane>
           </Panel>
         )}
         detailView={(

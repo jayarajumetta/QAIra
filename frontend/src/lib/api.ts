@@ -170,7 +170,7 @@ export const api = {
     list: () => request<User[]>("/users"),
     create: (input: { email: string; password_hash: string; name?: string; role_id: string }) =>
       request<{ id: string }>("/users", { method: "POST", body: JSON.stringify(input) }),
-    update: (id: string, input: Partial<{ email: string; password_hash: string; name: string; role_id: string }>) =>
+    update: (id: string, input: Partial<{ email: string; password_hash: string; name: string; role_id: string; avatar_data_url: string | null }>) =>
       request<{ updated: boolean }>(`/users/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/users/${id}`, { method: "DELETE" })
   },
@@ -387,7 +387,7 @@ export const api = {
       request<Execution[]>(`/executions${toQueryString(query)}`),
     get: (id: string) =>
       request<Execution>(`/executions/${id}`),
-    previewSmartPlan: (input: { project_id: string; app_type_id: string; integration_id?: string; release_scope: string; additional_context?: string; test_environment_id?: string; test_configuration_id?: string; test_data_set_id?: string }) =>
+    previewSmartPlan: (input: { project_id: string; app_type_id: string; integration_id?: string; release_scope: string; additional_context?: string; impacted_requirement_ids?: string[]; test_environment_id?: string; test_configuration_id?: string; test_data_set_id?: string }) =>
       request<SmartExecutionPreviewResponse>("/executions/smart-plan-preview", { method: "POST", body: JSON.stringify(input) }),
     create: (input: { project_id: string; app_type_id?: string; suite_ids?: string[]; test_case_ids?: string[]; test_environment_id?: string; test_configuration_id?: string; test_data_set_id?: string; assigned_to?: string; name?: string; created_by: string }) =>
       request<{ id: string }>("/executions", { method: "POST", body: JSON.stringify(input) }),

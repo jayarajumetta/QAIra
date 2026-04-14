@@ -4,6 +4,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../auth/AuthContext";
 import { ProjectDropdown } from "./ProjectDropdown";
+import { UserProfileDialog } from "./UserProfileDialog";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { api } from "../lib/api";
 
@@ -16,8 +17,8 @@ const navigation = [
   {
     label: "Main",
     items: [
-      { id: "overview", to: "/", label: "Dashboard", icon: DashboardIcon },
-      { id: "projects", to: "/projects", label: "Projects", icon: FolderIcon, countKey: "projects" }
+      { id: "overview", to: "/", label: "Dashboard", shortLabel: "Home", icon: DashboardIcon },
+      { id: "projects", to: "/projects", label: "Projects", shortLabel: "Projects", icon: FolderIcon, countKey: "projects" }
     ]
   },
   {
@@ -28,10 +29,10 @@ const navigation = [
         label: "Test Authoring",
         icon: FlaskIcon,
         children: [
-          { id: "requirements", to: "/requirements", label: "Requirements", icon: DocumentIcon },
-          { id: "test-cases", to: "/test-cases", label: "Test Cases", icon: PencilIcon },
-          { id: "shared-steps", to: "/shared-steps", label: "Shared Step Group", icon: SharedStepsIcon },
-          { id: "design", to: "/design", label: "Test Suites", icon: LayersIcon }
+          { id: "requirements", to: "/requirements", label: "Requirements", shortLabel: "Reqs", icon: DocumentIcon },
+          { id: "test-cases", to: "/test-cases", label: "Test Cases", shortLabel: "Cases", icon: PencilIcon },
+          { id: "shared-steps", to: "/shared-steps", label: "Shared Step Group", shortLabel: "Shared", icon: SharedStepsIcon },
+          { id: "design", to: "/design", label: "Test Suites", shortLabel: "Suites", icon: LayersIcon }
         ]
       },
       {
@@ -39,7 +40,7 @@ const navigation = [
         label: "Test Runs",
         icon: PlayIcon,
         children: [
-          { id: "executions", to: "/executions", label: "Executions", icon: RunIcon }
+          { id: "executions", to: "/executions", label: "Executions", shortLabel: "Runs", icon: RunIcon }
         ]
       },
       {
@@ -47,9 +48,9 @@ const navigation = [
         label: "Test Environment",
         icon: ServerIcon,
         children: [
-          { id: "test-environments", to: "/test-environments", label: "Environments", icon: ServerIcon },
-          { id: "test-data", to: "/test-data", label: "Test Data", icon: DatabaseIcon },
-          { id: "test-configurations", to: "/test-configurations", label: "Configurations", icon: SlidersIcon }
+          { id: "test-environments", to: "/test-environments", label: "Environments", shortLabel: "Env", icon: ServerIcon },
+          { id: "test-data", to: "/test-data", label: "Test Data", shortLabel: "Data", icon: DatabaseIcon },
+          { id: "test-configurations", to: "/test-configurations", label: "Configurations", shortLabel: "Config", icon: SlidersIcon }
         ]
       }
     ]
@@ -57,20 +58,24 @@ const navigation = [
   {
     label: "Administration",
     items: [
-      { id: "people", to: "/people", label: "Users", icon: UsersIcon },
-      { id: "integrations", to: "/integrations", label: "Integrations", icon: PlugIcon }
+      { id: "people", to: "/people", label: "Users", shortLabel: "Users", icon: UsersIcon },
+      { id: "integrations", to: "/integrations", label: "Integrations", shortLabel: "Connect", icon: PlugIcon }
     ]
   },
   {
     label: "Settings",
     items: [
-      { id: "support", to: "/support", label: "Support", icon: SupportIcon },
-      { id: "notifications", to: "/notifications", label: "Notifications", icon: BellIcon },
-      { id: "settings", to: "/settings", label: "Settings", icon: CogIcon },
-      { id: "feedback", to: "/feedback", label: "Reporting & Feedback", icon: ChatIcon }
+      { id: "support", to: "/support", label: "Support", shortLabel: "Support", icon: SupportIcon },
+      { id: "notifications", to: "/notifications", label: "Notifications", shortLabel: "Alerts", icon: BellIcon },
+      { id: "settings", to: "/settings", label: "Settings", shortLabel: "Settings", icon: CogIcon },
+      { id: "feedback", to: "/feedback", label: "Reporting & Feedback", shortLabel: "Feedback", icon: ChatIcon }
     ]
   }
 ] as const;
+
+function getNavigationItemLabel(item: { label: string; shortLabel?: string }, shouldCollapseSidebar: boolean) {
+  return shouldCollapseSidebar ? item.shortLabel || item.label : item.label;
+}
 
 export function AppShell() {
   const location = useLocation();
@@ -96,6 +101,7 @@ export function AppShell() {
   });
   const [isMobileViewport, setIsMobileViewport] = useState(() => window.matchMedia(MOBILE_SIDEBAR_BREAKPOINT).matches);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isProfileDialogOpen, setIsProfileDialogOpen] = useState(false);
   const [sidebarProjectId, setSidebarProjectId] = useCurrentProject();
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
     authoring: true,
@@ -261,10 +267,6 @@ export function AppShell() {
 
   const shouldCollapseSidebar = !isMobileViewport && isCollapsed;
   const sidebarClassName = `${shouldCollapseSidebar ? "sidebar is-collapsed" : "sidebar"}${isMobileSidebarOpen ? " is-mobile-open" : ""}`;
-  const userWorkspaceTarget = session?.user.id
-    ? { pathname: "/people", search: `?view=users&userId=${session.user.id}` }
-    : "/people";
-  const resolveNavTarget = (item: { id: string; to: string }) => item.id === "people" ? userWorkspaceTarget : item.to;
 
   useEffect(() => {
     document.documentElement.dataset.sidebar = shouldCollapseSidebar ? "collapsed" : "expanded";
@@ -338,6 +340,7 @@ export function AppShell() {
               type="button"
             >
               <MenuIcon />
+              <span className="sidebar-slot-label">Menu</span>
             </button>
           ) : null}
 
@@ -405,6 +408,7 @@ export function AppShell() {
                                 title={child.label}
                               >
                                 <span className="nav-link-icon" aria-hidden="true"><ChildIcon /></span>
+                                <span className="nav-link-label">{getNavigationItemLabel(child, shouldCollapseSidebar)}</span>
                               </NavLink>
                             );
                           })}
@@ -431,7 +435,7 @@ export function AppShell() {
                             to={firstChild?.to || "/"}
                           >
                             <span className="nav-link-icon" aria-hidden="true"><Icon /></span>
-                            {!shouldCollapseSidebar ? <span className="nav-link-label">{item.label}</span> : null}
+                            <span className="nav-link-label">{getNavigationItemLabel(item, shouldCollapseSidebar)}</span>
                           </NavLink>
 
                           {!shouldCollapseSidebar ? (
@@ -489,7 +493,7 @@ export function AppShell() {
                   return (
                     <NavLink
                       key={item.to}
-                      to={resolveNavTarget(item)}
+                      to={item.to}
                       className={({ isActive }) => isActive ? "nav-link is-active" : "nav-link"}
                       title={shouldCollapseSidebar ? item.label : undefined}
                       aria-label={item.label}
@@ -501,7 +505,7 @@ export function AppShell() {
                       style={{ opacity: isDisabled ? 0.5 : 1, cursor: isDisabled ? "not-allowed" : "pointer" }}
                     >
                       <span className="nav-link-icon" aria-hidden="true"><Icon /></span>
-                      {!shouldCollapseSidebar ? <span className="nav-link-label">{item.label}</span> : null}
+                      <span className="nav-link-label">{getNavigationItemLabel(item, shouldCollapseSidebar)}</span>
                       {!shouldCollapseSidebar && typeof badgeCount === "number" ? <span className="nav-link-badge">{badgeCount}</span> : null}
                     </NavLink>
                   );
@@ -536,18 +540,22 @@ export function AppShell() {
               type="button"
             >
               {theme === "dark" ? <MoonIcon /> : <SunIcon />}
+              <span className="sidebar-slot-label">Theme</span>
             </button>
           )}
 
-          <NavLink
-            aria-label="Open user profile"
-            className={({ isActive }) => isActive ? "user-chip user-chip-link is-active" : "user-chip user-chip-link"}
-            to={userWorkspaceTarget}
+          <button
+            aria-expanded={isProfileDialogOpen}
+            aria-haspopup="dialog"
+            aria-label="Open your profile"
+            className="user-chip user-chip-button"
+            onClick={() => setIsProfileDialogOpen(true)}
             title={shouldCollapseSidebar ? (session?.user.name || "Workspace user") : undefined}
+            type="button"
           >
             <div className="user-chip-head">
               <span className="user-chip-icon" aria-hidden="true">
-                <UsersIcon />
+                {session?.user.avatar_data_url ? <img alt="" className="user-chip-avatar" src={session.user.avatar_data_url} /> : <UserIcon />}
               </span>
               <div className="user-chip-copy">
                 <strong>{session?.user.name || "Workspace User"}</strong>
@@ -558,8 +566,9 @@ export function AppShell() {
                   </>
                 ) : null}
               </div>
+              {shouldCollapseSidebar ? <span className="sidebar-slot-label user-chip-slot-label">Profile</span> : null}
             </div>
-          </NavLink>
+          </button>
 
           <button 
             className="ghost-button sidebar-signout" 
@@ -569,7 +578,7 @@ export function AppShell() {
             title={shouldCollapseSidebar ? "Sign out" : undefined}
           >
             <LogoutIcon />
-            {!shouldCollapseSidebar ? <span>Sign out</span> : null}
+            {shouldCollapseSidebar ? <span className="sidebar-slot-label">Logout</span> : <span>Sign out</span>}
           </button>
         </div>
       </aside>
@@ -609,6 +618,8 @@ export function AppShell() {
         ) : null}
         <Outlet />
       </main>
+
+      <UserProfileDialog isOpen={isProfileDialogOpen} onClose={() => setIsProfileDialogOpen(false)} />
     </div>
   );
 }
@@ -623,6 +634,10 @@ function DashboardIcon() {
 
 function UsersIcon() {
   return <IconFrame><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" /><circle cx="9.5" cy="7" r="3.5" /><path d="M20 8.5a3 3 0 0 1 0 5.8" /><path d="M23 21v-2a4 4 0 0 0-3-3.85" /></IconFrame>;
+}
+
+function UserIcon() {
+  return <IconFrame><path d="M4 21v-1.6A4.4 4.4 0 0 1 8.4 15h7.2A4.4 4.4 0 0 1 20 19.4V21" /><circle cx="12" cy="8.2" r="3.6" /></IconFrame>;
 }
 
 function FolderIcon() {

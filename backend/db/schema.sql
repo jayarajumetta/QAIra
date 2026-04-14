@@ -12,6 +12,7 @@ CREATE TABLE users (
   email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   name TEXT,
+  avatar_data_url TEXT,
   auth_provider TEXT NOT NULL DEFAULT 'local',
   google_sub TEXT UNIQUE,
   email_verified BOOLEAN NOT NULL DEFAULT FALSE,

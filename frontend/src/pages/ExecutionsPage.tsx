@@ -102,6 +102,13 @@ type ExecutionEvidencePreviewState = {
   dataUrl: string;
 };
 
+type SmartExecutionRequirementOption = {
+  id: string;
+  title: string;
+  description: string | null;
+  linkedCaseCount: number;
+};
+
 const EMPTY_EXECUTION_RUN_SUMMARY: ExecutionRunSummary = {
   passed: 0,
   failed: 0,
@@ -431,6 +438,8 @@ export function ExecutionsPage() {
   const [smartExecutionIntegrationId, setSmartExecutionIntegrationId] = useState("");
   const [smartExecutionReleaseScope, setSmartExecutionReleaseScope] = useState("");
   const [smartExecutionAdditionalContext, setSmartExecutionAdditionalContext] = useState("");
+  const [selectedSmartRequirementIds, setSelectedSmartRequirementIds] = useState<string[]>([]);
+  const [smartExecutionRequirementSearch, setSmartExecutionRequirementSearch] = useState("");
   const [smartExecutionPreview, setSmartExecutionPreview] = useState<SmartExecutionPreviewResponse | null>(null);
   const [selectedSmartExecutionCaseIds, setSelectedSmartExecutionCaseIds] = useState<string[]>([]);
   const [smartExecutionPreviewMessage, setSmartExecutionPreviewMessage] = useState("");
@@ -484,6 +493,16 @@ export function ExecutionsPage() {
     queryFn: () => api.appTypes.list({ project_id: projectId }),
     enabled: Boolean(projectId)
   });
+  const requirementsQuery = useQuery({
+    queryKey: ["requirements", projectId],
+    queryFn: () => api.requirements.list({ project_id: projectId }),
+    enabled: Boolean(projectId)
+  });
+  const smartExecutionCasesQuery = useQuery({
+    queryKey: ["smart-execution-cases", appTypeId],
+    queryFn: () => api.testCases.list({ app_type_id: appTypeId }),
+    enabled: Boolean(appTypeId)
+  });
   const scopedSuitesQuery = useQuery({
     queryKey: ["execution-suites", appTypeId],
     queryFn: () => api.testSuites.list({ app_type_id: appTypeId }),
@@ -521,6 +540,8 @@ export function ExecutionsPage() {
   const projectMembers = projectMembersQuery.data || [];
   const executions = executionsQuery.data || [];
   const appTypes = appTypesQuery.data || [];
+  const requirements = requirementsQuery.data || [];
+  const smartExecutionLibraryCases = smartExecutionCasesQuery.data || [];
   const scopeSuites = scopedSuitesQuery.data || [];
   const executionResults = executionResultsQuery.data || [];
   const allExecutionResults = allExecutionResultsQuery.data || [];
@@ -566,6 +587,49 @@ export function ExecutionsPage() {
       }, {}),
     [appTypes]
   );
+  const smartExecutionRequirementOptions = useMemo<SmartExecutionRequirementOption[]>(() => {
+    const linkedCaseIdsByRequirementId = smartExecutionLibraryCases.reduce<Map<string, Set<string>>>((accumulator, testCase) => {
+      const requirementIds = [...new Set([...(testCase.requirement_ids || []), testCase.requirement_id].filter(Boolean))] as string[];
+
+      requirementIds.forEach((requirementId) => {
+        const scopedCaseIds = accumulator.get(requirementId) || new Set<string>();
+        scopedCaseIds.add(testCase.id);
+        accumulator.set(requirementId, scopedCaseIds);
+      });
+
+      return accumulator;
+    }, new Map<string, Set<string>>());
+
+    return requirements
+      .filter((requirement) => linkedCaseIdsByRequirementId.has(requirement.id))
+      .map((requirement) => ({
+        id: requirement.id,
+        title: requirement.title,
+        description: requirement.description,
+        linkedCaseCount: linkedCaseIdsByRequirementId.get(requirement.id)?.size || 0
+      }))
+      .sort((left, right) => {
+        if (right.linkedCaseCount !== left.linkedCaseCount) {
+          return right.linkedCaseCount - left.linkedCaseCount;
+        }
+
+        return left.title.localeCompare(right.title);
+      });
+  }, [requirements, smartExecutionLibraryCases]);
+
+  useEffect(() => {
+    const validRequirementIds = new Set(smartExecutionRequirementOptions.map((requirement) => requirement.id));
+
+    setSelectedSmartRequirementIds((current) => {
+      const next = current.filter((requirementId) => validRequirementIds.has(requirementId));
+
+      if (next.length === current.length && next.every((requirementId, index) => requirementId === current[index])) {
+        return current;
+      }
+
+      return next;
+    });
+  }, [smartExecutionRequirementOptions]);
 
   const showSuccess = (text: string) => {
     setMessageTone("success");
@@ -600,6 +664,8 @@ export function ExecutionsPage() {
     setSmartExecutionIntegrationId("");
     setSmartExecutionReleaseScope("");
     setSmartExecutionAdditionalContext("");
+    setSelectedSmartRequirementIds([]);
+    setSmartExecutionRequirementSearch("");
     resetSmartExecutionPreview();
   };
 
@@ -615,6 +681,8 @@ export function ExecutionsPage() {
     setAppTypeId("");
     setSelectedSuiteIds([]);
     setSelectedExecutionAssigneeId("");
+    setSelectedSmartRequirementIds([]);
+    setSmartExecutionRequirementSearch("");
     resetExecutionContextSelection();
     resetSmartExecutionPreview();
   };
@@ -622,6 +690,8 @@ export function ExecutionsPage() {
   const handleExecutionAppTypeChange = (value: string) => {
     setAppTypeId(value);
     setSelectedSuiteIds([]);
+    setSelectedSmartRequirementIds([]);
+    setSmartExecutionRequirementSearch("");
     resetExecutionContextSelection();
     resetSmartExecutionPreview();
   };
@@ -653,6 +723,23 @@ export function ExecutionsPage() {
 
   const handleSmartExecutionAdditionalContextChange = (value: string) => {
     setSmartExecutionAdditionalContext(value);
+    resetSmartExecutionPreview();
+  };
+
+  const handleToggleSmartExecutionRequirement = (requirementId: string) => {
+    setSelectedSmartRequirementIds((current) =>
+      current.includes(requirementId) ? current.filter((id) => id !== requirementId) : [...current, requirementId]
+    );
+    resetSmartExecutionPreview();
+  };
+
+  const handleClearSmartExecutionRequirements = () => {
+    setSelectedSmartRequirementIds([]);
+    resetSmartExecutionPreview();
+  };
+
+  const handleSelectSmartExecutionRequirements = (requirementIds: string[]) => {
+    setSelectedSmartRequirementIds(requirementIds);
     resetSmartExecutionPreview();
   };
 
@@ -1123,6 +1210,7 @@ export function ExecutionsPage() {
         integration_id: smartExecutionIntegrationId || undefined,
         release_scope: smartExecutionReleaseScope,
         additional_context: smartExecutionAdditionalContext || undefined,
+        impacted_requirement_ids: selectedSmartRequirementIds.length ? selectedSmartRequirementIds : undefined,
         test_environment_id: selectedExecutionEnvironmentId || undefined,
         test_configuration_id: selectedExecutionConfigurationId || undefined,
         test_data_set_id: selectedExecutionDataSetId || undefined
@@ -1134,7 +1222,7 @@ export function ExecutionsPage() {
       setSmartExecutionPreviewTone("success");
       setSmartExecutionPreviewMessage(
         response.cases.length
-          ? `${response.matched_case_count} impacted case${response.matched_case_count === 1 ? "" : "s"} identified from ${response.source_case_count} existing cases using ${response.integration.name}.`
+          ? `${response.matched_case_count} impacted case${response.matched_case_count === 1 ? "" : "s"} identified from ${response.source_case_count} existing case${response.source_case_count === 1 ? "" : "s"} using ${response.integration.name}${selectedSmartRequirementIds.length ? ` and ${selectedSmartRequirementIds.length} selected requirement${selectedSmartRequirementIds.length === 1 ? "" : "s"}` : ""}.`
           : `No impacted cases were identified using ${response.integration.name}. Refine the release scope or add more context and try again.`
       );
     } catch (error) {
@@ -1348,6 +1436,19 @@ export function ExecutionsPage() {
       showError(error, "Unable to save evidence image");
     } finally {
       setUploadingEvidenceStepId((current) => (current === step.id ? "" : current));
+    }
+  };
+
+  const handleDeleteStepEvidence = async (step: TestStep) => {
+    if (!selectedExecution || !selectedTestCaseId) {
+      return;
+    }
+
+    try {
+      await persistCaseResult(selectedTestCaseId, { stepEvidencePatch: { [step.id]: null } });
+      showSuccess("Evidence image removed.");
+    } catch (error) {
+      showError(error, "Unable to delete evidence image");
     }
   };
 
@@ -2074,6 +2175,7 @@ export function ExecutionsPage() {
                                               key={step.id}
                                               note={stepNotes[step.id] || ""}
                                               onFail={() => void handleRecordStep(step.id, "failed")}
+                                              onDeleteEvidence={() => void handleDeleteStepEvidence(step)}
                                               onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
                                               onPass={() => void handleRecordStep(step.id, "passed")}
                                               onUploadEvidence={(file) => void handleUploadStepEvidence(step, file)}
@@ -2105,6 +2207,7 @@ export function ExecutionsPage() {
                                     key={step.id}
                                     note={stepNotes[step.id] || ""}
                                     onFail={() => void handleRecordStep(step.id, "failed")}
+                                    onDeleteEvidence={() => void handleDeleteStepEvidence(step)}
                                     onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
                                     onPass={() => void handleRecordStep(step.id, "passed")}
                                     onUploadEvidence={(file) => void handleUploadStepEvidence(step, file)}
@@ -2517,10 +2620,14 @@ export function ExecutionsPage() {
           onSuiteSelectionChange={setSelectedSuiteIds}
           onSelectAllSmartExecutionCases={() => setSelectedSmartExecutionCaseIds(smartPreviewCases.map((testCase) => testCase.test_case_id))}
           onClearSmartExecutionCases={() => setSelectedSmartExecutionCaseIds([])}
+          onClearSmartExecutionRequirements={handleClearSmartExecutionRequirements}
           onSmartExecutionAdditionalContextChange={handleSmartExecutionAdditionalContextChange}
           onSmartExecutionIntegrationChange={handleSmartExecutionIntegrationChange}
+          onSmartExecutionRequirementSearchChange={setSmartExecutionRequirementSearch}
           onSmartExecutionReleaseScopeChange={handleSmartExecutionReleaseScopeChange}
+          onSelectAllSmartExecutionRequirements={(requirementIds) => handleSelectSmartExecutionRequirements(requirementIds)}
           onSubmit={(event) => void handleCreateExecution(event)}
+          onToggleSmartExecutionRequirement={handleToggleSmartExecutionRequirement}
           onToggleSmartExecutionCase={(testCaseId) =>
             setSelectedSmartExecutionCaseIds((current) =>
               current.includes(testCaseId) ? current.filter((id) => id !== testCaseId) : [...current, testCaseId]
@@ -2542,7 +2649,10 @@ export function ExecutionsPage() {
           smartExecutionPreview={smartExecutionPreview}
           smartExecutionPreviewMessage={smartExecutionPreviewMessage}
           smartExecutionPreviewTone={smartExecutionPreviewTone}
+          smartExecutionRequirementOptions={smartExecutionRequirementOptions}
+          smartExecutionRequirementSearch={smartExecutionRequirementSearch}
           smartExecutionReleaseScope={smartExecutionReleaseScope}
+          selectedSmartRequirementIds={selectedSmartRequirementIds}
         />
       ) : null}
     </div>
@@ -2981,9 +3091,9 @@ function StepKindIconBadge({
 
   return (
     <span
-      aria-label={kind === "reusable" ? "Shared Steps" : label}
+      aria-label={label}
       className={["step-kind-badge", tone === "default" ? "" : `is-${tone}`].filter(Boolean).join(" ")}
-      title={kind === "reusable" ? "Shared Steps" : label}
+      title={label}
     >
       {icon}
     </span>
@@ -3022,6 +3132,18 @@ function ExecutionEvidencePreviewIcon() {
     <ExecutionIconShell>
       <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
       <circle cx="12" cy="12" r="2.5" />
+    </ExecutionIconShell>
+  );
+}
+
+function ExecutionEvidenceDeleteIcon() {
+  return (
+    <ExecutionIconShell>
+      <path d="M4 7h16" />
+      <path d="M9 7V5.8A1.8 1.8 0 0 1 10.8 4h2.4A1.8 1.8 0 0 1 15 5.8V7" />
+      <path d="M7 7l.8 11.1A2 2 0 0 0 9.8 20h4.4a2 2 0 0 0 2-1.9L17 7" />
+      <path d="M10 11v5" />
+      <path d="M14 11v5" />
     </ExecutionIconShell>
   );
 }
@@ -3172,11 +3294,11 @@ function ExecutionStepGroupRow({
               <span aria-hidden="true" className={isExpanded ? "execution-step-group-chevron is-expanded" : "execution-step-group-chevron"}>
                 <ExecutionAccordionChevronIcon />
               </span>
+              <StepKindIconBadge kind={kind} label={stepKind.label} tone={stepKind.tone} />
               <strong>{name}</strong>
             </span>
             <span className="execution-step-group-meta">
               <span className="execution-step-group-count">{stepCount} step{stepCount === 1 ? "" : "s"}</span>
-              <StepKindIconBadge kind={kind} label={stepKind.label} tone={stepKind.tone} />
             </span>
           </span>
           <span>{stepKind.detail} · {isExpanded ? "Expanded" : "Collapsed"}</span>
@@ -3197,6 +3319,7 @@ function ExecutionCompactStepRow({
   onToggleSelect,
   onPass,
   onFail,
+  onDeleteEvidence,
   onNoteBlur,
   onUploadEvidence,
   onViewEvidence
@@ -3211,13 +3334,18 @@ function ExecutionCompactStepRow({
   onToggleSelect: (checked: boolean) => void;
   onPass: () => void;
   onFail: () => void;
+  onDeleteEvidence: () => void;
   onNoteBlur: (value: string) => void;
   onUploadEvidence: (file: File) => void;
   onViewEvidence: () => void;
 }) {
   const evidenceInputRef = useRef<HTMLInputElement | null>(null);
+  const isGroupedStep = Boolean(step.group_id);
   const resolvedKind = step.group_name ? step.group_kind || "local" : step.group_kind;
   const stepKind = getExecutionStepKindMeta(resolvedKind);
+  const stepBadgeKind = isGroupedStep ? undefined : resolvedKind;
+  const stepBadgeLabel = isGroupedStep ? "Standard step" : stepKind.label;
+  const stepBadgeTone = isGroupedStep ? "default" : stepKind.tone;
   const toneClass = [
     "execution-step-row",
     status === "passed" ? "is-passed" : "",
@@ -3242,17 +3370,7 @@ function ExecutionCompactStepRow({
       </span>
       <div className="execution-step-col-action execution-step-copy" role="cell">
         <div className="execution-step-badges">
-          <StepKindIconBadge kind={resolvedKind} label={stepKind.label} tone={stepKind.tone} />
-          {step.group_name ? (
-            <span
-              className={[
-                "execution-step-group-chip",
-                stepKind.tone === "shared" ? "is-shared" : stepKind.tone === "local" ? "is-local" : ""
-              ].filter(Boolean).join(" ")}
-            >
-              {step.group_name}
-            </span>
-          ) : null}
+          <StepKindIconBadge kind={stepBadgeKind} label={stepBadgeLabel} tone={stepBadgeTone} />
         </div>
         <span className="execution-step-clamp" title={step.action || ""}>
           {step.action || "—"}
@@ -3330,16 +3448,28 @@ function ExecutionCompactStepRow({
               <span>{isUploadingEvidence ? "Uploading…" : evidence ? "Replace image" : "Upload image"}</span>
             </button>
             {evidence ? (
-              <button
-                className="execution-step-evidence-link"
-                disabled={isUploadingEvidence}
-                onClick={onViewEvidence}
-                title={evidence.fileName || "View saved evidence image"}
-                type="button"
-              >
-                <ExecutionEvidencePreviewIcon />
-                <span>{evidence.fileName || "View image"}</span>
-              </button>
+              <>
+                <button
+                  className="execution-step-evidence-link"
+                  disabled={isUploadingEvidence}
+                  onClick={onViewEvidence}
+                  title={evidence.fileName || "View saved evidence image"}
+                  type="button"
+                >
+                  <ExecutionEvidencePreviewIcon />
+                  <span>{evidence.fileName || "View image"}</span>
+                </button>
+                <button
+                  className="execution-step-evidence-delete"
+                  disabled={isLocked || isUploadingEvidence}
+                  onClick={onDeleteEvidence}
+                  title="Delete saved evidence image"
+                  type="button"
+                >
+                  <ExecutionEvidenceDeleteIcon />
+                  <span>Delete image</span>
+                </button>
+              </>
             ) : (
               <span className="execution-step-evidence-empty">No image uploaded</span>
             )}
@@ -3483,7 +3613,10 @@ function ExecutionCreateModal({
   smartExecutionIntegrationId,
   smartExecutionReleaseScope,
   smartExecutionAdditionalContext,
+  smartExecutionRequirementOptions,
+  smartExecutionRequirementSearch,
   smartExecutionPreview,
+  selectedSmartRequirementIds,
   selectedSmartExecutionCaseIds,
   smartExecutionPreviewMessage,
   smartExecutionPreviewTone,
@@ -3497,7 +3630,11 @@ function ExecutionCreateModal({
   onSmartExecutionIntegrationChange,
   onSmartExecutionReleaseScopeChange,
   onSmartExecutionAdditionalContextChange,
+  onSmartExecutionRequirementSearchChange,
+  onToggleSmartExecutionRequirement,
   onToggleSmartExecutionCase,
+  onSelectAllSmartExecutionRequirements,
+  onClearSmartExecutionRequirements,
   onSelectAllSmartExecutionCases,
   onClearSmartExecutionCases,
   canCreateExecution,
@@ -3528,7 +3665,10 @@ function ExecutionCreateModal({
   smartExecutionIntegrationId: string;
   smartExecutionReleaseScope: string;
   smartExecutionAdditionalContext: string;
+  smartExecutionRequirementOptions: SmartExecutionRequirementOption[];
+  smartExecutionRequirementSearch: string;
   smartExecutionPreview: SmartExecutionPreviewResponse | null;
+  selectedSmartRequirementIds: string[];
   selectedSmartExecutionCaseIds: string[];
   smartExecutionPreviewMessage: string;
   smartExecutionPreviewTone: "success" | "error";
@@ -3542,7 +3682,11 @@ function ExecutionCreateModal({
   onSmartExecutionIntegrationChange: (value: string) => void;
   onSmartExecutionReleaseScopeChange: (value: string) => void;
   onSmartExecutionAdditionalContextChange: (value: string) => void;
+  onSmartExecutionRequirementSearchChange: (value: string) => void;
+  onToggleSmartExecutionRequirement: (requirementId: string) => void;
   onToggleSmartExecutionCase: (testCaseId: string) => void;
+  onSelectAllSmartExecutionRequirements: (requirementIds: string[]) => void;
+  onClearSmartExecutionRequirements: () => void;
   onSelectAllSmartExecutionCases: () => void;
   onClearSmartExecutionCases: () => void;
   canCreateExecution: boolean;
@@ -3553,6 +3697,15 @@ function ExecutionCreateModal({
 }) {
   const isSmartMode = executionCreateMode === "smart";
   const smartPreviewCases = smartExecutionPreview?.cases || [];
+  const normalizedRequirementSearch = smartExecutionRequirementSearch.trim().toLowerCase();
+  const filteredSmartRequirementOptions = normalizedRequirementSearch
+    ? smartExecutionRequirementOptions.filter((requirement) =>
+        [requirement.title, requirement.description || ""].some((value) => value.toLowerCase().includes(normalizedRequirementSearch))
+      )
+    : smartExecutionRequirementOptions;
+  const areAllVisibleSmartRequirementsSelected =
+    Boolean(filteredSmartRequirementOptions.length)
+    && filteredSmartRequirementOptions.every((requirement) => selectedSmartRequirementIds.includes(requirement.id));
   const selectedSmartCaseCount = selectedSmartExecutionCaseIds.length;
   const areAllSmartCasesSelected = Boolean(smartPreviewCases.length) && selectedSmartCaseCount === smartPreviewCases.length;
 
@@ -3716,6 +3869,77 @@ function ExecutionCreateModal({
                       />
                     </FormField>
 
+                    <FormField label="Impacted requirements">
+                      <div className="execution-smart-requirements-panel">
+                        <div className="execution-smart-requirement-toolbar">
+                          <input
+                            placeholder="Filter linked requirements"
+                            value={smartExecutionRequirementSearch}
+                            onChange={(event) => onSmartExecutionRequirementSearchChange(event.target.value)}
+                          />
+                          <button
+                            className="ghost-button"
+                            disabled={!filteredSmartRequirementOptions.length || areAllVisibleSmartRequirementsSelected}
+                            onClick={() => onSelectAllSmartExecutionRequirements(filteredSmartRequirementOptions.map((requirement) => requirement.id))}
+                            type="button"
+                          >
+                            Select visible
+                          </button>
+                          <button
+                            className="ghost-button"
+                            disabled={!selectedSmartRequirementIds.length}
+                            onClick={onClearSmartExecutionRequirements}
+                            type="button"
+                          >
+                            Clear
+                          </button>
+                        </div>
+
+                        {smartExecutionRequirementOptions.length ? (
+                          <div className="execution-smart-requirement-list">
+                            {filteredSmartRequirementOptions.map((requirement) => {
+                              const isSelected = selectedSmartRequirementIds.includes(requirement.id);
+
+                              return (
+                                <label
+                                  className={isSelected ? "execution-smart-requirement-card is-selected" : "execution-smart-requirement-card"}
+                                  key={requirement.id}
+                                >
+                                  <input
+                                    checked={isSelected}
+                                    onChange={() => onToggleSmartExecutionRequirement(requirement.id)}
+                                    type="checkbox"
+                                  />
+                                  <div className="execution-smart-requirement-copy">
+                                    <strong>{requirement.title}</strong>
+                                    <span>{requirement.description || "Requirement-linked coverage available in this app type."}</span>
+                                  </div>
+                                  <span className="execution-smart-requirement-count">
+                                    {requirement.linkedCaseCount} case{requirement.linkedCaseCount === 1 ? "" : "s"}
+                                  </span>
+                                </label>
+                              );
+                            })}
+
+                            {!filteredSmartRequirementOptions.length ? (
+                              <div className="empty-state compact">No linked requirements match the current search.</div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div className="empty-state compact">No requirement-linked test cases are available for this app type yet.</div>
+                        )}
+                      </div>
+                    </FormField>
+
+                    <div className="detail-summary compact-summary">
+                      <strong>{selectedSmartRequirementIds.length ? `${selectedSmartRequirementIds.length} impacted requirement${selectedSmartRequirementIds.length === 1 ? "" : "s"} selected` : "Requirement filter is optional"}</strong>
+                      <span>
+                        {selectedSmartRequirementIds.length
+                          ? "AI will screen only the cases linked to the selected requirements before building the Default execution suite."
+                          : "Choose impacted requirements if you want AI to narrow the candidate cases before planning the execution."}
+                      </span>
+                    </div>
+
                     <div className="detail-summary compact-summary">
                       <strong>{smartExecutionPreview?.default_suite.name || "Default"} suite target</strong>
                       <span>AI-selected cases are staged under the built-in Default suite so the run stays focused on impacted coverage instead of suite hierarchy.</span>
@@ -3730,7 +3954,9 @@ function ExecutionCreateModal({
                     <span>
                       {smartExecutionPreview
                         ? `${smartExecutionPreview.source_case_count} existing cases were screened and ${smartExecutionPreview.matched_case_count} cases were suggested for this run.`
-                        : "AI uses the selected project, app type, execution context, and existing cases exported as CSV."}
+                        : selectedSmartRequirementIds.length
+                          ? `AI will use the selected project, app type, execution context, and only the cases linked to ${selectedSmartRequirementIds.length} selected requirement${selectedSmartRequirementIds.length === 1 ? "" : "s"}.`
+                          : "AI uses the selected project, app type, execution context, and existing cases exported as CSV."}
                     </span>
                   </div>
 

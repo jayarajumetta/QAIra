@@ -58,7 +58,7 @@ const getSessionRole = async (id) => {
 
 const selectUserForSession = async (id) => {
   const user = await db.prepare(`
-    SELECT id, email, name, auth_provider, email_verified, created_at
+    SELECT id, email, name, avatar_data_url, auth_provider, email_verified, created_at
     FROM users
     WHERE id = ?
   `).get(id);

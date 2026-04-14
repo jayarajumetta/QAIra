@@ -2,6 +2,7 @@ export type User = {
   id: string;
   email: string;
   name: string | null;
+  avatar_data_url?: string | null;
   role?: "admin" | "member";
   auth_provider?: "local" | "google";
   email_verified?: boolean;

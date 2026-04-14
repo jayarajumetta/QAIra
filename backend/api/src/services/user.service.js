@@ -5,6 +5,56 @@ const normalizeEmail = (email) => {
   return email.toLowerCase().trim();
 };
 
+const normalizeName = (value) => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    throw new Error("Name must be a string");
+  }
+
+  const normalized = value.trim();
+  return normalized || null;
+};
+
+const IMAGE_DATA_URL_PATTERN = /^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+$/i;
+const MAX_AVATAR_DATA_URL_LENGTH = 2_000_000;
+
+const normalizeAvatarDataUrl = (value) => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    throw new Error("Avatar image must be provided as a data URL");
+  }
+
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.length > MAX_AVATAR_DATA_URL_LENGTH) {
+    throw new Error("Avatar image is too large. Upload a smaller image and try again.");
+  }
+
+  if (!IMAGE_DATA_URL_PATTERN.test(normalized)) {
+    throw new Error("Avatar image must be a valid base64-encoded image data URL.");
+  }
+
+  return normalized;
+};
+
 exports.createUser = async ({ email, password_hash, name, role_id }) => {
   if (!email || !password_hash || !role_id) {
     throw new Error("Missing required fields");
@@ -37,7 +87,7 @@ exports.createUser = async ({ email, password_hash, name, role_id }) => {
   `);
 
   const transaction = db.transaction(async () => {
-    await createUserStatement.run(id, normalizedEmail, password_hash, name || null);
+    await createUserStatement.run(id, normalizedEmail, password_hash, normalizeName(name));
 
     for (const project of projects) {
       await createMembership.run(uuid(), project.id, id, role_id);
@@ -51,7 +101,7 @@ exports.createUser = async ({ email, password_hash, name, role_id }) => {
 
 exports.getUsers = async () => {
   return db.prepare(`
-    SELECT users.id, users.email, users.name, users.created_at,
+    SELECT users.id, users.email, users.name, users.avatar_data_url, users.created_at,
       (
         SELECT roles.name
         FROM project_members
@@ -67,7 +117,7 @@ exports.getUsers = async () => {
 
 exports.getUser = async (id) => {
   const user = await db.prepare(`
-    SELECT users.id, users.email, users.name, users.created_at,
+    SELECT users.id, users.email, users.name, users.avatar_data_url, users.created_at,
       (
         SELECT roles.name
         FROM project_members
@@ -113,9 +163,18 @@ exports.updateUser = async (id, data) => {
     if (!role) throw new Error("Role not found");
   }
 
+  const nextAvatarDataUrl =
+    data.avatar_data_url !== undefined
+      ? normalizeAvatarDataUrl(data.avatar_data_url)
+      : existing.avatar_data_url;
+  const nextName =
+    data.name !== undefined
+      ? normalizeName(data.name)
+      : existing.name;
+
   const updateUserStatement = db.prepare(`
     UPDATE users
-    SET email = ?, password_hash = ?, name = ?
+    SET email = ?, password_hash = ?, name = ?, avatar_data_url = ?
     WHERE id = ?
   `);
   const updateMembershipRoles = db.prepare(`
@@ -129,7 +188,8 @@ exports.updateUser = async (id, data) => {
     await updateUserStatement.run(
       emailToUpdate,
       data.password_hash ?? existing.password_hash,
-      data.name ?? existing.name,
+      nextName,
+      nextAvatarDataUrl,
       id
     );
 

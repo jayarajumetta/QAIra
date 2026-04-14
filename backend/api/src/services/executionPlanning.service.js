@@ -79,12 +79,18 @@ const selectSuiteMappingsForPlanning = db.prepare(`
 `);
 
 const selectRequirementMappingsForPlanning = db.prepare(`
-  SELECT rtc.test_case_id, r.title AS requirement_title
+  SELECT rtc.test_case_id, rtc.requirement_id, r.title AS requirement_title
   FROM requirement_test_cases rtc
   JOIN requirements r ON r.id = rtc.requirement_id
   JOIN test_cases tc ON tc.id = rtc.test_case_id
   WHERE tc.app_type_id = ?
   ORDER BY rtc.test_case_id ASC, r.title ASC
+`);
+
+const selectRequirementForPlanning = db.prepare(`
+  SELECT id, project_id, title
+  FROM requirements
+  WHERE id = ?
 `);
 
 const selectStepsForPlanning = db.prepare(`
@@ -332,7 +338,10 @@ const buildCaseMaps = ({ cases, suiteMappings, requirementMappings, stepRows }) 
 
   const requirementsByCaseId = requirementMappings.reduce((accumulator, mapping) => {
     accumulator[mapping.test_case_id] = accumulator[mapping.test_case_id] || [];
-    accumulator[mapping.test_case_id].push(mapping.requirement_title);
+    accumulator[mapping.test_case_id].push({
+      id: mapping.requirement_id,
+      title: mapping.requirement_title
+    });
     return accumulator;
   }, {});
 
@@ -345,7 +354,9 @@ const buildCaseMaps = ({ cases, suiteMappings, requirementMappings, stepRows }) 
   return cases.map((testCase) => {
     const steps = stepsByCaseId[testCase.id] || [];
     const suite_names = uniqueList(suitesByCaseId[testCase.id] || []);
-    const requirement_titles = uniqueList(requirementsByCaseId[testCase.id] || []);
+    const requirementMappingsForCase = requirementsByCaseId[testCase.id] || [];
+    const requirement_ids = uniqueList(requirementMappingsForCase.map((mapping) => mapping.id));
+    const requirement_titles = uniqueList(requirementMappingsForCase.map((mapping) => mapping.title));
     const summarizedSteps = steps
       .slice(0, SMART_EXECUTION_MAX_STEP_COUNT_IN_SUMMARY)
       .map((step) => {
@@ -375,6 +386,7 @@ const buildCaseMaps = ({ cases, suiteMappings, requirementMappings, stepRows }) 
       priority: testCase.priority ?? null,
       status: testCase.status || null,
       suite_names,
+      requirement_ids,
       requirement_titles,
       step_count: steps.length,
       step_summary
@@ -432,6 +444,7 @@ const buildPrompt = ({
   appType,
   releaseScope,
   additionalContext,
+  selectedRequirementTitles,
   executionContext,
   sourceCaseCount,
   candidateCaseCount,
@@ -452,6 +465,14 @@ const buildPrompt = ({
     prompt.push("");
     prompt.push("Additional release/testing context:");
     prompt.push(additionalContext);
+  }
+
+  if (selectedRequirementTitles.length) {
+    prompt.push("");
+    prompt.push("Selected impacted requirements:");
+    selectedRequirementTitles.forEach((title) => {
+      prompt.push(`- ${title}`);
+    });
   }
 
   if (executionContext.length) {
@@ -489,6 +510,9 @@ const buildPrompt = ({
   prompt.push("- Use only exact test_case_id values that exist in the provided CSV.");
   if (isPartialLibrary) {
     prompt.push("- The CSV is a relevance-ranked excerpt of the full library based on the release scope and selected execution context.");
+  }
+  if (selectedRequirementTitles.length) {
+    prompt.push("- The CSV is already constrained to cases linked to the selected impacted requirements.");
   }
   prompt.push("- Include every materially impacted case that should be executed for confidence in this release.");
   prompt.push("- Exclude obviously unrelated cases.");
@@ -556,6 +580,7 @@ const selectCasesForPrompt = ({
   scopedCases,
   releaseScope,
   additionalContext,
+  selectedRequirementTitles,
   executionContext,
   appType,
   csvBudget,
@@ -564,6 +589,7 @@ const selectCasesForPrompt = ({
   const searchTerms = tokenizePlanningText(
     releaseScope,
     additionalContext,
+    selectedRequirementTitles.join(" "),
     executionContext.join(" "),
     appType.name,
     appType.type
@@ -624,6 +650,7 @@ const requestSmartExecutionPlan = async ({
   appType,
   releaseScope,
   additionalContext,
+  selectedRequirementTitles,
   executionContext,
   scopedCases
 }) => {
@@ -634,6 +661,7 @@ const requestSmartExecutionPlan = async ({
       scopedCases,
       releaseScope,
       additionalContext,
+      selectedRequirementTitles,
       executionContext,
       appType,
       csvBudget: attempt.csvBudget,
@@ -644,6 +672,7 @@ const requestSmartExecutionPlan = async ({
       appType,
       releaseScope,
       additionalContext,
+      selectedRequirementTitles,
       executionContext,
       sourceCaseCount: scopedCases.length,
       candidateCaseCount: promptCases.length,
@@ -685,12 +714,16 @@ exports.previewSmartExecution = async ({
   integration_id,
   release_scope,
   additional_context,
+  impacted_requirement_ids,
   test_environment_id,
   test_configuration_id,
   test_data_set_id
 }) => {
   const releaseScope = normalizeText(release_scope);
   const additionalContext = normalizeText(additional_context);
+  const impactedRequirementIds = uniqueList(
+    (Array.isArray(impacted_requirement_ids) ? impacted_requirement_ids : []).map((value) => normalizeText(value))
+  );
 
   if (!project_id || !appType?.id || !releaseScope) {
     throw new Error("Project, app type, and release scope are required");
@@ -739,6 +772,29 @@ exports.previewSmartExecution = async ({
     requirementMappings,
     stepRows
   });
+  const selectedRequirements = impactedRequirementIds.length
+    ? impactedRequirementIds.map((requirementId) => {
+        const requirement = selectRequirementForPlanning.get(requirementId);
+
+        if (!requirement) {
+          throw new Error(`Requirement not found: ${requirementId}`);
+        }
+
+        if (requirement.project_id !== project_id) {
+          throw new Error("Impacted requirements must belong to the selected project");
+        }
+
+        return requirement;
+      })
+    : [];
+  const filteredScopedCases = impactedRequirementIds.length
+    ? scopedCases.filter((testCase) => testCase.requirement_ids.some((requirementId) => impactedRequirementIds.includes(requirementId)))
+    : scopedCases;
+
+  if (impactedRequirementIds.length && !filteredScopedCases.length) {
+    throw new Error("No existing test cases are linked to the selected impacted requirements in this app type yet.");
+  }
+
   const executionContext = [
     selectedEnvironment ? `Environment: ${selectedEnvironment.summary}` : null,
     selectedConfiguration ? `Configuration: ${selectedConfiguration.summary}` : null,
@@ -749,11 +805,12 @@ exports.previewSmartExecution = async ({
     appType,
     releaseScope,
     additionalContext,
+    selectedRequirementTitles: selectedRequirements.map((requirement) => requirement.title),
     executionContext,
-    scopedCases
+    scopedCases: filteredScopedCases
   });
   const caseMap = new Map(
-    scopedCases
+    filteredScopedCases
       .filter((testCase) => promptCaseIds.includes(testCase.id))
       .map((testCase) => [testCase.id, testCase])
   );
@@ -832,7 +889,7 @@ exports.previewSmartExecution = async ({
       id: DIRECT_CASE_SUITE_ID,
       name: DIRECT_CASE_SUITE_NAME
     },
-    source_case_count: scopedCases.length,
+    source_case_count: filteredScopedCases.length,
     matched_case_count: normalizedCases.length,
     execution_name:
       normalizeText(payload?.execution_name || payload?.executionName) ||
@@ -840,7 +897,7 @@ exports.previewSmartExecution = async ({
     summary:
       normalizeText(payload?.summary) ||
       (normalizedCases.length
-        ? `${normalizedCases.length} impacted test case${normalizedCases.length === 1 ? "" : "s"} selected from ${scopedCases.length} existing cases.`
+        ? `${normalizedCases.length} impacted test case${normalizedCases.length === 1 ? "" : "s"} selected from ${filteredScopedCases.length} existing case${filteredScopedCases.length === 1 ? "" : "s"}${selectedRequirements.length ? " linked to the selected requirements" : ""}.`
         : "No materially impacted test cases were identified for this release scope."),
     cases: normalizedCases
   };

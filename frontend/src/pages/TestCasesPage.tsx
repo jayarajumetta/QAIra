@@ -22,6 +22,7 @@ import {
   getTileCardTone
 } from "../components/TileCardPrimitives";
 import { SuiteCasePicker } from "../components/SuiteCasePicker";
+import { TileBrowserPane } from "../components/TileBrowserPane";
 import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
@@ -1406,7 +1407,6 @@ export function TestCasesPage() {
         return next;
       });
       setExpandedStepIds((current) => [...new Set([...current, draftId])]);
-      setSelectedStepIds([draftId]);
       setNewStepDraft(EMPTY_STEP_DRAFT);
       setStepInsertIndex(null);
       setStepInsertGroupContext(null);
@@ -1439,7 +1439,6 @@ export function TestCasesPage() {
       setStepInsertIndex(null);
       setStepInsertGroupContext(null);
       setExpandedStepIds((current) => [...new Set([...current, response.id])]);
-      setSelectedStepIds([response.id]);
       showSuccess("Step added.");
       await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
       if (insertionGroupContext?.reusable_group_id) {
@@ -2921,117 +2920,117 @@ export function TestCasesPage() {
               </div>
             ) : null}
 
-            {isLibraryLoading ? (
-              <TileCardSkeletonGrid className="test-case-library-scroll" />
-            ) : null}
+            <TileBrowserPane className="test-case-library-scroll">
+              {isLibraryLoading ? <TileCardSkeletonGrid /> : null}
 
-            {!isLibraryLoading ? (
-              <div className="tile-browser-grid test-case-library-scroll">
-                {filteredCases.map((testCase) => {
-                  const isSelectedForAction = selectedActionTestCaseIds.includes(testCase.id);
-                  const isActive = selectedTestCaseId === testCase.id && !isCreating;
-                  const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
-                  const latest = history[0];
-                  const requirementTitle =
-                    (testCase.requirement_ids || [testCase.requirement_id]).map((id) => (id ? requirementTitleById[id] || "" : "")).find(Boolean) || "";
-                  const stepCount = stepCountByCaseId[testCase.id] || 0;
-                  const caseStatusValue = latest?.status || testCase.status || defaultTestCaseStatus;
-                  const caseStatusLabel = formatTileCardLabel(caseStatusValue, "Active");
-                  const caseStatusTone = getTileCardTone(caseStatusValue);
-                  const suiteCount = (testCase.suite_ids || []).length || 0;
+              {!isLibraryLoading && filteredCases.length ? (
+                <div className="tile-browser-grid">
+                  {filteredCases.map((testCase) => {
+                    const isSelectedForAction = selectedActionTestCaseIds.includes(testCase.id);
+                    const isActive = selectedTestCaseId === testCase.id && !isCreating;
+                    const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
+                    const latest = history[0];
+                    const requirementTitle =
+                      (testCase.requirement_ids || [testCase.requirement_id]).map((id) => (id ? requirementTitleById[id] || "" : "")).find(Boolean) || "";
+                    const stepCount = stepCountByCaseId[testCase.id] || 0;
+                    const caseStatusValue = latest?.status || testCase.status || defaultTestCaseStatus;
+                    const caseStatusLabel = formatTileCardLabel(caseStatusValue, "Active");
+                    const caseStatusTone = getTileCardTone(caseStatusValue);
+                    const suiteCount = (testCase.suite_ids || []).length || 0;
 
-                  return (
-                    <button
-                      className={[
-                        "record-card tile-card test-case-card test-case-catalog-card",
-                        isActive ? "is-active" : "",
-                        isSelectedForAction ? "is-marked-for-delete" : ""
-                      ].filter(Boolean).join(" ")}
-                      key={testCase.id}
-                      onClick={() => {
-                        syncTestCaseSearchParams(testCase.id);
-                        setSelectedTestCaseId(testCase.id);
-                        setIsCreating(false);
-                        setDraftSteps([]);
-                      }}
-                      type="button"
-                    >
-                      <div className="tile-card-main">
-                        <div className="tile-card-select-row">
-                          <label className="checkbox-field test-case-delete-checkbox" onClick={(event) => event.stopPropagation()}>
-                            <input
-                              checked={isSelectedForAction}
-                              onChange={(event) =>
-                                setSelectedActionTestCaseIds((current) =>
-                                  event.target.checked ? [...new Set([...current, testCase.id])] : current.filter((id) => id !== testCase.id)
-                                )
-                              }
-                              type="checkbox"
-                            />
-                            Select case
-                          </label>
-                        </div>
-                        <div className="tile-card-header">
-                          <TileCardIconFrame tone={caseStatusTone}>
-                          <TileCardCaseIcon />
-                        </TileCardIconFrame>
-                        <div className="tile-card-title-group">
-                          <strong>{testCase.title}</strong>
-                          <span className="tile-card-kicker">{requirementTitle || "No requirement linked"}</span>
-                        </div>
-                          <TileCardStatusIndicator title={caseStatusLabel} tone={caseStatusTone} />
-                        </div>
-                        <p className="tile-card-description">{testCase.description || "No description yet for this test case."}</p>
-                        <div className="tile-card-facts" aria-label={`${testCase.title} facts`}>
-                          <TileCardFact
-                            label={`P${testCase.priority || 3}`}
-                            title={`Priority P${testCase.priority || 3}`}
-                            tone={(testCase.priority || 3) <= 2 ? "danger" : "info"}
-                          >
-                            <TileCardPriorityIcon />
-                          </TileCardFact>
-                          <TileCardFact
-                            label={String(stepCount)}
-                            title={`${stepCount} step${stepCount === 1 ? "" : "s"}`}
-                            tone={stepCount ? "info" : "neutral"}
-                          >
-                            <TileCardStepsIcon />
-                          </TileCardFact>
-                          <TileCardFact
-                            label={String(suiteCount)}
-                            title={`${suiteCount} linked suite${suiteCount === 1 ? "" : "s"}`}
-                            tone={suiteCount ? "success" : "neutral"}
-                          >
-                            <TileCardLinkIcon />
-                          </TileCardFact>
-                          <TileCardFact
-                            label={String(history.length)}
-                            title={`${history.length} recent run${history.length === 1 ? "" : "s"}`}
-                            tone={history.length ? getTileCardTone(latest?.status || caseStatusValue) : "neutral"}
-                          >
-                            <TileCardRunsIcon />
-                          </TileCardFact>
-                        </div>
-                        <div className="tile-card-footer">
-                          <div className="history-bars" aria-label="Execution history">
-                            {history.length ? history.map((result) => (
-                              <span
-                                key={result.id}
-                                className={result.status === "passed" ? "history-bar is-passed" : result.status === "failed" ? "history-bar is-failed" : "history-bar is-blocked"}
-                                title={`${result.status} · ${result.created_at || "recent"}`}
+                    return (
+                      <button
+                        className={[
+                          "record-card tile-card test-case-card test-case-catalog-card",
+                          isActive ? "is-active" : "",
+                          isSelectedForAction ? "is-marked-for-delete" : ""
+                        ].filter(Boolean).join(" ")}
+                        key={testCase.id}
+                        onClick={() => {
+                          syncTestCaseSearchParams(testCase.id);
+                          setSelectedTestCaseId(testCase.id);
+                          setIsCreating(false);
+                          setDraftSteps([]);
+                        }}
+                        type="button"
+                      >
+                        <div className="tile-card-main">
+                          <div className="tile-card-select-row">
+                            <label className="checkbox-field test-case-delete-checkbox" onClick={(event) => event.stopPropagation()}>
+                              <input
+                                checked={isSelectedForAction}
+                                onChange={(event) =>
+                                  setSelectedActionTestCaseIds((current) =>
+                                    event.target.checked ? [...new Set([...current, testCase.id])] : current.filter((id) => id !== testCase.id)
+                                  )
+                                }
+                                type="checkbox"
                               />
-                            )) : <span className="history-bar" />}
+                              Select case
+                            </label>
+                          </div>
+                          <div className="tile-card-header">
+                            <TileCardIconFrame tone={caseStatusTone}>
+                              <TileCardCaseIcon />
+                            </TileCardIconFrame>
+                            <div className="tile-card-title-group">
+                              <strong>{testCase.title}</strong>
+                              <span className="tile-card-kicker">{requirementTitle || "No requirement linked"}</span>
+                            </div>
+                            <TileCardStatusIndicator title={caseStatusLabel} tone={caseStatusTone} />
+                          </div>
+                          <p className="tile-card-description">{testCase.description || "No description yet for this test case."}</p>
+                          <div className="tile-card-facts" aria-label={`${testCase.title} facts`}>
+                            <TileCardFact
+                              label={`P${testCase.priority || 3}`}
+                              title={`Priority P${testCase.priority || 3}`}
+                              tone={(testCase.priority || 3) <= 2 ? "danger" : "info"}
+                            >
+                              <TileCardPriorityIcon />
+                            </TileCardFact>
+                            <TileCardFact
+                              label={String(stepCount)}
+                              title={`${stepCount} step${stepCount === 1 ? "" : "s"}`}
+                              tone={stepCount ? "info" : "neutral"}
+                            >
+                              <TileCardStepsIcon />
+                            </TileCardFact>
+                            <TileCardFact
+                              label={String(suiteCount)}
+                              title={`${suiteCount} linked suite${suiteCount === 1 ? "" : "s"}`}
+                              tone={suiteCount ? "success" : "neutral"}
+                            >
+                              <TileCardLinkIcon />
+                            </TileCardFact>
+                            <TileCardFact
+                              label={String(history.length)}
+                              title={`${history.length} recent run${history.length === 1 ? "" : "s"}`}
+                              tone={history.length ? getTileCardTone(latest?.status || caseStatusValue) : "neutral"}
+                            >
+                              <TileCardRunsIcon />
+                            </TileCardFact>
+                          </div>
+                          <div className="tile-card-footer">
+                            <div className="history-bars" aria-label="Execution history">
+                              {history.length ? history.map((result) => (
+                                <span
+                                  key={result.id}
+                                  className={result.status === "passed" ? "history-bar is-passed" : result.status === "failed" ? "history-bar is-failed" : "history-bar is-blocked"}
+                                  title={`${result.status} · ${result.created_at || "recent"}`}
+                                />
+                              )) : <span className="history-bar" />}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </button>
-                  );
-                })}
-                {!filteredCases.length ? (
-                  <div className="empty-state compact">{testCases.length ? "No test cases match the current search." : "No test cases found for this app type."}</div>
-                ) : null}
-              </div>
-            ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {!isLibraryLoading && !filteredCases.length ? (
+                <div className="empty-state compact">{testCases.length ? "No test cases match the current search." : "No test cases found for this app type."}</div>
+              ) : null}
+            </TileBrowserPane>
           </Panel>
         )}
         detailView={(
