@@ -8,6 +8,9 @@ import { ExecutionContextSelector } from "../components/ExecutionContextSelector
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { StepParameterDialog } from "../components/StepParameterDialog";
+import { StepParameterizedText } from "../components/StepParameterizedText";
+import { SharedStepsIcon as SharedStepsIconGraphic } from "../components/SharedStepsIcon";
 import { StatusBadge } from "../components/StatusBadge";
 import {
   TileCardCaseIcon,
@@ -25,6 +28,7 @@ import { SuiteCasePicker } from "../components/SuiteCasePicker";
 import { TileBrowserPane } from "../components/TileBrowserPane";
 import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
+import { WorkspaceSectionTabs } from "../components/WorkspaceSectionTabs";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
@@ -33,6 +37,13 @@ import { useDialogFocus } from "../hooks/useDialogFocus";
 import { parseTestCaseCsv, type ImportedTestCaseRow } from "../lib/testCaseImport";
 import { api } from "../lib/api";
 import { appendUniqueImages, parseExternalLinks, readImageFiles, toggleRequirementOnPreviewCase } from "../lib/aiDesignStudio";
+import { upsertSharedStepGroupInCache } from "../lib/sharedStepGroupCache";
+import {
+  collectStepParameters,
+  filterStepParameterValues,
+  type StepParameterDefinition
+} from "../lib/stepParameters";
+import { TEST_AUTHORING_SECTION_ITEMS } from "../lib/workspaceSections";
 import type { AiDesignImageInput, AiDesignedTestCaseCandidate, AppType, Execution, ExecutionResult, Project, Requirement, SharedStepGroup, TestCase, TestStep, TestSuite } from "../types";
 
 type TestCaseDraft = {
@@ -340,6 +351,8 @@ export function TestCasesPage() {
   const [stepInsertGroupContext, setStepInsertGroupContext] = useState<StepInsertionGroupContext | null>(null);
   const [draftSteps, setDraftSteps] = useState<DraftTestStep[]>([]);
   const [selectedStepIds, setSelectedStepIds] = useState<string[]>([]);
+  const [isCaseParameterDialogOpen, setIsCaseParameterDialogOpen] = useState(false);
+  const [testCaseParameterValues, setTestCaseParameterValues] = useState<Record<string, string>>({});
   const [copiedSteps, setCopiedSteps] = useState<CopiedTestStep[]>([]);
   const [copiedStepMode, setCopiedStepMode] = useState<"copy" | "cut">("copy");
   const [cutStepSource, setCutStepSource] = useState<CutStepSource | null>(null);
@@ -839,6 +852,11 @@ export function TestCasesPage() {
   }, [isCreating, selectedTestCase, selectedTestCaseId, testCasesQuery.isFetching, testCasesQuery.isLoading]);
 
   useEffect(() => {
+    setTestCaseParameterValues({});
+    setIsCaseParameterDialogOpen(false);
+  }, [isCreating, selectedTestCaseId]);
+
+  useEffect(() => {
     if (!searchParams.get("case")) {
       suppressCaseSelectionFromUrlRef.current = false;
     }
@@ -1053,7 +1071,10 @@ export function TestCasesPage() {
       }))
     });
 
-    return response.id;
+    const createdGroup = await api.sharedStepGroups.get(response.id);
+    upsertSharedStepGroupInCache(queryClient, appTypeId, createdGroup);
+
+    return createdGroup.id;
   };
 
   const hasUnsavedStepGroupDrafts = (groupItems: TestStep[]) =>
@@ -2437,6 +2458,33 @@ export function TestCasesPage() {
     });
   }, [sharedGroupSearchTerm, sharedStepGroups]);
   const selectedSharedGroup = sharedStepGroups.find((group) => group.id === selectedSharedGroupId) || null;
+  const detectedStepParameters = useMemo<StepParameterDefinition[]>(
+    () =>
+      collectStepParameters(
+        displaySteps.map((step) => ({
+          id: step.id,
+          action: stepDrafts[step.id]?.action ?? step.action,
+          expected_result: stepDrafts[step.id]?.expected_result ?? step.expected_result
+        }))
+      ),
+    [displaySteps, stepDrafts]
+  );
+  useEffect(() => {
+    setTestCaseParameterValues((current) => {
+      const next = filterStepParameterValues(current, detectedStepParameters);
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(next);
+
+      if (
+        currentKeys.length === nextKeys.length
+        && currentKeys.every((key) => current[key] === next[key])
+      ) {
+        return current;
+      }
+
+      return next;
+    });
+  }, [detectedStepParameters]);
   const isCaseWorkspaceOpen = Boolean(selectedTestCaseId) || isCreating;
   const stepCountLabel = `${displaySteps.length} step${displaySteps.length === 1 ? "" : "s"}`;
   const allStepsSelected = Boolean(displaySteps.length) && selectedStepIds.length === displaySteps.length;
@@ -2630,6 +2678,8 @@ export function TestCasesPage() {
     setIsSharedGroupPickerOpen(false);
     setSelectedSharedGroupId("");
     setSharedGroupSearchTerm("");
+    setTestCaseParameterValues({});
+    setIsCaseParameterDialogOpen(false);
   };
 
   const handleWorkspaceBack = () => {
@@ -2639,7 +2689,16 @@ export function TestCasesPage() {
   const caseHeaderActions = (
     <div className="panel-head-actions-row">
       <WorkspaceBackButton label="Back to test case tiles" onClick={handleWorkspaceBack} />
-      {selectedTestCaseId || isCreating ? null : null}
+      {isCaseWorkspaceOpen ? (
+        <button
+          className="ghost-button"
+          onClick={() => setIsCaseParameterDialogOpen(true)}
+          type="button"
+        >
+          <StepParameterIcon />
+          <span>{detectedStepParameters.length ? `Test data · ${detectedStepParameters.length}` : "Test data"}</span>
+        </button>
+      ) : null}
     </div>
   );
 
@@ -2669,6 +2728,7 @@ export function TestCasesPage() {
     if (isCreating) {
       return (
         <DraftStepCard
+          parameterValues={testCaseParameterValues}
           canPaste={Boolean(copiedSteps.length)}
           canMoveDown={canMoveDown}
           canMoveUp={canMoveUp}
@@ -2708,9 +2768,10 @@ export function TestCasesPage() {
       );
     }
 
-    return (
-      <EditableStepCard
-        canPaste={Boolean(copiedSteps.length)}
+      return (
+        <EditableStepCard
+          parameterValues={testCaseParameterValues}
+          canPaste={Boolean(copiedSteps.length)}
         canMoveDown={canMoveDown}
         canMoveUp={canMoveUp}
         draft={stepDraft}
@@ -2797,6 +2858,8 @@ export function TestCasesPage() {
           projects={projects}
         />
       ) : null}
+
+      <WorkspaceSectionTabs ariaLabel="Test authoring sections" items={TEST_AUTHORING_SECTION_ITEMS} />
 
       <WorkspaceMasterDetail
         browseView={(
@@ -3181,6 +3244,15 @@ export function TestCasesPage() {
                         />
                       </div>
 
+                      {detectedStepParameters.length ? (
+                        <div className="detail-summary step-parameter-summary">
+                          <strong>{detectedStepParameters.length} parameter{detectedStepParameters.length === 1 ? "" : "s"} detected</strong>
+                          <span>
+                            {detectedStepParameters.map((parameter) => parameter.token).join(", ")}
+                          </span>
+                        </div>
+                      ) : null}
+
       {copiedSteps.length ? null : null}
 
       {!isCreating && stepsQuery.isLoading ? <div className="empty-state compact">Loading steps…</div> : null}
@@ -3415,6 +3487,22 @@ export function TestCasesPage() {
           selectedGroup={selectedSharedGroup}
           selectedGroupId={selectedSharedGroupId}
           setSelectedGroupId={setSelectedSharedGroupId}
+        />
+      ) : null}
+
+      {isCaseParameterDialogOpen ? (
+        <StepParameterDialog
+          onChange={(name, value) =>
+            setTestCaseParameterValues((current) => ({
+              ...current,
+              [name]: value
+            }))
+          }
+          onClose={() => setIsCaseParameterDialogOpen(false)}
+          parameters={detectedStepParameters}
+          subtitle="Detected @params from the current case steps. Any value you set here is previewed directly inside the step editor."
+          title="Test case parameter values"
+          values={testCaseParameterValues}
         />
       ) : null}
 
@@ -4089,6 +4177,17 @@ function StepPasteBelowIcon() {
   );
 }
 
+function StepParameterIcon() {
+  return (
+    <StepIconShell>
+      <path d="M5 7.5h14" />
+      <path d="M7 12h10" />
+      <path d="M9 16.5h6" />
+      <path d="m5 5 2.5 2.5L5 10" />
+    </StepIconShell>
+  );
+}
+
 function StepKebabIcon() {
   return (
     <StepIconShell>
@@ -4119,16 +4218,7 @@ function StepGroupIcon() {
 }
 
 function StepSharedGroupIcon() {
-  return (
-    <StepIconShell>
-      <circle cx="7" cy="8" r="2.5" />
-      <circle cx="17" cy="8" r="2.5" />
-      <circle cx="12" cy="17" r="2.5" />
-      <path d="m9.2 9.4 2 5.2" />
-      <path d="m14.8 9.4-2 5.2" />
-      <path d="M9.5 8h5" />
-    </StepIconShell>
-  );
+  return <SharedStepsIconGraphic size={16} />;
 }
 
 function StepGroupChevronIcon() {
@@ -4149,17 +4239,6 @@ function ExecutionStepsIcon() {
       <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
       <circle cx="5" cy="17" r="1" fill="currentColor" stroke="none" />
     </StepIconShell>
-  );
-}
-
-function SharedStepsIcon() {
-  return (
-    <svg aria-hidden="true" fill="none" height="20" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width="20">
-      <rect x="3" y="5" width="7" height="6" rx="1.5" />
-      <rect x="14" y="13" width="7" height="6" rx="1.5" />
-      <path d="M10 8h2.5A2.5 2.5 0 0 1 15 10.5V13" />
-      <path d="M14 16h-2.5A2.5 2.5 0 0 1 9 13.5V11" />
-    </svg>
   );
 }
 
@@ -4184,7 +4263,7 @@ function StepKindIconBadge({
   label: string;
   tone: "default" | "shared" | "local";
 }) {
-  const icon = kind === "reusable" ? <SharedStepsIcon /> : <ExecutionStepsIcon />;
+  const icon = kind === "reusable" ? <SharedStepsIconGraphic size={20} /> : <ExecutionStepsIcon />;
 
   return (
     <span
@@ -4546,6 +4625,7 @@ function StepGroupHeader({
 function EditableStepCard({
   step,
   draft,
+  parameterValues,
   isExpanded,
   isSelected,
   canPaste,
@@ -4567,6 +4647,7 @@ function EditableStepCard({
 }: {
   step: TestStep;
   draft: StepDraft;
+  parameterValues: Record<string, string>;
   isExpanded: boolean;
   isSelected: boolean;
   canPaste: boolean;
@@ -4687,7 +4768,12 @@ function EditableStepCard({
               <StepKindIconBadge kind={step.group_kind} label={stepKind.label} tone={stepKind.tone} />
               <strong>Step {step.step_order}</strong>
             </div>
-            <span>{draft.action || "No action written yet"}</span>
+            <StepParameterizedText
+              className="step-card-parameterized"
+              fallback="No action written yet"
+              text={draft.action}
+              values={parameterValues}
+            />
           </div>
           <span aria-hidden="true" className="step-card-toggle-state">
             <StepKebabIcon />
@@ -4707,9 +4793,21 @@ function EditableStepCard({
           <FormField label="Action">
             <input value={draft.action} onChange={(event) => onDraftChange({ ...draft, action: event.target.value })} />
           </FormField>
+          {draft.action ? (
+            <div className="step-parameter-preview">
+              <span className="step-parameter-preview-label">Resolved action</span>
+              <StepParameterizedText text={draft.action} values={parameterValues} />
+            </div>
+          ) : null}
           <FormField label="Expected result">
             <textarea rows={3} value={draft.expected_result} onChange={(event) => onDraftChange({ ...draft, expected_result: event.target.value })} />
           </FormField>
+          {draft.expected_result ? (
+            <div className="step-parameter-preview">
+              <span className="step-parameter-preview-label">Resolved expected result</span>
+              <StepParameterizedText text={draft.expected_result} values={parameterValues} />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </article>
@@ -4718,6 +4816,7 @@ function EditableStepCard({
 
 function DraftStepCard({
   step,
+  parameterValues,
   isSelected,
   isExpanded,
   canPaste,
@@ -4737,6 +4836,7 @@ function DraftStepCard({
   onPasteBelow
 }: {
   step: { id: string; step_order: number; action: string; expected_result: string; group_id: string | null; group_name: string | null; group_kind: "local" | "reusable" | null; reusable_group_id: string | null };
+  parameterValues: Record<string, string>;
   isSelected: boolean;
   isExpanded: boolean;
   canPaste: boolean;
@@ -4845,7 +4945,12 @@ function DraftStepCard({
               <StepKindIconBadge kind={step.group_kind} label={stepKind.label} tone={stepKind.tone} />
               <strong>Step {step.step_order}</strong>
             </div>
-            <span>{step.action || step.expected_result || "Draft step details"}</span>
+            <StepParameterizedText
+              className="step-card-parameterized"
+              fallback="Draft step details"
+              text={step.action || step.expected_result}
+              values={parameterValues}
+            />
           </div>
           <span aria-hidden="true" className="step-card-toggle-state">
             <StepKebabIcon />
@@ -4868,6 +4973,12 @@ function DraftStepCard({
               onChange={(event) => onChange({ action: event.target.value, expected_result: step.expected_result })}
             />
           </FormField>
+          {step.action ? (
+            <div className="step-parameter-preview">
+              <span className="step-parameter-preview-label">Resolved action</span>
+              <StepParameterizedText text={step.action} values={parameterValues} />
+            </div>
+          ) : null}
           <FormField label="Expected result">
             <textarea
               rows={3}
@@ -4875,6 +4986,12 @@ function DraftStepCard({
               onChange={(event) => onChange({ action: step.action, expected_result: event.target.value })}
             />
           </FormField>
+          {step.expected_result ? (
+            <div className="step-parameter-preview">
+              <span className="step-parameter-preview-label">Resolved expected result</span>
+              <StepParameterizedText text={step.expected_result} values={parameterValues} />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </article>
@@ -5014,7 +5131,12 @@ function SharedGroupPickerModal({
             {!isLoading && groups.map((group) => (
               <label className="stack-item" key={group.id}>
                 <div>
-                  <strong>{group.name}</strong>
+                  <span className="step-group-title-row">
+                    <span aria-hidden="true" className="step-kind-badge is-shared">
+                      <SharedStepsIconGraphic size={14} />
+                    </span>
+                    <strong>{group.name}</strong>
+                  </span>
                   <span>{group.description || `${group.steps.length} reusable step${group.steps.length === 1 ? "" : "s"}`}</span>
                 </div>
                 <input
@@ -5029,7 +5151,12 @@ function SharedGroupPickerModal({
 
           {selectedGroup ? (
             <div className="detail-summary">
-              <strong>{selectedGroup.name}</strong>
+              <div className="step-group-title-row">
+                <span aria-hidden="true" className="step-kind-badge is-shared">
+                  <SharedStepsIconGraphic size={14} />
+                </span>
+                <strong>{selectedGroup.name}</strong>
+              </div>
               <span>
                 {(selectedGroup.steps[0]?.action || selectedGroup.steps[0]?.expected_result || "No preview available")}
                 {selectedGroup.steps.length > 1 ? ` · ${selectedGroup.steps.length} steps total` : ""}

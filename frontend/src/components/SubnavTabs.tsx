@@ -3,11 +3,15 @@ import { useRef, type KeyboardEvent } from "react";
 export function SubnavTabs<T extends string>({
   value,
   onChange,
-  items
+  items,
+  ariaLabel = "Section navigation",
+  className = ""
 }: {
   value: T;
   onChange: (value: T) => void;
   items: Array<{ value: T; label: string; meta?: string }>;
+  ariaLabel?: string;
+  className?: string;
 }) {
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -38,7 +42,7 @@ export function SubnavTabs<T extends string>({
   };
 
   return (
-    <div className="subnav-tabs" role="tablist" aria-label="Section navigation">
+    <div className={["subnav-tabs", className].filter(Boolean).join(" ")} role="tablist" aria-label={ariaLabel}>
       {items.map((item, index) => (
         <button
           key={item.value}
@@ -53,8 +57,11 @@ export function SubnavTabs<T extends string>({
           tabIndex={value === item.value ? 0 : -1}
           type="button"
         >
-          <strong>{item.label}</strong>
-          {item.meta ? <span>{item.meta}</span> : null}
+          <span className="subnav-tab-copy">
+            <strong>{item.label}</strong>
+            {item.meta ? <span>{item.meta}</span> : null}
+          </span>
+          <span aria-hidden="true" className="subnav-tab-indicator" />
         </button>
       ))}
     </div>

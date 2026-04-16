@@ -7,6 +7,12 @@ import { ProjectDropdown } from "./ProjectDropdown";
 import { UserProfileDialog } from "./UserProfileDialog";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { api } from "../lib/api";
+import {
+  TEST_AUTHORING_SECTION_ITEMS,
+  TEST_ENVIRONMENT_SECTION_ITEMS,
+  WORKSPACE_LIBRARY_PATHS,
+  WORKSPACE_PAGE_LABELS
+} from "../lib/workspaceSections";
 
 const THEME_KEY = "app_theme";
 const SIDEBAR_KEY = "sidebar_collapsed";
@@ -26,32 +32,33 @@ const navigation = [
     items: [
       {
         id: "authoring",
+        to: "/requirements",
         label: "Test Authoring",
+        shortLabel: "Authoring",
         icon: FlaskIcon,
-        children: [
-          { id: "requirements", to: "/requirements", label: "Requirements", shortLabel: "Reqs", icon: DocumentIcon },
-          { id: "test-cases", to: "/test-cases", label: "Test Cases", shortLabel: "Cases", icon: PencilIcon },
-          { id: "shared-steps", to: "/shared-steps", label: "Shared Step Group", shortLabel: "Shared", icon: SharedStepsIcon },
-          { id: "design", to: "/design", label: "Test Suites", shortLabel: "Suites", icon: LayersIcon }
-        ]
+        subItems: TEST_AUTHORING_SECTION_ITEMS,
+        matchPaths: TEST_AUTHORING_SECTION_ITEMS.map((item) => item.to),
+        disabledWhenNoProjects: true
       },
       {
         id: "runs",
+        to: "/executions",
         label: "Test Runs",
+        shortLabel: "Runs",
         icon: PlayIcon,
-        children: [
-          { id: "executions", to: "/executions", label: "Executions", shortLabel: "Runs", icon: RunIcon }
-        ]
+        subItems: [{ to: "/executions", label: "Execution Console", shortLabel: "Console" }],
+        matchPaths: ["/executions"],
+        disabledWhenNoProjects: true
       },
       {
         id: "environment",
+        to: "/test-environments",
         label: "Test Environment",
+        shortLabel: "Environment",
         icon: ServerIcon,
-        children: [
-          { id: "test-environments", to: "/test-environments", label: "Environments", shortLabel: "Env", icon: ServerIcon },
-          { id: "test-data", to: "/test-data", label: "Test Data", shortLabel: "Data", icon: DatabaseIcon },
-          { id: "test-configurations", to: "/test-configurations", label: "Configurations", shortLabel: "Config", icon: SlidersIcon }
-        ]
+        subItems: TEST_ENVIRONMENT_SECTION_ITEMS,
+        matchPaths: TEST_ENVIRONMENT_SECTION_ITEMS.map((item) => item.to),
+        disabledWhenNoProjects: true
       }
     ]
   },
@@ -72,6 +79,18 @@ const navigation = [
     ]
   }
 ] as const;
+
+function isNavigationItemActive(item: { to: string; matchPaths?: readonly string[] }, pathname: string) {
+  if (item.to === "/") {
+    return pathname === "/";
+  }
+
+  if (pathname === item.to) {
+    return true;
+  }
+
+  return Boolean(item.matchPaths?.includes(pathname));
+}
 
 function getNavigationItemLabel(item: { label: string; shortLabel?: string }, shouldCollapseSidebar: boolean) {
   return shouldCollapseSidebar ? item.shortLabel || item.label : item.label;
@@ -103,11 +122,6 @@ export function AppShell() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isProfileDialogOpen, setIsProfileDialogOpen] = useState(false);
   const [sidebarProjectId, setSidebarProjectId] = useCurrentProject();
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
-    authoring: true,
-    runs: true,
-    environment: true
-  });
 
   const projects = projectsQuery.data || [];
   const hasNoProjects = !projectsQuery.isPending && projects.length === 0;
@@ -226,44 +240,9 @@ export function AppShell() {
     }
   }, [projects, projectsQuery.isPending, setSidebarProjectId, sidebarProjectId]);
 
-  useEffect(() => {
-    navigation.forEach((group) => {
-      group.items.forEach((item) => {
-        if ("children" in item && item.children.some((child) => child.to === location.pathname)) {
-          setExpandedGroups((current) => ({ ...current, [item.id]: true }));
-        }
-      });
-    });
-  }, [location.pathname]);
+  const isWorkspaceWideLibrary = WORKSPACE_LIBRARY_PATHS.has(location.pathname);
 
-  const isWorkspaceWideLibrary =
-    location.pathname === "/requirements" ||
-    location.pathname === "/test-cases" ||
-    location.pathname === "/shared-steps" ||
-    location.pathname === "/design" ||
-    location.pathname === "/executions" ||
-    location.pathname === "/test-environments" ||
-    location.pathname === "/test-data" ||
-    location.pathname === "/test-configurations";
-
-  const currentSection = useMemo(() => {
-    for (const group of navigation) {
-      for (const item of group.items) {
-        if ("to" in item && item.to === location.pathname) {
-          return item.label;
-        }
-
-        if ("children" in item) {
-          const match = item.children.find((child) => child.to === location.pathname);
-          if (match) {
-            return match.label;
-          }
-        }
-      }
-    }
-
-    return "Workspace";
-  }, [location.pathname]);
+  const currentSection = useMemo(() => WORKSPACE_PAGE_LABELS[location.pathname] || "Workspace", [location.pathname]);
 
   const shouldCollapseSidebar = !isMobileViewport && isCollapsed;
   const sidebarClassName = `${shouldCollapseSidebar ? "sidebar is-collapsed" : "sidebar"}${isMobileSidebarOpen ? " is-mobile-open" : ""}`;
@@ -379,135 +358,54 @@ export function AppShell() {
               <div className="nav-group-items">
                 {group.items.map((item) => {
                   const Icon = item.icon;
+                  const isDisabled = Boolean("disabledWhenNoProjects" in item && item.disabledWhenNoProjects && hasNoProjects);
+                  const badgeCount = "countKey" in item ? navCounts[item.countKey as keyof typeof navCounts] : undefined;
+                  const isActive = isNavigationItemActive(item, location.pathname);
+                  const subItems = "subItems" in item ? item.subItems : undefined;
 
-                  if ("children" in item) {
-                    const isOpen = expandedGroups[item.id] ?? true;
-                    const hasActiveChild = item.children.some((child) => child.to === location.pathname);
-                    const isDisabled = hasNoProjects;
-                    const firstChild = item.children[0];
+                  return (
+                    <div className="nav-item-stack" key={item.to}>
+                      <NavLink
+                        aria-current={isActive ? "page" : undefined}
+                        to={item.to}
+                        className={isActive ? "nav-link is-active" : "nav-link"}
+                        end={item.to === "/"}
+                        title={shouldCollapseSidebar ? item.label : undefined}
+                        aria-label={item.label}
+                        onClick={(e) => {
+                          if (isDisabled) {
+                            e.preventDefault();
+                          }
+                        }}
+                        style={{ opacity: isDisabled ? 0.5 : 1, cursor: isDisabled ? "not-allowed" : "pointer" }}
+                      >
+                        <span className="nav-link-icon" aria-hidden="true"><Icon /></span>
+                        <span className="nav-link-label">{getNavigationItemLabel(item, shouldCollapseSidebar)}</span>
+                        {!shouldCollapseSidebar && typeof badgeCount === "number" ? <span className="nav-link-badge">{badgeCount}</span> : null}
+                      </NavLink>
 
-                    if (shouldCollapseSidebar) {
-                      return (
-                        <div className="nav-collapsed-branch" key={item.id}>
-                          {item.children.map((child) => {
-                            const childDisabled = hasNoProjects;
-                            const ChildIcon = child.icon || Icon;
+                      {!shouldCollapseSidebar && subItems?.length ? (
+                        <div className="nav-subgroup">
+                          {subItems.map((subItem) => {
+                            const isSubItemActive = location.pathname === subItem.to;
 
                             return (
                               <NavLink
-                                key={child.to}
-                                to={child.to}
-                                className={({ isActive }) => isActive ? "nav-link nav-link--icon-only is-active" : "nav-link nav-link--icon-only"}
-                                aria-label={child.label}
-                                onClick={(event) => {
-                                  if (childDisabled) {
-                                    event.preventDefault();
-                                  }
-                                }}
-                                style={{ opacity: childDisabled ? 0.5 : 1, cursor: childDisabled ? "not-allowed" : "pointer" }}
-                                title={child.label}
+                                aria-current={isSubItemActive ? "page" : undefined}
+                                className={isSubItemActive ? "nav-sublink is-active" : "nav-sublink"}
+                                key={subItem.to}
+                                to={subItem.to}
                               >
-                                <span className="nav-link-icon" aria-hidden="true"><ChildIcon /></span>
-                                <span className="nav-link-label">{getNavigationItemLabel(child, shouldCollapseSidebar)}</span>
+                                <span className="nav-sublink-icon" aria-hidden="true">
+                                  <SubmenuDotIcon />
+                                </span>
+                                <span className="nav-sublink-label">{subItem.label}</span>
                               </NavLink>
                             );
                           })}
                         </div>
-                      );
-                    }
-
-                    return (
-                      <div className="nav-branch" key={item.id}>
-                        <div className="nav-branch-control">
-                          <NavLink
-                            aria-label={item.label}
-                            className={hasActiveChild ? "nav-link nav-branch-link is-active" : "nav-link nav-branch-link"}
-                            onClick={(event) => {
-                              if (isDisabled || !firstChild) {
-                                event.preventDefault();
-                                return;
-                              }
-
-                              setExpandedGroups((current) => ({ ...current, [item.id]: true }));
-                            }}
-                            style={{ opacity: isDisabled ? 0.5 : 1, cursor: isDisabled ? "not-allowed" : "pointer" }}
-                            title={shouldCollapseSidebar ? item.label : undefined}
-                            to={firstChild?.to || "/"}
-                          >
-                            <span className="nav-link-icon" aria-hidden="true"><Icon /></span>
-                            <span className="nav-link-label">{getNavigationItemLabel(item, shouldCollapseSidebar)}</span>
-                          </NavLink>
-
-                          {!shouldCollapseSidebar ? (
-                            <button
-                              aria-expanded={isOpen}
-                              aria-label={isOpen ? `Collapse ${item.label}` : `Expand ${item.label}`}
-                              className={hasActiveChild ? "nav-branch-caret-button is-active" : "nav-branch-caret-button"}
-                              disabled={isDisabled}
-                              onClick={() => {
-                                if (isDisabled) {
-                                  return;
-                                }
-
-                                setExpandedGroups((current) => ({ ...current, [item.id]: !isOpen }));
-                              }}
-                              type="button"
-                            >
-                              <span className={isOpen ? "nav-link-caret is-open" : "nav-link-caret"}><ChevronIcon /></span>
-                            </button>
-                          ) : null}
-                        </div>
-
-                        {!shouldCollapseSidebar && isOpen ? (
-                          <div className="nav-subgroup">
-                            {item.children.map((child) => {
-                              const childDisabled = hasNoProjects;
-                              const ChildIcon = child.icon;
-
-                              return (
-                                <NavLink
-                                  key={child.to}
-                                  to={child.to}
-                                  className={({ isActive }) => isActive ? "nav-sublink is-active" : "nav-sublink"}
-                                  onClick={(event) => {
-                                    if (childDisabled) {
-                                      event.preventDefault();
-                                    }
-                                  }}
-                                  style={{ opacity: childDisabled ? 0.5 : 1, cursor: childDisabled ? "not-allowed" : "pointer" }}
-                                >
-                                  {ChildIcon ? <span className="nav-sublink-icon" aria-hidden="true"><ChildIcon /></span> : null}
-                                  <span className="nav-sublink-label">{child.label}</span>
-                                </NavLink>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  }
-
-                  const isDisabled = false;
-                  const badgeCount = "countKey" in item ? navCounts[item.countKey as keyof typeof navCounts] : undefined;
-
-                  return (
-                    <NavLink
-                      key={item.to}
-                      to={item.to}
-                      className={({ isActive }) => isActive ? "nav-link is-active" : "nav-link"}
-                      title={shouldCollapseSidebar ? item.label : undefined}
-                      aria-label={item.label}
-                      onClick={(e) => {
-                        if (isDisabled) {
-                          e.preventDefault();
-                        }
-                      }}
-                      style={{ opacity: isDisabled ? 0.5 : 1, cursor: isDisabled ? "not-allowed" : "pointer" }}
-                    >
-                      <span className="nav-link-icon" aria-hidden="true"><Icon /></span>
-                      <span className="nav-link-label">{getNavigationItemLabel(item, shouldCollapseSidebar)}</span>
-                      {!shouldCollapseSidebar && typeof badgeCount === "number" ? <span className="nav-link-badge">{badgeCount}</span> : null}
-                    </NavLink>
+                      ) : null}
+                    </div>
                   );
                 })}
               </div>
@@ -674,6 +572,14 @@ function LayersIcon() {
 
 function SharedStepsIcon() {
   return <IconFrame><circle cx="7" cy="8" r="2.5" /><circle cx="17" cy="8" r="2.5" /><circle cx="12" cy="17" r="2.5" /><path d="m9.2 9.4 2 5.2" /><path d="m14.8 9.4-2 5.2" /><path d="M9.5 8h5" /></IconFrame>;
+}
+
+function SubmenuDotIcon() {
+  return (
+    <svg aria-hidden="true" fill="currentColor" height="10" viewBox="0 0 10 10" width="10">
+      <circle cx="5" cy="5" r="2" />
+    </svg>
+  );
 }
 
 function PlayIcon() {

@@ -13,7 +13,7 @@ module.exports = async function (fastify) {
       project_id: { required: true, type: "string" },
       app_type_id: { required: true, type: "string" },
       integration_id: { required: false, type: "string" },
-      release_scope: { required: true, type: "string", minLength: 2 },
+      release_scope: { required: false, type: "string" },
       additional_context: { required: false, type: "string" },
       impacted_requirement_ids: { required: false, type: "array", items: "string" },
       test_environment_id: { required: false, type: "string" },
@@ -87,6 +87,21 @@ module.exports = async function (fastify) {
     // Verify user is member of the execution's project
     await projectService.getProject(execution.project_id, req.user.id);
     return execution;
+  });
+
+  fastify.post("/executions/:id/rerun", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      failed_only: { required: false, type: "boolean" },
+      created_by: { required: true, type: "string" },
+      name: { required: false, type: "string" }
+    }, req.body);
+
+    const execution = await service.getExecution(req.params.id);
+    await projectService.getProject(execution.project_id, req.user.id);
+
+    return service.rerunExecution(req.params.id, req.body);
   });
 
 

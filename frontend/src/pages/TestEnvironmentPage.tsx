@@ -1,14 +1,13 @@
 import { FormEvent, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
-import { SubnavTabs } from "../components/SubnavTabs";
 import { TileBrowserPane } from "../components/TileBrowserPane";
 import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
 import { TileCardStatusIndicator } from "../components/TileCardPrimitives";
+import { WorkspaceSectionTabs } from "../components/WorkspaceSectionTabs";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
@@ -16,6 +15,7 @@ import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { useDialogFocus } from "../hooks/useDialogFocus";
 import { api } from "../lib/api";
 import { parseSpreadsheetFile, toKeyValueRows } from "../lib/testDataImport";
+import { TEST_ENVIRONMENT_SECTION_ITEMS } from "../lib/workspaceSections";
 import type { KeyValueEntry, TestConfiguration, TestDataSet, TestDataSetMode, TestDataSetRow, TestEnvironment } from "../types";
 
 type TestEnvironmentPageView = "environments" | "data" | "configurations";
@@ -55,12 +55,6 @@ type DataSetBuildResult = {
     rows: TestDataSetRow[];
   };
   didSanitizeInvalidChars: boolean;
-};
-
-const ROUTE_BY_VIEW: Record<TestEnvironmentPageView, string> = {
-  environments: "/test-environments",
-  data: "/test-data",
-  configurations: "/test-configurations"
 };
 
 const INVALID_DATA_SET_CHAR_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
@@ -224,7 +218,6 @@ const formatConfigurationTarget = (configuration: Pick<TestConfiguration, "brows
   [configuration.browser, configuration.mobile_os, configuration.platform_version].filter(Boolean).join(" · ");
 
 export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView }) {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const domainMetadataQuery = useDomainMetadata();
   const [projectId, setProjectId] = useCurrentProject();
@@ -631,14 +624,17 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
         projects={projects}
       />
 
-      <SubnavTabs
-        value={view}
-        onChange={(next) => navigate(ROUTE_BY_VIEW[next])}
-        items={[
-          { value: "environments", label: "Environments", meta: `${environments.length} records` },
-          { value: "data", label: "Test Data", meta: `${dataSets.length} records` },
-          { value: "configurations", label: "Configurations", meta: `${configurations.length} records` }
-        ]}
+      <WorkspaceSectionTabs
+        ariaLabel="Test environment sections"
+        items={TEST_ENVIRONMENT_SECTION_ITEMS.map((item) => ({
+          ...item,
+          meta:
+            item.to === "/test-environments"
+              ? `${environments.length} records`
+              : item.to === "/test-data"
+                ? `${dataSets.length} records`
+                : `${configurations.length} records`
+        }))}
       />
 
       {view === "environments" ? (

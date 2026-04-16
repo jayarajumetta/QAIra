@@ -7,6 +7,7 @@ import { FormField } from "../components/FormField";
 import { ExecutionContextSelector } from "../components/ExecutionContextSelector";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { SharedStepsIcon as SharedStepsIconGraphic } from "../components/SharedStepsIcon";
 import { StatusBadge } from "../components/StatusBadge";
 import {
   TileCardCaseIcon,
@@ -26,11 +27,13 @@ import { SuiteCasePicker, SuiteScopePicker } from "../components/SuiteCasePicker
 import { TileBrowserPane } from "../components/TileBrowserPane";
 import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
+import { WorkspaceSectionTabs } from "../components/WorkspaceSectionTabs";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { api } from "../lib/api";
+import { TEST_AUTHORING_SECTION_ITEMS } from "../lib/workspaceSections";
 import type { AppType, ExecutionResult, Project, Requirement, TestCase, TestStep, TestSuite } from "../types";
 
 type CaseDraft = {
@@ -127,19 +130,6 @@ function ExecutionStepsIcon() {
   );
 }
 
-function SharedStepsIcon() {
-  return (
-    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
-      <circle cx="7" cy="8" r="2.5" />
-      <circle cx="17" cy="8" r="2.5" />
-      <circle cx="12" cy="17" r="2.5" />
-      <path d="m9.2 9.4 2 5.2" />
-      <path d="m14.8 9.4-2 5.2" />
-      <path d="M9.5 8h5" />
-    </svg>
-  );
-}
-
 function StepKindIconBadge({
   kind,
   label,
@@ -149,7 +139,7 @@ function StepKindIconBadge({
   label: string;
   tone: "default" | "shared" | "local";
 }) {
-  const icon = kind === "reusable" ? <SharedStepsIcon /> : <ExecutionStepsIcon />;
+  const icon = kind === "reusable" ? <SharedStepsIconGraphic size={16} /> : <ExecutionStepsIcon />;
 
   return (
     <span
@@ -1372,6 +1362,8 @@ export function DesignPage() {
         projectId={projectId}
         projects={projects}
       />
+
+      <WorkspaceSectionTabs ariaLabel="Test authoring sections" items={TEST_AUTHORING_SECTION_ITEMS} />
 
       <WorkspaceMasterDetail
         browseView={(

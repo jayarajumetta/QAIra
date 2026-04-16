@@ -26,6 +26,13 @@ const getStepSnapshotsForExecution = db.prepare(`
   ORDER BY test_case_id ASC, step_order ASC
 `);
 
+const getResultsForExecution = db.prepare(`
+  SELECT test_case_id, status, created_at
+  FROM execution_results
+  WHERE execution_id = ?
+  ORDER BY created_at DESC, id DESC
+`);
+
 const insertExecutionSuite = db.prepare(`
   INSERT INTO execution_suites (execution_id, suite_id, suite_name)
   VALUES (?, ?, ?)
@@ -145,6 +152,15 @@ function parseJsonValue(value, fallback) {
   }
 
   return value;
+}
+
+function normalizeText(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return normalized || null;
 }
 
 function attachExecutionContext(execution) {
@@ -661,6 +677,134 @@ exports.getExecution = async (id) => {
   if (!execution) throw new Error("Execution not found");
 
   return attachDetailedScope(execution);
+};
+
+exports.rerunExecution = async (id, { failed_only = false, created_by, name } = {}) => {
+  if (!created_by) {
+    throw new Error("created_by is required");
+  }
+
+  const sourceExecution = await exports.getExecution(id);
+  const sourceCaseSnapshots = sourceExecution.case_snapshots || [];
+  const sourceStepSnapshots = sourceExecution.step_snapshots || [];
+  const sourceSuiteSnapshots = sourceExecution.suite_snapshots || [];
+
+  if (!sourceCaseSnapshots.length) {
+    throw new Error("This execution does not contain any snapped cases to rerun.");
+  }
+
+  let filteredCaseSnapshots = sourceCaseSnapshots;
+
+  if (failed_only) {
+    const latestStatusByCaseId = new Map();
+
+    getResultsForExecution.all(id).forEach((result) => {
+      if (!latestStatusByCaseId.has(result.test_case_id)) {
+        latestStatusByCaseId.set(result.test_case_id, result.status);
+      }
+    });
+
+    const failedCaseIds = new Set(
+      [...latestStatusByCaseId.entries()]
+        .filter(([, status]) => status === "failed")
+        .map(([test_case_id]) => test_case_id)
+    );
+
+    filteredCaseSnapshots = sourceCaseSnapshots.filter((snapshot) => failedCaseIds.has(snapshot.test_case_id));
+
+    if (!filteredCaseSnapshots.length) {
+      throw new Error("This execution does not have any failed cases to rerun.");
+    }
+  }
+
+  const nextExecutionId = uuid();
+  const allowedCaseIds = new Set(filteredCaseSnapshots.map((snapshot) => snapshot.test_case_id));
+  const filteredSuiteSnapshots = sourceSuiteSnapshots.filter((suite) =>
+    filteredCaseSnapshots.some((snapshot) => snapshot.suite_id === suite.id)
+  );
+  const filteredStepSnapshots = sourceStepSnapshots.filter((snapshot) => allowedCaseIds.has(snapshot.test_case_id));
+  const rerunName =
+    normalizeText(name) ||
+    `${sourceExecution.name || "Execution Run"}${failed_only ? " Failed Rerun" : " Rerun"}`;
+
+  const transaction = db.transaction(async () => {
+    await db.prepare(`
+      INSERT INTO executions
+      (
+        id,
+        project_id,
+        app_type_id,
+        name,
+        trigger,
+        status,
+        test_environment_id,
+        test_environment_name,
+        test_environment_snapshot,
+        test_configuration_id,
+        test_configuration_name,
+        test_configuration_snapshot,
+        test_data_set_id,
+        test_data_set_name,
+        test_data_set_snapshot,
+        assigned_to,
+        created_by
+      )
+      VALUES (?, ?, ?, ?, 'manual', 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      nextExecutionId,
+      sourceExecution.project_id,
+      sourceExecution.app_type_id || null,
+      rerunName,
+      sourceExecution.test_environment?.id || null,
+      sourceExecution.test_environment?.name || null,
+      sourceExecution.test_environment?.snapshot || null,
+      sourceExecution.test_configuration?.id || null,
+      sourceExecution.test_configuration?.name || null,
+      sourceExecution.test_configuration?.snapshot || null,
+      sourceExecution.test_data_set?.id || null,
+      sourceExecution.test_data_set?.name || null,
+      sourceExecution.test_data_set?.snapshot || null,
+      sourceExecution.assigned_to || null,
+      created_by
+    );
+
+    for (const suite of filteredSuiteSnapshots) {
+      await insertExecutionSuite.run(nextExecutionId, suite.id, suite.name || "Deleted Suite");
+    }
+
+    for (const [index, snapshot] of filteredCaseSnapshots.entries()) {
+      await insertExecutionCaseSnapshot.run(
+        nextExecutionId,
+        snapshot.test_case_id,
+        snapshot.test_case_title,
+        snapshot.test_case_description,
+        snapshot.suite_id,
+        snapshot.suite_name,
+        snapshot.priority,
+        snapshot.status,
+        index + 1
+      );
+    }
+
+    for (const snapshot of filteredStepSnapshots) {
+      await insertExecutionStepSnapshot.run(
+        nextExecutionId,
+        snapshot.test_case_id,
+        uuid(),
+        snapshot.step_order,
+        snapshot.action,
+        snapshot.expected_result,
+        snapshot.group_id,
+        snapshot.group_name,
+        snapshot.group_kind,
+        snapshot.reusable_group_id
+      );
+    }
+  });
+
+  await transaction();
+
+  return { id: nextExecutionId };
 };
 
 exports.startExecution = async (id) => {

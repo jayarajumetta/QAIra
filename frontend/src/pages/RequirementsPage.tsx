@@ -20,6 +20,7 @@ import {
 import { TileBrowserPane } from "../components/TileBrowserPane";
 import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
+import { WorkspaceSectionTabs } from "../components/WorkspaceSectionTabs";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
@@ -27,6 +28,7 @@ import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { api } from "../lib/api";
 import { appendUniqueImages, parseExternalLinks, readImageFiles } from "../lib/aiDesignStudio";
 import { parseRequirementCsv } from "../lib/requirementImport";
+import { TEST_AUTHORING_SECTION_ITEMS } from "../lib/workspaceSections";
 import type { AiDesignImageInput, AiDesignedTestCaseCandidate, Requirement, TestCase } from "../types";
 
 type RequirementDraft = {
@@ -753,6 +755,8 @@ export function RequirementsPage() {
         projectId={projectId}
         projects={projects}
       />
+
+      <WorkspaceSectionTabs ariaLabel="Test authoring sections" items={TEST_AUTHORING_SECTION_ITEMS} />
 
       <WorkspaceMasterDetail
         browseView={(

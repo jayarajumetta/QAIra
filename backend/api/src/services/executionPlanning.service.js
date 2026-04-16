@@ -431,8 +431,8 @@ const buildCaseCsv = (cases = []) => {
   return rows.join("\n");
 };
 
-const buildFallbackExecutionName = (releaseScope, appTypeName) => {
-  const scopeSnippet = normalizeText(releaseScope)
+const buildFallbackExecutionName = (planningInput, appTypeName) => {
+  const scopeSnippet = normalizeText(planningInput)
     ?.split(/\s+/)
     .slice(0, 6)
     .join(" ");
@@ -455,15 +455,16 @@ const buildPrompt = ({
     "Plan a smart QA execution for a release by selecting impacted existing test cases from the provided CSV candidate library.",
     "",
     `Application type: ${appType.name} (${appType.type})`,
-    `Execution suite to use when creating the run: ${DIRECT_CASE_SUITE_NAME} (${DIRECT_CASE_SUITE_ID})`,
-    "",
-    "Release scope:",
-    releaseScope
+    `Execution suite to use when creating the run: ${DIRECT_CASE_SUITE_NAME} (${DIRECT_CASE_SUITE_ID})`
   ];
+
+  if (releaseScope) {
+    prompt.push("", "Release scope:", releaseScope);
+  }
 
   if (additionalContext) {
     prompt.push("");
-    prompt.push("Additional release/testing context:");
+    prompt.push(releaseScope ? "Additional release/testing context:" : "Planning context:");
     prompt.push(additionalContext);
   }
 
@@ -725,8 +726,8 @@ exports.previewSmartExecution = async ({
     (Array.isArray(impacted_requirement_ids) ? impacted_requirement_ids : []).map((value) => normalizeText(value))
   );
 
-  if (!project_id || !appType?.id || !releaseScope) {
-    throw new Error("Project, app type, and release scope are required");
+  if (!project_id || !appType?.id || (!releaseScope && !additionalContext)) {
+    throw new Error("Project, app type, and either release scope or additional context are required");
   }
 
   const [selectedEnvironment, selectedConfiguration, selectedDataSet, cases, suiteMappings, requirementMappings, stepRows, integration] =
@@ -843,7 +844,7 @@ exports.previewSmartExecution = async ({
           suite_names: match.suite_names,
           requirement_titles: match.requirement_titles,
           step_count: match.step_count,
-          reason: normalizeText(item?.reason) || "Selected as impacted by the release scope.",
+          reason: normalizeText(item?.reason) || "Selected as impacted by the planning context.",
           impact_level: normalizeImpactLevel(item?.impact_level || item?.impactLevel)
         };
       })
@@ -865,13 +866,13 @@ exports.previewSmartExecution = async ({
       suite_names: match.suite_names,
       requirement_titles: match.requirement_titles,
       step_count: match.step_count,
-      reason: normalizeText(raw?.reason) || "Selected as impacted by the release scope.",
+      reason: normalizeText(raw?.reason) || "Selected as impacted by the planning context.",
       impact_level: normalizeImpactLevel(raw?.impact_level || raw?.impactLevel)
     };
   });
 
   if (rawCases.length && !normalizedCases.length) {
-    throw new Error("AI could not match impacted cases to the existing library. Refine the release scope and try again.");
+    throw new Error("AI could not match impacted cases to the existing library. Refine the planning context and try again.");
   }
 
   return {
@@ -893,12 +894,12 @@ exports.previewSmartExecution = async ({
     matched_case_count: normalizedCases.length,
     execution_name:
       normalizeText(payload?.execution_name || payload?.executionName) ||
-      buildFallbackExecutionName(releaseScope, appType.name),
+      buildFallbackExecutionName(releaseScope || additionalContext, appType.name),
     summary:
       normalizeText(payload?.summary) ||
       (normalizedCases.length
         ? `${normalizedCases.length} impacted test case${normalizedCases.length === 1 ? "" : "s"} selected from ${filteredScopedCases.length} existing case${filteredScopedCases.length === 1 ? "" : "s"}${selectedRequirements.length ? " linked to the selected requirements" : ""}.`
-        : "No materially impacted test cases were identified for this release scope."),
+        : `No materially impacted test cases were identified for this ${releaseScope ? "release scope" : "planning context"}.`),
     cases: normalizedCases
   };
 };

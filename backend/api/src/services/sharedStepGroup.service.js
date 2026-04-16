@@ -41,7 +41,7 @@ const selectSharedStepGroupUsageRows = db.prepare(`
   JOIN test_cases tc ON tc.id = ts.test_case_id
   WHERE ts.reusable_group_id IS NOT NULL
   GROUP BY ts.reusable_group_id, tc.id, tc.title, tc.status
-  ORDER BY tc.title COLLATE NOCASE ASC, tc.id ASC
+  ORDER BY LOWER(COALESCE(tc.title, '')) ASC, tc.title ASC, tc.id ASC
 `);
 
 const normalizeText = (value) => {

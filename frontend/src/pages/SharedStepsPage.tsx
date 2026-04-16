@@ -1,17 +1,24 @@
-import { Fragment, FormEvent, useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, FormEvent, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { StepParameterDialog } from "../components/StepParameterDialog";
+import { StepParameterizedText } from "../components/StepParameterizedText";
+import { SharedStepsIcon as SharedStepsIconGraphic } from "../components/SharedStepsIcon";
 import { StatusBadge } from "../components/StatusBadge";
 import { TileBrowserPane } from "../components/TileBrowserPane";
 import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
+import { WorkspaceSectionTabs } from "../components/WorkspaceSectionTabs";
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { api } from "../lib/api";
+import { removeSharedStepGroupFromCache, upsertSharedStepGroupInCache } from "../lib/sharedStepGroupCache";
+import { collectStepParameters, filterStepParameterValues, type StepParameterDefinition } from "../lib/stepParameters";
+import { TEST_AUTHORING_SECTION_ITEMS } from "../lib/workspaceSections";
 import type { SharedStepGroup } from "../types";
 
 type SharedGroupDraftStep = {
@@ -27,6 +34,15 @@ type SharedGroupDraft = {
 };
 
 type SharedGroupStepInput = Pick<SharedGroupDraftStep, "action" | "expected_result">;
+
+type SharedGroupStepActionMenuAction = {
+  label: string;
+  description?: string;
+  icon: ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  tone?: "default" | "danger" | "primary";
+};
 
 const EMPTY_GROUP_DRAFT: SharedGroupDraft = {
   name: "",
@@ -95,6 +111,9 @@ export function SharedStepsPage() {
   const [groupDraft, setGroupDraft] = useState<SharedGroupDraft>(EMPTY_GROUP_DRAFT);
   const [stepInsertIndex, setStepInsertIndex] = useState<number | null>(null);
   const [newStepDraft, setNewStepDraft] = useState<SharedGroupStepInput>(EMPTY_SHARED_GROUP_STEP_INPUT);
+  const [expandedStepIds, setExpandedStepIds] = useState<string[]>([]);
+  const [isParameterDialogOpen, setIsParameterDialogOpen] = useState(false);
+  const [sharedParameterValues, setSharedParameterValues] = useState<Record<string, string>>({});
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -159,13 +178,68 @@ export function SharedStepsPage() {
     setSelectedGroupId("");
     setIsCreating(false);
     setGroupDraft(EMPTY_GROUP_DRAFT);
+    setExpandedStepIds([]);
+    setSharedParameterValues({});
+    setIsParameterDialogOpen(false);
     resetStepComposer();
   }, [appTypeId]);
+
+  useEffect(() => {
+    const nextStepIds = groupDraft.steps.map((step) => step.id);
+
+    setExpandedStepIds((current) => {
+      const keptIds = current.filter((id) => nextStepIds.includes(id));
+      const addedIds = nextStepIds.filter((id) => !keptIds.includes(id));
+      const nextExpandedIds = [...keptIds, ...addedIds];
+
+      if (
+        nextExpandedIds.length === current.length
+        && nextExpandedIds.every((id, index) => id === current[index])
+      ) {
+        return current;
+      }
+
+      return nextExpandedIds;
+    });
+  }, [groupDraft.steps]);
+
+  useEffect(() => {
+    setSharedParameterValues({});
+    setIsParameterDialogOpen(false);
+  }, [isCreating, selectedGroupId]);
 
   const selectedGroup = useMemo(
     () => sharedGroups.find((group) => group.id === selectedGroupId) || null,
     [selectedGroupId, sharedGroups]
   );
+  const detectedSharedParameters = useMemo<StepParameterDefinition[]>(
+    () =>
+      collectStepParameters(
+        groupDraft.steps.map((step) => ({
+          id: step.id,
+          action: step.action,
+          expected_result: step.expected_result
+        })) as Array<{ id: string; action: string; expected_result: string }>
+      ),
+    [groupDraft.steps]
+  );
+
+  useEffect(() => {
+    setSharedParameterValues((current) => {
+      const next = filterStepParameterValues(current, detectedSharedParameters);
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(next);
+
+      if (
+        currentKeys.length === nextKeys.length
+        && currentKeys.every((key) => current[key] === next[key])
+      ) {
+        return current;
+      }
+
+      return next;
+    });
+  }, [detectedSharedParameters]);
 
   useEffect(() => {
     if (isCreating) {
@@ -184,10 +258,14 @@ export function SharedStepsPage() {
       return;
     }
 
+    if (sharedGroupsQuery.isLoading || sharedGroupsQuery.isFetching) {
+      return;
+    }
+
     setSelectedGroupId("");
     setGroupDraft(EMPTY_GROUP_DRAFT);
     resetStepComposer();
-  }, [isCreating, selectedGroup, selectedGroupId]);
+  }, [isCreating, selectedGroup, selectedGroupId, sharedGroupsQuery.isFetching, sharedGroupsQuery.isLoading]);
 
   const filteredGroups = useMemo(() => {
     const search = deferredSearchTerm.trim().toLowerCase();
@@ -231,6 +309,7 @@ export function SharedStepsPage() {
       ...EMPTY_GROUP_DRAFT,
       steps: [createEmptyDraftStep()]
     });
+    setExpandedStepIds([]);
     resetStepComposer();
   };
 
@@ -238,6 +317,7 @@ export function SharedStepsPage() {
     setSelectedGroupId("");
     setIsCreating(false);
     setGroupDraft(EMPTY_GROUP_DRAFT);
+    setExpandedStepIds([]);
     resetStepComposer();
   };
 
@@ -320,6 +400,14 @@ export function SharedStepsPage() {
     });
   };
 
+  const toggleDraftStepExpanded = (stepId: string) => {
+    setExpandedStepIds((current) =>
+      current.includes(stepId)
+        ? current.filter((id) => id !== stepId)
+        : [...current, stepId]
+    );
+  };
+
   const handleSaveGroup = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -338,9 +426,13 @@ export function SharedStepsPage() {
           description: groupDraft.description.trim() || undefined,
           steps
         });
+        const createdGroup = await api.sharedStepGroups.get(response.id);
 
-        setSelectedGroupId(response.id);
+        upsertSharedStepGroupInCache(queryClient, appTypeId, createdGroup);
+
+        setSelectedGroupId(createdGroup.id);
         setIsCreating(false);
+        setGroupDraft(draftFromGroup(createdGroup));
         showSuccess("Shared step group created.");
       } else if (selectedGroup) {
         await updateSharedGroup.mutateAsync({
@@ -352,6 +444,10 @@ export function SharedStepsPage() {
             steps
           }
         });
+        const refreshedGroup = await api.sharedStepGroups.get(selectedGroup.id);
+
+        upsertSharedStepGroupInCache(queryClient, appTypeId, refreshedGroup);
+        setGroupDraft(draftFromGroup(refreshedGroup));
 
         showSuccess(
           selectedGroup.usage_count
@@ -377,6 +473,7 @@ export function SharedStepsPage() {
 
     try {
       await deleteSharedGroup.mutateAsync(selectedGroup.id);
+      removeSharedStepGroupFromCache(queryClient, appTypeId, selectedGroup.id);
       setSelectedGroupId("");
       setGroupDraft(EMPTY_GROUP_DRAFT);
       resetStepComposer();
@@ -424,6 +521,8 @@ export function SharedStepsPage() {
         projectId={projectId}
         projects={projects}
       />
+
+      <WorkspaceSectionTabs ariaLabel="Test authoring sections" items={TEST_AUTHORING_SECTION_ITEMS} />
 
       <WorkspaceMasterDetail
         browseView={(
@@ -477,6 +576,9 @@ export function SharedStepsPage() {
                       >
                         <div className="tile-card-main">
                           <div className="tile-card-header">
+                            <span aria-label="Shared Steps" className="step-kind-badge is-shared" title="Shared Steps">
+                              <SharedStepsIconGraphic size={16} />
+                            </span>
                             <div className="tile-card-title-group">
                               <strong>{group.name}</strong>
                               <span className="tile-card-kicker">{formatSharedStepDate(group.updated_at)}</span>
@@ -538,11 +640,18 @@ export function SharedStepsPage() {
                   </FormField>
                 </div>
 
-                <div className="step-editor step-editor--embedded">
-                  <div className="detail-summary">
-                    <strong>{groupDraft.steps.length} step{groupDraft.steps.length === 1 ? "" : "s"}</strong>
-                    <span>These steps stay linked anywhere this shared group is referenced.</span>
-                  </div>
+                  <div className="step-editor step-editor--embedded">
+                    <div className="detail-summary">
+                      <strong>{groupDraft.steps.length} step{groupDraft.steps.length === 1 ? "" : "s"}</strong>
+                      <span>These steps stay linked anywhere this shared group is referenced.</span>
+                    </div>
+
+                    {detectedSharedParameters.length ? (
+                      <div className="detail-summary step-parameter-summary">
+                        <strong>{detectedSharedParameters.length} parameter{detectedSharedParameters.length === 1 ? "" : "s"} detected</strong>
+                        <span>{detectedSharedParameters.map((parameter) => parameter.token).join(", ")}</span>
+                      </div>
+                    ) : null}
 
                   {!isCreating && selectedGroup ? (
                     <div className="detail-summary">
@@ -564,6 +673,10 @@ export function SharedStepsPage() {
                   ) : null}
 
                   <div className="action-row step-editor-toolbar">
+                    <button className="ghost-button" onClick={() => setIsParameterDialogOpen(true)} type="button">
+                      <SharedGroupParameterIcon />
+                      <span>{detectedSharedParameters.length ? `Params · ${detectedSharedParameters.length}` : "Params"}</span>
+                    </button>
                     <SharedGroupStepIconButton
                       ariaLabel="Add shared step"
                       onClick={() => activateStepInsert(groupDraft.steps.length)}
@@ -580,6 +693,7 @@ export function SharedStepsPage() {
                         draft={newStepDraft}
                         index={0}
                         isActive={stepInsertIndex === 0}
+                        parameterValues={sharedParameterValues}
                         isVisibleByDefault={true}
                         onActivate={() => activateStepInsert(0)}
                         onCancel={resetStepComposer}
@@ -594,6 +708,7 @@ export function SharedStepsPage() {
                           draft={newStepDraft}
                           index={index}
                           isActive={stepInsertIndex === index}
+                          parameterValues={sharedParameterValues}
                           onActivate={() => activateStepInsert(index)}
                           onCancel={resetStepComposer}
                           onChange={setNewStepDraft}
@@ -602,12 +717,15 @@ export function SharedStepsPage() {
                         <SharedGroupDraftStepCard
                           canMoveDown={index < groupDraft.steps.length - 1}
                           canMoveUp={index > 0}
+                          isExpanded={expandedStepIds.includes(step.id)}
+                          parameterValues={sharedParameterValues}
                           onChange={(input) => updateDraftStep(step.id, input)}
                           onDelete={() => removeDraftStep(step.id)}
                           onInsertAbove={() => activateStepInsert(index)}
                           onInsertBelow={() => activateStepInsert(index + 1)}
                           onMoveDown={() => moveDraftStep(step.id, "down")}
                           onMoveUp={() => moveDraftStep(step.id, "up")}
+                          onToggle={() => toggleDraftStepExpanded(step.id)}
                           step={step}
                           stepNumber={index + 1}
                         />
@@ -616,6 +734,7 @@ export function SharedStepsPage() {
                             draft={newStepDraft}
                             index={index + 1}
                             isActive={stepInsertIndex === index + 1}
+                            parameterValues={sharedParameterValues}
                             onActivate={() => activateStepInsert(index + 1)}
                             onCancel={resetStepComposer}
                             onChange={setNewStepDraft}
@@ -673,6 +792,22 @@ export function SharedStepsPage() {
         )}
         isDetailOpen={Boolean(selectedGroupId) || isCreating}
       />
+
+      {isParameterDialogOpen ? (
+        <StepParameterDialog
+          onChange={(name, value) =>
+            setSharedParameterValues((current) => ({
+              ...current,
+              [name]: value
+            }))
+          }
+          onClose={() => setIsParameterDialogOpen(false)}
+          parameters={detectedSharedParameters}
+          subtitle="Detected @params from the current shared-group steps. These values are previewed inline so reusable flows stay readable."
+          title="Shared step parameter values"
+          values={sharedParameterValues}
+        />
+      ) : null}
     </div>
   );
 }
@@ -707,19 +842,6 @@ function SharedGroupStepIconShell({ children }: { children: ReactNode }) {
   );
 }
 
-function SharedStepsIcon() {
-  return (
-    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
-      <circle cx="7" cy="8" r="2.5" />
-      <circle cx="17" cy="8" r="2.5" />
-      <circle cx="12" cy="17" r="2.5" />
-      <path d="m9.2 9.4 2 5.2" />
-      <path d="m14.8 9.4-2 5.2" />
-      <path d="M9.5 8h5" />
-    </svg>
-  );
-}
-
 function SharedGroupStepInsertIcon() {
   return (
     <SharedGroupStepIconShell>
@@ -727,6 +849,17 @@ function SharedGroupStepInsertIcon() {
       <path d="M5 12h14" />
       <path d="M7 5h10" />
       <path d="M7 19h10" />
+    </SharedGroupStepIconShell>
+  );
+}
+
+function SharedGroupParameterIcon() {
+  return (
+    <SharedGroupStepIconShell>
+      <path d="M5 7.5h14" />
+      <path d="M7 12h10" />
+      <path d="M9 16.5h6" />
+      <path d="m5 5 2.5 2.5L5 10" />
     </SharedGroupStepIconShell>
   );
 }
@@ -785,11 +918,103 @@ function SharedGroupStepDeleteIcon() {
   );
 }
 
+function SharedGroupStepKebabIcon() {
+  return (
+    <SharedGroupStepIconShell>
+      <circle cx="12" cy="6" r="1.5" />
+      <circle cx="12" cy="12" r="1.5" />
+      <circle cx="12" cy="18" r="1.5" />
+    </SharedGroupStepIconShell>
+  );
+}
+
+function SharedGroupStepActionMenu({
+  label,
+  actions
+}: {
+  label: string;
+  actions: SharedGroupStepActionMenuAction[];
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handlePointer = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) {
+        return;
+      }
+
+      setIsOpen(false);
+    };
+
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointer);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("mousedown", handlePointer);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [isOpen]);
+
+  return (
+    <div className="step-card-menu step-card-menu--floating">
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        aria-label={label}
+        className="step-card-menu-trigger"
+        onClick={() => setIsOpen((current) => !current)}
+        ref={triggerRef}
+        title={label}
+        type="button"
+      >
+        <SharedGroupStepKebabIcon />
+      </button>
+      {isOpen ? (
+        <div className="step-card-menu-panel" ref={menuRef} role="menu">
+          {actions.map((action) => (
+            <button
+              className={["step-card-menu-item", action.tone ? `is-${action.tone}` : ""].filter(Boolean).join(" ")}
+              disabled={action.disabled}
+              key={action.label}
+              onClick={() => {
+                action.onClick();
+                setIsOpen(false);
+              }}
+              role="menuitem"
+              title={action.label}
+              type="button"
+            >
+              {action.icon}
+              <span className="step-card-menu-item-content">
+                <span className="step-card-menu-item-label">{action.label}</span>
+                {action.description ? <span className="step-card-menu-item-description">{action.description}</span> : null}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function InlineSharedGroupStepInsertSlot({
   index,
   isActive,
   isVisibleByDefault = false,
   draft,
+  parameterValues,
   onActivate,
   onCancel,
   onChange,
@@ -799,6 +1024,7 @@ function InlineSharedGroupStepInsertSlot({
   isActive: boolean;
   isVisibleByDefault?: boolean;
   draft: SharedGroupStepInput;
+  parameterValues: Record<string, string>;
   onActivate: () => void;
   onCancel: () => void;
   onChange: (draft: SharedGroupStepInput) => void;
@@ -820,7 +1046,12 @@ function InlineSharedGroupStepInsertSlot({
         </div>
       ) : (
         <form className="step-create step-create--inline" onSubmit={onSubmit}>
-          <strong>{index === 0 ? "+ Add Shared Step" : "+ Insert Shared Step"}</strong>
+          <div className="step-card-summary-top">
+            <span aria-label="Shared Steps" className="step-kind-badge is-shared" title="Shared Steps">
+              <SharedStepsIconGraphic size={16} />
+            </span>
+            <strong>{index === 0 ? "+ Add Shared Step" : "+ Insert Shared Step"}</strong>
+          </div>
           <FormField label="Action">
             <input
               autoFocus
@@ -828,6 +1059,12 @@ function InlineSharedGroupStepInsertSlot({
               onChange={(event) => onChange({ ...draft, action: event.target.value })}
             />
           </FormField>
+          {draft.action ? (
+            <div className="step-parameter-preview">
+              <span className="step-parameter-preview-label">Resolved action</span>
+              <StepParameterizedText text={draft.action} values={parameterValues} />
+            </div>
+          ) : null}
           <FormField label="Expected result">
             <textarea
               rows={3}
@@ -835,6 +1072,12 @@ function InlineSharedGroupStepInsertSlot({
               onChange={(event) => onChange({ ...draft, expected_result: event.target.value })}
             />
           </FormField>
+          {draft.expected_result ? (
+            <div className="step-parameter-preview">
+              <span className="step-parameter-preview-label">Resolved expected result</span>
+              <StepParameterizedText text={draft.expected_result} values={parameterValues} />
+            </div>
+          ) : null}
           <div className="action-row">
             <button className="primary-button" type="submit">Save step</button>
             <button className="ghost-button" onClick={onCancel} type="button">
@@ -850,6 +1093,8 @@ function InlineSharedGroupStepInsertSlot({
 function SharedGroupDraftStepCard({
   step,
   stepNumber,
+  parameterValues,
+  isExpanded,
   canMoveUp,
   canMoveDown,
   onChange,
@@ -857,10 +1102,13 @@ function SharedGroupDraftStepCard({
   onInsertAbove,
   onInsertBelow,
   onMoveUp,
-  onMoveDown
+  onMoveDown,
+  onToggle
 }: {
   step: SharedGroupDraftStep;
   stepNumber: number;
+  parameterValues: Record<string, string>;
+  isExpanded: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
   onChange: (input: SharedGroupStepInput) => void;
@@ -869,53 +1117,106 @@ function SharedGroupDraftStepCard({
   onInsertBelow: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
+  onToggle: () => void;
 }) {
+  const stepActions: SharedGroupStepActionMenuAction[] = [
+    {
+      label: "Insert above",
+      description: "Open a new shared step slot right above this step.",
+      icon: <SharedGroupStepInsertAboveIcon />,
+      onClick: onInsertAbove
+    },
+    {
+      label: "Insert below",
+      description: "Open a new shared step slot right below this step.",
+      icon: <SharedGroupStepInsertBelowIcon />,
+      onClick: onInsertBelow
+    },
+    {
+      label: "Move up",
+      description: "Shift this shared step earlier in the group.",
+      icon: <SharedGroupStepMoveUpIcon />,
+      onClick: onMoveUp,
+      disabled: !canMoveUp
+    },
+    {
+      label: "Move down",
+      description: "Shift this shared step later in the group.",
+      icon: <SharedGroupStepMoveDownIcon />,
+      onClick: onMoveDown,
+      disabled: !canMoveDown
+    },
+    {
+      label: "Delete step",
+      description: "Remove this shared step from the group.",
+      icon: <SharedGroupStepDeleteIcon />,
+      onClick: onDelete,
+      tone: "danger"
+    }
+  ];
+
   return (
-    <article className="step-card step-card--shared is-expanded">
+    <article className={["step-card step-card--shared", isExpanded ? "is-expanded" : ""].join(" ")}>
       <div className="step-card-top">
-        <div className="step-card-summary">
-          <div className="step-card-summary-top">
-            <span aria-label="Shared Steps" className="step-kind-badge is-shared" title="Shared Steps">
-              <SharedStepsIcon />
-            </span>
-            <strong>Step {stepNumber}</strong>
+        <button
+          aria-label={isExpanded ? `Hide shared step ${stepNumber} details` : `Show shared step ${stepNumber} details`}
+          className="step-card-toggle"
+          onClick={onToggle}
+          type="button"
+        >
+          <div className="step-card-summary">
+            <div className="step-card-summary-top">
+              <span aria-label="Shared Steps" className="step-kind-badge is-shared" title="Shared Steps">
+                <SharedStepsIconGraphic size={16} />
+              </span>
+              <strong>Step {stepNumber}</strong>
+            </div>
+            <StepParameterizedText
+              className="step-card-parameterized"
+              fallback="Shared step details"
+              text={step.action || step.expected_result}
+              values={parameterValues}
+            />
           </div>
-          <span>{step.action || step.expected_result || "Shared step details"}</span>
-        </div>
-        <div className="step-card-action-menu">
-          <SharedGroupStepIconButton ariaLabel={`Insert above step ${stepNumber}`} onClick={onInsertAbove} title="Insert above" type="button">
-            <SharedGroupStepInsertAboveIcon />
-          </SharedGroupStepIconButton>
-          <SharedGroupStepIconButton ariaLabel={`Insert below step ${stepNumber}`} onClick={onInsertBelow} title="Insert below" type="button">
-            <SharedGroupStepInsertBelowIcon />
-          </SharedGroupStepIconButton>
-          <SharedGroupStepIconButton ariaLabel={`Move step ${stepNumber} up`} disabled={!canMoveUp} onClick={onMoveUp} title="Move up" type="button">
-            <SharedGroupStepMoveUpIcon />
-          </SharedGroupStepIconButton>
-          <SharedGroupStepIconButton ariaLabel={`Move step ${stepNumber} down`} disabled={!canMoveDown} onClick={onMoveDown} title="Move down" type="button">
-            <SharedGroupStepMoveDownIcon />
-          </SharedGroupStepIconButton>
-          <SharedGroupStepIconButton ariaLabel={`Delete step ${stepNumber}`} onClick={onDelete} title="Delete step" type="button">
-            <SharedGroupStepDeleteIcon />
-          </SharedGroupStepIconButton>
-        </div>
+          <span aria-hidden="true" className="step-card-toggle-state">
+            <SharedGroupStepKebabIcon />
+          </span>
+        </button>
+        <SharedGroupStepActionMenu
+          actions={stepActions}
+          label={`Shared step ${stepNumber} actions`}
+        />
       </div>
 
-      <div className="step-card-body">
-        <FormField label="Action">
-          <input
-            value={step.action}
-            onChange={(event) => onChange({ action: event.target.value, expected_result: step.expected_result })}
-          />
-        </FormField>
-        <FormField label="Expected result">
-          <textarea
-            rows={3}
-            value={step.expected_result}
-            onChange={(event) => onChange({ action: step.action, expected_result: event.target.value })}
-          />
-        </FormField>
-      </div>
+      {isExpanded ? (
+        <div className="step-card-body">
+          <FormField label="Action">
+            <input
+              value={step.action}
+              onChange={(event) => onChange({ action: event.target.value, expected_result: step.expected_result })}
+            />
+          </FormField>
+          {step.action ? (
+            <div className="step-parameter-preview">
+              <span className="step-parameter-preview-label">Resolved action</span>
+              <StepParameterizedText text={step.action} values={parameterValues} />
+            </div>
+          ) : null}
+          <FormField label="Expected result">
+            <textarea
+              rows={3}
+              value={step.expected_result}
+              onChange={(event) => onChange({ action: step.action, expected_result: event.target.value })}
+            />
+          </FormField>
+          {step.expected_result ? (
+            <div className="step-parameter-preview">
+              <span className="step-parameter-preview-label">Resolved expected result</span>
+              <StepParameterizedText text={step.expected_result} values={parameterValues} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </article>
   );
 }

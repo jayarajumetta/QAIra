@@ -9,6 +9,8 @@ import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { ProjectDropdown } from "../components/ProjectDropdown";
 import { ProgressMeter } from "../components/ProgressMeter";
+import { SharedStepsIcon as SharedStepsIconGraphic } from "../components/SharedStepsIcon";
+import { StepParameterizedText } from "../components/StepParameterizedText";
 import { StatusBadge } from "../components/StatusBadge";
 import { SubnavTabs } from "../components/SubnavTabs";
 import { SuiteScopePicker } from "../components/SuiteCasePicker";
@@ -26,6 +28,7 @@ import {
   type ExecutionStepEvidence,
   type ExecutionStepStatus
 } from "../lib/executionLogs";
+import { buildDataSetParameterValues, resolveStepParameterText } from "../lib/stepParameters";
 import type {
   AppType,
   Execution,
@@ -524,6 +527,10 @@ export function ExecutionsPage() {
   });
 
   const createExecution = useMutation({ mutationFn: api.executions.create });
+  const rerunExecution = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: Parameters<typeof api.executions.rerun>[1] }) =>
+      api.executions.rerun(id, input)
+  });
   const previewSmartExecution = useMutation({ mutationFn: api.executions.previewSmartPlan });
   const startExecution = useMutation({ mutationFn: api.executions.start });
   const completeExecution = useMutation({
@@ -847,6 +854,10 @@ export function ExecutionsPage() {
   }, [executions, searchParams, selectedExecutionId]);
 
   const selectedExecution = selectedExecutionQuery.data || executions.find((execution) => execution.id === selectedExecutionId) || null;
+  const executionStepParameterValues = useMemo(
+    () => buildDataSetParameterValues(selectedExecution?.test_data_set?.snapshot || null),
+    [selectedExecution?.test_data_set?.snapshot]
+  );
   const selectedExecutionSuiteIds = selectedExecution?.suite_ids || [];
   const selectedExecutionSuites = selectedExecution?.suite_snapshots || [];
   const currentExecutionStatus = normalizeExecutionStatus(selectedExecution?.status);
@@ -1197,9 +1208,9 @@ export function ExecutionsPage() {
       return;
     }
 
-    if (!smartExecutionReleaseScope.trim()) {
+    if (!smartExecutionReleaseScope.trim() && !smartExecutionAdditionalContext.trim()) {
       setSmartExecutionPreviewTone("error");
-      setSmartExecutionPreviewMessage("Add the release scope so AI can identify impacted test coverage.");
+      setSmartExecutionPreviewMessage("Add release scope or additional context so AI can identify impacted test coverage.");
       return;
     }
 
@@ -1208,7 +1219,7 @@ export function ExecutionsPage() {
         project_id: projectId,
         app_type_id: appTypeId,
         integration_id: smartExecutionIntegrationId || undefined,
-        release_scope: smartExecutionReleaseScope,
+        release_scope: smartExecutionReleaseScope || undefined,
         additional_context: smartExecutionAdditionalContext || undefined,
         impacted_requirement_ids: selectedSmartRequirementIds.length ? selectedSmartRequirementIds : undefined,
         test_environment_id: selectedExecutionEnvironmentId || undefined,
@@ -1223,7 +1234,7 @@ export function ExecutionsPage() {
       setSmartExecutionPreviewMessage(
         response.cases.length
           ? `${response.matched_case_count} impacted case${response.matched_case_count === 1 ? "" : "s"} identified from ${response.source_case_count} existing case${response.source_case_count === 1 ? "" : "s"} using ${response.integration.name}${selectedSmartRequirementIds.length ? ` and ${selectedSmartRequirementIds.length} selected requirement${selectedSmartRequirementIds.length === 1 ? "" : "s"}` : ""}.`
-          : `No impacted cases were identified using ${response.integration.name}. Refine the release scope or add more context and try again.`
+          : `No impacted cases were identified using ${response.integration.name}. Refine the release scope, add context, or try a narrower requirement filter.`
       );
     } catch (error) {
       resetSmartExecutionPreview();
@@ -1274,6 +1285,28 @@ export function ExecutionsPage() {
       await refreshExecutionScope(response.id);
     } catch (error) {
       showError(error, "Unable to create execution");
+    }
+  };
+
+  const handleRerunExecution = async (failedOnly: boolean) => {
+    if (!selectedExecution || !session?.user.id) {
+      return;
+    }
+
+    try {
+      const response = await rerunExecution.mutateAsync({
+        id: selectedExecution.id,
+        input: {
+          failed_only: failedOnly,
+          created_by: session.user.id
+        }
+      });
+
+      focusExecution(response.id);
+      await refreshExecutionScope(response.id);
+      showSuccess(failedOnly ? "Failed cases were queued into a fresh rerun execution." : "A fresh rerun execution was created with the same execution context.");
+    } catch (error) {
+      showError(error, failedOnly ? "Unable to rerun failed cases" : "Unable to rerun execution");
     }
   };
 
@@ -2174,6 +2207,7 @@ export function ExecutionsPage() {
                                               isUploadingEvidence={uploadingEvidenceStepId === step.id}
                                               key={step.id}
                                               note={stepNotes[step.id] || ""}
+                                              parameterValues={executionStepParameterValues}
                                               onFail={() => void handleRecordStep(step.id, "failed")}
                                               onDeleteEvidence={() => void handleDeleteStepEvidence(step)}
                                               onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
@@ -2206,6 +2240,7 @@ export function ExecutionsPage() {
                                     isUploadingEvidence={uploadingEvidenceStepId === step.id}
                                     key={step.id}
                                     note={stepNotes[step.id] || ""}
+                                    parameterValues={executionStepParameterValues}
                                     onFail={() => void handleRecordStep(step.id, "failed")}
                                     onDeleteEvidence={() => void handleDeleteStepEvidence(step)}
                                     onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
@@ -2376,6 +2411,24 @@ export function ExecutionsPage() {
                         <span>{executionControlDescription}</span>
                       </div>
                       <div className="action-row">
+                        <button
+                          className="ghost-button"
+                          disabled={!selectedExecution || rerunExecution.isPending || startExecution.isPending || completeExecution.isPending}
+                          onClick={() => void handleRerunExecution(false)}
+                          type="button"
+                        >
+                          <ExecutionRerunIcon />
+                          <span>{rerunExecution.isPending ? "Preparing…" : "Rerun execution"}</span>
+                        </button>
+                        <button
+                          className="ghost-button"
+                          disabled={!selectedExecution || !executionStatusCounts.failed || rerunExecution.isPending || startExecution.isPending || completeExecution.isPending}
+                          onClick={() => void handleRerunExecution(true)}
+                          type="button"
+                        >
+                          <ExecutionRerunIcon />
+                          <span>{rerunExecution.isPending ? "Preparing…" : `Rerun failed (${executionStatusCounts.failed})`}</span>
+                        </button>
                         <button
                           className="ghost-button"
                           disabled={currentExecutionStatus !== "queued" || startExecution.isPending || completeExecution.isPending}
@@ -2985,6 +3038,15 @@ function ExecutionAbortIcon() {
   );
 }
 
+function ExecutionRerunIcon() {
+  return (
+    <ExecutionIconShell>
+      <path d="M20 12a8 8 0 1 1-2.3-5.6" />
+      <path d="M20 4v6h-6" />
+    </ExecutionIconShell>
+  );
+}
+
 function ExecutionIconShell({ children }: { children: ReactNode }) {
   return <svg aria-hidden="true" fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width="14">{children}</svg>;
 }
@@ -3065,19 +3127,6 @@ function ExecutionStepsIcon() {
   );
 }
 
-function SharedStepsIcon() {
-  return (
-    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
-      <circle cx="7" cy="8" r="2.5" />
-      <circle cx="17" cy="8" r="2.5" />
-      <circle cx="12" cy="17" r="2.5" />
-      <path d="m9.2 9.4 2 5.2" />
-      <path d="m14.8 9.4-2 5.2" />
-      <path d="M9.5 8h5" />
-    </svg>
-  );
-}
-
 function StepKindIconBadge({
   kind,
   label,
@@ -3087,7 +3136,7 @@ function StepKindIconBadge({
   label: string;
   tone: "default" | "shared" | "local";
 }) {
-  const icon = kind === "reusable" ? <SharedStepsIcon /> : <ExecutionStepsIcon />;
+  const icon = kind === "reusable" ? <SharedStepsIconGraphic size={16} /> : <ExecutionStepsIcon />;
 
   return (
     <span
@@ -3313,6 +3362,7 @@ function ExecutionCompactStepRow({
   status,
   note,
   evidence,
+  parameterValues,
   isLocked,
   isSelected,
   isUploadingEvidence,
@@ -3328,6 +3378,7 @@ function ExecutionCompactStepRow({
   status: ExecutionResult["status"] | "queued";
   note: string;
   evidence: ExecutionStepEvidence | null;
+  parameterValues: Record<string, string>;
   isLocked: boolean;
   isSelected: boolean;
   isUploadingEvidence: boolean;
@@ -3346,6 +3397,7 @@ function ExecutionCompactStepRow({
   const stepBadgeKind = isGroupedStep ? undefined : resolvedKind;
   const stepBadgeLabel = isGroupedStep ? "Standard step" : stepKind.label;
   const stepBadgeTone = isGroupedStep ? "default" : stepKind.tone;
+  const resolvedExpectedResult = resolveStepParameterText(step.expected_result, parameterValues);
   const toneClass = [
     "execution-step-row",
     status === "passed" ? "is-passed" : "",
@@ -3372,12 +3424,20 @@ function ExecutionCompactStepRow({
         <div className="execution-step-badges">
           <StepKindIconBadge kind={stepBadgeKind} label={stepBadgeLabel} tone={stepBadgeTone} />
         </div>
-        <span className="execution-step-clamp" title={step.action || ""}>
-          {step.action || "—"}
-        </span>
+        <StepParameterizedText
+          className="execution-step-clamp"
+          fallback="—"
+          text={step.action}
+          values={parameterValues}
+        />
       </div>
-      <span className="execution-step-col-expected execution-step-clamp" role="cell" title={step.expected_result || ""}>
-        {step.expected_result || "—"}
+      <span className="execution-step-col-expected execution-step-clamp" role="cell" title={resolvedExpectedResult || step.expected_result || ""}>
+        <StepParameterizedText
+          className="execution-step-clamp"
+          fallback="—"
+          text={step.expected_result}
+          values={parameterValues}
+        />
       </span>
       <span className="execution-step-col-status" role="cell">
         <StatusBadge value={status} />
@@ -3697,6 +3757,7 @@ function ExecutionCreateModal({
 }) {
   const isSmartMode = executionCreateMode === "smart";
   const smartPreviewCases = smartExecutionPreview?.cases || [];
+  const hasSmartPlanningInput = Boolean(smartExecutionReleaseScope.trim() || smartExecutionAdditionalContext.trim());
   const normalizedRequirementSearch = smartExecutionRequirementSearch.trim().toLowerCase();
   const filteredSmartRequirementOptions = normalizedRequirementSearch
     ? smartExecutionRequirementOptions.filter((requirement) =>
@@ -3836,7 +3897,7 @@ function ExecutionCreateModal({
                     <div className="panel-head">
                       <div>
                         <h3>Release impact prompt</h3>
-                        <p>Shape the AI prompt with release scope and any extra risk context before previewing impacted coverage.</p>
+                        <p>Shape the AI prompt with release scope, additional context, or both before previewing impacted coverage.</p>
                       </div>
                     </div>
 
@@ -3851,7 +3912,7 @@ function ExecutionCreateModal({
                       </select>
                     </FormField>
 
-                    <FormField label="Release scope" required>
+                    <FormField label="Release scope" hint="Provide release scope, additional context, or both. AI can plan from either field.">
                       <textarea
                         placeholder="Summarize the release changes, touched modules, high-risk workflows, integrations, data movement, and regression concerns..."
                         rows={7}
@@ -3860,7 +3921,7 @@ function ExecutionCreateModal({
                       />
                     </FormField>
 
-                    <FormField label="Additional context">
+                    <FormField label="Additional context" hint="Optional on its own too: rollout notes, known gaps, compliance focus, customer risk, or environment context.">
                       <textarea
                         placeholder="Environment notes, rollout risks, known gaps, customer impact, compliance focus..."
                         rows={5}
@@ -3950,7 +4011,7 @@ function ExecutionCreateModal({
                 <div className="ai-studio-main">
                   <div className="detail-summary">
                     <strong>{smartExecutionPreview ? `${selectedSmartCaseCount} impacted cases selected` : "AI Smart Execution"}</strong>
-                    <span>{smartExecutionPreview ? smartExecutionPreview.summary : "Generate an impact-based execution plan from the current release scope."}</span>
+                    <span>{smartExecutionPreview ? smartExecutionPreview.summary : "Generate an impact-based execution plan from release scope, additional context, or both."}</span>
                     <span>
                       {smartExecutionPreview
                         ? `${smartExecutionPreview.source_case_count} existing cases were screened and ${smartExecutionPreview.matched_case_count} cases were suggested for this run.`
@@ -3975,7 +4036,7 @@ function ExecutionCreateModal({
                   <div className="action-row">
                     <button
                       className="primary-button"
-                      disabled={!projectId || !appTypeId || !smartExecutionReleaseScope.trim() || isPreviewingSmartExecution || isSubmitting || !integrations.length}
+                      disabled={!projectId || !appTypeId || !hasSmartPlanningInput || isPreviewingSmartExecution || isSubmitting || !integrations.length}
                       onClick={onPreviewSmartExecution}
                       type="button"
                     >
