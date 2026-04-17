@@ -223,6 +223,11 @@ export function DesignPage() {
     queryFn: () => api.testSteps.list(),
     enabled: Boolean(appTypeId)
   });
+  const sharedGroupsQuery = useQuery({
+    queryKey: ["design-shared-step-groups", appTypeId],
+    queryFn: () => api.sharedStepGroups.list({ app_type_id: appTypeId }),
+    enabled: Boolean(appTypeId)
+  });
   const suiteMappingsQuery = useQuery({
     queryKey: ["suite-test-case-mappings", selectedSuiteId],
     queryFn: () => api.suiteTestCases.list({ suite_id: selectedSuiteId }),
@@ -432,6 +437,24 @@ export function DesignPage() {
 
   const selectedProject = projects.find((project) => project.id === projectId) || null;
   const selectedAppType = appTypes.find((appType) => appType.id === appTypeId) || null;
+  const sharedGroups = sharedGroupsQuery.data || [];
+  const authoringSectionItems = useMemo(
+    () =>
+      TEST_AUTHORING_SECTION_ITEMS.map((item) => ({
+        ...item,
+        meta:
+          item.to === "/requirements"
+            ? String(requirements.length)
+            : item.to === "/test-cases"
+              ? String(appTypeCases.length)
+              : item.to === "/shared-steps"
+                ? String(sharedGroups.length)
+                : item.to === "/design"
+                  ? String(suites.length)
+                  : undefined
+      })),
+    [appTypeCases.length, requirements.length, sharedGroups.length, suites.length]
+  );
   const selectedSuite = suites.find((suite) => suite.id === selectedSuiteId) || null;
   const selectedTestCase = appTypeCases.find((testCase) => testCase.id === selectedTestCaseId) || null;
   const sortedSteps = useMemo(
@@ -1363,7 +1386,7 @@ export function DesignPage() {
         projects={projects}
       />
 
-      <WorkspaceSectionTabs ariaLabel="Test authoring sections" items={TEST_AUTHORING_SECTION_ITEMS} />
+      <WorkspaceSectionTabs ariaLabel="Test authoring sections" items={authoringSectionItems} />
 
       <WorkspaceMasterDetail
         browseView={(

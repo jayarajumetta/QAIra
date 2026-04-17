@@ -5,11 +5,11 @@ import { useAuth } from "../auth/AuthContext";
 import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
 import { FormField } from "../components/FormField";
+import { LinkedTestCaseModal } from "../components/LinkedTestCaseModal";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import {
   TileCardFact,
-  TileCardIconFrame,
   TileCardLinkIcon,
   TileCardPriorityIcon,
   TileCardRequirementIcon,
@@ -63,6 +63,7 @@ export function RequirementsPage() {
   const [appTypeId, setAppTypeId] = useState("");
   const [selectedRequirementId, setSelectedRequirementId] = useState("");
   const [selectedTestCaseIds, setSelectedTestCaseIds] = useState<string[]>([]);
+  const [linkedPreviewCaseId, setLinkedPreviewCaseId] = useState("");
   const [deleteSelectedRequirementIds, setDeleteSelectedRequirementIds] = useState<string[]>([]);
   const [isDeletingSelectedRequirements, setIsDeletingSelectedRequirements] = useState(false);
   const [requirementSearchTerm, setRequirementSearchTerm] = useState("");
@@ -112,6 +113,16 @@ export function RequirementsPage() {
     queryFn: () => api.testCases.list({ app_type_id: appTypeId }),
     enabled: Boolean(appTypeId)
   });
+  const sharedGroupsQuery = useQuery({
+    queryKey: ["requirements-shared-step-groups", appTypeId],
+    queryFn: () => api.sharedStepGroups.list({ app_type_id: appTypeId }),
+    enabled: Boolean(appTypeId)
+  });
+  const suitesQuery = useQuery({
+    queryKey: ["requirements-test-suites", appTypeId],
+    queryFn: () => api.testSuites.list({ app_type_id: appTypeId }),
+    enabled: Boolean(appTypeId)
+  });
   const integrationsQuery = useQuery({
     queryKey: ["integrations", "llm"],
     queryFn: () => api.integrations.list({ type: "llm", is_active: true }),
@@ -142,6 +153,8 @@ export function RequirementsPage() {
   const appTypes = appTypesQuery.data || [];
   const requirements = requirementsQuery.data || [];
   const testCases = testCasesQuery.data || [];
+  const sharedGroups = sharedGroupsQuery.data || [];
+  const suites = suitesQuery.data || [];
   const integrations = integrationsQuery.data || [];
   const isRequirementCatalogLoading = projectsQuery.isLoading || (Boolean(projectId) && requirementsQuery.isLoading);
 
@@ -297,6 +310,29 @@ export function RequirementsPage() {
     const linkedIds = new Set(selectedTestCaseIds);
     return testCases.filter((testCase) => linkedIds.has(testCase.id));
   }, [selectedTestCaseIds, testCases]);
+  const linkedPreviewCase = useMemo(
+    () => testCases.find((testCase) => testCase.id === linkedPreviewCaseId) || null,
+    [linkedPreviewCaseId, testCases]
+  );
+
+  const openTestCaseWorkspace = (testCaseId: string) => setLinkedPreviewCaseId(testCaseId);
+  const authoringSectionItems = useMemo(
+    () =>
+      TEST_AUTHORING_SECTION_ITEMS.map((item) => ({
+        ...item,
+        meta:
+          item.to === "/requirements"
+            ? String(requirements.length)
+            : item.to === "/test-cases"
+              ? String(testCases.length)
+              : item.to === "/shared-steps"
+                ? String(sharedGroups.length)
+                : item.to === "/design"
+                  ? String(suites.length)
+                  : undefined
+      })),
+    [requirements.length, sharedGroups.length, suites.length, testCases.length]
+  );
 
   useEffect(() => {
     if (!selectedRequirement) {
@@ -756,7 +792,7 @@ export function RequirementsPage() {
         projects={projects}
       />
 
-      <WorkspaceSectionTabs ariaLabel="Test authoring sections" items={TEST_AUTHORING_SECTION_ITEMS} />
+      <WorkspaceSectionTabs ariaLabel="Test authoring sections" items={authoringSectionItems} />
 
       <WorkspaceMasterDetail
         browseView={(
@@ -898,18 +934,9 @@ export function RequirementsPage() {
                             </label>
                           </div>
                           <div className="tile-card-header">
-                            <TileCardIconFrame tone={requirementStatusTone}>
-                              <TileCardRequirementIcon />
-                            </TileCardIconFrame>
                             <div className="tile-card-title-group">
                               <strong>{item.title}</strong>
-                              <span className="tile-card-kicker requirement-tile-kicker">
-                                <span>{currentAppTypeName}</span>
-                                <span className="requirement-tile-link-count" title={`${linkedCaseCount} linked test case${linkedCaseCount === 1 ? "" : "s"}`}>
-                                  <TileCardLinkIcon />
-                                  <span>{linkedCaseCount}</span>
-                                </span>
-                              </span>
+                              <span className="tile-card-kicker requirement-tile-kicker">{currentAppTypeName}</span>
                             </div>
                             <TileCardStatusIndicator title={requirementStatusLabel} tone={requirementStatusTone} />
                           </div>
@@ -1001,7 +1028,10 @@ export function RequirementsPage() {
                             <strong>{testCase.title}</strong>
                             <span>{testCase.description || "No description available."}</span>
                           </div>
-                          <span className="count-pill">Linked</span>
+                          <button className="ghost-button inline-button" onClick={() => openTestCaseWorkspace(testCase.id)} type="button">
+                            <TileCardLinkIcon />
+                            <span>View test case</span>
+                          </button>
                         </div>
                       ))}
                       {!selectedVisibleCases.length ? <div className="empty-state compact">No linked test cases are visible in the current app type yet.</div> : null}
@@ -1272,7 +1302,7 @@ export function RequirementsPage() {
           dialogClassName="ai-design-modal--requirements"
           existingCases={associatedCases}
           existingCasesSubtitle="These are already associated with the selected requirement in the current app type."
-          existingCasesTitle="Existing linked cases"
+          existingCasesTitle="Linked test cases"
           externalLinksText={aiExternalLinksText}
           eyebrow="Requirements"
           integrationId={integrationId}
@@ -1290,6 +1320,7 @@ export function RequirementsPage() {
           }}
           onExternalLinksTextChange={setAiExternalLinksText}
           onIntegrationIdChange={setIntegrationId}
+          onViewExistingCase={openTestCaseWorkspace}
           onPreview={() => void handlePreviewDesignedCases()}
           onRemoveImage={(imageUrl) => setAiReferenceImages((current) => current.filter((image) => image.url !== imageUrl))}
           onRemovePreviewCase={(clientId) => setPreviewCases((current) => current.filter((candidate) => candidate.client_id !== clientId))}
@@ -1303,6 +1334,17 @@ export function RequirementsPage() {
           requirementLabel="Requirement"
           requirements={requirements}
           selectedRequirementIds={aiRequirement?.id ? [aiRequirement.id] : []}
+        />
+      ) : null}
+
+      {linkedPreviewCase ? (
+        <LinkedTestCaseModal
+          appTypeName={currentAppTypeName}
+          projectName={projects.find((project) => project.id === projectId)?.name || ""}
+          requirements={requirements}
+          suites={suites}
+          testCase={linkedPreviewCase}
+          onClose={() => setLinkedPreviewCaseId("")}
         />
       ) : null}
     </div>

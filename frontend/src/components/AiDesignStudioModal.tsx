@@ -1,6 +1,7 @@
 import type { AiDesignImageInput, AiDesignedTestCaseCandidate, Integration, Requirement, TestCase } from "../types";
 import { useDialogFocus } from "../hooks/useDialogFocus";
 import { FormField } from "./FormField";
+import { TileCardLinkIcon } from "./TileCardPrimitives";
 
 export function AiDesignStudioModal({
   eyebrow,
@@ -26,6 +27,7 @@ export function AiDesignStudioModal({
   existingCases,
   existingCasesTitle,
   existingCasesSubtitle,
+  onViewExistingCase,
   previewCases,
   onRemovePreviewCase,
   onTogglePreviewRequirement,
@@ -65,6 +67,7 @@ export function AiDesignStudioModal({
   existingCases: TestCase[];
   existingCasesTitle: string;
   existingCasesSubtitle: string;
+  onViewExistingCase?: (testCaseId: string) => void;
   previewCases: AiDesignedTestCaseCandidate[];
   onRemovePreviewCase: (clientId: string) => void;
   onTogglePreviewRequirement?: (clientId: string, requirementId: string) => void;
@@ -297,7 +300,15 @@ export function AiDesignStudioModal({
                         <strong>{testCase.title}</strong>
                         <span>{testCase.description || "No description available."}</span>
                       </div>
-                      <span className="count-pill">Existing</span>
+                      <button
+                        className="ghost-button ai-existing-case-button"
+                        onClick={() => onViewExistingCase?.(testCase.id)}
+                        type="button"
+                      >
+                        <AiViewIcon />
+                        <TileCardLinkIcon />
+                        <span>TC</span>
+                      </button>
                     </div>
                   ))}
                   {!existingCases.length ? <div className="empty-state compact">No existing cases are linked to the current selection yet.</div> : null}
@@ -385,5 +396,14 @@ export function AiDesignStudioModal({
         </div>
       </div>
     </div>
+  );
+}
+
+function AiViewIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
+      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
   );
 }

@@ -201,9 +201,8 @@ export function TileCardStepsIcon() {
 export function TileCardLinkIcon() {
   return (
     <TileCardIconShell>
-      <path d="M10 13.5 14 9.5" />
-      <path d="M8.5 16a3.5 3.5 0 0 1 0-5l2-2a3.5 3.5 0 0 1 5 5l-.5.5" />
-      <path d="M15.5 8a3.5 3.5 0 0 1 0 5l-2 2a3.5 3.5 0 0 1-5-5l.5-.5" />
+      <path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L10.8 5.12" />
+      <path d="M14 11a5 5 0 0 0-7.07 0L4.8 13.12a5 5 0 1 0 7.07 7.07L13.2 18.9" />
     </TileCardIconShell>
   );
 }

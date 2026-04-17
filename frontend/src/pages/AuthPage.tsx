@@ -85,48 +85,48 @@ const AUTH_CAPABILITY_SLIDES: Array<{
 }> = [
   {
     id: "marketplace",
-    eyebrow: "Marketplace Tools",
-    title: "Browse QA marketplace packs without leaving the workspace.",
-    description: "Preview the tool packs QAira can activate across smart planning, secure access, notifications, and defect handoff instead of scattering the team across tabs.",
+    eyebrow: "Connected Tooling",
+    title: "Bring planning, access, alerts, and defect handoff into one QA workspace.",
+    description: "QAira keeps AI design, login controls, integrations, and release workflows connected so the team works from one operating surface instead of stitching together separate tools.",
     theme: "blue",
     visual: "marketplace",
     metrics: [
-      { value: "12", label: "live tools" },
-      { value: "4", label: "ready packs" },
-      { value: "1", label: "workspace" }
+      { value: "12", label: "tool surfaces" },
+      { value: "4", label: "ready flows" },
+      { value: "1", label: "team hub" }
     ],
-    capabilities: ["LLM planning packs", "Google and email access", "Jira-ready handoff"],
-    footer: "One marketplace surface for the tools that power release work."
+    capabilities: ["AI-powered design", "Google and email access", "Integration-ready handoff"],
+    footer: "One workspace for the tooling that usually gets split across tabs and teams."
   },
   {
     id: "playbooks",
-    eyebrow: "Execution Packs",
-    title: "Turn impacted requirements into execution-ready packs in a few clicks.",
-    description: "Blend selected requirements, linked cases, shared step groups, and the Default suite into a focused run without rebuilding scope by hand.",
+    eyebrow: "Reusable Coverage",
+    title: "Link requirements, reusable cases, suites, and shared steps into one test flow.",
+    description: "Move from requirement coverage to suite planning without rebuilding the same scope. Shared steps, linked cases, and grouped flows stay connected across authoring and execution.",
     theme: "amber",
     visual: "playbooks",
     metrics: [
-      { value: "18", label: "reqs scoped" },
+      { value: "18", label: "reqs mapped" },
       { value: "42", label: "cases linked" },
-      { value: "1", label: "default suite" }
+      { value: "9", label: "shared groups" }
     ],
-    capabilities: ["Impact-based runs", "Shared step packs", "Grouped flow coverage"],
-    footer: "Execution planning stays deliberate, fast, and tied to real product change."
+    capabilities: ["Requirement traceability", "Shared step groups", "Suite-ready case reuse"],
+    footer: "Coverage stays deliberate, reusable, and ready to move into execution."
   },
   {
     id: "evidence",
-    eyebrow: "Evidence Exchange",
-    title: "Keep execution proof connected to every tool and team that needs it.",
-    description: "Bundle screenshots, notes, failures, and release signals into a clean handoff path for audit, product, and engineering conversations.",
+    eyebrow: "Execution Evidence",
+    title: "Capture runs, failures, and proof in a format product and engineering can act on.",
+    description: "Execution history, notes, failure signals, and linked evidence stay attached to reusable coverage so audits, bug triage, and release reviews stay grounded in the same source.",
     theme: "teal",
     visual: "evidence",
     metrics: [
       { value: "100%", label: "proof linked" },
       { value: "3", label: "handoff lanes" },
-      { value: "0", label: "orphan runs" }
+      { value: "24h", label: "audit ready" }
     ],
-    capabilities: ["Audit-ready evidence", "Defect sync summaries", "Release-ready signals"],
-    footer: "Evidence stays readable, reusable, and ready for the next decision."
+    capabilities: ["Execution history", "Defect-ready summaries", "Release signals"],
+    footer: "Evidence stays readable, linked, and ready for the next shipping decision."
   }
 ];
 

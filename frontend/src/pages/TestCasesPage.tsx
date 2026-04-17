@@ -6,6 +6,7 @@ import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
 import { ExecutionContextSelector } from "../components/ExecutionContextSelector";
 import { FormField } from "../components/FormField";
+import { LinkedTestCaseModal } from "../components/LinkedTestCaseModal";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StepParameterDialog } from "../components/StepParameterDialog";
@@ -15,7 +16,6 @@ import { StatusBadge } from "../components/StatusBadge";
 import {
   TileCardCaseIcon,
   TileCardFact,
-  TileCardIconFrame,
   TileCardLinkIcon,
   TileCardPriorityIcon,
   TileCardRunsIcon,
@@ -332,6 +332,7 @@ export function TestCasesPage() {
   const [caseRunFilter, setCaseRunFilter] = useState<CaseRunFilter>("all");
   const [isCreating, setIsCreating] = useState(false);
   const [selectedActionTestCaseIds, setSelectedActionTestCaseIds] = useState<string[]>([]);
+  const [linkedPreviewCaseId, setLinkedPreviewCaseId] = useState("");
   const [isDeletingSelectedTestCases, setIsDeletingSelectedTestCases] = useState(false);
   const [isCreateSuiteModalOpen, setIsCreateSuiteModalOpen] = useState(false);
   const [isCreateExecutionModalOpen, setIsCreateExecutionModalOpen] = useState(false);
@@ -2670,6 +2671,29 @@ export function TestCasesPage() {
       (testCase.requirement_ids || [testCase.requirement_id]).filter(Boolean).some((requirementId) => requirementSet.has(requirementId as string))
     );
   }, [aiRequirementIds, testCases]);
+  const linkedPreviewCase = useMemo(
+    () => testCases.find((testCase) => testCase.id === linkedPreviewCaseId) || null,
+    [linkedPreviewCaseId, testCases]
+  );
+
+  const openExistingCaseFromAi = (testCaseId: string) => setLinkedPreviewCaseId(testCaseId);
+  const authoringSectionItems = useMemo(
+    () =>
+      TEST_AUTHORING_SECTION_ITEMS.map((item) => ({
+        ...item,
+        meta:
+          item.to === "/requirements"
+            ? String(requirements.length)
+            : item.to === "/test-cases"
+              ? String(testCases.length)
+              : item.to === "/shared-steps"
+                ? String(sharedStepGroups.length)
+                : item.to === "/design"
+                  ? String(suites.length)
+                  : undefined
+      })),
+    [requirements.length, sharedStepGroups.length, suites.length, testCases.length]
+  );
 
 
   const closeCaseWorkspace = () => {
@@ -2873,7 +2897,7 @@ export function TestCasesPage() {
         />
       ) : null}
 
-      <WorkspaceSectionTabs ariaLabel="Test authoring sections" items={TEST_AUTHORING_SECTION_ITEMS} />
+      <WorkspaceSectionTabs ariaLabel="Test authoring sections" items={authoringSectionItems} />
 
       <WorkspaceMasterDetail
         browseView={(
@@ -3047,9 +3071,6 @@ export function TestCasesPage() {
                             </label>
                           </div>
                           <div className="tile-card-header">
-                            <TileCardIconFrame tone={caseStatusTone}>
-                              <TileCardCaseIcon />
-                            </TileCardIconFrame>
                             <div className="tile-card-title-group">
                               <strong>{testCase.title}</strong>
                               <span className="tile-card-kicker">{requirementTitle || "No requirement linked"}</span>
@@ -3073,7 +3094,7 @@ export function TestCasesPage() {
                               <TileCardStepsIcon />
                             </TileCardFact>
                             <TileCardFact
-                              label={String(suiteCount)}
+                              label={`${suiteCount} linked`}
                               title={`${suiteCount} linked suite${suiteCount === 1 ? "" : "s"}`}
                               tone={suiteCount ? "success" : "neutral"}
                             >
@@ -3677,7 +3698,7 @@ export function TestCasesPage() {
           disablePreview={!aiRequirementIds.length || !appTypeId || previewDesignedCases.isPending || !integrations.length}
           existingCases={aiExistingCases}
           existingCasesSubtitle="These reusable cases are already linked to one or more of the selected requirements in the current app type."
-          existingCasesTitle="Existing related cases"
+          existingCasesTitle="Linked test cases"
           externalLinksText={aiExternalLinksText}
           eyebrow="Test Cases"
           integrationId={integrationId}
@@ -3695,6 +3716,7 @@ export function TestCasesPage() {
           }}
           onExternalLinksTextChange={setAiExternalLinksText}
           onIntegrationIdChange={setIntegrationId}
+          onViewExistingCase={openExistingCaseFromAi}
           onPreview={() => void handlePreviewDesignedCases()}
           onRemoveImage={(imageUrl) => setAiReferenceImages((current) => current.filter((image) => image.url !== imageUrl))}
           onRemovePreviewCase={(clientId) => setAiPreviewCases((current) => current.filter((candidate) => candidate.client_id !== clientId))}
@@ -3717,6 +3739,17 @@ export function TestCasesPage() {
           requirementLabel="Requirements"
           requirements={requirements}
           selectedRequirementIds={aiSelectedRequirements.map((requirement) => requirement.id)}
+        />
+      ) : null}
+
+      {linkedPreviewCase ? (
+        <LinkedTestCaseModal
+          appTypeName={appTypes.find((item) => item.id === appTypeId)?.name || ""}
+          projectName={selectedProject?.name || ""}
+          requirements={requirements}
+          suites={suites}
+          testCase={linkedPreviewCase}
+          onClose={() => setLinkedPreviewCaseId("")}
         />
       ) : null}
     </div>
