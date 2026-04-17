@@ -7,6 +7,7 @@ import type {
   DomainMetadata,
   Execution,
   ExecutionResult,
+  ExecutionSchedule,
   Feedback,
   Integration,
   KeyValueEntry,
@@ -397,6 +398,17 @@ export const api = {
     complete: (id: string, input: { status: "completed" | "failed" | "aborted" }) =>
       request<{ completed: boolean }>(`/executions/${id}/complete`, { method: "POST", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/executions/${id}`, { method: "DELETE" })
+  },
+  executionSchedules: {
+    list: (query?: { project_id?: string; app_type_id?: string; is_active?: boolean }) =>
+      request<ExecutionSchedule[]>(`/execution-schedules${toQueryString(query)}`),
+    get: (id: string) =>
+      request<ExecutionSchedule>(`/execution-schedules/${id}`),
+    create: (input: { project_id: string; app_type_id?: string; name?: string; cadence?: string; next_run_at?: string; suite_ids?: string[]; test_case_ids?: string[]; test_environment_id?: string; test_configuration_id?: string; test_data_set_id?: string; assigned_to?: string; created_by: string }) =>
+      request<{ id: string }>("/execution-schedules", { method: "POST", body: JSON.stringify(input) }),
+    run: (id: string) =>
+      request<{ id: string }>(`/execution-schedules/${id}/run`, { method: "POST" }),
+    delete: (id: string) => request<{ deleted: boolean }>(`/execution-schedules/${id}`, { method: "DELETE" })
   },
   executionResults: {
     list: (query?: { execution_id?: string; test_case_id?: string; app_type_id?: string }) =>

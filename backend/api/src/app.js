@@ -8,6 +8,7 @@ const fastify = require("fastify")({
 const cors = require("@fastify/cors");
 const db = require("./db");
 const { ensureRuntimeSchema } = require("./db/bootstrap");
+const executionScheduleService = require("./services/executionSchedule.service");
 const { verifyToken, generateRequestId } = require("./utils/token");
 
 const createError = (message, statusCode) => {
@@ -157,6 +158,28 @@ fastify.register(require("./plugins/errorHandler"));
 fastify.register(require("./routes"));
 fastify.addHook("onReady", async () => {
   await ensureRuntimeSchema();
+});
+
+let scheduleProcessorTimer = null;
+
+fastify.addHook("onReady", async () => {
+  const runDueSchedules = async () => {
+    try {
+      await executionScheduleService.processDueSchedules();
+    } catch (error) {
+      fastify.log.error(error, "Unable to process due execution schedules");
+    }
+  };
+
+  await runDueSchedules();
+  scheduleProcessorTimer = setInterval(runDueSchedules, 60 * 1000);
+});
+
+fastify.addHook("onClose", async () => {
+  if (scheduleProcessorTimer) {
+    clearInterval(scheduleProcessorTimer);
+    scheduleProcessorTimer = null;
+  }
 });
 
 module.exports = fastify;

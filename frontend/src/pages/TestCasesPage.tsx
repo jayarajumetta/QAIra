@@ -2240,7 +2240,19 @@ export function TestCasesPage() {
 
       Object.values(stepsByCaseId).forEach((items) => items.sort((left, right) => left.step_order - right.step_order));
 
-      const header = ["title", "description", "priority", "status", "requirement", "suites", "action", "expected_result", "step_group_name"];
+      const header = [
+        "title",
+        "description",
+        "priority",
+        "status",
+        "requirement",
+        "suites",
+        "action",
+        "expected_result",
+        "step_group_name",
+        "step_group_kind",
+        "shared_group_id"
+      ];
       const rows = filteredCases.map((testCase) => {
         const requirement = requirements.find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id));
         const suiteCount = (testCase.suite_ids || []).length;
@@ -2255,7 +2267,9 @@ export function TestCasesPage() {
           suiteCount ? `${suiteCount} suite${suiteCount === 1 ? "" : "s"}` : "",
           scopedSteps.map((step) => step.action || "").join("\n"),
           scopedSteps.map((step) => step.expected_result || "").join("\n"),
-          scopedSteps.map((step) => step.group_name || "").join("\n")
+          scopedSteps.map((step) => step.group_name || "").join("\n"),
+          scopedSteps.map((step) => step.group_kind || "").join("\n"),
+          scopedSteps.map((step) => step.reusable_group_id || "").join("\n")
         ];
       });
 
@@ -4793,21 +4807,9 @@ function EditableStepCard({
           <FormField label="Action">
             <input value={draft.action} onChange={(event) => onDraftChange({ ...draft, action: event.target.value })} />
           </FormField>
-          {draft.action ? (
-            <div className="step-parameter-preview">
-              <span className="step-parameter-preview-label">Resolved action</span>
-              <StepParameterizedText text={draft.action} values={parameterValues} />
-            </div>
-          ) : null}
           <FormField label="Expected result">
             <textarea rows={3} value={draft.expected_result} onChange={(event) => onDraftChange({ ...draft, expected_result: event.target.value })} />
           </FormField>
-          {draft.expected_result ? (
-            <div className="step-parameter-preview">
-              <span className="step-parameter-preview-label">Resolved expected result</span>
-              <StepParameterizedText text={draft.expected_result} values={parameterValues} />
-            </div>
-          ) : null}
         </div>
       ) : null}
     </article>
@@ -4973,12 +4975,6 @@ function DraftStepCard({
               onChange={(event) => onChange({ action: event.target.value, expected_result: step.expected_result })}
             />
           </FormField>
-          {step.action ? (
-            <div className="step-parameter-preview">
-              <span className="step-parameter-preview-label">Resolved action</span>
-              <StepParameterizedText text={step.action} values={parameterValues} />
-            </div>
-          ) : null}
           <FormField label="Expected result">
             <textarea
               rows={3}
@@ -4986,12 +4982,6 @@ function DraftStepCard({
               onChange={(event) => onChange({ action: step.action, expected_result: event.target.value })}
             />
           </FormField>
-          {step.expected_result ? (
-            <div className="step-parameter-preview">
-              <span className="step-parameter-preview-label">Resolved expected result</span>
-              <StepParameterizedText text={step.expected_result} values={parameterValues} />
-            </div>
-          ) : null}
         </div>
       ) : null}
     </article>

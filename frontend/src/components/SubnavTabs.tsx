@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent } from "react";
+import { useRef, type KeyboardEvent, type ReactNode } from "react";
 
 export function SubnavTabs<T extends string>({
   value,
@@ -9,7 +9,7 @@ export function SubnavTabs<T extends string>({
 }: {
   value: T;
   onChange: (value: T) => void;
-  items: Array<{ value: T; label: string; meta?: string }>;
+  items: Array<{ value: T; label: string; meta?: string; icon?: ReactNode }>;
   ariaLabel?: string;
   className?: string;
 }) {
@@ -57,6 +57,7 @@ export function SubnavTabs<T extends string>({
           tabIndex={value === item.value ? 0 : -1}
           type="button"
         >
+          {item.icon ? <span aria-hidden="true" className="subnav-tab-icon">{item.icon}</span> : null}
           <span className="subnav-tab-copy">
             <strong>{item.label}</strong>
             {item.meta ? <span>{item.meta}</span> : null}

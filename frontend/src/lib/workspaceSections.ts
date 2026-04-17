@@ -2,19 +2,20 @@ export type WorkspaceSectionItem = {
   to: string;
   label: string;
   shortLabel?: string;
+  icon?: "requirements" | "cases" | "shared" | "suites" | "executions" | "environments" | "data" | "configurations";
 };
 
 export const TEST_AUTHORING_SECTION_ITEMS: WorkspaceSectionItem[] = [
-  { to: "/requirements", label: "Requirements", shortLabel: "Reqs" },
-  { to: "/test-cases", label: "Test Cases", shortLabel: "Cases" },
-  { to: "/shared-steps", label: "Shared Steps", shortLabel: "Shared" },
-  { to: "/design", label: "Test Suites", shortLabel: "Suites" }
+  { to: "/requirements", label: "Requirements", shortLabel: "Reqs", icon: "requirements" },
+  { to: "/test-cases", label: "Test Cases", shortLabel: "Cases", icon: "cases" },
+  { to: "/shared-steps", label: "Shared Steps", shortLabel: "Shared", icon: "shared" },
+  { to: "/design", label: "Test Suites", shortLabel: "Suites", icon: "suites" }
 ];
 
 export const TEST_ENVIRONMENT_SECTION_ITEMS: WorkspaceSectionItem[] = [
-  { to: "/test-environments", label: "Environments", shortLabel: "Env" },
-  { to: "/test-data", label: "Test Data", shortLabel: "Data" },
-  { to: "/test-configurations", label: "Configurations", shortLabel: "Config" }
+  { to: "/test-environments", label: "Environments", shortLabel: "Env", icon: "environments" },
+  { to: "/test-data", label: "Test Data", shortLabel: "Data", icon: "data" },
+  { to: "/test-configurations", label: "Configurations", shortLabel: "Config", icon: "configurations" }
 ];
 
 export const WORKSPACE_PAGE_LABELS: Record<string, string> = {

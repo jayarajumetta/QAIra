@@ -19,5 +19,6 @@ module.exports = async function (fastify) {
     fastify.register(require("./testConfigurations.routes"));
     fastify.register(require("./testDataSets.routes"));
     fastify.register(require("./executions.routes"));
+    fastify.register(require("./executionSchedules.routes"));
     fastify.register(require("./executionResults.routes"));
   };

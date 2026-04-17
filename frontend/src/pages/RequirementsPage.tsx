@@ -903,7 +903,13 @@ export function RequirementsPage() {
                             </TileCardIconFrame>
                             <div className="tile-card-title-group">
                               <strong>{item.title}</strong>
-                              <span className="tile-card-kicker">{currentAppTypeName}</span>
+                              <span className="tile-card-kicker requirement-tile-kicker">
+                                <span>{currentAppTypeName}</span>
+                                <span className="requirement-tile-link-count" title={`${linkedCaseCount} linked test case${linkedCaseCount === 1 ? "" : "s"}`}>
+                                  <TileCardLinkIcon />
+                                  <span>{linkedCaseCount}</span>
+                                </span>
+                              </span>
                             </div>
                             <TileCardStatusIndicator title={requirementStatusLabel} tone={requirementStatusTone} />
                           </div>
@@ -920,7 +926,7 @@ export function RequirementsPage() {
                               <TileCardPriorityIcon />
                             </TileCardFact>
                             <TileCardFact
-                              label={String(linkedCaseCount)}
+                              label={`${linkedCaseCount} linked`}
                               title={`${linkedCaseCount} linked test case${linkedCaseCount === 1 ? "" : "s"}`}
                               tone={linkedCaseCount ? "success" : "neutral"}
                             >
@@ -1322,23 +1328,50 @@ function RequirementTestCasePicker({
 
   return (
     <div className={pickerClassName ? `modal-case-picker requirement-link-picker ${pickerClassName}` : "modal-case-picker requirement-link-picker"}>
-      {testCases.map((testCase) => (
-        <label className="modal-case-option requirement-link-option" key={testCase.id}>
-          <input
-            checked={selectedIds.includes(testCase.id)}
-            onChange={(event) => onToggle(testCase.id, event.target.checked)}
-            type="checkbox"
-          />
-          <div>
-            <strong>{testCase.title}</strong>
-            <span>{testCase.description || "No description available."}</span>
-            <span className="requirement-link-option-meta">
-              Priority P{testCase.priority ?? 3} · {testCase.status || "draft"}
-            </span>
+      {testCases.map((testCase) => {
+        const isLinked = selectedIds.includes(testCase.id);
+
+        return (
+          <div className={isLinked ? "modal-case-option requirement-link-option is-linked" : "modal-case-option requirement-link-option"} key={testCase.id}>
+            <div>
+              <strong>{testCase.title}</strong>
+              <span>{testCase.description || "No description available."}</span>
+              <span className="requirement-link-option-meta">
+                Priority P{testCase.priority ?? 3} · {testCase.status || "draft"}
+              </span>
+            </div>
+            <button
+              aria-label={isLinked ? `Unlink ${testCase.title}` : `Link ${testCase.title}`}
+              className={isLinked ? "ghost-button requirement-link-toggle is-linked" : "ghost-button requirement-link-toggle"}
+              onClick={() => onToggle(testCase.id, !isLinked)}
+              type="button"
+            >
+              {isLinked ? <RequirementUnlinkIcon /> : <RequirementLinkIcon />}
+              <span>{isLinked ? "Unlink" : "Link"}</span>
+            </button>
           </div>
-        </label>
-      ))}
+        );
+      })}
     </div>
+  );
+}
+
+function RequirementLinkIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
+      <path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L10.8 5.12" />
+      <path d="M14 11a5 5 0 0 0-7.07 0L4.8 13.12a5 5 0 1 0 7.07 7.07L13.2 18.9" />
+    </svg>
+  );
+}
+
+function RequirementUnlinkIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
+      <path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L10.8 5.12" />
+      <path d="M14 11a5 5 0 0 0-7.07 0L4.8 13.12a5 5 0 1 0 7.07 7.07L13.2 18.9" />
+      <path d="M6 6l12 12" />
+    </svg>
   );
 }
 

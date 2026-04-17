@@ -369,10 +369,37 @@ export type Execution = {
     id: string;
     email: string;
     name: string | null;
+    avatar_data_url?: string | null;
   } | null;
   created_by: string | null;
   started_at: string | null;
   ended_at: string | null;
+};
+
+export type ExecutionSchedule = {
+  id: string;
+  project_id: string;
+  app_type_id: string | null;
+  name: string;
+  cadence: "once" | "daily" | "weekly" | "monthly" | string;
+  next_run_at: string | null;
+  last_run_at?: string | null;
+  suite_ids: string[];
+  test_case_ids: string[];
+  test_environment_id?: string | null;
+  test_configuration_id?: string | null;
+  test_data_set_id?: string | null;
+  assigned_to?: string | null;
+  assigned_user?: {
+    id: string;
+    email: string;
+    name: string | null;
+    avatar_data_url?: string | null;
+  } | null;
+  created_by: string;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type ExecutionCaseSnapshot = {

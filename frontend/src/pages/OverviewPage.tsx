@@ -7,6 +7,7 @@ import { ProgressMeter } from "../components/ProgressMeter";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
+import type { ExecutionResult } from "../types";
 
 type DashboardTone = "success" | "info" | "neutral" | "error";
 
@@ -84,6 +85,23 @@ function buildExecutionSegments(
   ].filter((segment) => segment.value > 0);
 }
 
+function pickLatestExecutionResults(results: ExecutionResult[]) {
+  const latestByExecutionCase = new Map<string, ExecutionResult>();
+
+  results.forEach((result) => {
+    const key = `${result.execution_id}:${result.test_case_id}`;
+    const current = latestByExecutionCase.get(key);
+    const currentTime = current?.created_at ? new Date(current.created_at).getTime() || 0 : 0;
+    const nextTime = result.created_at ? new Date(result.created_at).getTime() || 0 : 0;
+
+    if (!current || nextTime >= currentTime) {
+      latestByExecutionCase.set(key, result);
+    }
+  });
+
+  return [...latestByExecutionCase.values()];
+}
+
 function DashboardToneChip({
   label,
   tone
@@ -116,6 +134,10 @@ export function OverviewPage() {
   const testStepsList = testSteps.data || [];
   const executionsList = executions.data || [];
   const executionResultsList = executionResults.data || [];
+  const latestExecutionResultsList = useMemo(
+    () => pickLatestExecutionResults(executionResultsList),
+    [executionResultsList]
+  );
 
   const caseStepCountById = useMemo(() => {
     return testStepsList.reduce<Record<string, number>>((counts, step) => {
@@ -127,7 +149,7 @@ export function OverviewPage() {
   const executionSummaryById = useMemo(() => {
     const summary: Record<string, typeof EMPTY_EXECUTION_SUMMARY> = {};
 
-    executionResultsList.forEach((result) => {
+    latestExecutionResultsList.forEach((result) => {
       summary[result.execution_id] = summary[result.execution_id] || { ...EMPTY_EXECUTION_SUMMARY };
       summary[result.execution_id].total += 1;
 
@@ -145,7 +167,7 @@ export function OverviewPage() {
     });
 
     return summary;
-  }, [executionResultsList]);
+  }, [latestExecutionResultsList]);
 
   const mappedRequirementsCount = useMemo(
     () => requirementsList.filter((item) => (item.test_case_ids || []).length).length,
@@ -185,7 +207,7 @@ export function OverviewPage() {
   }, [executionsList]);
 
   const resultStatusCounts = useMemo(() => {
-    return executionResultsList.reduce(
+    return latestExecutionResultsList.reduce(
       (counts, result) => {
         counts[result.status] += 1;
         counts.total += 1;
@@ -193,7 +215,7 @@ export function OverviewPage() {
       },
       { passed: 0, failed: 0, blocked: 0, total: 0 }
     );
-  }, [executionResultsList]);
+  }, [latestExecutionResultsList]);
 
   const passRate = useMemo(() => {
     if (!resultStatusCounts.total) {
@@ -349,7 +371,7 @@ export function OverviewPage() {
       .map((appType) => {
         const scopedCases = testCasesList.filter((testCase) => testCase.app_type_id === appType.id);
         const scopedSuites = suitesList.filter((suite) => suite.app_type_id === appType.id);
-        const scopedResults = executionResultsList.filter((result) => result.app_type_id === appType.id);
+        const scopedResults = latestExecutionResultsList.filter((result) => result.app_type_id === appType.id);
         const executableCases = scopedCases.filter((testCase) => (caseStepCountById[testCase.id] || 0) > 0).length;
         const passedCount = scopedResults.filter((result) => result.status === "passed").length;
         const failedCount = scopedResults.filter((result) => result.status === "failed").length;
@@ -409,10 +431,10 @@ export function OverviewPage() {
         return left.releaseScore - right.releaseScore;
       })
       .slice(0, 6);
-  }, [appTypesList, caseStepCountById, executionResultsList, projectsList, suitesList, testCasesList]);
+  }, [appTypesList, caseStepCountById, latestExecutionResultsList, projectsList, suitesList, testCasesList]);
 
   const riskHotspots = useMemo(() => {
-    const aggregated = executionResultsList
+    const aggregated = latestExecutionResultsList
       .filter((result) => result.status === "failed" || result.status === "blocked")
       .reduce<Record<string, {
         id: string;
@@ -448,7 +470,7 @@ export function OverviewPage() {
     return Object.values(aggregated)
       .sort((left, right) => right.count - left.count || left.title.localeCompare(right.title))
       .slice(0, 6);
-  }, [executionResultsList]);
+  }, [latestExecutionResultsList]);
 
   const activitySeries = useMemo(() => {
     const now = new Date();
@@ -461,7 +483,7 @@ export function OverviewPage() {
       };
     });
 
-    executionResultsList.forEach((result) => {
+    latestExecutionResultsList.forEach((result) => {
       const createdAt = result.created_at ? new Date(result.created_at) : null;
 
       if (!createdAt || Number.isNaN(createdAt.getTime())) {
@@ -482,7 +504,7 @@ export function OverviewPage() {
       ...item,
       height: Math.max(14, Math.round((item.total / peak) * 100))
     }));
-  }, [executionResultsList]);
+  }, [latestExecutionResultsList]);
 
   const hasActivityData = activitySeries.some((item) => item.total > 0);
 
@@ -531,13 +553,13 @@ export function OverviewPage() {
       {
         id: "evidence",
         label: "Evidence",
-        value: executionResultsList.length,
+        value: latestExecutionResultsList.length,
         detail: "Captured execution signals",
-        chipLabel: executionResultsList.length ? "Observed" : "Pending",
-        tone: executionResultsList.length ? "success" as const : "neutral" as const
+        chipLabel: latestExecutionResultsList.length ? "Observed" : "Pending",
+        tone: latestExecutionResultsList.length ? "success" as const : "neutral" as const
       }
     ];
-  }, [automationReadiness, casesWithStepsCount, executionResultsList.length, mappedRequirementsCount, requirementCoverage, requirementsList.length, suitesList.length, testCasesList.length]);
+  }, [automationReadiness, casesWithStepsCount, latestExecutionResultsList.length, mappedRequirementsCount, requirementCoverage, requirementsList.length, suitesList.length, testCasesList.length]);
 
   const commandSignals = useMemo(() => {
     return [

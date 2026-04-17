@@ -46,7 +46,7 @@ const navigation = [
         label: "Test Runs",
         shortLabel: "Runs",
         icon: PlayIcon,
-        subItems: [{ to: "/executions", label: "Execution Console", shortLabel: "Console" }],
+        subItems: [{ to: "/executions", label: "Execution Console", shortLabel: "Console", icon: "executions" }],
         matchPaths: ["/executions"],
         disabledWhenNoProjects: true
       },
@@ -388,6 +388,7 @@ export function AppShell() {
                         <div className="nav-subgroup">
                           {subItems.map((subItem) => {
                             const isSubItemActive = location.pathname === subItem.to;
+                            const SubItemIcon = getWorkspaceSubItemIcon(subItem.icon);
 
                             return (
                               <NavLink
@@ -397,7 +398,7 @@ export function AppShell() {
                                 to={subItem.to}
                               >
                                 <span className="nav-sublink-icon" aria-hidden="true">
-                                  <SubmenuDotIcon />
+                                  <SubItemIcon />
                                 </span>
                                 <span className="nav-sublink-label">{subItem.label}</span>
                               </NavLink>
@@ -574,12 +575,31 @@ function SharedStepsIcon() {
   return <IconFrame><circle cx="7" cy="8" r="2.5" /><circle cx="17" cy="8" r="2.5" /><circle cx="12" cy="17" r="2.5" /><path d="m9.2 9.4 2 5.2" /><path d="m14.8 9.4-2 5.2" /><path d="M9.5 8h5" /></IconFrame>;
 }
 
+function getWorkspaceSubItemIcon(icon?: string) {
+  switch (icon) {
+    case "requirements":
+      return DocumentIcon;
+    case "cases":
+      return PencilIcon;
+    case "shared":
+      return SharedStepsIcon;
+    case "suites":
+      return LayersIcon;
+    case "executions":
+      return RunIcon;
+    case "environments":
+      return ServerIcon;
+    case "data":
+      return DatabaseIcon;
+    case "configurations":
+      return SlidersIcon;
+    default:
+      return SubmenuDotIcon;
+  }
+}
+
 function SubmenuDotIcon() {
-  return (
-    <svg aria-hidden="true" fill="currentColor" height="10" viewBox="0 0 10 10" width="10">
-      <circle cx="5" cy="5" r="2" />
-    </svg>
-  );
+  return <IconFrame><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none" /></IconFrame>;
 }
 
 function PlayIcon() {

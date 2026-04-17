@@ -35,6 +35,7 @@ import type {
   ExecutionCaseSnapshot,
   ExecutionDataSetSnapshot,
   ExecutionResult,
+  ExecutionSchedule,
   ExecutionStatus,
   ExecutionStepSnapshot,
   Integration,
@@ -90,6 +91,7 @@ type ExecutionStepBlock = {
 type ExecutionIssueFilter = "all" | "with-issues" | "clean";
 type ExecutionEvidenceFilter = "all" | "with-evidence" | "no-evidence";
 type ExecutionCreateMode = "manual" | "smart";
+type TestRunsView = "executions" | "scheduled";
 
 type ExecutionAssigneeOption = {
   id: string;
@@ -111,6 +113,8 @@ type SmartExecutionRequirementOption = {
   description: string | null;
   linkedCaseCount: number;
 };
+
+type ExecutionScheduleCadence = "once" | "daily" | "weekly" | "monthly";
 
 const EMPTY_EXECUTION_RUN_SUMMARY: ExecutionRunSummary = {
   passed: 0,
@@ -425,9 +429,12 @@ export function ExecutionsPage() {
   const [projectId, setProjectId] = useCurrentProject();
   const [appTypeId, setAppTypeId] = useState("");
   const [executionCreateMode, setExecutionCreateMode] = useState<ExecutionCreateMode>("manual");
+  const [testRunsView, setTestRunsView] = useState<TestRunsView>("executions");
   const [selectedSuiteIds, setSelectedSuiteIds] = useState<string[]>([]);
   const [isCreateExecutionModalOpen, setIsCreateExecutionModalOpen] = useState(false);
+  const [isCreateScheduleModalOpen, setIsCreateScheduleModalOpen] = useState(false);
   const [selectedExecutionId, setSelectedExecutionId] = useState("");
+  const [selectedScheduleId, setSelectedScheduleId] = useState("");
   const [focusedSuiteId, setFocusedSuiteId] = useState("");
   const [expandedExecutionSuiteIds, setExpandedExecutionSuiteIds] = useState<string[]>([]);
   const [selectedTestCaseId, setSelectedTestCaseId] = useState("");
@@ -438,6 +445,8 @@ export function ExecutionsPage() {
   const [selectedExecutionConfigurationId, setSelectedExecutionConfigurationId] = useState("");
   const [selectedExecutionDataSetId, setSelectedExecutionDataSetId] = useState("");
   const [selectedExecutionAssigneeId, setSelectedExecutionAssigneeId] = useState("");
+  const [scheduleCadence, setScheduleCadence] = useState<ExecutionScheduleCadence>("weekly");
+  const [scheduleNextRunAt, setScheduleNextRunAt] = useState("");
   const [smartExecutionIntegrationId, setSmartExecutionIntegrationId] = useState("");
   const [smartExecutionReleaseScope, setSmartExecutionReleaseScope] = useState("");
   const [smartExecutionAdditionalContext, setSmartExecutionAdditionalContext] = useState("");
@@ -486,6 +495,14 @@ export function ExecutionsPage() {
     queryKey: ["executions", projectId],
     queryFn: () => api.executions.list(projectId ? { project_id: projectId } : undefined)
   });
+  const executionSchedulesQuery = useQuery({
+    queryKey: ["execution-schedules", projectId, appTypeId],
+    queryFn: () => api.executionSchedules.list({
+      project_id: projectId || undefined,
+      app_type_id: appTypeId || undefined
+    }),
+    enabled: Boolean(projectId)
+  });
   const selectedExecutionQuery = useQuery({
     queryKey: ["execution", selectedExecutionId],
     queryFn: () => api.executions.get(selectedExecutionId),
@@ -527,6 +544,9 @@ export function ExecutionsPage() {
   });
 
   const createExecution = useMutation({ mutationFn: api.executions.create });
+  const createExecutionSchedule = useMutation({ mutationFn: api.executionSchedules.create });
+  const runExecutionSchedule = useMutation({ mutationFn: api.executionSchedules.run });
+  const deleteExecutionSchedule = useMutation({ mutationFn: api.executionSchedules.delete });
   const rerunExecution = useMutation({
     mutationFn: ({ id, input }: { id: string; input: Parameters<typeof api.executions.rerun>[1] }) =>
       api.executions.rerun(id, input)
@@ -546,6 +566,7 @@ export function ExecutionsPage() {
   const users = usersQuery.data || [];
   const projectMembers = projectMembersQuery.data || [];
   const executions = executionsQuery.data || [];
+  const executionSchedules = executionSchedulesQuery.data || [];
   const appTypes = appTypesQuery.data || [];
   const requirements = requirementsQuery.data || [];
   const smartExecutionLibraryCases = smartExecutionCasesQuery.data || [];
@@ -665,6 +686,15 @@ export function ExecutionsPage() {
     setSelectedExecutionDataSetId("");
   };
 
+  const resetScheduleBuilder = () => {
+    setExecutionName("");
+    setSelectedSuiteIds([]);
+    setSelectedExecutionAssigneeId("");
+    setScheduleCadence("weekly");
+    setScheduleNextRunAt("");
+    resetExecutionContextSelection();
+  };
+
   const resetSmartExecutionBuilder = () => {
     setExecutionCreateMode("manual");
     setSelectedExecutionAssigneeId("");
@@ -681,6 +711,11 @@ export function ExecutionsPage() {
     setExecutionName("");
     resetExecutionContextSelection();
     resetSmartExecutionBuilder();
+  };
+
+  const closeScheduleBuilder = () => {
+    setIsCreateScheduleModalOpen(false);
+    resetScheduleBuilder();
   };
 
   const handleExecutionProjectChange = (value: string) => {
@@ -853,7 +888,17 @@ export function ExecutionsPage() {
     }
   }, [executions, searchParams, selectedExecutionId]);
 
+  useEffect(() => {
+    if (testRunsView === "scheduled") {
+      setSelectedExecutionId("");
+      setFocusedSuiteId("");
+      setSelectedTestCaseId("");
+      syncExecutionSearchParams("", null);
+    }
+  }, [testRunsView]);
+
   const selectedExecution = selectedExecutionQuery.data || executions.find((execution) => execution.id === selectedExecutionId) || null;
+  const selectedSchedule = executionSchedules.find((schedule) => schedule.id === selectedScheduleId) || null;
   const executionStepParameterValues = useMemo(
     () => buildDataSetParameterValues(selectedExecution?.test_data_set?.snapshot || null),
     [selectedExecution?.test_data_set?.snapshot]
@@ -1181,6 +1226,10 @@ export function ExecutionsPage() {
     ]);
   };
 
+  const refreshExecutionSchedules = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["execution-schedules"] });
+  };
+
   const handleFinalizeExecution = async (mode: "complete" | "abort") => {
     if (!selectedExecution) {
       return;
@@ -1288,6 +1337,53 @@ export function ExecutionsPage() {
     }
   };
 
+  const handleCreateExecutionSchedule = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!session?.user.id) {
+      showError(new Error("You need an active session before creating a schedule."), "Unable to create schedule");
+      return;
+    }
+
+    if (!projectId || !appTypeId) {
+      showError(new Error("Choose a project and app type before creating a schedule."), "Unable to create schedule");
+      return;
+    }
+
+    if (!selectedSuiteIds.length) {
+      showError(new Error("Select at least one suite to schedule."), "Unable to create schedule");
+      return;
+    }
+
+    if (!scheduleNextRunAt) {
+      showError(new Error("Choose the first run time for this schedule."), "Unable to create schedule");
+      return;
+    }
+
+    try {
+      await createExecutionSchedule.mutateAsync({
+        project_id: projectId,
+        app_type_id: appTypeId,
+        name: executionName || undefined,
+        cadence: scheduleCadence,
+        next_run_at: new Date(scheduleNextRunAt).toISOString(),
+        suite_ids: selectedSuiteIds,
+        test_environment_id: selectedExecutionEnvironmentId || undefined,
+        test_configuration_id: selectedExecutionConfigurationId || undefined,
+        test_data_set_id: selectedExecutionDataSetId || undefined,
+        assigned_to: selectedExecutionAssigneeId || undefined,
+        created_by: session.user.id
+      });
+
+      closeScheduleBuilder();
+      setTestRunsView("scheduled");
+      await refreshExecutionSchedules();
+      showSuccess("Scheduled execution created.");
+    } catch (error) {
+      showError(error, "Unable to create schedule");
+    }
+  };
+
   const handleRerunExecution = async (failedOnly: boolean) => {
     if (!selectedExecution || !session?.user.id) {
       return;
@@ -1307,6 +1403,35 @@ export function ExecutionsPage() {
       showSuccess(failedOnly ? "Failed cases were queued into a fresh rerun execution." : "A fresh rerun execution was created with the same execution context.");
     } catch (error) {
       showError(error, failedOnly ? "Unable to rerun failed cases" : "Unable to rerun execution");
+    }
+  };
+
+  const handleRunExecutionSchedule = async (scheduleId: string) => {
+    try {
+      const response = await runExecutionSchedule.mutateAsync(scheduleId);
+      setTestRunsView("executions");
+      focusExecution(response.id);
+      await Promise.all([refreshExecutionScope(response.id), refreshExecutionSchedules()]);
+      showSuccess("Scheduled execution was launched as a fresh run.");
+    } catch (error) {
+      showError(error, "Unable to run the schedule");
+    }
+  };
+
+  const handleDeleteExecutionSchedule = async (scheduleId: string, scheduleName: string) => {
+    if (!window.confirm(`Delete schedule "${scheduleName}"?`)) {
+      return;
+    }
+
+    try {
+      await deleteExecutionSchedule.mutateAsync(scheduleId);
+      if (selectedScheduleId === scheduleId) {
+        setSelectedScheduleId("");
+      }
+      await refreshExecutionSchedules();
+      showSuccess("Scheduled execution removed.");
+    } catch (error) {
+      showError(error, "Unable to delete schedule");
     }
   };
 
@@ -1644,7 +1769,7 @@ export function ExecutionsPage() {
   const remainingCaseCount = Math.max(executionProgress.totalCases - executionProgress.completedCases, 0);
   const selectedCaseStatusLabel = selectedExecutionCase ? caseDerivedStatus(selectedExecutionCase) : executionProgress.derivedStatus;
   const activeExecutionStage = selectedExecutionCase ? "case" : selectedExecution ? "suites" : "executions";
-  const showExecutionListHeader = !selectedExecution;
+  const showExecutionListHeader = testRunsView === "scheduled" ? !selectedSchedule : !selectedExecution;
   const executionControlTitle =
     currentExecutionStatus === "running"
       ? "Execution is live"
@@ -1727,6 +1852,18 @@ export function ExecutionsPage() {
       return true;
     });
   }, [deferredExecutionSearch, executionEvidenceFilter, executionIssueFilter, executionStatusFilter, executionSummaryById, executions, projectNameById]);
+
+  const filteredSchedules = useMemo(() => {
+    const search = deferredExecutionSearch.trim().toLowerCase();
+
+    return executionSchedules.filter((schedule) => {
+      const appTypeName = appTypeNameById[schedule.app_type_id || ""] || "";
+      const assigneeLabel = schedule.assigned_user ? resolveUserPrimaryLabel(schedule.assigned_user) : "";
+      const nextRunLabel = schedule.next_run_at || "";
+
+      return !search || [schedule.name, appTypeName, assigneeLabel, nextRunLabel].some((value) => value.toLowerCase().includes(search));
+    });
+  }, [appTypeNameById, deferredExecutionSearch, executionSchedules]);
 
   const activeExecutionFilterCount =
     Number(executionStatusFilter !== "all") +
@@ -1871,23 +2008,54 @@ export function ExecutionsPage() {
     <div className="page-content page-content--executions-full">
       {showExecutionListHeader ? (
         <PageHeader
-          eyebrow="Executions"
-          title="Test Executions"
-          description="Launch scoped runs, monitor live progress, and capture failure evidence without losing the surrounding suite and case context."
+          eyebrow="Test Runs"
+          title={testRunsView === "executions" ? "Test Executions" : "Scheduled Executions"}
+          description={
+            testRunsView === "executions"
+              ? "Launch scoped runs, monitor live progress, and capture failure evidence without losing the surrounding suite and case context."
+              : "Plan recurring release checks separately from live runs so teams can see what is scheduled next without cluttering the active execution board."
+          }
           meta={[
-            { label: "Runs", value: executions.length },
-            { label: "Blocking cases", value: blockingCases.length },
-            { label: "Completion", value: `${executionProgress.percent}%` }
+            { label: testRunsView === "executions" ? "Runs" : "Schedules", value: testRunsView === "executions" ? executions.length : executionSchedules.length },
+            { label: testRunsView === "executions" ? "Blocking cases" : "Active schedules", value: testRunsView === "executions" ? blockingCases.length : executionSchedules.filter((schedule) => schedule.is_active).length },
+            { label: testRunsView === "executions" ? "Completion" : "Next due", value: testRunsView === "executions" ? `${executionProgress.percent}%` : (filteredSchedules[0]?.next_run_at ? formatExecutionTimestamp(filteredSchedules[0].next_run_at, "Not set") : "Not set") }
           ]}
           actions={
-            <button className="primary-button" onClick={() => setIsCreateExecutionModalOpen(true)} type="button">
-              Create Execution
-            </button>
+            <>
+              <button
+                className="ghost-button"
+                onClick={() => {
+                  if (!scheduleNextRunAt) {
+                    const nextHour = new Date();
+                    nextHour.setMinutes(0, 0, 0);
+                    nextHour.setHours(nextHour.getHours() + 1);
+                    setScheduleNextRunAt(nextHour.toISOString().slice(0, 16));
+                  }
+                  setIsCreateScheduleModalOpen(true);
+                }}
+                type="button"
+              >
+                Schedule Execution
+              </button>
+              <button className="primary-button" onClick={() => setIsCreateExecutionModalOpen(true)} type="button">
+                Create Execution
+              </button>
+            </>
           }
         />
       ) : null}
 
       <ToastMessage message={message} onDismiss={() => setMessage("")} tone={messageTone} />
+
+      <SubnavTabs
+        ariaLabel="Test runs views"
+        items={[
+          { value: "executions", label: "Executions", meta: `${executions.length}`, icon: <ExecutionRunIcon /> },
+          { value: "scheduled", label: "Scheduled", meta: `${executionSchedules.length}`, icon: <ExecutionScheduleIcon /> }
+        ]}
+        onChange={setTestRunsView}
+        value={testRunsView}
+      />
 
       <WorkspaceScopeBar
         appTypeId={selectedExecution?.app_type_id || appTypeId}
@@ -1914,21 +2082,26 @@ export function ExecutionsPage() {
         browseView={(
           <Panel
             className="execution-panel execution-panel--list"
-            title="Execution tiles"
-            subtitle="Start from the run catalog, then drill into suites, cases, and step execution one focused screen at a time."
+            title={testRunsView === "executions" ? "Execution tiles" : "Scheduled runs"}
+            subtitle={
+              testRunsView === "executions"
+                ? "Start from the run catalog, then drill into suites, cases, and step execution one focused screen at a time."
+                : "Keep recurring release checks separate from live runs, then launch one instantly when the team is ready."
+            }
           >
             <div className="design-list-toolbar">
               <CatalogSearchFilter
                 activeFilterCount={activeExecutionFilterCount}
-                ariaLabel="Search executions"
+                ariaLabel={testRunsView === "executions" ? "Search executions" : "Search schedules"}
                 onChange={setExecutionSearch}
-                placeholder="Search executions"
-                subtitle="Filter execution tiles by the run status and facts shown on each card."
-                title="Filter executions"
+                placeholder={testRunsView === "executions" ? "Search executions" : "Search schedules"}
+                subtitle={testRunsView === "executions" ? "Filter execution tiles by the run status and facts shown on each card." : "Filter scheduled runs by cadence, timing, or scope context."}
+                title={testRunsView === "executions" ? "Filter executions" : "Filter schedules"}
                 type="search"
                 value={executionSearch}
               >
                 <div className="catalog-filter-grid">
+                  {testRunsView === "executions" ? (
                   <label className="catalog-filter-field">
                     <span>Status</span>
                     <select
@@ -1943,7 +2116,9 @@ export function ExecutionsPage() {
                       ))}
                     </select>
                   </label>
+                  ) : null}
 
+                  {testRunsView === "executions" ? (
                   <label className="catalog-filter-field">
                     <span>Issue count</span>
                     <select
@@ -1955,7 +2130,9 @@ export function ExecutionsPage() {
                       <option value="clean">No failed or blocked cases</option>
                     </select>
                   </label>
+                  ) : null}
 
+                  {testRunsView === "executions" ? (
                   <label className="catalog-filter-field">
                     <span>Evidence activity</span>
                     <select
@@ -1967,6 +2144,7 @@ export function ExecutionsPage() {
                       <option value="no-evidence">No evidence yet</option>
                     </select>
                   </label>
+                  ) : null}
 
                   <div className="catalog-filter-actions">
                     <button
@@ -1986,29 +2164,81 @@ export function ExecutionsPage() {
               </CatalogSearchFilter>
             </div>
 
-            {executionsQuery.isLoading ? (
+            {(testRunsView === "executions" ? executionsQuery.isLoading : executionSchedulesQuery.isLoading) ? (
               <TileCardSkeletonGrid />
             ) : null}
 
-            {!executionsQuery.isLoading ? (
+            {!(testRunsView === "executions" ? executionsQuery.isLoading : executionSchedulesQuery.isLoading) ? (
               <div className="tile-browser-grid">
-                {filteredExecutions.map((execution) => (
-                  <ExecutionListCard
-                    key={execution.id}
-                    execution={execution}
-                    isActive={selectedExecution?.id === execution.id}
-                    liveNow={liveNow}
-                    onSelect={() => focusExecution(execution.id)}
-                    summary={executionSummaryById[execution.id] || EMPTY_EXECUTION_RUN_SUMMARY}
-                  />
-                ))}
-                {!filteredExecutions.length ? <div className="empty-state compact">No executions created yet.</div> : null}
+                {testRunsView === "executions"
+                  ? filteredExecutions.map((execution) => (
+                      <ExecutionListCard
+                        key={execution.id}
+                        execution={execution}
+                        isActive={selectedExecution?.id === execution.id}
+                        liveNow={liveNow}
+                        onSelect={() => focusExecution(execution.id)}
+                        summary={executionSummaryById[execution.id] || EMPTY_EXECUTION_RUN_SUMMARY}
+                      />
+                    ))
+                  : filteredSchedules.map((schedule) => (
+                      <ExecutionScheduleCard
+                        key={schedule.id}
+                        isActive={selectedSchedule?.id === schedule.id}
+                        onDelete={() => void handleDeleteExecutionSchedule(schedule.id, schedule.name)}
+                        onRun={() => void handleRunExecutionSchedule(schedule.id)}
+                        onSelect={() => setSelectedScheduleId(schedule.id)}
+                        schedule={schedule}
+                      />
+                    ))}
+                {testRunsView === "executions" && !filteredExecutions.length ? <div className="empty-state compact">No executions created yet.</div> : null}
+                {testRunsView === "scheduled" && !filteredSchedules.length ? <div className="empty-state compact">No schedules created yet.</div> : null}
               </div>
             ) : null}
           </Panel>
         )}
         detailView={(
-          activeExecutionStage === "case" ? (
+          testRunsView === "scheduled" ? (
+            <Panel
+              className="execution-panel execution-panel--detail"
+              title="Scheduled run"
+              subtitle={selectedSchedule ? "Review cadence, scope, and execution context for this recurring run." : "Select a scheduled run to inspect its scope."}
+            >
+              {selectedSchedule ? (
+                <div className="detail-stack">
+                  <div className="detail-summary">
+                    <strong>{selectedSchedule.name}</strong>
+                    <span>{selectedSchedule.is_active ? "Active schedule" : "Inactive schedule"} · {selectedSchedule.cadence}</span>
+                    <span>Next run: {formatExecutionTimestamp(selectedSchedule.next_run_at, "Not set")}</span>
+                  </div>
+                  <div className="metric-strip compact">
+                    <div className="mini-card">
+                      <strong>{selectedSchedule.suite_ids.length}</strong>
+                      <span>Suites</span>
+                    </div>
+                    <div className="mini-card">
+                      <strong>{selectedSchedule.test_case_ids.length}</strong>
+                      <span>Direct cases</span>
+                    </div>
+                    <div className="mini-card">
+                      <strong>{selectedSchedule.assigned_user ? resolveUserPrimaryLabel(selectedSchedule.assigned_user) : "Unassigned"}</strong>
+                      <span>Assignee</span>
+                    </div>
+                  </div>
+                  <div className="action-row">
+                    <button className="primary-button" onClick={() => void handleRunExecutionSchedule(selectedSchedule.id)} type="button">
+                      Run now
+                    </button>
+                    <button className="ghost-button danger" onClick={() => void handleDeleteExecutionSchedule(selectedSchedule.id, selectedSchedule.name)} type="button">
+                      Delete schedule
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="empty-state compact">Choose a scheduled run from the left to review or launch it.</div>
+              )}
+            </Panel>
+          ) : activeExecutionStage === "case" ? (
             <Panel
               className="execution-panel execution-panel--detail"
               actions={<WorkspaceBackButton label={`Back to ${focusedExecutionSuite?.name || "execution suites"}`} onClick={closeCaseDrilldown} />}
@@ -2612,7 +2842,7 @@ export function ExecutionsPage() {
             </Panel>
           )
         )}
-        isDetailOpen={Boolean(selectedExecution)}
+        isDetailOpen={testRunsView === "scheduled" ? Boolean(selectedSchedule) : Boolean(selectedExecution)}
       />
 
       {executionEvidencePreview ? (
@@ -2706,6 +2936,36 @@ export function ExecutionsPage() {
           smartExecutionRequirementSearch={smartExecutionRequirementSearch}
           smartExecutionReleaseScope={smartExecutionReleaseScope}
           selectedSmartRequirementIds={selectedSmartRequirementIds}
+        />
+      ) : null}
+
+      {isCreateScheduleModalOpen ? (
+        <CreateExecutionScheduleModal
+          appTypeId={appTypeId}
+          appTypeName={selectedAppType?.name || ""}
+          assigneeOptions={assigneeOptions}
+          cadence={scheduleCadence}
+          executionName={executionName}
+          isSubmitting={createExecutionSchedule.isPending}
+          nextRunAt={scheduleNextRunAt}
+          onAssigneeChange={setSelectedExecutionAssigneeId}
+          onCadenceChange={setScheduleCadence}
+          onClose={closeScheduleBuilder}
+          onConfigurationChange={setSelectedExecutionConfigurationId}
+          onDataSetChange={setSelectedExecutionDataSetId}
+          onEnvironmentChange={setSelectedExecutionEnvironmentId}
+          onExecutionNameChange={setExecutionName}
+          onNextRunAtChange={setScheduleNextRunAt}
+          onSubmit={(event) => void handleCreateExecutionSchedule(event)}
+          onSuiteSelectionChange={setSelectedSuiteIds}
+          projectId={projectId}
+          projectName={selectedProject?.name || ""}
+          scopeSuites={scopeSuites}
+          selectedAssigneeId={selectedExecutionAssigneeId}
+          selectedConfigurationId={selectedExecutionConfigurationId}
+          selectedDataSetId={selectedExecutionDataSetId}
+          selectedEnvironmentId={selectedExecutionEnvironmentId}
+          selectedSuiteIds={selectedSuiteIds}
         />
       ) : null}
     </div>
@@ -2832,6 +3092,14 @@ function ExecutionListCard({
     : "No evidence yet";
   const assigneeLabel = execution.assigned_user ? resolveUserPrimaryLabel(execution.assigned_user) : "Unassigned";
   const assigneeDetail = execution.assigned_user ? resolveUserSecondaryLabel(execution.assigned_user) : null;
+  const assigneeInitials = execution.assigned_user
+    ? (execution.assigned_user.name || execution.assigned_user.email || "U")
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0]?.toUpperCase() || "")
+        .join("")
+    : "U";
   const progressDetail = resolvedTotal
     ? `${summary.total}/${resolvedTotal} touched · ${summary.failed} failed · ${summary.blocked} blocked`
     : "No evidence recorded yet";
@@ -2855,7 +3123,14 @@ function ExecutionListCard({
           <div className="tile-card-title-group">
             <strong>{execution.name || "Unnamed execution"}</strong>
             <span className="execution-card-assignee" title={assigneeDetail || assigneeLabel}>
-              {execution.assigned_user ? `Assigned to ${assigneeLabel}` : "Unassigned"}
+              <span className="execution-card-assignee-avatar" aria-hidden="true">
+                {execution.assigned_user?.avatar_data_url ? (
+                  <img alt="" className="execution-card-assignee-photo" src={execution.assigned_user.avatar_data_url} />
+                ) : (
+                  assigneeInitials
+                )}
+              </span>
+              <span>{assigneeLabel}</span>
             </span>
           </div>
           <ExecutionStatusIndicator status={executionStatus} />
@@ -2908,6 +3183,66 @@ function ExecutionListCard({
         />
       </div>
     </button>
+  );
+}
+
+function ExecutionScheduleCard({
+  schedule,
+  isActive,
+  onSelect,
+  onRun,
+  onDelete
+}: {
+  schedule: ExecutionSchedule;
+  isActive: boolean;
+  onSelect: () => void;
+  onRun: () => void;
+  onDelete: () => void;
+}) {
+  const nextRunLabel = formatExecutionTimestamp(schedule.next_run_at, "Not scheduled");
+  const assigneeLabel = schedule.assigned_user ? resolveUserPrimaryLabel(schedule.assigned_user) : "Unassigned";
+
+  return (
+    <div className={isActive ? "record-card tile-card execution-card virtual-card is-active" : "record-card tile-card execution-card virtual-card"}>
+      <button className="tile-card-main execution-schedule-card-button" onClick={onSelect} type="button">
+        <div className="tile-card-header">
+          <div aria-hidden="true" className={`record-card-icon execution status-${schedule.is_active ? "queued" : "aborted"}`}>
+            <ExecutionScheduleIcon />
+          </div>
+          <div className="tile-card-title-group">
+            <strong>{schedule.name}</strong>
+            <span className="execution-card-assignee">{schedule.is_active ? `${schedule.cadence} cadence` : "Inactive schedule"}</span>
+          </div>
+          <ExecutionStatusIndicator status={schedule.is_active ? "queued" : "aborted"} />
+        </div>
+
+        <div className="execution-card-facts" aria-label="Schedule facts">
+          <ExecutionCardFact ariaLabel={`${schedule.suite_ids.length} suites in scope`} label={String(schedule.suite_ids.length)} title={`${schedule.suite_ids.length} suites in scope`}>
+            <ExecutionSuiteIcon />
+          </ExecutionCardFact>
+          <ExecutionCardFact ariaLabel={`${schedule.test_case_ids.length} direct cases in scope`} label={String(schedule.test_case_ids.length)} title={`${schedule.test_case_ids.length} direct cases in scope`}>
+            <ExecutionScopeIcon />
+          </ExecutionCardFact>
+          <ExecutionCardFact ariaLabel={`Assigned to ${assigneeLabel}`} label={assigneeLabel} title={`Assigned to ${assigneeLabel}`}>
+            <ExecutionAssigneeIcon />
+          </ExecutionCardFact>
+          <ExecutionCardFact ariaLabel={`Next run ${nextRunLabel}`} label={nextRunLabel} title={`Next run ${nextRunLabel}`}>
+            <ExecutionTimeIcon />
+          </ExecutionCardFact>
+        </div>
+      </button>
+
+      <div className="action-row execution-schedule-actions">
+        <button className="ghost-button" onClick={onRun} type="button">
+          <ExecutionStartIcon />
+          <span>Run now</span>
+        </button>
+        <button className="ghost-button danger" onClick={onDelete} type="button">
+          <ExecutionDeleteIcon />
+          <span>Delete</span>
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -3043,6 +3378,39 @@ function ExecutionRerunIcon() {
     <ExecutionIconShell>
       <path d="M20 12a8 8 0 1 1-2.3-5.6" />
       <path d="M20 4v6h-6" />
+    </ExecutionIconShell>
+  );
+}
+
+function ExecutionScheduleIcon() {
+  return (
+    <ExecutionIconShell>
+      <rect height="15" rx="2" width="16" x="4" y="5" />
+      <path d="M8 3v4" />
+      <path d="M16 3v4" />
+      <path d="M4 10h16" />
+      <path d="m10 15 1.5 1.5L15 13" />
+    </ExecutionIconShell>
+  );
+}
+
+function ExecutionAssigneeIcon() {
+  return (
+    <ExecutionIconShell>
+      <path d="M4 20v-1.2A4.8 4.8 0 0 1 8.8 14h6.4a4.8 4.8 0 0 1 4.8 4.8V20" />
+      <circle cx="12" cy="8.2" r="3.2" />
+    </ExecutionIconShell>
+  );
+}
+
+function ExecutionDeleteIcon() {
+  return (
+    <ExecutionIconShell>
+      <path d="M4 7h16" />
+      <path d="M9 7V5.8A1.8 1.8 0 0 1 10.8 4h2.4A1.8 1.8 0 0 1 15 5.8V7" />
+      <path d="M7 7l.8 11.1A2 2 0 0 0 9.8 20h4.4a2 2 0 0 0 2-1.9L17 7" />
+      <path d="M10 11v5" />
+      <path d="M14 11v5" />
     </ExecutionIconShell>
   );
 }
@@ -4149,6 +4517,161 @@ function ExecutionCreateModal({
           <div className="action-row execution-create-actions">
             <button className="primary-button" disabled={!canCreateExecution || isSubmitting || (isSmartMode && isPreviewingSmartExecution)} type="submit">
               {isSubmitting ? "Creating…" : isSmartMode ? "Create AI smart execution" : "Create execution"}
+            </button>
+            <button className="ghost-button" disabled={isSubmitting} onClick={onClose} type="button">
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function CreateExecutionScheduleModal({
+  projectId,
+  projectName,
+  appTypeId,
+  appTypeName,
+  scopeSuites,
+  selectedSuiteIds,
+  executionName,
+  selectedEnvironmentId,
+  selectedConfigurationId,
+  selectedDataSetId,
+  selectedAssigneeId,
+  assigneeOptions,
+  cadence,
+  nextRunAt,
+  isSubmitting,
+  onExecutionNameChange,
+  onEnvironmentChange,
+  onConfigurationChange,
+  onDataSetChange,
+  onAssigneeChange,
+  onSuiteSelectionChange,
+  onCadenceChange,
+  onNextRunAtChange,
+  onClose,
+  onSubmit
+}: {
+  projectId: string;
+  projectName: string;
+  appTypeId: string;
+  appTypeName: string;
+  scopeSuites: TestSuite[];
+  selectedSuiteIds: string[];
+  executionName: string;
+  selectedEnvironmentId: string;
+  selectedConfigurationId: string;
+  selectedDataSetId: string;
+  selectedAssigneeId: string;
+  assigneeOptions: ExecutionAssigneeOption[];
+  cadence: ExecutionScheduleCadence;
+  nextRunAt: string;
+  isSubmitting: boolean;
+  onExecutionNameChange: (value: string) => void;
+  onEnvironmentChange: (value: string) => void;
+  onConfigurationChange: (value: string) => void;
+  onDataSetChange: (value: string) => void;
+  onAssigneeChange: (value: string) => void;
+  onSuiteSelectionChange: (nextIds: string[]) => void;
+  onCadenceChange: (value: ExecutionScheduleCadence) => void;
+  onNextRunAtChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div className="modal-backdrop modal-backdrop--scroll" onClick={() => !isSubmitting && onClose()} role="presentation">
+      <div
+        aria-labelledby="create-execution-schedule-title"
+        aria-modal="true"
+        className="modal-card execution-create-modal"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <form className="execution-create-form" onSubmit={onSubmit}>
+          <div className="execution-create-header">
+            <div className="execution-create-title">
+              <p className="eyebrow">Scheduled Runs</p>
+              <h3 id="create-execution-schedule-title">Create schedule</h3>
+              <p>Save a recurring run separately from the live execution board, then launch it when needed.</p>
+            </div>
+            <button aria-label="Close create schedule dialog" className="ghost-button" disabled={isSubmitting} onClick={onClose} type="button">
+              Close
+            </button>
+          </div>
+
+          <div className="execution-create-body">
+            <div className="detail-summary">
+              <strong>{projectName || "Select a project to continue"}</strong>
+              <span>{appTypeName ? `${appTypeName} app type selected for this schedule.` : "Choose an app type before scheduling."}</span>
+              <span>{scopeSuites.length ? `${scopeSuites.length} suites available for recurring runs.` : "No suites available yet in the selected scope."}</span>
+            </div>
+
+            <div className="execution-create-grid">
+              <FormField label="Schedule name">
+                <input value={executionName} onChange={(event) => onExecutionNameChange(event.target.value)} />
+              </FormField>
+              <FormField label="Assign to">
+                <select
+                  disabled={!projectId || !assigneeOptions.length}
+                  value={selectedAssigneeId}
+                  onChange={(event) => onAssigneeChange(event.target.value)}
+                >
+                  <option value="">
+                    {!projectId ? "Select a project first" : assigneeOptions.length ? "Unassigned" : "No project members available"}
+                  </option>
+                  {assigneeOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.caption ? `${option.label} · ${option.caption}` : option.label}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+            </div>
+
+            <div className="execution-create-grid">
+              <FormField label="Cadence" required>
+                <select value={cadence} onChange={(event) => onCadenceChange(event.target.value as ExecutionScheduleCadence)}>
+                  <option value="once">Once</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </FormField>
+              <FormField label="First run" required>
+                <input type="datetime-local" value={nextRunAt} onChange={(event) => onNextRunAtChange(event.target.value)} />
+              </FormField>
+            </div>
+
+            <ExecutionContextSelector
+              appTypeId={appTypeId}
+              onConfigurationChange={onConfigurationChange}
+              onDataSetChange={onDataSetChange}
+              onEnvironmentChange={onEnvironmentChange}
+              prefillFirstAvailable={true}
+              projectId={projectId}
+              selectedConfigurationId={selectedConfigurationId}
+              selectedDataSetId={selectedDataSetId}
+              selectedEnvironmentId={selectedEnvironmentId}
+            />
+
+            <FormField label="Execution scope" required>
+              <SuiteScopePicker
+                description="Pick the reusable suites that should be snapped whenever this schedule runs."
+                emptyMessage="No suites available in this app type yet."
+                heading="Scheduled suite scope"
+                onChange={onSuiteSelectionChange}
+                selectedSuiteIds={selectedSuiteIds}
+                suites={scopeSuites}
+              />
+            </FormField>
+          </div>
+
+          <div className="action-row execution-create-actions">
+            <button className="primary-button" disabled={!projectId || !appTypeId || !selectedSuiteIds.length || !nextRunAt || isSubmitting} type="submit">
+              {isSubmitting ? "Saving…" : "Create schedule"}
             </button>
             <button className="ghost-button" disabled={isSubmitting} onClick={onClose} type="button">
               Cancel

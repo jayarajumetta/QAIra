@@ -120,7 +120,7 @@ const selectTestDataSet = db.prepare(`
 `);
 
 const selectExecutionAssignee = db.prepare(`
-  SELECT id, email, name
+  SELECT id, email, name, avatar_data_url
   FROM users
   WHERE id = ?
 `);
@@ -228,7 +228,8 @@ async function attachExecutionAssignee(execution) {
       ? {
           id: assignedUser.id,
           email: assignedUser.email,
-          name: assignedUser.name || null
+          name: assignedUser.name || null,
+          avatar_data_url: assignedUser.avatar_data_url || null
         }
       : null
   };
@@ -697,8 +698,9 @@ exports.rerunExecution = async (id, { failed_only = false, created_by, name } = 
 
   if (failed_only) {
     const latestStatusByCaseId = new Map();
+    const executionResults = await getResultsForExecution.all(id);
 
-    getResultsForExecution.all(id).forEach((result) => {
+    executionResults.forEach((result) => {
       if (!latestStatusByCaseId.has(result.test_case_id)) {
         latestStatusByCaseId.set(result.test_case_id, result.status);
       }
