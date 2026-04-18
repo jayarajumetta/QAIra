@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../auth/AuthContext";
+import { useLocalization } from "../context/LocalizationContext";
 import { ProjectDropdown } from "./ProjectDropdown";
 import { UserProfileDialog } from "./UserProfileDialog";
 import { useCurrentProject } from "../hooks/useCurrentProject";
@@ -99,6 +100,7 @@ function getNavigationItemLabel(item: { label: string; shortLabel?: string }, sh
 export function AppShell() {
   const location = useLocation();
   const { session, logout, error, clearError } = useAuth();
+  const { t } = useLocalization();
   const projectsQuery = useQuery({
     queryKey: ["projects"],
     queryFn: api.projects.list,
@@ -255,6 +257,37 @@ export function AppShell() {
     setIsCollapsed((current) => !current);
   };
 
+  const resolveNavLabel = (item: { id: string; label: string; shortLabel?: string }) => {
+    const defaultLabel = getNavigationItemLabel(item, shouldCollapseSidebar);
+
+    switch (item.id) {
+      case "overview":
+        return t("nav.dashboard", defaultLabel);
+      case "projects":
+        return t("nav.projects", defaultLabel);
+      case "authoring":
+        return t("nav.testAuthoring", defaultLabel);
+      case "runs":
+        return t("nav.testRuns", defaultLabel);
+      case "environment":
+        return t("nav.testEnvironment", defaultLabel);
+      case "people":
+        return t("nav.users", defaultLabel);
+      case "integrations":
+        return t("nav.integrations", defaultLabel);
+      case "support":
+        return t("nav.support", defaultLabel);
+      case "notifications":
+        return t("nav.notifications", defaultLabel);
+      case "settings":
+        return t("nav.settings", defaultLabel);
+      case "feedback":
+        return t("nav.feedback", defaultLabel);
+      default:
+        return defaultLabel;
+    }
+  };
+
   return (
     <div className={`app-shell app-layout${isWorkspaceWideLibrary ? " app-layout--workspace-wide" : ""}`}>
       {error && (
@@ -311,16 +344,15 @@ export function AppShell() {
           </div>
 
           {shouldCollapseSidebar ? (
-            <button
-              aria-label="Expand sidebar"
-              className="sidebar-collapse-button sidebar-collapse-button-compact ghost-button"
-              onClick={toggleSidebarCollapse}
-              title="Expand sidebar"
-              type="button"
-            >
-              <MenuIcon />
-              <span className="sidebar-slot-label">Menu</span>
-            </button>
+          <button
+            aria-label="Expand sidebar"
+            className="sidebar-collapse-button sidebar-collapse-button-compact ghost-button"
+            onClick={toggleSidebarCollapse}
+            title="Expand sidebar"
+            type="button"
+          >
+            <MenuIcon />
+          </button>
           ) : null}
 
           {!shouldCollapseSidebar ? (
@@ -354,7 +386,17 @@ export function AppShell() {
         <nav className="nav-list" aria-label="Main navigation">
           {navigation.map((group) => (
             <div className="nav-group" key={group.label}>
-              {!shouldCollapseSidebar ? <p className="nav-group-label">{group.label}</p> : null}
+              {!shouldCollapseSidebar ? (
+                <p className="nav-group-label">
+                  {group.label === "Main"
+                    ? t("nav.section.main", group.label)
+                    : group.label === "Test Management"
+                      ? t("nav.section.testManagement", group.label)
+                      : group.label === "Administration"
+                        ? t("nav.section.administration", group.label)
+                        : t("nav.section.settings", group.label)}
+                </p>
+              ) : null}
               <div className="nav-group-items">
                 {group.items.map((item) => {
                   const Icon = item.icon;
@@ -370,8 +412,8 @@ export function AppShell() {
                         to={item.to}
                         className={isActive ? "nav-link is-active" : "nav-link"}
                         end={item.to === "/"}
-                        title={shouldCollapseSidebar ? item.label : undefined}
-                        aria-label={item.label}
+                        title={shouldCollapseSidebar ? resolveNavLabel(item) : undefined}
+                        aria-label={resolveNavLabel(item)}
                         onClick={(e) => {
                           if (isDisabled) {
                             e.preventDefault();
@@ -380,7 +422,7 @@ export function AppShell() {
                         style={{ opacity: isDisabled ? 0.5 : 1, cursor: isDisabled ? "not-allowed" : "pointer" }}
                       >
                         <span className="nav-link-icon" aria-hidden="true"><Icon /></span>
-                        <span className="nav-link-label">{getNavigationItemLabel(item, shouldCollapseSidebar)}</span>
+                        <span className="nav-link-label">{resolveNavLabel(item)}</span>
                         {!shouldCollapseSidebar && typeof badgeCount === "number" ? <span className="nav-link-badge">{badgeCount}</span> : null}
                       </NavLink>
 
@@ -400,7 +442,25 @@ export function AppShell() {
                                 <span className="nav-sublink-icon" aria-hidden="true">
                                   <SubItemIcon />
                                 </span>
-                                <span className="nav-sublink-label">{subItem.label}</span>
+                                <span className="nav-sublink-label">
+                                  {subItem.to === "/requirements"
+                                    ? t("workspace.requirements", subItem.label)
+                                    : subItem.to === "/test-cases"
+                                      ? t("workspace.testCases", subItem.label)
+                                      : subItem.to === "/shared-steps"
+                                        ? t("workspace.sharedSteps", subItem.label)
+                                        : subItem.to === "/design"
+                                          ? t("workspace.testSuites", subItem.label)
+                                          : subItem.to === "/executions"
+                                            ? t("workspace.executions", subItem.label)
+                                            : subItem.to === "/test-environments"
+                                              ? t("workspace.environments", subItem.label)
+                                              : subItem.to === "/test-data"
+                                                ? t("workspace.testData", subItem.label)
+                                                : subItem.to === "/test-configurations"
+                                                  ? t("workspace.configurations", subItem.label)
+                                                  : subItem.label}
+                                </span>
                               </NavLink>
                             );
                           })}
@@ -439,7 +499,6 @@ export function AppShell() {
               type="button"
             >
               {theme === "dark" ? <MoonIcon /> : <SunIcon />}
-              <span className="sidebar-slot-label">Theme</span>
             </button>
           )}
 
@@ -465,7 +524,6 @@ export function AppShell() {
                   </>
                 ) : null}
               </div>
-              {shouldCollapseSidebar ? <span className="sidebar-slot-label user-chip-slot-label">Profile</span> : null}
             </div>
           </button>
 
@@ -477,7 +535,7 @@ export function AppShell() {
             title={shouldCollapseSidebar ? "Sign out" : undefined}
           >
             <LogoutIcon />
-            {shouldCollapseSidebar ? <span className="sidebar-slot-label">Logout</span> : <span>Sign out</span>}
+            {shouldCollapseSidebar ? null : <span>Sign out</span>}
           </button>
         </div>
       </aside>

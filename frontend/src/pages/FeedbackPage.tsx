@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../auth/AuthContext";
+import { MessageIcon } from "../components/AppIcons";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
@@ -171,7 +172,8 @@ export function FeedbackPage() {
             }}
             type="button"
           >
-            + Add Feedback
+            <MessageIcon />
+            Add Feedback
           </button>
         }
       />

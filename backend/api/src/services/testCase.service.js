@@ -4,6 +4,7 @@ const requirementTestCaseService = require("./requirementTestCase.service");
 const suiteTestCaseService = require("./suiteTestCase.service");
 const sharedStepSyncService = require("./sharedStepSync.service");
 const { DOMAIN_METADATA, TEST_CASE_STATUS_VALUES } = require("../domain/catalog");
+const displayIdService = require("./displayId.service");
 
 const DEFAULT_PRIORITY = 3;
 const DEFAULT_STATUS = DOMAIN_METADATA.test_cases.default_status;
@@ -32,9 +33,27 @@ const selectSharedStepGroup = db.prepare(`
   WHERE id = ?
 `);
 
+const selectSuitesForAppType = db.prepare(`
+  SELECT id, name, app_type_id
+  FROM test_suites
+  WHERE app_type_id = ?
+`);
+
+const selectRequirementsForProject = db.prepare(`
+  SELECT id, title, project_id
+  FROM requirements
+  WHERE project_id = ?
+`);
+
+const selectSharedStepGroupsForAppType = db.prepare(`
+  SELECT id, name, app_type_id
+  FROM shared_step_groups
+  WHERE app_type_id = ?
+`);
+
 const insertTestCaseRecord = db.prepare(`
-  INSERT INTO test_cases (id, app_type_id, suite_id, title, description, priority, status, requirement_id)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO test_cases (id, display_id, app_type_id, suite_id, title, description, priority, status, requirement_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const updateTestCaseRecord = db.prepare(`
@@ -103,6 +122,12 @@ const normalizeText = (value) => {
 const normalizeTextList = (values = []) => {
   return [...new Set(values.map((value) => normalizeText(value)).filter(Boolean))];
 };
+
+const normalizeComparableText = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
 
 const normalizePriority = (value) => {
   if (value === undefined || value === null || value === "") {
@@ -180,6 +205,40 @@ const splitImportSequence = (value) => {
     .map((item) => item.trim());
 };
 
+const buildNameLookup = (items = [], field) => {
+  return items.reduce((lookup, item) => {
+    const key = normalizeComparableText(item?.[field]);
+
+    if (!key) {
+      return lookup;
+    }
+
+    lookup[key] = lookup[key] || [];
+    lookup[key].push(item);
+    return lookup;
+  }, {});
+};
+
+const resolveNamedRows = (lookup, values = [], entityLabel) => {
+  const resolved = [];
+
+  for (const value of normalizeTextList(values)) {
+    const matches = lookup[normalizeComparableText(value)] || [];
+
+    if (!matches.length) {
+      throw new Error(`${entityLabel} not found: ${value}`);
+    }
+
+    if (matches.length > 1) {
+      throw new Error(`Multiple ${entityLabel.toLowerCase()} records match "${value}". Rename duplicates before importing.`);
+    }
+
+    resolved.push(matches[0]);
+  }
+
+  return resolved;
+};
+
 const pickImportSequenceValue = (items, index) => {
   if (!items.length) {
     return null;
@@ -196,7 +255,58 @@ const pickImportSequenceValue = (items, index) => {
   return null;
 };
 
-const buildStepsFromImportRow = (row) => {
+const normalizeImportedActionPrefixKind = (value) => {
+  const normalized = String(value || "").trim().toLowerCase().replace(/[^a-z]/g, "");
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "shared" || normalized === "sharedgroup" || normalized === "sharedsteps" || normalized === "reusable") {
+    return "reusable";
+  }
+
+  if (normalized === "group" || normalized === "grouped" || normalized === "local") {
+    return "local";
+  }
+
+  return null;
+};
+
+const IMPORTED_ACTION_PREFIX_PATTERN = /^\[(shared|sharedgroup|shared steps|group|grouped|local)\s*:\s*([^\]]+)\]\s*(.*)$/i;
+
+const parseImportedActionLine = (value) => {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return {
+      action: null,
+      group_name: null,
+      group_kind: null
+    };
+  }
+
+  const match = normalized.match(IMPORTED_ACTION_PREFIX_PATTERN);
+
+  if (!match) {
+    return {
+      action: normalized,
+      group_name: null,
+      group_kind: null
+    };
+  }
+
+  return {
+    action: normalizeText(match[3]),
+    group_name: normalizeText(match[2]),
+    group_kind: normalizeImportedActionPrefixKind(match[1])
+  };
+};
+
+const buildStepsFromImportRow = (row, options = {}) => {
+  const {
+    sharedGroupLookup = {}
+  } = options;
   const actions = splitImportSequence(row.action);
   const expectedResults = splitImportSequence(row.expected_result || row.expectedResult);
   const groupNames = splitImportSequence(row.step_group_name || row.stepGroupName);
@@ -212,13 +322,30 @@ const buildStepsFromImportRow = (row) => {
   let currentGroupId = null;
 
   return Array.from({ length: size }, (_, index) => {
-    const action = pickImportSequenceValue(actions, index);
+    const annotatedAction = parseImportedActionLine(pickImportSequenceValue(actions, index));
     const expectedResult = pickImportSequenceValue(expectedResults, index);
-    const groupName = pickImportSequenceValue(groupNames, index);
-    const reusableGroupId = pickImportSequenceValue(sharedGroupIds, index);
-    const groupKind =
+    let groupName = annotatedAction.group_name || pickImportSequenceValue(groupNames, index);
+    let reusableGroupId = pickImportSequenceValue(sharedGroupIds, index);
+    let groupKind =
+      annotatedAction.group_kind ||
       normalizeGroupKind(pickImportSequenceValue(groupKinds, index)) ||
       (reusableGroupId ? "reusable" : groupName ? "local" : null);
+
+    if (!reusableGroupId && groupKind === "reusable" && groupName) {
+      const matches = sharedGroupLookup[normalizeComparableText(groupName)] || [];
+
+      if (!matches.length) {
+        throw new Error(`Shared step group not found: ${groupName}`);
+      }
+
+      if (matches.length > 1) {
+        throw new Error(`Multiple shared step groups match "${groupName}". Rename duplicates before importing.`);
+      }
+
+      reusableGroupId = matches[0].id;
+      groupName = matches[0].name;
+    }
+
     const hasGroupMetadata = Boolean(groupName || reusableGroupId || groupKind);
     const groupSignature = hasGroupMetadata ? `${groupKind || "local"}::${groupName || ""}::${reusableGroupId || ""}` : null;
 
@@ -232,7 +359,7 @@ const buildStepsFromImportRow = (row) => {
 
     return {
       step_order: index + 1,
-      action: action || "",
+      action: annotatedAction.action || "",
       expected_result: expectedResult || "",
       group_id: currentGroupId,
       group_name: groupName,
@@ -327,6 +454,8 @@ const createPersistablePayload = async ({
     throw new Error("Test case title is required");
   }
 
+  const display_id = await displayIdService.createDisplayId("test_case");
+
   let resolvedAppTypeId = normalizeText(app_type_id);
   const resolvedSuiteIds = normalizeTextList([suite_id, ...suite_ids]);
   const resolvedRequirementIds = normalizeTextList([requirement_id, ...requirement_ids]);
@@ -344,6 +473,7 @@ const createPersistablePayload = async ({
     description: normalizeText(description),
     priority: normalizePriority(priority),
     status: normalizeStatus(status),
+    display_id,
     steps: normalizeSteps(steps)
   };
 };
@@ -353,6 +483,7 @@ const createOne = db.transaction(async (payload) => {
 
   await insertTestCaseRecord.run(
     id,
+    payload.display_id,
     payload.app_type_id,
     payload.suite_ids[0] || null,
     payload.title,
@@ -426,18 +557,38 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [] })
     throw new Error("At least one CSV row is required");
   }
 
-  await ensureAppTypeExists(resolvedAppTypeId);
+  const appType = await ensureAppTypeExists(resolvedAppTypeId);
 
   if (defaultRequirementId) {
     await ensureRequirementsExist([defaultRequirementId]);
   }
+
+  const [availableSuites, availableRequirements, availableSharedGroups] = await Promise.all([
+    selectSuitesForAppType.all(resolvedAppTypeId),
+    selectRequirementsForProject.all(appType?.project_id || ""),
+    selectSharedStepGroupsForAppType.all(resolvedAppTypeId)
+  ]);
+  const suiteLookup = buildNameLookup(availableSuites, "name");
+  const requirementLookup = buildNameLookup(availableRequirements, "title");
+  const sharedGroupLookup = buildNameLookup(availableSharedGroups, "name");
 
   const created = [];
   const errors = [];
 
   for (const [index, row] of rows.entries()) {
     try {
-      const importedSteps = buildStepsFromImportRow(row || {}).map((step) => ({ ...step }));
+      const normalizedRow = row || {};
+      const importedSteps = buildStepsFromImportRow(normalizedRow, { sharedGroupLookup }).map((step) => ({ ...step }));
+      const resolvedSuiteIds = resolveNamedRows(
+        suiteLookup,
+        splitImportSequence(normalizedRow.suites || normalizedRow.suite),
+        "Suite"
+      ).map((suite) => suite.id);
+      const resolvedRequirementIdsFromNames = resolveNamedRows(
+        requirementLookup,
+        splitImportSequence(normalizedRow.requirements || normalizedRow.requirement),
+        "Requirement"
+      ).map((requirement) => requirement.id);
 
       for (const step of importedSteps) {
         if (step.group_kind !== "reusable") {
@@ -468,11 +619,17 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [] })
 
       const response = await exports.createTestCase({
         app_type_id: resolvedAppTypeId,
-        title: row?.title,
-        description: row?.description,
-        priority: row?.priority,
-        status: normalizeStatus(row?.status, "draft"),
-        requirement_ids: normalizeTextList([defaultRequirementId, row?.requirement_id, row?.requirementId]),
+        title: normalizedRow?.title,
+        description: normalizedRow?.description,
+        priority: normalizedRow?.priority,
+        status: normalizeStatus(normalizedRow?.status, "draft"),
+        suite_ids: resolvedSuiteIds,
+        requirement_ids: normalizeTextList([
+          defaultRequirementId,
+          normalizedRow?.requirement_id,
+          normalizedRow?.requirementId,
+          ...resolvedRequirementIdsFromNames
+        ]),
         steps: importedSteps
       });
 

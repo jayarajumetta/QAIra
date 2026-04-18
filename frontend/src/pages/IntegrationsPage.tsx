@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../auth/AuthContext";
+import { PlugIcon } from "../components/AppIcons";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
@@ -367,7 +368,8 @@ export function IntegrationsPage() {
               onClick={openCreateForm}
               type="button"
             >
-              + New Integration
+              <PlugIcon />
+              New Integration
             </button>
           ) : null
         }

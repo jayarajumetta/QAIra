@@ -1,3 +1,4 @@
+import { MailIcon } from "../components/AppIcons";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 
@@ -41,6 +42,7 @@ export function SupportPage() {
         ]}
         actions={
           <a className="primary-button" href={`mailto:${supportChannels[0].value}?subject=QAIra%20Support%20Request`}>
+            <MailIcon />
             Open Support Ticket
           </a>
         }

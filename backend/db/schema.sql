@@ -35,6 +35,7 @@ CREATE TABLE password_reset_tokens (
 
 CREATE TABLE projects (
   id TEXT PRIMARY KEY,
+  display_id TEXT UNIQUE,
   name TEXT NOT NULL,
   description TEXT,
   created_by TEXT,
@@ -74,6 +75,7 @@ CREATE TABLE app_types (
 
 CREATE TABLE requirements (
   id TEXT PRIMARY KEY,
+  display_id TEXT UNIQUE,
   project_id TEXT NOT NULL,
   title TEXT NOT NULL,
   description TEXT,
@@ -129,6 +131,7 @@ CREATE INDEX idx_auth_verification_codes_lookup
 
 CREATE TABLE test_suites (
   id TEXT PRIMARY KEY,
+  display_id TEXT UNIQUE,
   app_type_id TEXT NOT NULL,
   name TEXT NOT NULL,
   parent_id TEXT,
@@ -139,6 +142,7 @@ CREATE TABLE test_suites (
 
 CREATE TABLE test_cases (
   id TEXT PRIMARY KEY,
+  display_id TEXT UNIQUE,
   app_type_id TEXT,
   suite_id TEXT,
   title TEXT NOT NULL,
@@ -184,6 +188,7 @@ CREATE TABLE test_steps (
 
 CREATE TABLE shared_step_groups (
   id TEXT PRIMARY KEY,
+  display_id TEXT UNIQUE,
   app_type_id TEXT NOT NULL,
   name TEXT NOT NULL,
   description TEXT,
@@ -340,4 +345,10 @@ CREATE TABLE execution_results (
   FOREIGN KEY (execution_id) REFERENCES executions(id),
   FOREIGN KEY (app_type_id) REFERENCES app_types(id),
   FOREIGN KEY (executed_by) REFERENCES users(id)
+);
+
+CREATE TABLE app_settings (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );

@@ -1,7 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useAuth } from "../auth/AuthContext";
+import { useLocalization } from "../context/LocalizationContext";
+import { SaveIcon } from "../components/AppIcons";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { ToastMessage } from "../components/ToastMessage";
+import { api } from "../lib/api";
+import { DEFAULT_LOCALIZATION_STRINGS } from "../lib/localization";
 
 const THEME_KEY = "app_theme";
 const SIDEBAR_KEY = "sidebar_collapsed";
@@ -9,10 +14,16 @@ const AUTO_EXPORT_KEY = "app_auto_export";
 const PREFERENCES_UPDATED_EVENT = "qaira:preferences-updated";
 
 export function SettingsPage() {
+  const { session } = useAuth();
+  const { strings, setWorkspaceStrings, t } = useLocalization();
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [sidebarMode, setSidebarMode] = useState<"expanded" | "collapsed">("expanded");
   const [autoExport, setAutoExport] = useState(false);
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"success" | "error">("success");
+  const [isSavingLocalization, setIsSavingLocalization] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const isAdmin = session?.user.role === "admin";
 
   useEffect(() => {
     const storedTheme = window.localStorage.getItem(THEME_KEY);
@@ -35,7 +46,62 @@ export function SettingsPage() {
         }
       })
     );
+    setMessageTone("success");
     setMessage("Workspace preferences saved.");
+  };
+
+  const showError = (error: unknown, fallback: string) => {
+    setMessageTone("error");
+    setMessage(error instanceof Error ? error.message : fallback);
+  };
+
+  const handleDownloadLocalization = () => {
+    const blob = new Blob([JSON.stringify(strings, null, 2)], { type: "application/json" });
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = "qaira-localization.json";
+    link.click();
+    URL.revokeObjectURL(href);
+  };
+
+  const persistLocalization = async (nextStrings: Record<string, string>, successMessage: string) => {
+    setIsSavingLocalization(true);
+
+    try {
+      const response = await api.settings.updateLocalization({ strings: nextStrings });
+      setWorkspaceStrings(response.strings);
+      setMessageTone("success");
+      setMessage(successMessage);
+    } catch (error) {
+      showError(error, "Unable to save localization strings.");
+    } finally {
+      setIsSavingLocalization(false);
+    }
+  };
+
+  const handleUploadLocalization = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(await file.text()) as Record<string, string>;
+
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("Localization file must be a JSON object.");
+      }
+
+      await persistLocalization(parsed, "Localization strings updated.");
+    } catch (error) {
+      showError(error, "Unable to upload localization strings.");
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
   };
 
   return (
@@ -49,10 +115,10 @@ export function SettingsPage() {
           { label: "Sidebar", value: sidebarMode === "collapsed" ? "Collapsed" : "Expanded" },
           { label: "Export prompts", value: autoExport ? "Enabled" : "Off" }
         ]}
-        actions={<button className="primary-button" onClick={saveSettings} type="button">Save preferences</button>}
+        actions={<button className="primary-button" onClick={saveSettings} type="button"><SaveIcon />Save preferences</button>}
       />
 
-      <ToastMessage message={message} onDismiss={() => setMessage("")} />
+      <ToastMessage message={message} onDismiss={() => setMessage("")} tone={messageTone} />
 
       <div className="two-column-grid">
         <Panel title="Appearance" subtitle="Keep the interface comfortable for long QA sessions.">
@@ -86,6 +152,48 @@ export function SettingsPage() {
               <strong>Historical evidence is preserved</strong>
               <span>Deleting live suites or test cases does not remove execution snapshots already captured.</span>
             </div>
+          </div>
+        </Panel>
+
+        <Panel
+          title={t("settings.localization.title", "Localization")}
+          subtitle={t("settings.localization.subtitle", "Download the current runtime strings, edit the JSON, then upload it to relabel menus and supported interface text.")}
+        >
+          <div className="detail-stack">
+            <div className="detail-summary">
+              <strong>{Object.keys(strings).length} strings ready</strong>
+              <span>{t("settings.localization.helper", "Only admins can publish updated localization strings for the workspace.")}</span>
+            </div>
+
+            <div className="action-row">
+              <button className="ghost-button" onClick={handleDownloadLocalization} type="button">
+                {t("settings.localization.download", "Download current strings")}
+              </button>
+              <button
+                className="ghost-button"
+                disabled={!isAdmin || isSavingLocalization}
+                onClick={() => fileInputRef.current?.click()}
+                type="button"
+              >
+                {t("settings.localization.upload", "Upload JSON")}
+              </button>
+              <button
+                className="ghost-button danger"
+                disabled={!isAdmin || isSavingLocalization}
+                onClick={() => void persistLocalization(DEFAULT_LOCALIZATION_STRINGS, "Uploaded localization reset to defaults.")}
+                type="button"
+              >
+                {t("settings.localization.reset", "Reset uploaded strings")}
+              </button>
+            </div>
+
+            <input
+              accept="application/json"
+              hidden
+              onChange={(event) => void handleUploadLocalization(event)}
+              ref={fileInputRef}
+              type="file"
+            />
           </div>
         </Panel>
       </div>

@@ -1,6 +1,7 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 const requirementTestCaseService = require("./requirementTestCase.service");
+const displayIdService = require("./displayId.service");
 
 const hydrateTestCaseIds = async (requirement) => {
   if (!requirement) {
@@ -83,12 +84,14 @@ exports.createRequirement = async ({ project_id, title, description, priority, s
   if (!project) throw new Error("Project not found");
 
   const id = uuid();
+  const display_id = await displayIdService.createDisplayId("requirement");
 
   await db.prepare(`
-    INSERT INTO requirements (id, project_id, title, description, priority, status)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO requirements (id, display_id, project_id, title, description, priority, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
+    display_id,
     project_id,
     title,
     description || null,

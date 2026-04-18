@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { FolderIcon, LayersIcon, PlayIcon } from "../components/AppIcons";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { ProgressMeter } from "../components/ProgressMeter";
@@ -614,12 +615,15 @@ export function OverviewPage() {
         actions={
           <>
             <button className="ghost-button" onClick={() => navigate("/projects")} type="button">
+              <FolderIcon />
               Manage Scope
             </button>
             <button className="ghost-button" onClick={() => navigate("/design")} type="button">
+              <LayersIcon />
               Open Suite Studio
             </button>
             <button className="primary-button" onClick={() => navigate("/executions")} type="button">
+              <PlayIcon />
               Open Execution Hub
             </button>
           </>

@@ -2,6 +2,8 @@ import { FormEvent, Fragment, useDeferredValue, useEffect, useMemo, useRef, useS
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { CalendarIcon, PlayIcon } from "../components/AppIcons";
+import { CatalogViewToggle } from "../components/CatalogViewToggle";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
 import { FormField } from "../components/FormField";
 import { ExecutionContextSelector } from "../components/ExecutionContextSelector";
@@ -460,6 +462,7 @@ export function ExecutionsPage() {
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const [activeTab, setActiveTab] = useState<ExecutionTab>("overview");
   const [executionSearch, setExecutionSearch] = useState("");
+  const [catalogViewMode, setCatalogViewMode] = useState<"tile" | "list">("tile");
   const [isExecutionListMinimized, setIsExecutionListMinimized] = useState(false);
   const [isSuiteTreeMinimized, setIsSuiteTreeMinimized] = useState(false);
   const [isExecutionHealthExpanded, setIsExecutionHealthExpanded] = useState(true);
@@ -2035,9 +2038,11 @@ export function ExecutionsPage() {
                 }}
                 type="button"
               >
+                <CalendarIcon />
                 Schedule Execution
               </button>
               <button className="primary-button" onClick={() => setIsCreateExecutionModalOpen(true)} type="button">
+                <PlayIcon />
                 Create Execution
               </button>
             </>
@@ -2090,6 +2095,7 @@ export function ExecutionsPage() {
             }
           >
             <div className="design-list-toolbar">
+              <CatalogViewToggle onChange={setCatalogViewMode} value={catalogViewMode} />
               <CatalogSearchFilter
                 activeFilterCount={activeExecutionFilterCount}
                 ariaLabel={testRunsView === "executions" ? "Search executions" : "Search schedules"}
@@ -2169,8 +2175,8 @@ export function ExecutionsPage() {
             ) : null}
 
             {!(testRunsView === "executions" ? executionsQuery.isLoading : executionSchedulesQuery.isLoading) ? (
-              <div className="tile-browser-grid">
-                {testRunsView === "executions"
+              <div className={catalogViewMode === "tile" ? "tile-browser-grid" : ""}>
+                {testRunsView === "executions" && catalogViewMode === "tile"
                   ? filteredExecutions.map((execution) => (
                       <ExecutionListCard
                         key={execution.id}
@@ -2181,7 +2187,9 @@ export function ExecutionsPage() {
                         summary={executionSummaryById[execution.id] || EMPTY_EXECUTION_RUN_SUMMARY}
                       />
                     ))
-                  : filteredSchedules.map((schedule) => (
+                  : null}
+                {testRunsView === "scheduled" && catalogViewMode === "tile"
+                  ? filteredSchedules.map((schedule) => (
                       <ExecutionScheduleCard
                         key={schedule.id}
                         isActive={selectedSchedule?.id === schedule.id}
@@ -2190,7 +2198,93 @@ export function ExecutionsPage() {
                         onSelect={() => setSelectedScheduleId(schedule.id)}
                         schedule={schedule}
                       />
-                    ))}
+                    ))
+                  : null}
+                {testRunsView === "executions" && catalogViewMode === "list" ? (
+                  <div className="table-wrap catalog-table-wrap">
+                    <table className="data-table catalog-data-table">
+                      <thead>
+                        <tr>
+                          <th>Execution</th>
+                          <th>Status</th>
+                          <th>Assignee</th>
+                          <th>Suites</th>
+                          <th>Touched</th>
+                          <th>Issues</th>
+                          <th>Started</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredExecutions.map((execution) => {
+                          const summary = executionSummaryById[execution.id] || EMPTY_EXECUTION_RUN_SUMMARY;
+                          const executionStatus = normalizeExecutionStatus(execution.status);
+                          const totalCases = (execution.case_snapshots || []).length;
+
+                          return (
+                            <tr
+                              className={selectedExecution?.id === execution.id ? "is-active-row" : ""}
+                              key={execution.id}
+                              onClick={() => focusExecution(execution.id)}
+                            >
+                              <td>
+                                <strong>{execution.name || "Unnamed execution"}</strong>
+                                <div className="catalog-row-subcopy">{execution.trigger || "manual"} trigger</div>
+                              </td>
+                              <td>{executionStatusLabel(executionStatus)}</td>
+                              <td>{execution.assigned_user ? resolveUserPrimaryLabel(execution.assigned_user) : "Unassigned"}</td>
+                              <td>{execution.suite_ids.length}</td>
+                              <td>{totalCases ? `${summary.total}/${totalCases}` : summary.total}</td>
+                              <td>{summary.failed + summary.blocked}</td>
+                              <td>{formatExecutionTimestamp(execution.started_at, "Not started yet")}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+                {testRunsView === "scheduled" && catalogViewMode === "list" ? (
+                  <div className="table-wrap catalog-table-wrap">
+                    <table className="data-table catalog-data-table">
+                      <thead>
+                        <tr>
+                          <th>Schedule</th>
+                          <th>Cadence</th>
+                          <th>Assignee</th>
+                          <th>Suites</th>
+                          <th>Direct cases</th>
+                          <th>Next run</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredSchedules.map((schedule) => (
+                          <tr
+                            className={selectedSchedule?.id === schedule.id ? "is-active-row" : ""}
+                            key={schedule.id}
+                            onClick={() => setSelectedScheduleId(schedule.id)}
+                          >
+                            <td>
+                              <strong>{schedule.name}</strong>
+                              <div className="catalog-row-subcopy">{schedule.is_active ? "Active schedule" : "Inactive schedule"}</div>
+                            </td>
+                            <td>{schedule.cadence}</td>
+                            <td>{schedule.assigned_user ? resolveUserPrimaryLabel(schedule.assigned_user) : "Unassigned"}</td>
+                            <td>{schedule.suite_ids.length}</td>
+                            <td>{schedule.test_case_ids.length}</td>
+                            <td>{formatExecutionTimestamp(schedule.next_run_at, "Not scheduled")}</td>
+                            <td onClick={(event) => event.stopPropagation()}>
+                              <div className="action-row compact">
+                                <button className="ghost-button" onClick={() => void handleRunExecutionSchedule(schedule.id)} type="button">Run</button>
+                                <button className="ghost-button danger" onClick={() => void handleDeleteExecutionSchedule(schedule.id, schedule.name)} type="button">Delete</button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
                 {testRunsView === "executions" && !filteredExecutions.length ? <div className="empty-state compact">No executions created yet.</div> : null}
                 {testRunsView === "scheduled" && !filteredSchedules.length ? <div className="empty-state compact">No schedules created yet.</div> : null}
               </div>

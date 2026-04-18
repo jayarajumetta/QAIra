@@ -3,7 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
+import { CatalogViewToggle } from "../components/CatalogViewToggle";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
+import { DisplayIdBadge } from "../components/DisplayIdBadge";
 import { ExecutionContextSelector } from "../components/ExecutionContextSelector";
 import { FormField } from "../components/FormField";
 import { LinkedTestCaseModal } from "../components/LinkedTestCaseModal";
@@ -34,7 +36,13 @@ import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { useDialogFocus } from "../hooks/useDialogFocus";
-import { parseTestCaseCsv, type ImportedTestCaseRow } from "../lib/testCaseImport";
+import {
+  countImportedGroups,
+  countImportedSteps,
+  getImportedStepPreviewLabel,
+  parseTestCaseCsv,
+  type ImportedTestCaseRow
+} from "../lib/testCaseImport";
 import { api } from "../lib/api";
 import { appendUniqueImages, parseExternalLinks, readImageFiles, toggleRequirementOnPreviewCase } from "../lib/aiDesignStudio";
 import { upsertSharedStepGroupInCache } from "../lib/sharedStepGroupCache";
@@ -139,109 +147,11 @@ const createDraftStepId = () =>
 const createDraftGroupId = () =>
   globalThis.crypto?.randomUUID?.() || `draft-group-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-const splitImportedStepSequence = (value?: string) =>
-  String(value || "")
-    .split(/\r?\n|\|/)
-    .map((item) => item.trim());
-
-const pickImportedSequenceValue = (items: string[], index: number) => {
-  if (!items.length) {
-    return "";
-  }
-
-  if (index < items.length) {
-    return items[index] || "";
-  }
-
-  return items.length === 1 ? items[0] || "" : "";
-};
-
-const normalizeImportedGroupKind = (value?: string) => {
-  const normalized = String(value || "").trim().toLowerCase().replace(/[^a-z]/g, "");
-
-  if (!normalized) {
-    return "";
-  }
-
-  if (normalized === "reusable" || normalized === "shared" || normalized === "sharedgroup" || normalized === "snapshot") {
-    return "reusable";
-  }
-
-  if (normalized === "local" || normalized === "grouped") {
-    return "local";
-  }
-
-  return "";
-};
-
 const normalizeSharedGroupComparableText = (value?: string | null) =>
   String(value || "")
     .trim()
     .replace(/\s+/g, " ")
     .toLowerCase();
-
-const buildImportedStepPreview = (row: ImportedTestCaseRow) => {
-  const actions = splitImportedStepSequence(row.action);
-  const expectedResults = splitImportedStepSequence(row.expected_result);
-  const groupNames = splitImportedStepSequence(row.step_group_name);
-  const groupKinds = splitImportedStepSequence(row.step_group_kind);
-  const sharedGroupIds = splitImportedStepSequence(row.shared_group_id);
-  const size = Math.max(actions.length, expectedResults.length, groupNames.length, groupKinds.length, sharedGroupIds.length, 0);
-
-  return Array.from({ length: size }, (_, index) => {
-    const action = pickImportedSequenceValue(actions, index);
-    const expectedResult = pickImportedSequenceValue(expectedResults, index);
-    const groupName = pickImportedSequenceValue(groupNames, index);
-    const sharedGroupId = pickImportedSequenceValue(sharedGroupIds, index);
-    const resolvedGroupKind = normalizeImportedGroupKind(pickImportedSequenceValue(groupKinds, index)) || (sharedGroupId ? "reusable" : groupName ? "local" : "");
-
-    return {
-      action,
-      expected_result: expectedResult,
-      step_group_name: groupName,
-      step_group_kind: resolvedGroupKind,
-      shared_group_id: sharedGroupId
-    };
-  }).filter((step) => step.action || step.expected_result || step.step_group_name || step.shared_group_id);
-};
-
-const countImportedSteps = (row: ImportedTestCaseRow) => buildImportedStepPreview(row).length;
-
-const countImportedGroups = (row: ImportedTestCaseRow) => {
-  let previousSignature = "";
-  let count = 0;
-
-  buildImportedStepPreview(row).forEach((step) => {
-    const signature =
-      step.step_group_name || step.shared_group_id || step.step_group_kind
-        ? `${step.step_group_kind || "local"}::${step.step_group_name || ""}::${step.shared_group_id || ""}`
-        : "";
-
-    if (signature && signature !== previousSignature) {
-      count += 1;
-    }
-
-    previousSignature = signature;
-  });
-
-  return count;
-};
-
-const getImportedStepPreviewLabel = (row: ImportedTestCaseRow) => {
-  const firstStep = buildImportedStepPreview(row)[0];
-
-  if (!firstStep) {
-    return "No step content supplied";
-  }
-
-  const summary = firstStep.action || firstStep.expected_result || "Grouped step";
-
-  if (!firstStep.step_group_name) {
-    return summary;
-  }
-
-  return `${summary} · ${firstStep.step_group_kind === "reusable" ? "Shared group" : "Group"}: ${firstStep.step_group_name}`;
-};
 
 const normalizeDraftSteps = (steps: DraftTestStep[]) =>
   steps
@@ -306,6 +216,69 @@ const toCsvCell = (value: string | number | null | undefined) => {
   return /[",\n]/.test(normalized) ? `"${normalized.replace(/"/g, "\"\"")}"` : normalized;
 };
 
+const formatBulkStepActionLabel = (
+  step: Pick<TestStep, "action" | "group_id" | "group_name" | "group_kind" | "reusable_group_id">,
+  sharedGroupNameById: Record<string, string>
+) => {
+  const action = step.action || "";
+
+  if (step.reusable_group_id) {
+    const sharedName = sharedGroupNameById[step.reusable_group_id] || step.group_name || "Shared steps";
+    return `[Shared: ${sharedName}]${action ? ` ${action}` : ""}`;
+  }
+
+  if (step.group_id || (step.group_kind === "local" && step.group_name)) {
+    return `[Group: ${step.group_name || "Grouped steps"}]${action ? ` ${action}` : ""}`;
+  }
+
+  return action;
+};
+
+function TestCaseActionIcon({ children }: { children: ReactNode }) {
+  return (
+    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width="16">
+      {children}
+    </svg>
+  );
+}
+
+function TestCaseImportIcon() {
+  return (
+    <TestCaseActionIcon>
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M5 21h14" />
+    </TestCaseActionIcon>
+  );
+}
+
+function TestCaseExportIcon() {
+  return (
+    <TestCaseActionIcon>
+      <path d="M12 21V9" />
+      <path d="m17 14-5-5-5 5" />
+      <path d="M5 3h14" />
+    </TestCaseActionIcon>
+  );
+}
+
+function TestCaseSparkIcon() {
+  return (
+    <TestCaseActionIcon>
+      <path d="m12 3 1.8 4.7L18 9.5l-4.2 1.8L12 16l-1.8-4.7L6 9.5l4.2-1.8Z" />
+    </TestCaseActionIcon>
+  );
+}
+
+function TestCaseCreateIcon() {
+  return (
+    <TestCaseActionIcon>
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </TestCaseActionIcon>
+  );
+}
+
 const formatExecutionHistoryDate = (value?: string | null) => {
   if (!value) {
     return "Recent run";
@@ -325,6 +298,7 @@ export function TestCasesPage() {
   const [appTypeId, setAppTypeId] = useState("");
   const [selectedTestCaseId, setSelectedTestCaseId] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [catalogViewMode, setCatalogViewMode] = useState<"tile" | "list">("tile");
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const [caseStatusFilter, setCaseStatusFilter] = useState("all");
   const [casePriorityFilter, setCasePriorityFilter] = useState("all");
@@ -2240,23 +2214,36 @@ export function TestCasesPage() {
       }, {});
 
       Object.values(stepsByCaseId).forEach((items) => items.sort((left, right) => left.step_order - right.step_order));
+      const sharedGroupNameById = sharedStepGroups.reduce<Record<string, string>>((accumulator, group) => {
+        accumulator[group.id] = group.name;
+        return accumulator;
+      }, {});
+      const requirementTitleById = requirements.reduce<Record<string, string>>((accumulator, requirement) => {
+        accumulator[requirement.id] = requirement.title;
+        return accumulator;
+      }, {});
+      const suiteNameById = suites.reduce<Record<string, string>>((accumulator, suite) => {
+        accumulator[suite.id] = suite.name;
+        return accumulator;
+      }, {});
 
       const header = [
         "title",
         "description",
         "priority",
         "status",
-        "requirement",
+        "requirements",
         "suites",
         "action",
-        "expected_result",
-        "step_group_name",
-        "step_group_kind",
-        "shared_group_id"
+        "expected_result"
       ];
       const rows = filteredCases.map((testCase) => {
-        const requirement = requirements.find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id));
-        const suiteCount = (testCase.suite_ids || []).length;
+        const linkedRequirementNames = (testCase.requirement_ids || [testCase.requirement_id])
+          .map((id) => (id ? requirementTitleById[id] || "" : ""))
+          .filter(Boolean);
+        const linkedSuiteNames = (testCase.suite_ids || [])
+          .map((id) => suiteNameById[id] || "")
+          .filter(Boolean);
         const scopedSteps = stepsByCaseId[testCase.id] || [];
 
         return [
@@ -2264,13 +2251,10 @@ export function TestCasesPage() {
           testCase.description || "",
           `P${testCase.priority || 3}`,
           testCase.status || defaultTestCaseStatus,
-          requirement?.title || "",
-          suiteCount ? `${suiteCount} suite${suiteCount === 1 ? "" : "s"}` : "",
-          scopedSteps.map((step) => step.action || "").join("\n"),
-          scopedSteps.map((step) => step.expected_result || "").join("\n"),
-          scopedSteps.map((step) => step.group_name || "").join("\n"),
-          scopedSteps.map((step) => step.group_kind || "").join("\n"),
-          scopedSteps.map((step) => step.reusable_group_id || "").join("\n")
+          linkedRequirementNames.join("\n"),
+          linkedSuiteNames.join("\n"),
+          scopedSteps.map((step) => formatBulkStepActionLabel(step, sharedGroupNameById)).join("\n"),
+          scopedSteps.map((step) => step.expected_result || "").join("\n")
         ];
       });
 
@@ -2286,7 +2270,7 @@ export function TestCasesPage() {
       link.click();
       link.remove();
       URL.revokeObjectURL(href);
-      showSuccess(`Exported ${filteredCases.length} test cases to CSV with step groups preserved.`);
+      showSuccess(`Exported ${filteredCases.length} test cases to a user-friendly CSV format.`);
     } catch (error) {
       showError(error, "Unable to export test cases");
     }
@@ -2850,6 +2834,7 @@ export function TestCasesPage() {
     <div className={["page-content", "page-content--library-full", isCaseWorkspaceOpen ? "page-content--workspace-focus" : ""].join(" ")}>
       {!isCaseWorkspaceOpen ? (
         <PageHeader
+          className="page-header--test-cases"
           eyebrow="Test Cases"
           title="Test Case Library"
           description="Build reusable coverage with clean step detail, requirement traceability, suite linkage, and execution-ready exports."
@@ -2861,16 +2846,20 @@ export function TestCasesPage() {
           actions={
             <>
               <button className="ghost-button" disabled={!appTypeId} onClick={() => setIsImportModalOpen(true)} type="button">
-                Bulk Import
+                <TestCaseImportIcon />
+                <span>Bulk Import</span>
               </button>
               <button className="ghost-button" disabled={!requirements.length || !appTypeId} onClick={openAiStudio} type="button">
-                AI Test Case Generation
+                <TestCaseSparkIcon />
+                <span>AI Test Case Generation</span>
               </button>
               <button className="ghost-button" disabled={!filteredCases.length} onClick={() => void handleExportCsv()} type="button">
-                Export CSV
+                <TestCaseExportIcon />
+                <span>Export CSV</span>
               </button>
               <button className="primary-button" disabled={!appTypeId} onClick={() => beginCreateCase()} type="button">
-                New Test Case
+                <TestCaseCreateIcon />
+                <span>New Test Case</span>
               </button>
             </>
           }
@@ -2903,6 +2892,7 @@ export function TestCasesPage() {
         browseView={(
           <Panel title="Test case tiles" subtitle={appTypeId ? "Browse reusable coverage as cards first, then open one case into a full-page editor." : "Choose an app type to begin."}>
             <div className="design-list-toolbar test-case-catalog-toolbar">
+              <CatalogViewToggle onChange={setCatalogViewMode} value={catalogViewMode} />
               <CatalogSearchFilter
                 activeFilterCount={activeCaseFilterCount}
                 ariaLabel="Search test cases"
@@ -3024,7 +3014,7 @@ export function TestCasesPage() {
             <TileBrowserPane className="test-case-library-scroll">
               {isLibraryLoading ? <TileCardSkeletonGrid /> : null}
 
-              {!isLibraryLoading && filteredCases.length ? (
+              {!isLibraryLoading && filteredCases.length && catalogViewMode === "tile" ? (
                 <div className="tile-browser-grid">
                   {filteredCases.map((testCase) => {
                     const isSelectedForAction = selectedActionTestCaseIds.includes(testCase.id);
@@ -3067,7 +3057,7 @@ export function TestCasesPage() {
                                 }
                                 type="checkbox"
                               />
-                              Select case
+                              <DisplayIdBadge value={testCase.display_id || testCase.id} />
                             </label>
                           </div>
                           <div className="tile-card-header">
@@ -3075,7 +3065,9 @@ export function TestCasesPage() {
                               <strong>{testCase.title}</strong>
                               <span className="tile-card-kicker">{requirementTitle || "No requirement linked"}</span>
                             </div>
-                            <TileCardStatusIndicator title={caseStatusLabel} tone={caseStatusTone} />
+                            <div className="tile-card-header-meta">
+                              <TileCardStatusIndicator title={caseStatusLabel} tone={caseStatusTone} />
+                            </div>
                           </div>
                           <p className="tile-card-description">{testCase.description || "No description yet for this test case."}</p>
                           <div className="tile-card-facts" aria-label={`${testCase.title} facts`}>
@@ -3123,6 +3115,70 @@ export function TestCasesPage() {
                       </button>
                     );
                   })}
+                </div>
+              ) : null}
+              {!isLibraryLoading && filteredCases.length && catalogViewMode === "list" ? (
+                <div className="table-wrap catalog-table-wrap">
+                  <table className="data-table catalog-data-table">
+                    <thead>
+                      <tr>
+                        <th />
+                        <th>ID</th>
+                        <th>Test case</th>
+                        <th>Status</th>
+                        <th>Priority</th>
+                        <th>Steps</th>
+                        <th>Suites</th>
+                        <th>Runs</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredCases.map((testCase) => {
+                        const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
+                        const latest = history[0];
+                        const requirementTitle =
+                          (testCase.requirement_ids || [testCase.requirement_id]).map((id) => (id ? requirementTitleById[id] || "" : "")).find(Boolean) || "";
+                        const stepCount = stepCountByCaseId[testCase.id] || 0;
+                        const caseStatusValue = latest?.status || testCase.status || defaultTestCaseStatus;
+                        const suiteCount = (testCase.suite_ids || []).length || 0;
+
+                        return (
+                          <tr
+                            className={selectedTestCaseId === testCase.id && !isCreating ? "is-active-row" : ""}
+                            key={testCase.id}
+                            onClick={() => {
+                              syncTestCaseSearchParams(testCase.id);
+                              setSelectedTestCaseId(testCase.id);
+                              setIsCreating(false);
+                              setDraftSteps([]);
+                            }}
+                          >
+                            <td onClick={(event) => event.stopPropagation()}>
+                              <input
+                                checked={selectedActionTestCaseIds.includes(testCase.id)}
+                                onChange={(event) =>
+                                  setSelectedActionTestCaseIds((current) =>
+                                    event.target.checked ? [...new Set([...current, testCase.id])] : current.filter((id) => id !== testCase.id)
+                                  )
+                                }
+                                type="checkbox"
+                              />
+                            </td>
+                            <td><DisplayIdBadge value={testCase.display_id || testCase.id} /></td>
+                            <td>
+                              <strong>{testCase.title}</strong>
+                              <div className="catalog-row-subcopy">{requirementTitle || "No requirement linked"}</div>
+                            </td>
+                            <td>{formatTileCardLabel(caseStatusValue, "Active")}</td>
+                            <td>{`P${testCase.priority || 3}`}</td>
+                            <td>{stepCount}</td>
+                            <td>{suiteCount}</td>
+                            <td>{history.length}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               ) : null}
               {!isLibraryLoading && !filteredCases.length ? (
@@ -3593,7 +3649,7 @@ export function TestCasesPage() {
               <div className="import-modal-title">
                 <p className="eyebrow">Bulk Import</p>
                 <h3 id="bulk-import-title">Import test cases from CSV</h3>
-                <p>Upload reusable cases in bulk. Action and Expected Result create attached steps automatically, while optional step group fields preserve local and shared grouping metadata.</p>
+                <p>Upload reusable cases in bulk. Use one Action line and one Expected Result line per step. Prefix action lines with `[Group: Name]` or `[Shared: Name]` to rebuild grouped and shared steps automatically.</p>
               </div>
               <button aria-label="Close bulk import dialog" className="ghost-button" disabled={importTestCases.isPending} onClick={() => setIsImportModalOpen(false)} type="button">
                 Close
@@ -3629,7 +3685,7 @@ export function TestCasesPage() {
 
               <div className="detail-summary">
                 <strong>{importFileName || "No CSV loaded yet"}</strong>
-                <span>Use new lines or the `|` character in Action and Expected Result to create multiple steps. Optional group columns keep shared and local step blocks aligned step-by-step.</span>
+                <span>Use new lines or the `|` character in Action and Expected Result to create multiple steps. `Requirements` and `Suites` can also contain multiple names separated by new lines.</span>
               </div>
 
               {importWarnings.length ? (
@@ -3648,6 +3704,7 @@ export function TestCasesPage() {
                         <th>Title</th>
                         <th>Step count</th>
                         <th>Groups</th>
+                        <th>Suites</th>
                         <th>Preview</th>
                       </tr>
                     </thead>
@@ -3657,6 +3714,7 @@ export function TestCasesPage() {
                           <td>{row.title}</td>
                           <td>{countImportedSteps(row)}</td>
                           <td>{countImportedGroups(row)}</td>
+                          <td>{String(row.suites || row.suite || "").split(/\r?\n|\|/).filter(Boolean).length}</td>
                           <td>{getImportedStepPreviewLabel(row)}</td>
                         </tr>
                       ))}

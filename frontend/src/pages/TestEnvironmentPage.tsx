@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AddIcon } from "../components/AppIcons";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
@@ -610,7 +611,7 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
           { label: "Project", value: selectedProjectName },
           { label: "Scope", value: selectedAppTypeName }
         ]}
-        actions={<button className="primary-button" disabled={!projectId} onClick={openCreateModal} type="button">{currentCreateLabel}</button>}
+        actions={<button className="primary-button" disabled={!projectId} onClick={openCreateModal} type="button"><AddIcon />{currentCreateLabel}</button>}
       />
 
       <ToastMessage message={message} onDismiss={() => setMessage("")} tone={messageTone} />

@@ -247,7 +247,81 @@ const statements = [
   `CREATE INDEX IF NOT EXISTS idx_requirement_test_cases_test_case ON requirement_test_cases (test_case_id)`,
   `CREATE INDEX IF NOT EXISTS idx_project_members_project_user ON project_members (project_id, user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_execution_suites_execution_suite ON execution_suites (execution_id, suite_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_test_cases_app_status_created ON test_cases (app_type_id, status, created_at DESC)`
+  `CREATE INDEX IF NOT EXISTS idx_test_cases_app_status_created ON test_cases (app_type_id, status, created_at DESC)`,
+  `
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    )
+  `,
+  `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS value JSONB NOT NULL DEFAULT '{}'::jsonb`,
+  `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
+  `ALTER TABLE projects ADD COLUMN IF NOT EXISTS display_id TEXT`,
+  `ALTER TABLE requirements ADD COLUMN IF NOT EXISTS display_id TEXT`,
+  `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS display_id TEXT`,
+  `ALTER TABLE test_suites ADD COLUMN IF NOT EXISTS display_id TEXT`,
+  `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS display_id TEXT`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_display_id_unique ON projects (display_id) WHERE display_id IS NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_requirements_display_id_unique ON requirements (display_id) WHERE display_id IS NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_test_cases_display_id_unique ON test_cases (display_id) WHERE display_id IS NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_test_suites_display_id_unique ON test_suites (display_id) WHERE display_id IS NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_step_groups_display_id_unique ON shared_step_groups (display_id) WHERE display_id IS NOT NULL`,
+  `
+    WITH numbered AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY created_at ASC NULLS LAST, id ASC) AS seq
+      FROM projects
+      WHERE display_id IS NULL
+    )
+    UPDATE projects
+    SET display_id = 'PROJ-' || numbered.seq
+    FROM numbered
+    WHERE projects.id = numbered.id
+  `,
+  `
+    WITH numbered AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY created_at ASC NULLS LAST, id ASC) AS seq
+      FROM requirements
+      WHERE display_id IS NULL
+    )
+    UPDATE requirements
+    SET display_id = 'RC_' || numbered.seq
+    FROM numbered
+    WHERE requirements.id = numbered.id
+  `,
+  `
+    WITH numbered AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY created_at ASC NULLS LAST, id ASC) AS seq
+      FROM test_cases
+      WHERE display_id IS NULL
+    )
+    UPDATE test_cases
+    SET display_id = 'TC_' || numbered.seq
+    FROM numbered
+    WHERE test_cases.id = numbered.id
+  `,
+  `
+    WITH numbered AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY created_at ASC NULLS LAST, id ASC) AS seq
+      FROM test_suites
+      WHERE display_id IS NULL
+    )
+    UPDATE test_suites
+    SET display_id = 'TS-' || numbered.seq
+    FROM numbered
+    WHERE test_suites.id = numbered.id
+  `,
+  `
+    WITH numbered AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY created_at ASC NULLS LAST, id ASC) AS seq
+      FROM shared_step_groups
+      WHERE display_id IS NULL
+    )
+    UPDATE shared_step_groups
+    SET display_id = 'SG-' || numbered.seq
+    FROM numbered
+    WHERE shared_step_groups.id = numbered.id
+  `
 ];
 
 const ensureRuntimeSchema = async () => {

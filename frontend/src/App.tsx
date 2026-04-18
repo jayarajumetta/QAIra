@@ -8,6 +8,7 @@ import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { AppShell } from "./components/AppShell";
+import { LocalizationProvider, useLocalization } from "./context/LocalizationContext";
 import { AuthPage } from "./pages/AuthPage";
 import { DesignPage } from "./pages/DesignPage";
 import { ExecutionsPage } from "./pages/ExecutionsPage";
@@ -27,24 +28,24 @@ import { TestEnvironmentPage } from "./pages/TestEnvironmentPage";
 const queryClient = new QueryClient();
 const THEME_KEY = "app_theme";
 
-const PAGE_TITLES: Record<string, string> = {
-  "/": "Overview · QAIra",
-  "/people": "People · QAIra",
-  "/projects": "Projects · QAIra",
-  "/integrations": "Integrations · QAIra",
-  "/design": "Test Design · QAIra",
-  "/requirements": "Requirements · QAIra",
-  "/feedback": "Feedback · QAIra",
-  "/support": "Support · QAIra",
-  "/notifications": "Notifications · QAIra",
-  "/settings": "Settings · QAIra",
-  "/test-cases": "Test Cases · QAIra",
-  "/shared-steps": "Shared Step Groups · QAIra",
-  "/executions": "Executions · QAIra",
-  "/test-environments": "Test Environments · QAIra",
-  "/test-data": "Test Data · QAIra",
-  "/test-configurations": "Test Configurations · QAIra",
-  "/auth": "Sign In · QAIra"
+const PAGE_TITLES: Record<string, { key?: string; fallback: string }> = {
+  "/": { key: "page.overview", fallback: "Overview" },
+  "/people": { key: "page.people", fallback: "People" },
+  "/projects": { key: "page.projects", fallback: "Projects" },
+  "/integrations": { key: "page.integrations", fallback: "Integrations" },
+  "/design": { key: "page.design", fallback: "Test Design" },
+  "/requirements": { key: "page.requirements", fallback: "Requirements" },
+  "/feedback": { key: "page.feedback", fallback: "Feedback" },
+  "/support": { key: "page.support", fallback: "Support" },
+  "/notifications": { key: "page.notifications", fallback: "Notifications" },
+  "/settings": { key: "page.settings", fallback: "Settings" },
+  "/test-cases": { key: "page.testCases", fallback: "Test Cases" },
+  "/shared-steps": { key: "page.sharedSteps", fallback: "Shared Step Groups" },
+  "/executions": { key: "page.executions", fallback: "Executions" },
+  "/test-environments": { key: "page.testEnvironments", fallback: "Test Environments" },
+  "/test-data": { key: "page.testData", fallback: "Test Data" },
+  "/test-configurations": { key: "page.testConfigurations", fallback: "Test Configurations" },
+  "/auth": { fallback: "Sign In" }
 };
 
 function ThemeBootstrap() {
@@ -64,11 +65,12 @@ function ThemeBootstrap() {
 
 function PageTitleUpdater() {
   const location = useLocation();
+  const { t } = useLocalization();
 
   useEffect(() => {
-    const title = PAGE_TITLES[location.pathname] || "QAIra";
-    document.title = title;
-  }, [location.pathname]);
+    const meta = PAGE_TITLES[location.pathname];
+    document.title = meta ? `${meta.key ? t(meta.key, meta.fallback) : meta.fallback} · QAIra` : "QAIra";
+  }, [location.pathname, t]);
 
   return null;
 }
@@ -145,7 +147,9 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeBootstrap />
       <AuthProvider>
-        <RouterProvider router={router} />
+        <LocalizationProvider>
+          <RouterProvider router={router} />
+        </LocalizationProvider>
       </AuthProvider>
     </QueryClientProvider>
   );

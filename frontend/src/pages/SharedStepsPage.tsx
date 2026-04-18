@@ -1,7 +1,10 @@
 import { Fragment, FormEvent, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
+import { AddIcon } from "../components/AppIcons";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
+import { CatalogViewToggle } from "../components/CatalogViewToggle";
+import { DisplayIdBadge } from "../components/DisplayIdBadge";
 import { FormField } from "../components/FormField";
 import { LinkedTestCaseModal } from "../components/LinkedTestCaseModal";
 import { PageHeader } from "../components/PageHeader";
@@ -118,6 +121,7 @@ export function SharedStepsPage() {
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [catalogViewMode, setCatalogViewMode] = useState<"tile" | "list">("tile");
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
@@ -725,6 +729,7 @@ export function SharedStepsPage() {
         ]}
         actions={
           <button className="primary-button" disabled={!appTypeId} onClick={beginCreateGroup} type="button">
+            <AddIcon />
             New shared group
           </button>
         }
@@ -753,6 +758,7 @@ export function SharedStepsPage() {
             subtitle={appTypeId ? "Browse shared groups as tiles first, including ones promoted from test cases, then open one for editing." : "Choose an app type to begin."}
           >
             <div className="design-list-toolbar test-case-catalog-toolbar">
+              <CatalogViewToggle onChange={setCatalogViewMode} value={catalogViewMode} />
               <CatalogSearchFilter
                 activeFilterCount={Number(Boolean(searchTerm.trim()))}
                 ariaLabel="Search shared step groups"
@@ -801,7 +807,7 @@ export function SharedStepsPage() {
 
             <TileBrowserPane className="test-case-library-scroll">
               {sharedGroupsQuery.isLoading ? <TileCardSkeletonGrid /> : null}
-              {!sharedGroupsQuery.isLoading && filteredGroups.length ? (
+              {!sharedGroupsQuery.isLoading && filteredGroups.length && catalogViewMode === "tile" ? (
                 <div className="tile-browser-grid">
                   {filteredGroups.map((group) => {
                     const isActive = !isCreating && selectedGroupId === group.id;
@@ -837,7 +843,7 @@ export function SharedStepsPage() {
                                 }}
                                 type="checkbox"
                               />
-                              Select group
+                              <DisplayIdBadge value={group.display_id || group.id} />
                             </label>
                           </div>
                           <div className="tile-card-header">
@@ -868,6 +874,64 @@ export function SharedStepsPage() {
                       </button>
                     );
                   })}
+                </div>
+              ) : null}
+              {!sharedGroupsQuery.isLoading && filteredGroups.length && catalogViewMode === "list" ? (
+                <div className="table-wrap catalog-table-wrap">
+                  <table className="data-table catalog-data-table">
+                    <thead>
+                      <tr>
+                        <th />
+                        <th>ID</th>
+                        <th>Group</th>
+                        <th>Steps</th>
+                        <th>Used in cases</th>
+                        <th>Updated</th>
+                        <th>Scope</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredGroups.map((group) => {
+                        const stepCount = group.step_count || group.steps.length;
+                        const usageCount = group.usage_count || 0;
+
+                        return (
+                          <tr
+                            className={!isCreating && selectedGroupId === group.id ? "is-active-row" : ""}
+                            key={group.id}
+                            onClick={() => {
+                              setSelectedGroupId(group.id);
+                              setIsCreating(false);
+                              setSelectedStepIds([]);
+                              setCutStepIds([]);
+                              resetStepComposer();
+                            }}
+                          >
+                            <td onClick={(event) => event.stopPropagation()}>
+                              <input
+                                checked={selectedGroupIds.includes(group.id)}
+                                onChange={(event) => {
+                                  setSelectedGroupIds((current) =>
+                                    event.target.checked ? [...new Set([...current, group.id])] : current.filter((groupId) => groupId !== group.id)
+                                  );
+                                }}
+                                type="checkbox"
+                              />
+                            </td>
+                            <td><DisplayIdBadge value={group.display_id || group.id} /></td>
+                            <td>
+                              <strong>{group.name}</strong>
+                              <div className="catalog-row-subcopy">{group.description || "Reusable shared step group"}</div>
+                            </td>
+                            <td>{stepCount}</td>
+                            <td>{usageCount}</td>
+                            <td>{formatSharedStepDate(group.updated_at)}</td>
+                            <td>{selectedAppType?.name || "App type"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               ) : null}
               {!sharedGroupsQuery.isLoading && !filteredGroups.length ? (

@@ -1,6 +1,7 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 const sharedStepSyncService = require("./sharedStepSync.service");
+const displayIdService = require("./displayId.service");
 
 const selectAppType = db.prepare(`
   SELECT id, project_id
@@ -15,8 +16,8 @@ const selectSharedStepGroup = db.prepare(`
 `);
 
 const insertSharedStepGroup = db.prepare(`
-  INSERT INTO shared_step_groups (id, app_type_id, name, description, steps)
-  VALUES (?, ?, ?, ?, ?)
+  INSERT INTO shared_step_groups (id, display_id, app_type_id, name, description, steps)
+  VALUES (?, ?, ?, ?, ?, ?)
 `);
 
 const updateSharedStepGroup = db.prepare(`
@@ -177,10 +178,12 @@ exports.createSharedStepGroup = async ({ app_type_id, name, description, steps =
   }
 
   const id = uuid();
+  const display_id = await displayIdService.createDisplayId("shared_step_group");
   const normalizedSteps = normalizeSteps(steps);
 
   await insertSharedStepGroup.run(
     id,
+    display_id,
     appType.id,
     resolvedName,
     normalizeText(description),

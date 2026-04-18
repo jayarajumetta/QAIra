@@ -2,7 +2,10 @@ import { DragEvent, FormEvent, useEffect, useMemo, useState, type ReactNode } fr
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { AddIcon, LayersIcon } from "../components/AppIcons";
+import { CatalogViewToggle } from "../components/CatalogViewToggle";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
+import { DisplayIdBadge } from "../components/DisplayIdBadge";
 import { FormField } from "../components/FormField";
 import { ExecutionContextSelector } from "../components/ExecutionContextSelector";
 import { PageHeader } from "../components/PageHeader";
@@ -164,6 +167,8 @@ export function DesignPage() {
   const [selectedTestCaseId, setSelectedTestCaseId] = useState("");
   const [suiteSearchTerm, setSuiteSearchTerm] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [suiteCatalogViewMode, setSuiteCatalogViewMode] = useState<"tile" | "list">("tile");
+  const [suiteCaseCatalogViewMode, setSuiteCaseCatalogViewMode] = useState<"tile" | "list">("tile");
   const [statusFilter, setStatusFilter] = useState("all");
   const [suitePlacementFilter, setSuitePlacementFilter] = useState<SuitePlacementFilter>("all");
   const [suiteMappedCasesFilter, setSuiteMappedCasesFilter] = useState<SuiteMappedCasesFilter>("all");
@@ -1360,6 +1365,7 @@ export function DesignPage() {
           actions={
             <>
               <button className="ghost-button" disabled={!selectedSuiteId} onClick={beginCreateCase} type="button">
+                <AddIcon />
                 New Test Case
               </button>
               <button
@@ -1368,6 +1374,7 @@ export function DesignPage() {
                 onClick={openCreateSuiteModal}
                 type="button"
               >
+                <LayersIcon />
                 Create Suite
               </button>
             </>
@@ -1427,6 +1434,8 @@ export function DesignPage() {
             isDeletingSelectedSuites={isDeletingSelectedSuites}
             hasSuiteSearchResults={Boolean(filteredSuites.length)}
             hasAnySuites={Boolean(suites.length)}
+            viewMode={suiteCatalogViewMode}
+            onViewModeChange={setSuiteCatalogViewMode}
           />
         )}
         detailView={(
@@ -1476,6 +1485,8 @@ export function DesignPage() {
             onOpenCaseEditor={openSelectedCaseEditor}
             canOpenCaseEditor={Boolean(selectedTestCaseId) || isCreatingCase}
             onReorderCases={handleReorderCases}
+            viewMode={suiteCaseCatalogViewMode}
+            onViewModeChange={setSuiteCaseCatalogViewMode}
           />
         )}
         isDetailOpen={Boolean(selectedSuiteId)}
@@ -1604,7 +1615,9 @@ function SuiteSidebar({
   selectedSuiteCount,
   isDeletingSelectedSuites,
   hasSuiteSearchResults,
-  hasAnySuites
+  hasAnySuites,
+  viewMode,
+  onViewModeChange
 }: {
   actions?: ReactNode;
   suites: TestSuite[];
@@ -1637,6 +1650,8 @@ function SuiteSidebar({
   isDeletingSelectedSuites: boolean;
   hasSuiteSearchResults: boolean;
   hasAnySuites: boolean;
+  viewMode: "tile" | "list";
+  onViewModeChange: (value: "tile" | "list") => void;
 }) {
   return (
     <Panel
@@ -1652,6 +1667,7 @@ function SuiteSidebar({
         </div>
 
         <div className="design-list-toolbar suite-sidebar-toolbar">
+          <CatalogViewToggle onChange={onViewModeChange} value={viewMode} />
           <CatalogSearchFilter
             activeFilterCount={activeFilterCount}
             ariaLabel="Search suites"
@@ -1737,7 +1753,7 @@ function SuiteSidebar({
           ) : null}
           {!isLoading && hasAnySuites && !hasSuiteSearchResults ? <div className="empty-state compact">No suites match the current search.</div> : null}
 
-          {!isLoading && hasSuiteSearchResults ? (
+          {!isLoading && hasSuiteSearchResults && viewMode === "tile" ? (
             <div className="tile-browser-grid">
               {suites.map((suite) => {
                 const suitePlacementLabel = suite.parent_id ? "Nested suite" : "Root suite";
@@ -1764,7 +1780,7 @@ function SuiteSidebar({
                             onChange={() => onToggleSuiteSelection(suite.id)}
                             type="checkbox"
                           />
-                          Select suite
+                          <DisplayIdBadge value={suite.display_id || suite.id} />
                         </label>
                       </div>
                       <div className="tile-card-header">
@@ -1775,7 +1791,9 @@ function SuiteSidebar({
                           <strong>{suite.name}</strong>
                           <span className="tile-card-kicker">{suitePlacementLabel}</span>
                         </div>
-                        <TileCardStatusIndicator icon={<TileCardHierarchyIcon />} title={suitePlacementLabel} tone={suite.parent_id ? "info" : "neutral"} />
+                        <div className="tile-card-header-meta">
+                          <TileCardStatusIndicator icon={<TileCardHierarchyIcon />} title={suitePlacementLabel} tone={suite.parent_id ? "info" : "neutral"} />
+                        </div>
                       </div>
                       <p className="tile-card-description">{selectedAppType ? `${selectedAppType.name} workspace suite` : "No app type selected"}</p>
                       <div className="tile-card-facts" aria-label={`${suite.name} facts`}>
@@ -1798,6 +1816,53 @@ function SuiteSidebar({
                   </button>
                 );
               })}
+            </div>
+          ) : null}
+          {!isLoading && hasSuiteSearchResults && viewMode === "list" ? (
+            <div className="table-wrap catalog-table-wrap">
+              <table className="data-table catalog-data-table">
+                <thead>
+                  <tr>
+                    <th />
+                    <th>ID</th>
+                    <th>Suite</th>
+                    <th>Placement</th>
+                    <th>Mapped cases</th>
+                    <th>Child suites</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {suites.map((suite) => {
+                    const suitePlacementLabel = suite.parent_id ? "Nested suite" : "Root suite";
+                    const mappedCaseCount = counts[suite.id] || 0;
+                    const childSuiteCount = childCounts[suite.id] || 0;
+
+                    return (
+                      <tr
+                        className={activeSuiteId === suite.id ? "is-active-row" : ""}
+                        key={suite.id}
+                        onClick={() => onSelectSuite(suite.id)}
+                      >
+                        <td onClick={(event) => event.stopPropagation()}>
+                          <input
+                            checked={selectedSuiteActionIds.includes(suite.id)}
+                            onChange={() => onToggleSuiteSelection(suite.id)}
+                            type="checkbox"
+                          />
+                        </td>
+                        <td><DisplayIdBadge value={suite.display_id || suite.id} /></td>
+                        <td>
+                          <strong>{suite.name}</strong>
+                          <div className="catalog-row-subcopy">{selectedAppType ? `${selectedAppType.name} workspace suite` : "Suite"}</div>
+                        </td>
+                        <td>{suitePlacementLabel}</td>
+                        <td>{mappedCaseCount}</td>
+                        <td>{childSuiteCount}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           ) : null}
         </TileBrowserPane>
@@ -1833,7 +1898,9 @@ function TestCaseList({
   onCreateCase,
   onOpenCaseEditor,
   canOpenCaseEditor,
-  onReorderCases
+  onReorderCases,
+  viewMode,
+  onViewModeChange
 }: {
   actions?: ReactNode;
   cases: TestCase[];
@@ -1862,6 +1929,8 @@ function TestCaseList({
   onOpenCaseEditor: () => void;
   canOpenCaseEditor: boolean;
   onReorderCases: (fromCaseId: string, toCaseId: string) => void;
+  viewMode: "tile" | "list";
+  onViewModeChange: (value: "tile" | "list") => void;
 }) {
   const [draggedCaseId, setDraggedCaseId] = useState("");
   const casesWithRequirements = cases.filter((testCase) => testCase.requirement_id || testCase.requirement_ids?.length).length;
@@ -1895,6 +1964,7 @@ function TestCaseList({
         </div>
 
         <div className="design-list-toolbar test-case-catalog-toolbar">
+          <CatalogViewToggle onChange={onViewModeChange} value={viewMode} />
           <CatalogSearchFilter
             activeFilterCount={activeFilterCount}
             ariaLabel="Search suite cases"
@@ -1964,7 +2034,7 @@ function TestCaseList({
               </div>
             </div>
           </CatalogSearchFilter>
-          <button className="primary-button" onClick={onCreateCase} type="button">New Test Case</button>
+          <button className="primary-button" onClick={onCreateCase} type="button"><AddIcon />New Test Case</button>
           <button className="ghost-button" disabled={!canOpenCaseEditor} onClick={onOpenCaseEditor} type="button">Open Case Editor</button>
         </div>
 
@@ -1979,7 +2049,7 @@ function TestCaseList({
           {isLoading ? <TileCardSkeletonGrid /> : null}
           {!isLoading && !cases.length ? <div className="empty-state compact">No test cases match this scope yet.</div> : null}
 
-          {!isLoading && cases.length ? (
+          {!isLoading && cases.length && viewMode === "tile" ? (
             <div className="tile-browser-grid">
               {cases.map((testCase) => {
                 const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
@@ -2021,7 +2091,10 @@ function TestCaseList({
                           <strong>{testCase.title}</strong>
                           <span className="tile-card-kicker">{requirement?.title || "No requirement linked"}</span>
                         </div>
-                        <TileCardStatusIndicator title={caseStatusLabel} tone={caseStatusTone} />
+                        <div className="tile-card-header-meta">
+                          <DisplayIdBadge value={testCase.display_id || testCase.id} />
+                          <TileCardStatusIndicator title={caseStatusLabel} tone={caseStatusTone} />
+                        </div>
                       </div>
                       <p className="tile-card-description">{testCase.description || "No description yet for this test case."}</p>
                       <div className="tile-card-facts" aria-label={`${testCase.title} facts`}>
@@ -2069,6 +2142,52 @@ function TestCaseList({
                   </button>
                 );
               })}
+            </div>
+          ) : null}
+          {!isLoading && cases.length && viewMode === "list" ? (
+            <div className="table-wrap catalog-table-wrap">
+              <table className="data-table catalog-data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Case</th>
+                    <th>Status</th>
+                    <th>Priority</th>
+                    <th>Steps</th>
+                    <th>Suites</th>
+                    <th>Runs</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cases.map((testCase) => {
+                    const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
+                    const latest = history[0];
+                    const requirement = requirements.find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id));
+                    const stepCount = stepCountByCaseId[testCase.id] || 0;
+                    const caseStatusValue = latest?.status || testCase.status || defaultCaseStatus;
+                    const suiteCount = (testCase.suite_ids || []).length || 0;
+
+                    return (
+                      <tr
+                        className={activeCaseId === testCase.id ? "is-active-row" : ""}
+                        key={testCase.id}
+                        onClick={() => onSelectCase(testCase.id)}
+                      >
+                        <td><DisplayIdBadge value={testCase.display_id || testCase.id} /></td>
+                        <td>
+                          <strong>{testCase.title}</strong>
+                          <div className="catalog-row-subcopy">{requirement?.title || "No requirement linked"}</div>
+                        </td>
+                        <td>{formatTileCardLabel(caseStatusValue, "Active")}</td>
+                        <td>{`P${testCase.priority || 3}`}</td>
+                        <td>{stepCount}</td>
+                        <td>{suiteCount}</td>
+                        <td>{history.length}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           ) : null}
         </TileBrowserPane>

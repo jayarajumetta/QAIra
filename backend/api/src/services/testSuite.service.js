@@ -1,6 +1,7 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 const suiteTestCaseService = require("./suiteTestCase.service");
+const displayIdService = require("./displayId.service");
 
 exports.createTestSuite = async ({ app_type_id, name, parent_id }) => {
   if (!app_type_id || !name) {
@@ -25,11 +26,12 @@ exports.createTestSuite = async ({ app_type_id, name, parent_id }) => {
   }
 
   const id = uuid();
+  const display_id = await displayIdService.createDisplayId("test_suite");
 
   await db.prepare(`
-    INSERT INTO test_suites (id, app_type_id, name, parent_id)
-    VALUES (?, ?, ?, ?)
-  `).run(id, app_type_id, name, parent_id || null);
+    INSERT INTO test_suites (id, display_id, app_type_id, name, parent_id)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(id, display_id, app_type_id, name, parent_id || null);
 
   return { id };
 };

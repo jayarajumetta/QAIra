@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
+import { AddIcon, UsersIcon } from "../components/AppIcons";
 import { api } from "../lib/api";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
@@ -387,9 +388,9 @@ export function PeoplePage() {
         actions={
           isAdmin ? (
             view === "users" ? (
-              <button className="primary-button" onClick={openCreateUserModal} type="button">Create user</button>
+              <button className="primary-button" onClick={openCreateUserModal} type="button"><UsersIcon />Create user</button>
             ) : (
-              <button className="primary-button" onClick={openCreateRoleModal} type="button">Create role</button>
+              <button className="primary-button" onClick={openCreateRoleModal} type="button"><AddIcon />Create role</button>
             )
           ) : null
         }

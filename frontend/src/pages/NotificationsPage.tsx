@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { SaveIcon } from "../components/AppIcons";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { ToastMessage } from "../components/ToastMessage";
@@ -61,7 +62,7 @@ export function NotificationsPage() {
           { label: "Recent events", value: notificationFeed.length },
           { label: "Digest", value: channels.digest ? "Enabled" : "Off" }
         ]}
-        actions={<button className="primary-button" onClick={savePreferences} type="button">Save preferences</button>}
+        actions={<button className="primary-button" onClick={savePreferences} type="button"><SaveIcon />Save preferences</button>}
       />
 
       <ToastMessage message={message} onDismiss={() => setMessage("")} />

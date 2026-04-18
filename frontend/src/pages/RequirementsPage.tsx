@@ -3,7 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
+import { AddIcon, SparkIcon, UploadIcon } from "../components/AppIcons";
+import { CatalogViewToggle } from "../components/CatalogViewToggle";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
+import { DisplayIdBadge } from "../components/DisplayIdBadge";
 import { FormField } from "../components/FormField";
 import { LinkedTestCaseModal } from "../components/LinkedTestCaseModal";
 import { PageHeader } from "../components/PageHeader";
@@ -70,6 +73,7 @@ export function RequirementsPage() {
   const [requirementStatusFilter, setRequirementStatusFilter] = useState("all");
   const [requirementPriorityFilter, setRequirementPriorityFilter] = useState("all");
   const [requirementCoverageFilter, setRequirementCoverageFilter] = useState<RequirementCoverageFilter>("all");
+  const [catalogViewMode, setCatalogViewMode] = useState<"tile" | "list">("tile");
   const [expandedSections, setExpandedSections] = useState<Record<RequirementSectionKey, boolean>>(createDefaultRequirementSections);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
@@ -758,6 +762,7 @@ export function RequirementsPage() {
               }}
               type="button"
             >
+              <UploadIcon />
               Import from CSV
             </button>
             <button
@@ -772,9 +777,11 @@ export function RequirementsPage() {
               }}
               type="button"
             >
+              <SparkIcon />
               AI Test Case Generation
             </button>
             <button className="primary-button" disabled={!projectId} onClick={openCreateRequirementModal} type="button">
+              <AddIcon />
               Create Requirement
             </button>
           </>
@@ -798,6 +805,7 @@ export function RequirementsPage() {
         browseView={(
           <Panel title="Requirement tiles" subtitle="Start in the visual catalog, scan coverage quickly, then open one requirement into a focused editor view.">
             <div className="design-list-toolbar requirement-catalog-toolbar">
+              <CatalogViewToggle onChange={setCatalogViewMode} value={catalogViewMode} />
               <CatalogSearchFilter
                 activeFilterCount={activeRequirementFilterCount}
                 ariaLabel="Search requirements"
@@ -898,7 +906,7 @@ export function RequirementsPage() {
             <TileBrowserPane className="requirement-card-list">
               {isRequirementCatalogLoading ? <TileCardSkeletonGrid /> : null}
 
-              {!isRequirementCatalogLoading && filteredRequirements.length ? (
+              {!isRequirementCatalogLoading && filteredRequirements.length && catalogViewMode === "tile" ? (
                 <div className="tile-browser-grid">
                   {filteredRequirements.map((item) => {
                     const isSelectedForDelete = deleteSelectedRequirementIds.includes(item.id);
@@ -930,7 +938,7 @@ export function RequirementsPage() {
                                 }
                                 type="checkbox"
                               />
-                              Mark for delete
+                              <DisplayIdBadge value={item.display_id || item.id} />
                             </label>
                           </div>
                           <div className="tile-card-header">
@@ -938,7 +946,9 @@ export function RequirementsPage() {
                               <strong>{item.title}</strong>
                               <span className="tile-card-kicker requirement-tile-kicker">{currentAppTypeName}</span>
                             </div>
-                            <TileCardStatusIndicator title={requirementStatusLabel} tone={requirementStatusTone} />
+                            <div className="tile-card-header-meta">
+                              <TileCardStatusIndicator title={requirementStatusLabel} tone={requirementStatusTone} />
+                            </div>
                           </div>
                           <p className="tile-card-description">{item.description || "No description yet."}</p>
                           <div className="tile-card-facts" aria-label={`${item.title} facts`}>
@@ -964,6 +974,56 @@ export function RequirementsPage() {
                       </button>
                     );
                   })}
+                </div>
+              ) : null}
+              {!isRequirementCatalogLoading && filteredRequirements.length && catalogViewMode === "list" ? (
+                <div className="table-wrap catalog-table-wrap">
+                  <table className="data-table catalog-data-table">
+                    <thead>
+                      <tr>
+                        <th />
+                        <th>ID</th>
+                        <th>Requirement</th>
+                        <th>Status</th>
+                        <th>Priority</th>
+                        <th>Linked cases</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredRequirements.map((item) => {
+                        const linkedCaseCount = (item.test_case_ids || []).length;
+                        const requirementStatusLabel = formatTileCardLabel(item.status, "Open");
+
+                        return (
+                          <tr
+                            className={selectedRequirement?.id === item.id ? "is-active-row" : ""}
+                            key={item.id}
+                            onClick={() => setSelectedRequirementId(item.id)}
+                          >
+                            <td onClick={(event) => event.stopPropagation()}>
+                              <input
+                                checked={deleteSelectedRequirementIds.includes(item.id)}
+                                onChange={(event) =>
+                                  setDeleteSelectedRequirementIds((current) =>
+                                    event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id)
+                                  )
+                                }
+                                type="checkbox"
+                              />
+                            </td>
+                            <td><DisplayIdBadge value={item.display_id || item.id} /></td>
+                            <td>
+                              <strong>{item.title}</strong>
+                              <div className="catalog-row-subcopy">{item.description || currentAppTypeName}</div>
+                            </td>
+                            <td>{requirementStatusLabel}</td>
+                            <td>{`P${item.priority ?? 3}`}</td>
+                            <td>{linkedCaseCount}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               ) : null}
               {!isRequirementCatalogLoading && !requirements.length ? <div className="empty-state compact">No requirements yet for this project.</div> : null}

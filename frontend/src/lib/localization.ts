@@ -1,0 +1,59 @@
+export type LocalizationStrings = Record<string, string>;
+
+export const DEFAULT_LOCALIZATION_STRINGS: LocalizationStrings = {
+  "nav.section.main": "Main",
+  "nav.section.testManagement": "Test Management",
+  "nav.section.administration": "Administration",
+  "nav.section.settings": "Settings",
+  "nav.dashboard": "Dashboard",
+  "nav.projects": "Projects",
+  "nav.testAuthoring": "Test Authoring",
+  "nav.testRuns": "Test Runs",
+  "nav.testEnvironment": "Test Environment",
+  "nav.users": "Users",
+  "nav.integrations": "Integrations",
+  "nav.support": "Support",
+  "nav.notifications": "Notifications",
+  "nav.settings": "Settings",
+  "nav.feedback": "Reporting & Feedback",
+  "workspace.requirements": "Requirements",
+  "workspace.testCases": "Test Cases",
+  "workspace.sharedSteps": "Shared Steps",
+  "workspace.testSuites": "Test Suites",
+  "workspace.executions": "Executions",
+  "workspace.environments": "Environments",
+  "workspace.testData": "Test Data",
+  "workspace.configurations": "Configurations",
+  "page.overview": "Overview",
+  "page.projects": "Projects",
+  "page.requirements": "Requirements",
+  "page.testCases": "Test Cases",
+  "page.sharedSteps": "Shared Step Groups",
+  "page.design": "Test Suites",
+  "page.executions": "Executions",
+  "page.testEnvironments": "Test Environments",
+  "page.testData": "Test Data",
+  "page.testConfigurations": "Test Configurations",
+  "page.people": "Users",
+  "page.integrations": "Integrations",
+  "page.support": "Support",
+  "page.notifications": "Notifications",
+  "page.settings": "Settings",
+  "page.feedback": "Reporting & Feedback",
+  "settings.localization.title": "Localization",
+  "settings.localization.subtitle": "Download the current runtime strings, edit the JSON, then upload it to relabel menus and supported interface text.",
+  "settings.localization.download": "Download current strings",
+  "settings.localization.upload": "Upload JSON",
+  "settings.localization.reset": "Reset uploaded strings",
+  "settings.localization.helper": "Only admins can publish updated localization strings for the workspace.",
+  "catalog.view.tile": "Tile view",
+  "catalog.view.list": "List view",
+  "catalog.copyId": "Copy ID"
+};
+
+export const LOCALIZATION_STORAGE_KEY = "qaira.localization";
+
+export const mergeLocalizationStrings = (overrides?: LocalizationStrings | null): LocalizationStrings => ({
+  ...DEFAULT_LOCALIZATION_STRINGS,
+  ...(overrides || {})
+});

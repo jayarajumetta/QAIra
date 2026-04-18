@@ -1,6 +1,8 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { FolderIcon } from "../components/AppIcons";
 import { api } from "../lib/api";
+import { DisplayIdBadge } from "../components/DisplayIdBadge";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
@@ -412,7 +414,7 @@ export function ProjectsPage() {
           { label: "Members in scope", value: selectedProject ? scopedMembers.length : 0 },
           { label: "App types", value: selectedProject ? selectedProjectAppTypeCount : 0 }
         ]}
-        actions={<button className="primary-button" onClick={openCreateProjectModal} type="button">Create Project</button>}
+        actions={<button className="primary-button" onClick={openCreateProjectModal} type="button"><FolderIcon />Create Project</button>}
       />
 
       <ToastMessage
@@ -454,7 +456,10 @@ export function ProjectsPage() {
                             <strong>{project.name}</strong>
                             <span className="tile-card-kicker">{appTypeCount} app type{appTypeCount === 1 ? "" : "s"} in scope</span>
                           </div>
-                          <TileCardStatusIndicator title={isSelected ? "Current project" : "Available project"} tone={isSelected ? "success" : "neutral"} />
+                          <div className="tile-card-header-meta">
+                            <DisplayIdBadge value={project.display_id || project.id} />
+                            <TileCardStatusIndicator title={isSelected ? "Current project" : "Available project"} tone={isSelected ? "success" : "neutral"} />
+                          </div>
                         </div>
                         <p className="tile-card-description">{project.description || "No description yet."}</p>
                         <div className="tile-card-facts" aria-label={`${project.name} facts`}>

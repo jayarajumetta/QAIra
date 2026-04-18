@@ -1,6 +1,7 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 const { APP_TYPE_VALUES } = require("../domain/catalog");
+const displayIdService = require("./displayId.service");
 
 const VALID_APP_TYPES = new Set(APP_TYPE_VALUES);
 
@@ -42,6 +43,7 @@ exports.createProject = async ({ name, description, created_by, member_ids, app_
   if (!normalizedName) throw new Error("Project name is required");
 
   const id = uuid();
+  const display_id = await displayIdService.createDisplayId("project");
 
   const user = await selectUserById.get(created_by);
   if (!user) throw new Error("Invalid user");
@@ -110,9 +112,9 @@ exports.createProject = async ({ name, description, created_by, member_ids, app_
 
   const createProjectWithMemberships = db.transaction(async () => {
     await db.prepare(`
-      INSERT INTO projects (id, name, description, created_by)
-      VALUES (?, ?, ?, ?)
-    `).run(id, normalizedName, description || null, created_by);
+      INSERT INTO projects (id, display_id, name, description, created_by)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, display_id, normalizedName, description || null, created_by);
 
     for (const [userId, roleId] of memberships.entries()) {
       await insertProjectMember.run(uuid(), id, userId, roleId);

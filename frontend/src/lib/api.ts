@@ -130,6 +130,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  settings: {
+    getLocalization: () => request<{ strings: Record<string, string> }>("/settings/localization"),
+    updateLocalization: (input: { strings: Record<string, string> }) =>
+      request<{ updated: boolean; strings: Record<string, string> }>("/settings/localization", {
+        method: "PUT",
+        body: JSON.stringify(input)
+      })
+  },
   metadata: {
     domain: () => request<DomainMetadata>("/metadata/domain")
   },

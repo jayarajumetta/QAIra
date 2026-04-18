@@ -16,6 +16,7 @@ export type Role = {
 
 export type Project = {
   id: string;
+  display_id?: string | null;
   name: string;
   description: string | null;
   created_by: string | null;
@@ -41,6 +42,7 @@ export type AppType = {
 
 export type Requirement = {
   id: string;
+  display_id?: string | null;
   project_id: string;
   title: string;
   description: string | null;
@@ -201,6 +203,7 @@ export type SmartExecutionPreviewResponse = {
 
 export type TestSuite = {
   id: string;
+  display_id?: string | null;
   app_type_id: string;
   name: string;
   parent_id: string | null;
@@ -209,6 +212,7 @@ export type TestSuite = {
 
 export type TestCase = {
   id: string;
+  display_id?: string | null;
   app_type_id?: string | null;
   suite_id: string | null;
   suite_ids?: string[];
@@ -241,6 +245,7 @@ export type SharedStepGroupStep = {
 
 export type SharedStepGroup = {
   id: string;
+  display_id?: string;
   app_type_id: string;
   name: string;
   description: string | null;

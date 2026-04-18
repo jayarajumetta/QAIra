@@ -37,6 +37,17 @@ export const WORKSPACE_PAGE_LABELS: Record<string, string> = {
   "/feedback": "Reporting & Feedback"
 };
 
+export const WORKSPACE_SECTION_LABEL_KEYS: Record<string, string> = {
+  "/requirements": "workspace.requirements",
+  "/test-cases": "workspace.testCases",
+  "/shared-steps": "workspace.sharedSteps",
+  "/design": "workspace.testSuites",
+  "/executions": "workspace.executions",
+  "/test-environments": "workspace.environments",
+  "/test-data": "workspace.testData",
+  "/test-configurations": "workspace.configurations"
+};
+
 export const WORKSPACE_LIBRARY_PATHS = new Set([
   ...TEST_AUTHORING_SECTION_ITEMS.map((item) => item.to),
   "/executions",
