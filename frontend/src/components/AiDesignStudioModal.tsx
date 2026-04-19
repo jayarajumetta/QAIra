@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { AiDesignImageInput, AiDesignedTestCaseCandidate, Integration, Requirement, TestCase } from "../types";
 import { useDialogFocus } from "../hooks/useDialogFocus";
 import { FormField } from "./FormField";
+import { ToastMessage } from "./ToastMessage";
 
 export function AiDesignStudioModal({
   eyebrow,
@@ -33,16 +34,23 @@ export function AiDesignStudioModal({
   onTogglePreviewRequirement,
   previewMessage,
   previewTone,
+  onPreviewMessageDismiss,
   isPreviewing,
   isAccepting,
   onPreview,
+  onSchedule,
   onAccept,
   onClose,
   disablePreview,
+  disableSchedule = true,
   disableAccept,
+  isScheduling = false,
   closeDisabled = false,
   acceptLabel,
-  dialogClassName
+  dialogClassName,
+  parallelRequirementCount,
+  onParallelRequirementCountChange,
+  scheduleHelperText
 }: {
   eyebrow: string;
   requirementLabel: string;
@@ -73,16 +81,23 @@ export function AiDesignStudioModal({
   onTogglePreviewRequirement?: (clientId: string, requirementId: string) => void;
   previewMessage: string;
   previewTone: "success" | "error";
+  onPreviewMessageDismiss: () => void;
   isPreviewing: boolean;
   isAccepting: boolean;
   onPreview: () => void;
+  onSchedule?: () => void;
   onAccept: () => void;
   onClose: () => void;
   disablePreview: boolean;
+  disableSchedule?: boolean;
   disableAccept: boolean;
+  isScheduling?: boolean;
   closeDisabled?: boolean;
   acceptLabel: string;
   dialogClassName?: string;
+  parallelRequirementCount?: number;
+  onParallelRequirementCountChange?: (value: number) => void;
+  scheduleHelperText?: string;
 }) {
   const dialogRef = useDialogFocus<HTMLDivElement>();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -176,7 +191,26 @@ export function AiDesignStudioModal({
                     <FormField label="Draft cases to generate">
                       <input min="1" max="20" type="number" value={maxCases} onChange={(event) => onMaxCasesChange(Number(event.target.value) || 6)} />
                     </FormField>
+
+                    {onSchedule && onParallelRequirementCountChange ? (
+                      <FormField label="Requirements in parallel">
+                        <input
+                          min="1"
+                          max="10"
+                          type="number"
+                          value={parallelRequirementCount || 1}
+                          onChange={(event) => onParallelRequirementCountChange(Number(event.target.value) || 1)}
+                        />
+                      </FormField>
+                    ) : null}
                   </div>
+
+                  {onSchedule ? (
+                    <div className="detail-summary compact-summary">
+                      <strong>AI scheduler</strong>
+                      <span>{scheduleHelperText || "Queue one AI generation run per selected requirement. Generated cases land back in the library with accept and reject review actions."}</span>
+                    </div>
+                  ) : null}
                 </section>
 
                 <div className="ai-studio-sidebar-divider" aria-hidden="true">
@@ -267,7 +301,7 @@ export function AiDesignStudioModal({
           </div>
 
           <div className="ai-studio-main">
-            {previewMessage ? <p className={previewTone === "error" ? "inline-message error-message" : "inline-message success-message"}>{previewMessage}</p> : null}
+            <ToastMessage message={previewMessage} onDismiss={onPreviewMessageDismiss} tone={previewTone} />
 
             {!integrations.length ? (
               <div className="inline-message error-message">
@@ -279,6 +313,11 @@ export function AiDesignStudioModal({
               <button className="primary-button" disabled={disablePreview} onClick={onPreview} type="button">
                 {isPreviewing ? "Designing…" : "Generate Preview"}
               </button>
+              {onSchedule ? (
+                <button className="ghost-button" disabled={disableSchedule} onClick={onSchedule} type="button">
+                  {isScheduling ? "Scheduling…" : "Schedule Test Case Generation"}
+                </button>
+              ) : null}
               <button className="ghost-button" disabled={closeDisabled} onClick={onClose} type="button">
                 Close
               </button>

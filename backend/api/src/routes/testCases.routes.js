@@ -3,6 +3,7 @@ const appTypeService = require("../services/appType.service");
 const projectService = require("../services/project.service");
 const requirementService = require("../services/requirement.service");
 const requirementDesignService = require("../services/requirementDesign.service");
+const aiTestCaseGenerationService = require("../services/aiTestCaseGeneration.service");
 const { TEST_CASE_AUTOMATED_VALUES, TEST_CASE_STATUS_VALUES } = require("../domain/catalog");
 
 const resolveScopedRequirements = async (requirementIds = [], projectId) => {
@@ -151,6 +152,47 @@ module.exports = async function (fastify) {
     });
   });
 
+  fastify.get("/test-cases/ai-generation-jobs", async (req) => {
+    await fastify.authenticate(req);
+
+    const { app_type_id, status } = req.query;
+
+    if (!app_type_id) {
+      throw new Error("app_type_id is required");
+    }
+
+    const appType = await appTypeService.getAppType(app_type_id);
+    await projectService.getProject(appType.project_id, req.user.id);
+
+    return aiTestCaseGenerationService.listJobs({ app_type_id, status });
+  });
+
+  fastify.post("/test-cases/ai-generation-jobs", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      app_type_id: { required: true, type: "string" },
+      requirement_ids: { required: true, type: "array", items: "string" },
+      integration_id: { required: false, type: "string" },
+      max_cases_per_requirement: { required: false, type: "number" },
+      parallel_requirement_limit: { required: false, type: "number" },
+      additional_context: { required: false, type: "string" },
+      external_links: { required: false, type: "array" },
+      images: { required: false, type: "array" }
+    }, req.body);
+
+    const appType = await appTypeService.getAppType(req.body.app_type_id);
+    await projectService.getProject(appType.project_id, req.user.id);
+
+    const response = await aiTestCaseGenerationService.createJob({
+      ...req.body,
+      created_by: req.user.id
+    });
+
+    aiTestCaseGenerationService.triggerJobProcessing();
+    return response;
+  });
+
   fastify.put("/test-cases/:id", async (req) => {
     await fastify.authenticate(req);
     
@@ -175,6 +217,32 @@ module.exports = async function (fastify) {
     }
 
     return service.updateTestCase(req.params.id, req.body);
+  });
+
+  fastify.post("/test-cases/:id/accept-generated", async (req) => {
+    await fastify.authenticate(req);
+
+    const testCase = await service.getTestCase(req.params.id);
+
+    if (testCase.app_type_id) {
+      const appType = await appTypeService.getAppType(testCase.app_type_id);
+      await projectService.getProject(appType.project_id, req.user.id);
+    }
+
+    return service.acceptGeneratedTestCase(req.params.id);
+  });
+
+  fastify.delete("/test-cases/:id/reject-generated", async (req) => {
+    await fastify.authenticate(req);
+
+    const testCase = await service.getTestCase(req.params.id);
+
+    if (testCase.app_type_id) {
+      const appType = await appTypeService.getAppType(testCase.app_type_id);
+      await projectService.getProject(appType.project_id, req.user.id);
+    }
+
+    return service.rejectGeneratedTestCase(req.params.id);
   });
 
   fastify.delete("/test-cases/:id", async (req) => {

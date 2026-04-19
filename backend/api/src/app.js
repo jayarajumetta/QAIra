@@ -9,6 +9,7 @@ const cors = require("@fastify/cors");
 const db = require("./db");
 const { ensureRuntimeSchema } = require("./db/bootstrap");
 const executionScheduleService = require("./services/executionSchedule.service");
+const aiTestCaseGenerationService = require("./services/aiTestCaseGeneration.service");
 const { verifyToken, generateRequestId } = require("./utils/token");
 
 const createError = (message, statusCode) => {
@@ -161,6 +162,7 @@ fastify.addHook("onReady", async () => {
 });
 
 let scheduleProcessorTimer = null;
+let aiGenerationProcessorTimer = null;
 
 fastify.addHook("onReady", async () => {
   const runDueSchedules = async () => {
@@ -175,10 +177,28 @@ fastify.addHook("onReady", async () => {
   scheduleProcessorTimer = setInterval(runDueSchedules, 60 * 1000);
 });
 
+fastify.addHook("onReady", async () => {
+  const runQueuedAiGeneration = async () => {
+    try {
+      await aiTestCaseGenerationService.processQueuedJobs();
+    } catch (error) {
+      fastify.log.error(error, "Unable to process queued AI test case generation jobs");
+    }
+  };
+
+  await runQueuedAiGeneration();
+  aiGenerationProcessorTimer = setInterval(runQueuedAiGeneration, 15 * 1000);
+});
+
 fastify.addHook("onClose", async () => {
   if (scheduleProcessorTimer) {
     clearInterval(scheduleProcessorTimer);
     scheduleProcessorTimer = null;
+  }
+
+  if (aiGenerationProcessorTimer) {
+    clearInterval(aiGenerationProcessorTimer);
+    aiGenerationProcessorTimer = null;
   }
 });
 

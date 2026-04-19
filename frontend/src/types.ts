@@ -168,6 +168,29 @@ export type AiDesignPreviewResponse = {
   };
 };
 
+export type AiTestCaseGenerationJob = {
+  id: string;
+  project_id: string;
+  app_type_id: string;
+  integration_id?: string | null;
+  requirement_ids: string[];
+  max_cases_per_requirement: number;
+  parallel_requirement_limit: number;
+  additional_context?: string | null;
+  external_links: string[];
+  images: AiDesignImageInput[];
+  status: "queued" | "running" | "completed" | "failed" | string;
+  total_requirements: number;
+  processed_requirements: number;
+  generated_cases_count: number;
+  error?: string | null;
+  created_by: string;
+  created_at?: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  updated_at?: string;
+};
+
 export type SmartExecutionImpactCase = {
   test_case_id: string;
   title: string;
@@ -225,6 +248,10 @@ export type TestCase = {
   priority: number | null;
   status: string | null;
   requirement_id: string | null;
+  ai_generation_source?: "scheduler" | null;
+  ai_generation_review_status?: "pending" | "accepted" | null;
+  ai_generation_job_id?: string | null;
+  ai_generated_at?: string | null;
   created_at?: string;
 };
 

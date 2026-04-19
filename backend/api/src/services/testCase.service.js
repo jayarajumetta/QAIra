@@ -53,8 +53,23 @@ const selectSharedStepGroupsForAppType = db.prepare(`
 `);
 
 const insertTestCaseRecord = db.prepare(`
-  INSERT INTO test_cases (id, display_id, app_type_id, suite_id, title, description, automated, priority, status, requirement_id)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO test_cases (
+    id,
+    display_id,
+    app_type_id,
+    suite_id,
+    title,
+    description,
+    automated,
+    priority,
+    status,
+    requirement_id,
+    ai_generation_source,
+    ai_generation_review_status,
+    ai_generation_job_id,
+    ai_generated_at
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const updateTestCaseRecord = db.prepare(`
@@ -99,6 +114,12 @@ const deleteTestCaseRecord = db.prepare(`
   WHERE id = ?
 `);
 
+const updateGeneratedReviewState = db.prepare(`
+  UPDATE test_cases
+  SET ai_generation_review_status = ?
+  WHERE id = ?
+`);
+
 const hydrateSuiteIds = async (testCase) => {
   if (!testCase) {
     return testCase;
@@ -137,6 +158,45 @@ const normalizePriority = (value) => {
 
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : DEFAULT_PRIORITY;
+};
+
+const normalizeAiGenerationSource = (value) => {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized !== "scheduler") {
+    throw new Error("ai_generation_source must be 'scheduler' when provided");
+  }
+
+  return normalized;
+};
+
+const normalizeAiGenerationReviewStatus = (value, source) => {
+  const normalized = normalizeText(value);
+
+  if (!source || !normalized) {
+    return null;
+  }
+
+  if (!["pending", "accepted"].includes(normalized)) {
+    throw new Error("ai_generation_review_status must be 'pending' or 'accepted'");
+  }
+
+  return normalized;
+};
+
+const normalizeIsoDateTime = (value) => {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 };
 
 const normalizeStatus = (value, fallback = DEFAULT_STATUS) => {
@@ -470,7 +530,11 @@ const createPersistablePayload = async ({
   status,
   requirement_id,
   requirement_ids = [],
-  steps = []
+  steps = [],
+  ai_generation_source,
+  ai_generation_review_status,
+  ai_generation_job_id,
+  ai_generated_at
 }) => {
   const resolvedTitle = normalizeText(title);
 
@@ -483,6 +547,11 @@ const createPersistablePayload = async ({
   let resolvedAppTypeId = normalizeText(app_type_id);
   const resolvedSuiteIds = normalizeTextList([suite_id, ...suite_ids]);
   const resolvedRequirementIds = normalizeTextList([requirement_id, ...requirement_ids]);
+  const resolvedAiGenerationSource = normalizeAiGenerationSource(ai_generation_source);
+  const resolvedAiGenerationReviewStatus = normalizeAiGenerationReviewStatus(
+    ai_generation_review_status,
+    resolvedAiGenerationSource
+  );
 
   const appType = await ensureAppTypeExists(resolvedAppTypeId);
   resolvedAppTypeId = await ensureSuitesMatchAppType(resolvedSuiteIds, resolvedAppTypeId);
@@ -499,7 +568,11 @@ const createPersistablePayload = async ({
     priority: normalizePriority(priority),
     status: normalizeStatus(status),
     display_id,
-    steps: normalizeSteps(steps)
+    steps: normalizeSteps(steps),
+    ai_generation_source: resolvedAiGenerationSource,
+    ai_generation_review_status: resolvedAiGenerationReviewStatus,
+    ai_generation_job_id: normalizeText(ai_generation_job_id),
+    ai_generated_at: normalizeIsoDateTime(ai_generated_at) || (resolvedAiGenerationSource ? new Date().toISOString() : null)
   };
 };
 
@@ -516,7 +589,11 @@ const createOne = db.transaction(async (payload) => {
     payload.automated,
     payload.priority,
     payload.status,
-    payload.requirement_ids[0] || null
+    payload.requirement_ids[0] || null,
+    payload.ai_generation_source,
+    payload.ai_generation_review_status,
+    payload.ai_generation_job_id,
+    payload.ai_generated_at
   );
 
   await syncSuiteMappings(id, payload.suite_ids);
@@ -816,4 +893,25 @@ exports.deleteTestCase = async (id) => {
   await executeDelete();
 
   return { deleted: true };
+};
+
+exports.acceptGeneratedTestCase = async (id) => {
+  const testCase = await exports.getTestCase(id);
+
+  if (testCase.ai_generation_source !== "scheduler" || testCase.ai_generation_review_status !== "pending") {
+    throw new Error("Only pending scheduler-generated test cases can be accepted");
+  }
+
+  await updateGeneratedReviewState.run("accepted", id);
+  return { accepted: true };
+};
+
+exports.rejectGeneratedTestCase = async (id) => {
+  const testCase = await exports.getTestCase(id);
+
+  if (testCase.ai_generation_source !== "scheduler" || testCase.ai_generation_review_status !== "pending") {
+    throw new Error("Only pending scheduler-generated test cases can be rejected");
+  }
+
+  return exports.deleteTestCase(id);
 };

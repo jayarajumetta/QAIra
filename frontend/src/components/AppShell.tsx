@@ -73,9 +73,9 @@ const navigation = [
   {
     label: "Settings",
     items: [
-      { id: "support", to: "/support", label: "Support", shortLabel: "Support", icon: SupportIcon },
       { id: "notifications", to: "/notifications", label: "Notifications", shortLabel: "Alerts", icon: BellIcon },
       { id: "settings", to: "/settings", label: "Settings", shortLabel: "Settings", icon: CogIcon },
+      { id: "support", to: "/support", label: "Support", shortLabel: "Support", icon: SupportIcon },
       { id: "feedback", to: "/feedback", label: "Reporting & Feedback", shortLabel: "Feedback", icon: ChatIcon }
     ]
   }
@@ -289,7 +289,7 @@ export function AppShell() {
   };
 
   return (
-    <div className={`app-shell app-layout${isWorkspaceWideLibrary ? " app-layout--workspace-wide" : ""}`}>
+    <div className="app-shell app-layout app-layout--workspace-wide">
       {error && (
         <div className="global-alert" role="alert">
           <p>{error}</p>

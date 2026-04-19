@@ -1,6 +1,7 @@
 import type {
   AiDesignImageInput,
   AiDesignPreviewResponse,
+  AiTestCaseGenerationJob,
   AuthSetupPayload,
   ApiError,
   AppType,
@@ -300,6 +301,30 @@ export const api = {
       request<{ accepted: number; created: Array<{ id: string; title: string; step_count: number; requirement_ids: string[] }> }>("/test-cases/design-test-cases-accept", {
         method: "POST",
         body: JSON.stringify(input)
+      }),
+    listGenerationJobs: (query: { app_type_id: string; status?: string }) =>
+      request<AiTestCaseGenerationJob[]>(`/test-cases/ai-generation-jobs${toQueryString(query)}`),
+    createGenerationJob: (input: {
+      app_type_id: string;
+      requirement_ids: string[];
+      integration_id?: string;
+      max_cases_per_requirement?: number;
+      parallel_requirement_limit?: number;
+      additional_context?: string;
+      external_links?: string[];
+      images?: AiDesignImageInput[];
+    }) =>
+      request<{ id: string }>("/test-cases/ai-generation-jobs", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
+    acceptGeneratedCase: (id: string) =>
+      request<{ accepted: boolean }>(`/test-cases/${id}/accept-generated`, {
+        method: "POST"
+      }),
+    rejectGeneratedCase: (id: string) =>
+      request<{ deleted: boolean }>(`/test-cases/${id}/reject-generated`, {
+        method: "DELETE"
       }),
     bulkImport: (input: { app_type_id: string; requirement_id?: string; rows: Array<Record<string, string | number | null | undefined>> }) =>
       request<{ imported: number; failed: number; created: Array<{ row: number; id: string; title: string }>; errors: Array<{ row: number; title?: string | null; message: string }> }>("/test-cases/import", {

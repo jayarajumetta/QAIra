@@ -16,12 +16,10 @@ import { StepParameterizedText } from "../components/StepParameterizedText";
 import { SharedStepsIcon as SharedStepsIconGraphic } from "../components/SharedStepsIcon";
 import { StatusBadge } from "../components/StatusBadge";
 import {
-  TileCardCaseIcon,
   TileCardFact,
-  TileCardLinkIcon,
   TileCardPriorityIcon,
-  TileCardRunsIcon,
-  TileCardStatusIndicator,
+  TileCardRequirementIcon,
+  TileCardSuiteIcon,
   TileCardStepsIcon,
   formatTileCardLabel,
   getTileCardTone
@@ -52,7 +50,20 @@ import {
   type StepParameterDefinition
 } from "../lib/stepParameters";
 import { TEST_AUTHORING_SECTION_ITEMS } from "../lib/workspaceSections";
-import type { AiDesignImageInput, AiDesignedTestCaseCandidate, AppType, Execution, ExecutionResult, Project, Requirement, SharedStepGroup, TestCase, TestStep, TestSuite } from "../types";
+import type {
+  AiDesignImageInput,
+  AiDesignedTestCaseCandidate,
+  AiTestCaseGenerationJob,
+  AppType,
+  Execution,
+  ExecutionResult,
+  Project,
+  Requirement,
+  SharedStepGroup,
+  TestCase,
+  TestStep,
+  TestSuite
+} from "../types";
 
 type TestCaseDraft = {
   title: string;
@@ -281,6 +292,93 @@ function TestCaseCreateIcon() {
   );
 }
 
+function TestCaseSelectAllIcon() {
+  return (
+    <TestCaseActionIcon>
+      <rect x="4" y="5" width="6" height="6" rx="1.2" />
+      <path d="M14 7h6" />
+      <rect x="4" y="13" width="6" height="6" rx="1.2" />
+      <path d="M14 15h6" />
+    </TestCaseActionIcon>
+  );
+}
+
+function TestCaseClearIcon() {
+  return (
+    <TestCaseActionIcon>
+      <path d="M5 12h14" />
+      <path d="m15.5 6.5 3 3-9.5 9.5H6v-3Z" />
+    </TestCaseActionIcon>
+  );
+}
+
+function TestCaseDeleteIcon() {
+  return (
+    <TestCaseActionIcon>
+      <path d="M4 7h16" />
+      <path d="M9 7V4h6v3" />
+      <path d="M7 7v11a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V7" />
+      <path d="M10 11v5" />
+      <path d="M14 11v5" />
+    </TestCaseActionIcon>
+  );
+}
+
+function TestCaseRunIcon() {
+  return (
+    <TestCaseActionIcon>
+      <path d="m9 7 8 5-8 5z" />
+    </TestCaseActionIcon>
+  );
+}
+
+function TestCaseAcceptIcon() {
+  return (
+    <TestCaseActionIcon>
+      <path d="M6 12.5 10 16l8-8" />
+    </TestCaseActionIcon>
+  );
+}
+
+function TestCaseRejectIcon() {
+  return (
+    <TestCaseActionIcon>
+      <path d="m8 8 8 8" />
+      <path d="m16 8-8 8" />
+    </TestCaseActionIcon>
+  );
+}
+
+function TestCaseTileActionButton({
+  children,
+  className = "",
+  disabled = false,
+  onClick,
+  title
+}: {
+  children: ReactNode;
+  className?: string;
+  disabled?: boolean;
+  onClick: () => void;
+  title: string;
+}) {
+  return (
+    <button
+      aria-label={title}
+      className={["test-case-tile-action-button", className].filter(Boolean).join(" ")}
+      disabled={disabled}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      title={title}
+      type="button"
+    >
+      {children}
+    </button>
+  );
+}
+
 const formatExecutionHistoryDate = (value?: string | null) => {
   if (!value) {
     return "Recent run";
@@ -362,12 +460,15 @@ export function TestCasesPage() {
   const [aiRequirementIds, setAiRequirementIds] = useState<string[]>([]);
   const [integrationId, setIntegrationId] = useState("");
   const [maxCases, setMaxCases] = useState(8);
+  const [parallelRequirementLimit, setParallelRequirementLimit] = useState(2);
   const [aiAdditionalContext, setAiAdditionalContext] = useState("");
   const [aiExternalLinksText, setAiExternalLinksText] = useState("");
   const [aiReferenceImages, setAiReferenceImages] = useState<AiDesignImageInput[]>([]);
   const [aiPreviewCases, setAiPreviewCases] = useState<AiDesignedTestCaseCandidate[]>([]);
   const [aiPreviewMessage, setAiPreviewMessage] = useState("");
   const [aiPreviewTone, setAiPreviewTone] = useState<"success" | "error">("success");
+  const [schedulerActionCaseId, setSchedulerActionCaseId] = useState("");
+  const [schedulerActionKind, setSchedulerActionKind] = useState<"accept" | "reject" | "run" | "">("");
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -392,6 +493,12 @@ export function TestCasesPage() {
     queryKey: ["global-test-cases", appTypeId],
     queryFn: () => api.testCases.list({ app_type_id: appTypeId }),
     enabled: Boolean(appTypeId)
+  });
+  const generationJobsQuery = useQuery({
+    queryKey: ["ai-test-case-generation-jobs", appTypeId],
+    queryFn: () => api.testCases.listGenerationJobs({ app_type_id: appTypeId }),
+    enabled: Boolean(appTypeId),
+    refetchInterval: appTypeId ? 5000 : false
   });
   const executionsQuery = useQuery({
     queryKey: ["executions", projectId],
@@ -424,11 +531,14 @@ export function TestCasesPage() {
   });
 
   const createTestCase = useMutation({ mutationFn: api.testCases.create });
+  const createGenerationJob = useMutation({ mutationFn: api.testCases.createGenerationJob });
   const createSuite = useMutation({ mutationFn: api.testSuites.create });
   const assignSuiteCases = useMutation({
     mutationFn: ({ id, testCaseIds }: { id: string; testCaseIds: string[] }) => api.testSuites.assignTestCases(id, testCaseIds)
   });
   const createExecution = useMutation({ mutationFn: api.executions.create });
+  const acceptGeneratedCase = useMutation({ mutationFn: api.testCases.acceptGeneratedCase });
+  const rejectGeneratedCase = useMutation({ mutationFn: api.testCases.rejectGeneratedCase });
   const updateTestCase = useMutation({
     mutationFn: ({ id, input }: { id: string; input: Parameters<typeof api.testCases.update>[1] }) =>
       api.testCases.update(id, input)
@@ -457,6 +567,7 @@ export function TestCasesPage() {
   const requirements = requirementsQuery.data || [];
   const suites = suitesQuery.data || [];
   const testCases = testCasesQuery.data || [];
+  const generationJobs = generationJobsQuery.data || [];
   const executions = executionsQuery.data || [];
   const sharedStepGroups = sharedStepGroupsQuery.data || [];
   const executionResults = executionResultsQuery.data || [];
@@ -643,6 +754,9 @@ export function TestCasesPage() {
     setAiRequirementIds([]);
     setAiPreviewCases([]);
     setAiPreviewMessage("");
+    setParallelRequirementLimit(2);
+    setSchedulerActionCaseId("");
+    setSchedulerActionKind("");
   }, [appTypeId]);
 
   useEffect(() => {
@@ -942,19 +1056,20 @@ export function TestCasesPage() {
     }
 
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !previewDesignedCases.isPending && !acceptDesignedCases.isPending) {
+      if (event.key === "Escape" && !previewDesignedCases.isPending && !acceptDesignedCases.isPending && !createGenerationJob.isPending) {
         setIsAiStudioOpen(false);
       }
     };
 
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [acceptDesignedCases.isPending, isAiStudioOpen, previewDesignedCases.isPending]);
+  }, [acceptDesignedCases.isPending, createGenerationJob.isPending, isAiStudioOpen, previewDesignedCases.isPending]);
 
   const refreshCases = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["global-test-cases", appTypeId] }),
       queryClient.invalidateQueries({ queryKey: ["global-test-case-results", appTypeId] }),
+      queryClient.invalidateQueries({ queryKey: ["ai-test-case-generation-jobs", appTypeId] }),
       queryClient.invalidateQueries({ queryKey: ["test-case-suites", appTypeId] }),
       queryClient.invalidateQueries({ queryKey: ["test-suites"] }),
       queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] }),
@@ -971,6 +1086,43 @@ export function TestCasesPage() {
       queryClient.invalidateQueries({ queryKey: ["shared-step-groups", appTypeId] })
     ]);
   };
+
+  const generationJobSyncToken = useMemo(
+    () =>
+      generationJobs
+        .map((job) => `${job.id}:${job.status}:${job.processed_requirements}:${job.generated_cases_count}`)
+        .join("|"),
+    [generationJobs]
+  );
+  const lastGenerationJobSyncTokenRef = useRef("");
+
+  useEffect(() => {
+    if (!appTypeId) {
+      lastGenerationJobSyncTokenRef.current = "";
+      return;
+    }
+
+    if (!generationJobSyncToken) {
+      lastGenerationJobSyncTokenRef.current = "";
+      return;
+    }
+
+    if (!lastGenerationJobSyncTokenRef.current) {
+      lastGenerationJobSyncTokenRef.current = generationJobSyncToken;
+      return;
+    }
+
+    if (lastGenerationJobSyncTokenRef.current === generationJobSyncToken) {
+      return;
+    }
+
+    lastGenerationJobSyncTokenRef.current = generationJobSyncToken;
+
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["global-test-cases", appTypeId] }),
+      queryClient.invalidateQueries({ queryKey: ["requirements", projectId] })
+    ]);
+  }, [appTypeId, generationJobSyncToken, projectId, queryClient]);
 
   const resolveStepInsertIndex = (items: Array<{ id: string }>) => {
     if (stepInsertIndex !== null) {
@@ -2307,7 +2459,10 @@ export function TestCasesPage() {
       ...(caseDraft.requirement_id ? [caseDraft.requirement_id] : [])
     ].filter(Boolean);
 
-    setAiRequirementIds(seededRequirementIds.length ? [...new Set(seededRequirementIds)] : requirements[0] ? [requirements[0].id] : []);
+    const nextRequirementIds = seededRequirementIds.length ? [...new Set(seededRequirementIds)] : requirements[0] ? [requirements[0].id] : [];
+
+    setAiRequirementIds(nextRequirementIds);
+    setParallelRequirementLimit(Math.min(Math.max(nextRequirementIds.length || 1, 1), 3));
     setAiPreviewCases([]);
     setAiPreviewMessage("");
     setAiPreviewTone("success");
@@ -2345,8 +2500,31 @@ export function TestCasesPage() {
       setAiPreviewMessage(`${response.generated} draft cases generated using ${response.integration.name}. Review them before accepting.`);
     } catch (error) {
       setAiPreviewTone("error");
-      setAiPreviewMessage(error instanceof Error ? error.message : "Unable to preview AI-generated test cases");
+      setAiPreviewMessage(formatAiStudioErrorMessage(error, "Unable to preview AI-generated test cases right now."));
     }
+  };
+
+  const formatAiStudioErrorMessage = (error: unknown, fallback: string) => {
+    const message = error instanceof Error ? error.message.trim() : "";
+    const normalized = message.toLowerCase();
+
+    if (!message) {
+      return fallback;
+    }
+
+    if (normalized.includes("rate limit") || normalized.includes("too many") || normalized.includes("429")) {
+      return "AI generation is being rate-limited right now. Please wait a moment and try again.";
+    }
+
+    if (normalized.includes("timeout") || normalized.includes("took too long")) {
+      return "AI generation took too long to respond. Please try again in a moment.";
+    }
+
+    if (normalized.includes("unable to reach api") || normalized.includes("network") || normalized.includes("connection")) {
+      return "Couldn't reach the AI generation service. Check the connection and try again.";
+    }
+
+    return message;
   };
 
   const handleAcceptDesignedCases = async () => {
@@ -2384,7 +2562,117 @@ export function TestCasesPage() {
       await refreshCases();
     } catch (error) {
       setAiPreviewTone("error");
-      setAiPreviewMessage(error instanceof Error ? error.message : "Unable to accept AI-generated test cases");
+      setAiPreviewMessage(formatAiStudioErrorMessage(error, "Unable to accept AI-generated test cases right now."));
+    }
+  };
+
+  const handleScheduleDesignedCases = async () => {
+    if (!appTypeId || !aiRequirementIds.length) {
+      setAiPreviewTone("error");
+      setAiPreviewMessage("Select at least one requirement before scheduling AI generation.");
+      return;
+    }
+
+    try {
+      await createGenerationJob.mutateAsync({
+        app_type_id: appTypeId,
+        requirement_ids: aiRequirementIds,
+        integration_id: integrationId || undefined,
+        max_cases_per_requirement: maxCases,
+        parallel_requirement_limit: parallelRequirementLimit,
+        additional_context: aiAdditionalContext || undefined,
+        external_links: parseExternalLinks(aiExternalLinksText),
+        images: aiReferenceImages
+      });
+
+      setAiPreviewCases([]);
+      setAiPreviewMessage("");
+      setIsAiStudioOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["ai-test-case-generation-jobs", appTypeId] }),
+        queryClient.invalidateQueries({ queryKey: ["requirements", projectId] })
+      ]);
+      showSuccess("AI test case generation scheduled. Draft cases will appear in the library with accept and reject controls once processing completes.");
+    } catch (error) {
+      setAiPreviewTone("error");
+      setAiPreviewMessage(formatAiStudioErrorMessage(error, "Unable to schedule AI-generated test cases right now."));
+    }
+  };
+
+  const handleRunTestCase = async (testCaseId: string) => {
+    const testCase = testCases.find((item) => item.id === testCaseId);
+
+    if (!session?.user.id) {
+      showError(new Error("You need an active session before running a test case."), "Unable to run test case");
+      return;
+    }
+
+    if (!projectId || !appTypeId || !testCase) {
+      showError(new Error("Select a project and app type before running a test case."), "Unable to run test case");
+      return;
+    }
+
+    setSchedulerActionCaseId(testCaseId);
+    setSchedulerActionKind("run");
+
+    try {
+      const response = await createExecution.mutateAsync({
+        project_id: projectId,
+        app_type_id: appTypeId,
+        test_case_ids: [testCaseId],
+        name: `${testCase.title} Run`,
+        created_by: session.user.id
+      });
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["executions"] }),
+        queryClient.invalidateQueries({ queryKey: ["executions", projectId] })
+      ]);
+
+      navigate(`/executions?execution=${response.id}&testCase=${testCaseId}`);
+    } catch (error) {
+      showError(error, "Unable to run test case");
+    } finally {
+      setSchedulerActionCaseId("");
+      setSchedulerActionKind("");
+    }
+  };
+
+  const handleReviewGeneratedCase = async (testCaseId: string, action: "accept" | "reject") => {
+    const testCase = testCases.find((item) => item.id === testCaseId);
+
+    if (!testCase) {
+      return;
+    }
+
+    if (action === "reject" && !window.confirm(`Reject and permanently delete "${testCase.title}"?`)) {
+      return;
+    }
+
+    setSchedulerActionCaseId(testCaseId);
+    setSchedulerActionKind(action);
+
+    try {
+      if (action === "accept") {
+        await acceptGeneratedCase.mutateAsync(testCaseId);
+        showSuccess(`Accepted "${testCase.title}" into the reusable test case library.`);
+      } else {
+        await rejectGeneratedCase.mutateAsync(testCaseId);
+
+        if (selectedTestCaseId === testCaseId) {
+          closeCaseWorkspace();
+        }
+
+        setSelectedActionTestCaseIds((current) => current.filter((id) => id !== testCaseId));
+        showSuccess(`Rejected "${testCase.title}" and permanently removed it.`);
+      }
+
+      await refreshCases();
+    } catch (error) {
+      showError(error, action === "accept" ? "Unable to accept generated test case" : "Unable to reject generated test case");
+    } finally {
+      setSchedulerActionCaseId("");
+      setSchedulerActionKind("");
     }
   };
 
@@ -2685,6 +2973,41 @@ export function TestCasesPage() {
     () => testCases.find((testCase) => testCase.id === linkedPreviewCaseId) || null,
     [linkedPreviewCaseId, testCases]
   );
+  const activeGenerationJobs = useMemo(
+    () => generationJobs.filter((job): job is AiTestCaseGenerationJob => ["queued", "running"].includes(job.status)),
+    [generationJobs]
+  );
+  const latestGenerationJob = generationJobs[0] || null;
+  const generationQueueSummary = useMemo(() => {
+    if (activeGenerationJobs.length) {
+      const processed = activeGenerationJobs.reduce((total, job) => total + job.processed_requirements, 0);
+      const total = activeGenerationJobs.reduce((count, job) => count + job.total_requirements, 0);
+
+      return {
+        tone: "success" as const,
+        title: `${activeGenerationJobs.length} AI generation job${activeGenerationJobs.length === 1 ? "" : "s"} in progress`,
+        detail: `${processed} of ${total} requirement${total === 1 ? "" : "s"} processed in the current app type.`
+      };
+    }
+
+    if (latestGenerationJob?.status === "failed") {
+      return {
+        tone: "error" as const,
+        title: "Latest AI generation job needs attention",
+        detail: latestGenerationJob.error || "One or more queued AI generations failed."
+      };
+    }
+
+    if (latestGenerationJob?.status === "completed") {
+      return {
+        tone: "success" as const,
+        title: "Latest AI generation job completed",
+        detail: `${latestGenerationJob.generated_cases_count} scheduler-generated test case${latestGenerationJob.generated_cases_count === 1 ? "" : "s"} are ready for review.`
+      };
+    }
+
+    return null;
+  }, [activeGenerationJobs, latestGenerationJob]);
 
   const openExistingCaseFromAi = (testCaseId: string) => setLinkedPreviewCaseId(testCaseId);
   const authoringSectionItems = useMemo(
@@ -2881,7 +3204,7 @@ export function TestCasesPage() {
               </button>
               <button className="ghost-button" disabled={!filteredCases.length} onClick={() => void handleExportCsv()} type="button">
                 <TestCaseExportIcon />
-                <span>Export CSV</span>
+                <span>Export test cases</span>
               </button>
               <button className="primary-button" disabled={!appTypeId} onClick={() => beginCreateCase()} type="button">
                 <TestCaseCreateIcon />
@@ -2893,6 +3216,13 @@ export function TestCasesPage() {
       ) : null}
 
       <ToastMessage message={message} onDismiss={() => setMessage("")} tone={messageTone} />
+
+      {generationQueueSummary ? (
+        <div className={generationQueueSummary.tone === "error" ? "inline-message error-message" : "inline-message success-message"}>
+          <strong>{generationQueueSummary.title}</strong>
+          <span>{generationQueueSummary.detail}</span>
+        </div>
+      ) : null}
 
       {!isCaseWorkspaceOpen ? (
         <WorkspaceScopeBar
@@ -2996,7 +3326,8 @@ export function TestCasesPage() {
                 }
                 type="button"
               >
-                Select all visible
+                <TestCaseSelectAllIcon />
+                <span>Select All</span>
               </button>
               <button
                 className="ghost-button"
@@ -3004,7 +3335,8 @@ export function TestCasesPage() {
                 onClick={() => setSelectedActionTestCaseIds([])}
                 type="button"
               >
-                Clear selection
+                <TestCaseClearIcon />
+                <span>Clear</span>
               </button>
               <button className="ghost-button" disabled={!appTypeId} onClick={() => setIsCreateSuiteModalOpen(true)} type="button">
                 Create suite
@@ -3015,7 +3347,8 @@ export function TestCasesPage() {
                 onClick={() => setIsCreateExecutionModalOpen(true)}
                 type="button"
               >
-                Create execution
+                <TestCaseRunIcon />
+                <span>Create Run</span>
               </button>
               <button
                 className="ghost-button danger"
@@ -3023,7 +3356,8 @@ export function TestCasesPage() {
                 onClick={() => void handleDeleteSelectedCases()}
                 type="button"
               >
-                {isDeletingSelectedTestCases ? "Deleting…" : `Delete selected${selectedActionTestCaseIds.length ? ` (${selectedActionTestCaseIds.length})` : ""}`}
+                <TestCaseDeleteIcon />
+                <span>{isDeletingSelectedTestCases ? "Deleting…" : `Delete${selectedActionTestCaseIds.length ? ` (${selectedActionTestCaseIds.length})` : ""}`}</span>
               </button>
               <button className="ghost-button" disabled={!appTypeId} onClick={() => beginCreateCase()} type="button">
                 New case
@@ -3033,7 +3367,7 @@ export function TestCasesPage() {
             {selectedActionTestCaseIds.length ? (
               <div className="detail-summary test-case-selection-summary">
                 <strong>{selectedActionTestCaseIds.length} test case{selectedActionTestCaseIds.length === 1 ? "" : "s"} selected for bulk actions</strong>
-                <span>Use the checked cases to create a suite, create an execution under the linked Default suite snapshot, or bulk delete them. Open any tile body to keep editing one case at a time.</span>
+                <span>Use the checked cases to create a suite, create a run, or bulk delete them. Open any tile body to keep editing one case at a time.</span>
               </div>
             ) : null}
 
@@ -3051,12 +3385,16 @@ export function TestCasesPage() {
                       (testCase.requirement_ids || [testCase.requirement_id]).map((id) => (id ? requirementTitleById[id] || "" : "")).find(Boolean) || "";
                     const stepCount = stepCountByCaseId[testCase.id] || 0;
                     const caseStatusValue = latest?.status || testCase.status || defaultTestCaseStatus;
-                    const caseStatusLabel = formatTileCardLabel(caseStatusValue, "Active");
-                    const caseStatusTone = getTileCardTone(caseStatusValue);
                     const suiteCount = (testCase.suite_ids || []).length || 0;
+                    const isPendingSchedulerCase =
+                      testCase.ai_generation_source === "scheduler" && testCase.ai_generation_review_status === "pending";
+                    const isRunningCase = schedulerActionCaseId === testCase.id && schedulerActionKind === "run";
+                    const isAcceptingCase = schedulerActionCaseId === testCase.id && schedulerActionKind === "accept";
+                    const isRejectingCase = schedulerActionCaseId === testCase.id && schedulerActionKind === "reject";
 
                     return (
-                      <button
+                      <div
+                        aria-pressed={isActive}
                         className={[
                           "record-card tile-card test-case-card test-case-catalog-card",
                           isActive ? "is-active" : "",
@@ -3069,7 +3407,21 @@ export function TestCasesPage() {
                           setIsCreating(false);
                           setDraftSteps([]);
                         }}
-                        type="button"
+                        onKeyDown={(event) => {
+                          if (event.target !== event.currentTarget) {
+                            return;
+                          }
+
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            syncTestCaseSearchParams(testCase.id);
+                            setSelectedTestCaseId(testCase.id);
+                            setIsCreating(false);
+                            setDraftSteps([]);
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
                       >
                         <div className="tile-card-main">
                           <div className="tile-card-select-row">
@@ -3085,14 +3437,44 @@ export function TestCasesPage() {
                               />
                               <DisplayIdBadge value={testCase.display_id || testCase.id} />
                             </label>
+                            <div className="catalog-inline-actions test-case-top-actions">
+                              {isPendingSchedulerCase ? (
+                                <>
+                                  <TestCaseTileActionButton
+                                    className="is-accept"
+                                    disabled={isAcceptingCase || isRejectingCase || isRunningCase}
+                                    onClick={() => void handleReviewGeneratedCase(testCase.id, "accept")}
+                                    title="Accept scheduler-generated test case"
+                                  >
+                                    <TestCaseAcceptIcon />
+                                  </TestCaseTileActionButton>
+                                  <TestCaseTileActionButton
+                                    className="is-reject"
+                                    disabled={isAcceptingCase || isRejectingCase || isRunningCase}
+                                    onClick={() => void handleReviewGeneratedCase(testCase.id, "reject")}
+                                    title="Reject and permanently delete scheduler-generated test case"
+                                  >
+                                    <TestCaseRejectIcon />
+                                  </TestCaseTileActionButton>
+                                </>
+                              ) : null}
+                              <TestCaseTileActionButton
+                                className="is-run"
+                                disabled={isRunningCase || isAcceptingCase || isRejectingCase || !projectId || !appTypeId || !session?.user.id}
+                                onClick={() => void handleRunTestCase(testCase.id)}
+                                title="Run test case in execution console"
+                              >
+                                <TestCaseRunIcon />
+                              </TestCaseTileActionButton>
+                            </div>
                           </div>
                           <div className="tile-card-header">
                             <div className="tile-card-title-group">
                               <strong>{testCase.title}</strong>
-                              <span className="tile-card-kicker">{requirementTitle || "No requirement linked"}</span>
-                            </div>
-                            <div className="tile-card-header-meta">
-                              <TileCardStatusIndicator title={caseStatusLabel} tone={caseStatusTone} />
+                              <span className="tile-card-kicker">
+                                <TileCardRequirementIcon />
+                                <span>{requirementTitle || "No requirement linked"}</span>
+                              </span>
                             </div>
                           </div>
                           <p className="tile-card-description">{testCase.description || "No description yet for this test case."}</p>
@@ -3112,18 +3494,18 @@ export function TestCasesPage() {
                               <TileCardStepsIcon />
                             </TileCardFact>
                             <TileCardFact
-                              label={`${suiteCount} linked`}
-                              title={`${suiteCount} linked suite${suiteCount === 1 ? "" : "s"}`}
-                              tone={suiteCount ? "success" : "neutral"}
+                              label={String(suiteCount)}
+                              title={`${suiteCount} suite${suiteCount === 1 ? "" : "s"} linked to this case`}
+                              tone={suiteCount ? "info" : "neutral"}
                             >
-                              <TileCardLinkIcon />
+                              <TileCardSuiteIcon />
                             </TileCardFact>
                             <TileCardFact
                               label={String(history.length)}
                               title={`${history.length} recent run${history.length === 1 ? "" : "s"}`}
                               tone={history.length ? getTileCardTone(latest?.status || caseStatusValue) : "neutral"}
                             >
-                              <TileCardRunsIcon />
+                              <TestCaseRunIcon />
                             </TileCardFact>
                           </div>
                           <div className="tile-card-footer">
@@ -3138,7 +3520,7 @@ export function TestCasesPage() {
                             </div>
                           </div>
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -3157,6 +3539,7 @@ export function TestCasesPage() {
                         <th>Steps</th>
                         <th>Suites</th>
                         <th>Runs</th>
+                        <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3168,6 +3551,10 @@ export function TestCasesPage() {
                         const stepCount = stepCountByCaseId[testCase.id] || 0;
                         const caseStatusValue = latest?.status || testCase.status || defaultTestCaseStatus;
                         const suiteCount = (testCase.suite_ids || []).length || 0;
+                        const isPendingSchedulerCase =
+                          testCase.ai_generation_source === "scheduler" && testCase.ai_generation_review_status === "pending";
+                        const isAcceptingCase = schedulerActionCaseId === testCase.id && schedulerActionKind === "accept";
+                        const isRejectingCase = schedulerActionCaseId === testCase.id && schedulerActionKind === "reject";
 
                         return (
                           <tr
@@ -3202,6 +3589,30 @@ export function TestCasesPage() {
                             <td>{stepCount}</td>
                             <td>{suiteCount}</td>
                             <td>{history.length}</td>
+                            <td onClick={(event) => event.stopPropagation()}>
+                              <div className="catalog-inline-actions">
+                                {isPendingSchedulerCase ? (
+                                  <>
+                                    <TestCaseTileActionButton
+                                      className="is-accept"
+                                      disabled={isAcceptingCase || isRejectingCase}
+                                      onClick={() => void handleReviewGeneratedCase(testCase.id, "accept")}
+                                      title="Accept scheduler-generated test case"
+                                    >
+                                      <TestCaseAcceptIcon />
+                                    </TestCaseTileActionButton>
+                                    <TestCaseTileActionButton
+                                      className="is-reject"
+                                      disabled={isAcceptingCase || isRejectingCase}
+                                      onClick={() => void handleReviewGeneratedCase(testCase.id, "reject")}
+                                      title="Reject and permanently delete scheduler-generated test case"
+                                    >
+                                      <TestCaseRejectIcon />
+                                    </TestCaseTileActionButton>
+                                  </>
+                                ) : null}
+                              </div>
+                            </td>
                           </tr>
                         );
                       })}
@@ -3791,9 +4202,10 @@ export function TestCasesPage() {
           additionalContext={aiAdditionalContext}
           allowMultipleRequirements={true}
           appTypeName={appTypes.find((item) => item.id === appTypeId)?.name || "No app type selected"}
-          closeDisabled={previewDesignedCases.isPending || acceptDesignedCases.isPending}
+          closeDisabled={previewDesignedCases.isPending || acceptDesignedCases.isPending || createGenerationJob.isPending}
           disableAccept={!aiPreviewCases.length || acceptDesignedCases.isPending}
           disablePreview={!aiRequirementIds.length || !appTypeId || previewDesignedCases.isPending || !integrations.length}
+          disableSchedule={!aiRequirementIds.length || !appTypeId || createGenerationJob.isPending || !integrations.length}
           existingCases={aiExistingCases}
           existingCasesSubtitle="These reusable cases are already linked to one or more of the selected requirements in the current app type."
           existingCasesTitle="Linked test cases"
@@ -3803,6 +4215,7 @@ export function TestCasesPage() {
           integrations={integrations}
           isAccepting={acceptDesignedCases.isPending}
           isPreviewing={previewDesignedCases.isPending}
+          isScheduling={createGenerationJob.isPending}
           maxCases={maxCases}
           onAccept={() => void handleAcceptDesignedCases()}
           onAddImages={(files) => void handleAddAiReferenceImages(files)}
@@ -3814,8 +4227,10 @@ export function TestCasesPage() {
           }}
           onExternalLinksTextChange={setAiExternalLinksText}
           onIntegrationIdChange={setIntegrationId}
+          onParallelRequirementCountChange={setParallelRequirementLimit}
           onViewExistingCase={openExistingCaseFromAi}
           onPreview={() => void handlePreviewDesignedCases()}
+          onSchedule={() => void handleScheduleDesignedCases()}
           onRemoveImage={(imageUrl) => setAiReferenceImages((current) => current.filter((image) => image.url !== imageUrl))}
           onRemovePreviewCase={(clientId) => setAiPreviewCases((current) => current.filter((candidate) => candidate.client_id !== clientId))}
           onRequirementSelectionChange={setAiRequirementIds}
@@ -3829,13 +4244,16 @@ export function TestCasesPage() {
             setAiPreviewCases((current) => toggleRequirementOnPreviewCase(current, clientId, requirementId, requirement.title));
           }}
           onMaxCasesChange={setMaxCases}
+          parallelRequirementCount={parallelRequirementLimit}
           previewCases={aiPreviewCases}
           previewMessage={aiPreviewMessage}
+          onPreviewMessageDismiss={() => setAiPreviewMessage("")}
           previewTone={aiPreviewTone}
           referenceImages={aiReferenceImages}
           requirementHelpText="Select one or more requirements, provide extra context, then review the generated drafts before approving them into the reusable library."
           requirementLabel="Requirements"
           requirements={requirements}
+          scheduleHelperText="Schedule one AI run per selected requirement. The parallel field controls how many requirements are processed at once, and each generated case returns as a draft with green accept and red reject actions."
           selectedRequirementIds={aiSelectedRequirements.map((requirement) => requirement.id)}
         />
       ) : null}
@@ -4002,11 +4420,11 @@ function TestCaseExecutionModal({
           <div className="execution-create-header">
             <div className="execution-create-title">
               <p className="eyebrow">Test Cases</p>
-              <h3 id="create-test-case-execution-title">Create execution</h3>
-              <p>The selected test cases will be snapshotted under a linked Default suite without creating a real suite record.</p>
+              <h3 id="create-test-case-execution-title">Create Run</h3>
+              <p>The selected test cases will open directly in the execution console without creating a suite first.</p>
             </div>
             <button
-              aria-label="Close create execution dialog"
+              aria-label="Close create run dialog"
               className="ghost-button"
               disabled={isSubmitting}
               onClick={onClose}
@@ -4017,7 +4435,7 @@ function TestCaseExecutionModal({
           </div>
 
           <div className="execution-create-body">
-            <FormField label="Execution name">
+            <FormField label="Run name">
               <input
                 autoFocus
                 placeholder="Optional run name"
@@ -4028,8 +4446,8 @@ function TestCaseExecutionModal({
 
             <div className="detail-summary">
               <strong>{selectedProject || "Select a project to continue"}</strong>
-              <span>{selectedAppType ? `${selectedAppType} app type selected for this snapshot.` : "Choose an app type to load test cases."}</span>
-              <span>{testCases.length ? `${testCases.length} test cases selected for this execution.` : "No test cases selected yet."}</span>
+              <span>{selectedAppType ? `${selectedAppType} app type selected for this run.` : "Choose an app type to load test cases."}</span>
+              <span>{testCases.length ? `${testCases.length} test cases selected for this run.` : "No test cases selected yet."}</span>
             </div>
 
             <ExecutionContextSelector
@@ -4049,7 +4467,7 @@ function TestCaseExecutionModal({
                 <div className="selection-summary-header">
                   <div>
                     <strong>{testCases.length ? `${testCases.length} test cases selected` : "No test cases selected yet"}</strong>
-                    <span>These came from the checkbox selections in the test case library. Remove any chip here before creating the execution.</span>
+                    <span>These came from the checkbox selections in the test case library. Remove any chip here before creating the run.</span>
                   </div>
                 </div>
 
@@ -4068,7 +4486,7 @@ function TestCaseExecutionModal({
 
           <div className="action-row execution-create-actions">
             <button className="primary-button" disabled={!canCreateExecution || isSubmitting} type="submit">
-              {isSubmitting ? "Creating…" : "Create execution"}
+              {isSubmitting ? "Creating…" : "Create Run"}
             </button>
             <button className="ghost-button" disabled={isSubmitting} onClick={onClose} type="button">
               Cancel

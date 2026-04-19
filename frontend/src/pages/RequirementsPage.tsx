@@ -1515,6 +1515,7 @@ export function RequirementsPage() {
           onMaxCasesChange={setMaxCases}
           previewCases={previewCases}
           previewMessage={previewMessage}
+          onPreviewMessageDismiss={() => setPreviewMessage("")}
           previewTone={previewTone}
           referenceImages={aiReferenceImages}
           requirementHelpText="Select the requirement, shape the prompt, then review the AI-generated reusable cases before approving them."
