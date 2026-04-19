@@ -57,6 +57,7 @@ import type { AiDesignImageInput, AiDesignedTestCaseCandidate, AppType, Executio
 type TestCaseDraft = {
   title: string;
   description: string;
+  automated: "yes" | "no";
   priority: number;
   status: string;
   requirement_id: string;
@@ -108,9 +109,10 @@ type CaseRunFilter = "all" | "with-runs" | "no-runs";
 
 type TestCaseEditorSectionKey = "case" | "steps" | "history";
 
-const createEmptyCaseDraft = (defaultStatus = "active"): TestCaseDraft => ({
+const createEmptyCaseDraft = (defaultStatus = "active", defaultAutomated: "yes" | "no" = "no"): TestCaseDraft => ({
   title: "",
   description: "",
+  automated: defaultAutomated,
   priority: 3,
   status: defaultStatus,
   requirement_id: ""
@@ -318,8 +320,16 @@ export function TestCasesPage() {
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const defaultTestCaseStatus = domainMetadataQuery.data?.test_cases.default_status || "active";
+  const defaultTestCaseAutomated = (domainMetadataQuery.data?.test_cases.default_automated || "no") as "yes" | "no";
   const testCaseStatusOptions = domainMetadataQuery.data?.test_cases.statuses || [];
-  const emptyCaseDraft = useMemo(() => createEmptyCaseDraft(defaultTestCaseStatus), [defaultTestCaseStatus]);
+  const testCaseAutomatedOptions = domainMetadataQuery.data?.test_cases.automated_options || [
+    { value: "no", label: "No" },
+    { value: "yes", label: "Yes" }
+  ];
+  const emptyCaseDraft = useMemo(
+    () => createEmptyCaseDraft(defaultTestCaseStatus, defaultTestCaseAutomated),
+    [defaultTestCaseAutomated, defaultTestCaseStatus]
+  );
   const [caseDraft, setCaseDraft] = useState<TestCaseDraft>(() => createEmptyCaseDraft());
   const [newStepDraft, setNewStepDraft] = useState<StepDraft>(EMPTY_STEP_DRAFT);
   const [stepInsertIndex, setStepInsertIndex] = useState<number | null>(null);
@@ -814,6 +824,7 @@ export function TestCasesPage() {
       setCaseDraft({
         title: selectedTestCase.title,
         description: selectedTestCase.description || "",
+        automated: (selectedTestCase.automated || defaultTestCaseAutomated) as "yes" | "no",
         priority: selectedTestCase.priority ?? 3,
         status: selectedTestCase.status || defaultTestCaseStatus,
         requirement_id: selectedTestCase.requirement_ids?.[0] || selectedTestCase.requirement_id || ""
@@ -824,7 +835,16 @@ export function TestCasesPage() {
     syncTestCaseSearchParams(null);
     setSelectedTestCaseId("");
     setCaseDraft(emptyCaseDraft);
-  }, [isCreating, selectedTestCase, selectedTestCaseId, testCasesQuery.isFetching, testCasesQuery.isLoading]);
+  }, [
+    defaultTestCaseAutomated,
+    defaultTestCaseStatus,
+    emptyCaseDraft,
+    isCreating,
+    selectedTestCase,
+    selectedTestCaseId,
+    testCasesQuery.isFetching,
+    testCasesQuery.isLoading
+  ]);
 
   useEffect(() => {
     setTestCaseParameterValues({});
@@ -1166,6 +1186,7 @@ export function TestCasesPage() {
           suite_ids: createSuiteContextId ? [createSuiteContextId] : [],
           title: caseDraft.title,
           description: caseDraft.description || undefined,
+          automated: caseDraft.automated,
           priority: Number(caseDraft.priority),
           status: caseDraft.status,
           requirement_ids: caseDraft.requirement_id ? [caseDraft.requirement_id] : [],
@@ -1188,6 +1209,7 @@ export function TestCasesPage() {
             app_type_id: appTypeId,
             title: caseDraft.title,
             description: caseDraft.description,
+            automated: caseDraft.automated,
             priority: Number(caseDraft.priority),
             status: caseDraft.status,
             requirement_ids: caseDraft.requirement_id ? [caseDraft.requirement_id] : []
@@ -2230,6 +2252,7 @@ export function TestCasesPage() {
       const header = [
         "title",
         "description",
+        "automated",
         "priority",
         "status",
         "requirements",
@@ -2249,6 +2272,7 @@ export function TestCasesPage() {
         return [
           testCase.title,
           testCase.description || "",
+          testCase.automated || defaultTestCaseAutomated,
           `P${testCase.priority || 3}`,
           testCase.status || defaultTestCaseStatus,
           linkedRequirementNames.join("\n"),
@@ -2366,12 +2390,14 @@ export function TestCasesPage() {
 
   const coverageMetrics = useMemo(() => {
     const covered = testCases.filter((testCase) => (testCase.requirement_ids || [testCase.requirement_id]).filter(Boolean).length).length;
+    const automated = testCases.filter((testCase) => testCase.automated === "yes").length;
     const withHistory = testCases.filter((testCase) => (historyByCaseId[testCase.id] || []).length).length;
     const withSuites = testCases.filter((testCase) => (testCase.suite_ids || []).length).length;
 
     return {
       total: testCases.length,
       covered,
+      automated,
       withHistory,
       withSuites
     };
@@ -2841,7 +2867,7 @@ export function TestCasesPage() {
           meta={[
             { label: "Cases", value: coverageMetrics.total },
             { label: "Mapped", value: coverageMetrics.covered },
-            { label: "With history", value: coverageMetrics.withHistory }
+            { label: "Automated", value: coverageMetrics.automated }
           ]}
           actions={
             <>
@@ -3126,6 +3152,7 @@ export function TestCasesPage() {
                         <th>ID</th>
                         <th>Test case</th>
                         <th>Status</th>
+                        <th>Automated</th>
                         <th>Priority</th>
                         <th>Steps</th>
                         <th>Suites</th>
@@ -3170,6 +3197,7 @@ export function TestCasesPage() {
                               <div className="catalog-row-subcopy">{requirementTitle || "No requirement linked"}</div>
                             </td>
                             <td>{formatTileCardLabel(caseStatusValue, "Active")}</td>
+                            <td>{testCase.automated === "yes" ? "Yes" : "No"}</td>
                             <td>{`P${testCase.priority || 3}`}</td>
                             <td>{stepCount}</td>
                             <td>{suiteCount}</td>
@@ -3219,6 +3247,18 @@ export function TestCasesPage() {
                               onChange={(event) => setCaseDraft((current) => ({ ...current, status: event.target.value }))}
                             >
                               {testCaseStatusOptions.map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                              ))}
+                            </select>
+                          </FormField>
+                          <FormField label="Automated">
+                            <select
+                              value={caseDraft.automated}
+                              onChange={(event) =>
+                                setCaseDraft((current) => ({ ...current, automated: event.target.value as "yes" | "no" }))
+                              }
+                            >
+                              {testCaseAutomatedOptions.map((option) => (
                                 <option key={option.value} value={option.value}>{option.label}</option>
                               ))}
                             </select>
@@ -3649,7 +3689,7 @@ export function TestCasesPage() {
               <div className="import-modal-title">
                 <p className="eyebrow">Bulk Import</p>
                 <h3 id="bulk-import-title">Import test cases from CSV</h3>
-                <p>Upload reusable cases in bulk. Use one Action line and one Expected Result line per step. Prefix action lines with `[Group: Name]` or `[Shared: Name]` to rebuild grouped and shared steps automatically.</p>
+                <p>Upload reusable cases in bulk. Use one Action line and one Expected Result line per step. Prefix action lines with `[Group: Name]` or `[Shared: Name]` to rebuild grouped and shared steps automatically. Optional `Automated` values accept `yes` or `no` and default to `no`.</p>
               </div>
               <button aria-label="Close bulk import dialog" className="ghost-button" disabled={importTestCases.isPending} onClick={() => setIsImportModalOpen(false)} type="button">
                 Close
@@ -3685,7 +3725,7 @@ export function TestCasesPage() {
 
               <div className="detail-summary">
                 <strong>{importFileName || "No CSV loaded yet"}</strong>
-                <span>Use new lines or the `|` character in Action and Expected Result to create multiple steps. `Requirements` and `Suites` can also contain multiple names separated by new lines.</span>
+                <span>Use new lines or the `|` character in Action and Expected Result to create multiple steps. `Requirements` and `Suites` can also contain multiple names separated by new lines. If the CSV omits `Automated`, the imported case is saved as `no`.</span>
               </div>
 
               {importWarnings.length ? (

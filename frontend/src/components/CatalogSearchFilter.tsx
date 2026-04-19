@@ -26,6 +26,7 @@ export function CatalogSearchFilter({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({});
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const inputId = useId();
@@ -74,31 +75,47 @@ export function CatalogSearchFilter({
     }
 
     const updatePopoverPosition = () => {
+      const container = containerRef.current;
       const button = buttonRef.current;
       const popover = popoverRef.current;
 
-      if (!button || !popover) {
+      if (!container || !button || !popover) {
         return;
       }
 
+      const containerRect = container.getBoundingClientRect();
       const triggerRect = button.getBoundingClientRect();
-      const popoverWidth = popover.offsetWidth;
       const popoverHeight = popover.offsetHeight;
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
-      const spaceBelow = viewportHeight - triggerRect.bottom - POPOVER_TRIGGER_GAP - POPOVER_VIEWPORT_PADDING;
-      const spaceAbove = triggerRect.top - POPOVER_TRIGGER_GAP - POPOVER_VIEWPORT_PADDING;
-      const shouldOpenAbove = spaceBelow < Math.min(popoverHeight, 260) && spaceAbove > spaceBelow;
+      const isCompactViewport = viewportWidth <= 720;
+      const maxPopoverWidth = Math.max(240, viewportWidth - POPOVER_VIEWPORT_PADDING * 2);
+      const popoverWidth = isCompactViewport
+        ? Math.min(maxPopoverWidth, Math.max(containerRect.width, Math.min(320, maxPopoverWidth)))
+        : Math.min(popover.offsetWidth, maxPopoverWidth);
+      const anchorRect = isCompactViewport ? containerRect : triggerRect;
+      const spaceBelow = viewportHeight - anchorRect.bottom - POPOVER_TRIGGER_GAP - POPOVER_VIEWPORT_PADDING;
+      const spaceAbove = anchorRect.top - POPOVER_TRIGGER_GAP - POPOVER_VIEWPORT_PADDING;
+      const shouldOpenAbove =
+        !isCompactViewport &&
+        spaceBelow < Math.min(popoverHeight, 260) &&
+        spaceAbove > spaceBelow;
       const viewportMaxHeight = Math.max(120, viewportHeight - POPOVER_VIEWPORT_PADDING * 2);
       const availableHeight = shouldOpenAbove ? spaceAbove : spaceBelow;
       const maxHeight = Math.min(viewportMaxHeight, Math.max(120, Math.floor(availableHeight || viewportMaxHeight)));
-      const left = Math.min(
-        Math.max(POPOVER_VIEWPORT_PADDING, triggerRect.right - popoverWidth),
-        Math.max(POPOVER_VIEWPORT_PADDING, viewportWidth - popoverWidth - POPOVER_VIEWPORT_PADDING)
-      );
+      const effectiveHeight = Math.min(popoverHeight, maxHeight);
+      const left = isCompactViewport
+        ? Math.min(
+            Math.max(POPOVER_VIEWPORT_PADDING, containerRect.left),
+            Math.max(POPOVER_VIEWPORT_PADDING, viewportWidth - popoverWidth - POPOVER_VIEWPORT_PADDING)
+          )
+        : Math.min(
+            Math.max(POPOVER_VIEWPORT_PADDING, triggerRect.right - popoverWidth),
+            Math.max(POPOVER_VIEWPORT_PADDING, viewportWidth - popoverWidth - POPOVER_VIEWPORT_PADDING)
+          );
       const top = shouldOpenAbove
-        ? Math.max(POPOVER_VIEWPORT_PADDING, triggerRect.top - POPOVER_TRIGGER_GAP - Math.min(popoverHeight, maxHeight))
-        : Math.min(triggerRect.bottom + POPOVER_TRIGGER_GAP, viewportHeight - POPOVER_VIEWPORT_PADDING - Math.min(popoverHeight, maxHeight));
+        ? Math.max(POPOVER_VIEWPORT_PADDING, anchorRect.top - POPOVER_TRIGGER_GAP - effectiveHeight)
+        : Math.min(anchorRect.bottom + POPOVER_TRIGGER_GAP, viewportHeight - POPOVER_VIEWPORT_PADDING - effectiveHeight);
 
       setPopoverStyle({
         left,
@@ -106,7 +123,8 @@ export function CatalogSearchFilter({
         overflowY: "auto",
         position: "fixed",
         right: "auto",
-        top
+        top,
+        width: popoverWidth
       });
     };
 
@@ -121,7 +139,7 @@ export function CatalogSearchFilter({
   }, [isOpen]);
 
   return (
-    <div className="catalog-search-filter">
+    <div className="catalog-search-filter" ref={containerRef}>
       <div className="catalog-search-field">
         <input
           aria-label={ariaLabel || placeholder}

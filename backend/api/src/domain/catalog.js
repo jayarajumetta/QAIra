@@ -53,6 +53,11 @@ const TEST_CASE_STATUS_OPTIONS = freezeOptions([
   { value: "retired", label: "Retired", description: "Preserved for history but not intended for active reuse." }
 ]);
 
+const TEST_CASE_AUTOMATED_OPTIONS = freezeOptions([
+  { value: "no", label: "No", description: "Case is not marked for automation coverage yet." },
+  { value: "yes", label: "Yes", description: "Case is marked as automated and counts toward automation coverage." }
+]);
+
 const TEST_STEP_GROUP_KIND_OPTIONS = freezeOptions([
   { value: "local", label: "Local", description: "Scoped only to the current test case." },
   { value: "reusable", label: "Reusable", description: "Linked shared group reused across test cases." }
@@ -128,7 +133,9 @@ const DOMAIN_METADATA = Object.freeze({
   },
   test_cases: {
     default_status: "active",
+    default_automated: "no",
     statuses: TEST_CASE_STATUS_OPTIONS,
+    automated_options: TEST_CASE_AUTOMATED_OPTIONS,
     priority_scale: PRIORITY_SCALE
   },
   test_steps: {
@@ -165,6 +172,8 @@ module.exports = {
   INTEGRATION_TYPE_VALUES: optionValues(INTEGRATION_TYPE_OPTIONS),
   TEST_CASE_STATUS_OPTIONS,
   TEST_CASE_STATUS_VALUES: optionValues(TEST_CASE_STATUS_OPTIONS),
+  TEST_CASE_AUTOMATED_OPTIONS,
+  TEST_CASE_AUTOMATED_VALUES: optionValues(TEST_CASE_AUTOMATED_OPTIONS),
   TEST_STEP_GROUP_KIND_OPTIONS,
   TEST_STEP_GROUP_KIND_VALUES: optionValues(TEST_STEP_GROUP_KIND_OPTIONS),
   TEST_DATA_SET_MODE_OPTIONS,

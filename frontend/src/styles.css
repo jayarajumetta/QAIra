@@ -1216,13 +1216,16 @@ textarea {
   position: relative;
   flex: 1 1 18rem;
   min-width: min(100%, 18rem);
+  max-width: 100%;
 }
 
 .catalog-search-field {
   position: relative;
+  width: 100%;
 }
 
 .catalog-search-field input {
+  width: 100%;
   padding-right: 3.35rem;
 }
 
@@ -1277,10 +1280,12 @@ textarea {
   right: 0;
   z-index: 30;
   width: min(22rem, calc(100vw - 3rem));
+  max-width: calc(100vw - 1.5rem);
   max-height: calc(100dvh - 1.5rem);
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 0.95rem;
+  box-sizing: border-box;
   border-radius: 20px;
   border: 1px solid rgba(18, 40, 75, 0.1);
   background: rgba(255, 255, 255, 0.96);
@@ -1318,6 +1323,25 @@ textarea {
   display: flex;
   justify-content: flex-end;
   gap: 0.6rem;
+}
+
+@media (max-width: 640px) {
+  .catalog-search-filter {
+    flex-basis: 100%;
+    min-width: 100%;
+  }
+
+  .catalog-filter-popover {
+    width: calc(100vw - 1.5rem);
+  }
+
+  .catalog-filter-actions {
+    justify-content: stretch;
+  }
+
+  .catalog-filter-actions > * {
+    width: 100%;
+  }
 }
 
 .design-sidebar-actions.compact {
@@ -13308,9 +13332,20 @@ html {
   }
 }
 
-/* Projects list coverage badge and collapsed sidebar polish */
+/* Projects list progress meters and collapsed sidebar polish */
+.project-list-toolbar {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 1rem;
+}
+
+.project-list-toolbar .catalog-search-filter {
+  width: min(100%, 24rem);
+  max-width: 24rem;
+}
+
 .project-catalog-card .project-card-header {
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .project-card-icon-row {
@@ -13324,11 +13359,6 @@ html {
   min-width: 0;
 }
 
-.project-catalog-card .project-coverage-circle {
-  min-width: 0;
-  justify-self: end;
-}
-
 .project-card-title-group {
   padding-top: 0.05rem;
 }
@@ -13338,73 +13368,49 @@ html {
   line-height: 1.35;
 }
 
-.project-coverage-circle {
-  --project-coverage: 0%;
-  position: relative;
-  width: 2.7rem;
-  height: 2.7rem;
-  border-radius: 999px;
-  display: inline-grid;
-  place-items: center;
-  flex: 0 0 auto;
-  background: conic-gradient(#1aa96b var(--project-coverage), rgba(94, 116, 146, 0.16) 0);
-  color: var(--text-primary);
-  font-size: 0.72rem;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: 0;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+.project-card-progress-stack {
+  display: grid;
+  gap: 0.8rem;
 }
 
-.project-coverage-circle::before {
-  content: "";
-  position: absolute;
-  inset: 0.28rem;
-  border-radius: inherit;
-  background: var(--panel-strong);
-  border: 1px solid rgba(18, 40, 75, 0.08);
+.project-progress-meter {
+  display: grid;
+  gap: 0.35rem;
 }
 
-.project-coverage-circle > span {
-  position: relative;
-  z-index: 1;
-  display: inline-flex;
+.project-progress-meter-header {
+  display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
-.project-coverage-circle.is-complete {
-  background: conic-gradient(#1aa96b var(--project-coverage), rgba(94, 116, 146, 0.16) 0);
-}
-
-.project-coverage-circle.is-partial {
-  background: conic-gradient(#2168f3 var(--project-coverage), rgba(94, 116, 146, 0.16) 0);
-}
-
-.project-coverage-circle.is-uncovered {
-  background: conic-gradient(#d04668 var(--project-coverage), rgba(208, 70, 104, 0.16) 0);
-}
-
-.project-coverage-circle.is-empty {
-  background: conic-gradient(#7b8da8 var(--project-coverage), rgba(94, 116, 146, 0.16) 0);
+.project-progress-meter-header span {
+  font-size: 0.82rem;
+  font-weight: 700;
   color: var(--text-secondary);
 }
 
-:root[data-theme="dark"] .project-coverage-circle::before {
-  background: var(--panel-strong);
-  border-color: rgba(180, 199, 231, 0.14);
+.project-progress-meter-header strong {
+  font-size: 0.92rem;
+  font-weight: 800;
+  color: var(--text-primary);
 }
 
-:root[data-theme="dark"] .project-coverage-circle.is-complete {
-  background: conic-gradient(#2fc486 var(--project-coverage), rgba(169, 189, 219, 0.16) 0);
+.project-progress-meter .progress-meter {
+  gap: 0;
+  margin-top: 0;
 }
 
-:root[data-theme="dark"] .project-coverage-circle.is-partial {
-  background: conic-gradient(#6ca7ff var(--project-coverage), rgba(169, 189, 219, 0.16) 0);
+.project-progress-meter .progress-meter-track {
+  height: 0.58rem;
 }
 
-:root[data-theme="dark"] .project-coverage-circle.is-uncovered {
-  background: conic-gradient(#ff8aa3 var(--project-coverage), rgba(255, 138, 163, 0.16) 0);
+@media (max-width: 640px) {
+  .project-list-toolbar .catalog-search-filter {
+    width: 100%;
+    max-width: 100%;
+  }
 }
 
 .sidebar.is-collapsed .nav-list {
@@ -13450,10 +13456,6 @@ html {
 @media (max-width: 640px) {
   .project-catalog-card .project-card-header {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .project-catalog-card .project-coverage-circle {
-    justify-self: start;
   }
 }
 

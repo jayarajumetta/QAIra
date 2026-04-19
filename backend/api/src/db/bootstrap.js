@@ -248,6 +248,17 @@ const statements = [
   `CREATE INDEX IF NOT EXISTS idx_project_members_project_user ON project_members (project_id, user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_execution_suites_execution_suite ON execution_suites (execution_id, suite_id)`,
   `CREATE INDEX IF NOT EXISTS idx_test_cases_app_status_created ON test_cases (app_type_id, status, created_at DESC)`,
+  `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS automated TEXT NOT NULL DEFAULT 'no'`,
+  `
+    UPDATE test_cases
+    SET automated = CASE
+      WHEN automated IS NULL OR BTRIM(automated) = '' THEN 'no'
+      WHEN LOWER(BTRIM(automated)) IN ('yes', 'y', 'true', '1') THEN 'yes'
+      ELSE 'no'
+    END
+  `,
+  `ALTER TABLE test_cases DROP CONSTRAINT IF EXISTS test_cases_automated_check`,
+  `ALTER TABLE test_cases ADD CONSTRAINT test_cases_automated_check CHECK (automated IN ('yes', 'no'))`,
   `
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,

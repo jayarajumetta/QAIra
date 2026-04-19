@@ -43,6 +43,7 @@ type CaseDraft = {
   suite_id: string;
   title: string;
   description: string;
+  automated: "yes" | "no";
   priority: string;
   status: string;
   requirement_id: string;
@@ -73,10 +74,11 @@ type SuiteCaseStepFilter = "all" | "with-steps" | "no-steps";
 type SuiteCaseRunFilter = "all" | "with-runs" | "no-runs";
 
 const DEFAULT_CASE_STATUS = "active";
-const createEmptyCaseDraft = (defaultStatus = DEFAULT_CASE_STATUS): CaseDraft => ({
+const createEmptyCaseDraft = (defaultStatus = DEFAULT_CASE_STATUS, defaultAutomated: "yes" | "no" = "no"): CaseDraft => ({
   suite_id: "",
   title: "",
   description: "",
+  automated: defaultAutomated,
   priority: "3",
   status: defaultStatus,
   requirement_id: ""
@@ -191,8 +193,16 @@ export function DesignPage() {
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const defaultCaseStatus = domainMetadataQuery.data?.test_cases.default_status || DEFAULT_CASE_STATUS;
+  const defaultCaseAutomated = (domainMetadataQuery.data?.test_cases.default_automated || "no") as "yes" | "no";
   const testCaseStatusOptions = domainMetadataQuery.data?.test_cases.statuses || [];
-  const emptyCaseDraft = useMemo(() => createEmptyCaseDraft(defaultCaseStatus), [defaultCaseStatus]);
+  const testCaseAutomatedOptions = domainMetadataQuery.data?.test_cases.automated_options || [
+    { value: "no", label: "No" },
+    { value: "yes", label: "Yes" }
+  ];
+  const emptyCaseDraft = useMemo(
+    () => createEmptyCaseDraft(defaultCaseStatus, defaultCaseAutomated),
+    [defaultCaseAutomated, defaultCaseStatus]
+  );
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -258,7 +268,7 @@ export function DesignPage() {
   });
   const createTestCaseMutation = useMutation({ mutationFn: api.testCases.create });
   const updateTestCaseMutation = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: Partial<{ app_type_id: string; suite_id: string; suite_ids: string[]; title: string; description: string; priority: number; status: string; requirement_id: string }> }) =>
+    mutationFn: ({ id, input }: { id: string; input: Partial<{ app_type_id: string; suite_id: string; suite_ids: string[]; title: string; description: string; automated: "yes" | "no"; priority: number; status: string; requirement_id: string }> }) =>
       api.testCases.update(id, input)
   });
   const deleteTestCaseMutation = useMutation({ mutationFn: api.testCases.delete });
@@ -698,11 +708,12 @@ export function DesignPage() {
       suite_id: selectedTestCase.suite_ids?.[0] || selectedTestCase.suite_id || "",
       title: selectedTestCase.title,
       description: selectedTestCase.description || "",
+      automated: (selectedTestCase.automated || defaultCaseAutomated) as "yes" | "no",
       priority: String(selectedTestCase.priority ?? 3),
       status: selectedTestCase.status || defaultCaseStatus,
       requirement_id: selectedTestCase.requirement_id || ""
     });
-  }, [defaultCaseStatus, emptyCaseDraft, isCreatingCase, selectedSuiteId, selectedTestCase, suites]);
+  }, [defaultCaseAutomated, defaultCaseStatus, emptyCaseDraft, isCreatingCase, selectedSuiteId, selectedTestCase, suites]);
 
   useEffect(() => {
     const drafts: Record<string, StepDraft> = {};
@@ -893,6 +904,7 @@ export function DesignPage() {
           suite_ids: [suiteId],
           title: caseDraft.title,
           description: caseDraft.description || undefined,
+          automated: caseDraft.automated,
           priority: Number(caseDraft.priority || 3),
           status: caseDraft.status || defaultCaseStatus,
           requirement_id: caseDraft.requirement_id || undefined,
@@ -906,6 +918,7 @@ export function DesignPage() {
           suite_ids: [suiteId],
           title: caseDraft.title,
           description: caseDraft.description || null,
+          automated: caseDraft.automated,
           priority: Number(caseDraft.priority || 3),
           status: caseDraft.status || defaultCaseStatus,
           requirement_id: caseDraft.requirement_id || null
@@ -927,6 +940,7 @@ export function DesignPage() {
               : [suiteId],
             title: caseDraft.title,
             description: caseDraft.description,
+            automated: caseDraft.automated,
             priority: Number(caseDraft.priority || 3),
             status: caseDraft.status,
             requirement_id: caseDraft.requirement_id || undefined
@@ -944,6 +958,7 @@ export function DesignPage() {
                     : [suiteId],
                   title: caseDraft.title,
                   description: caseDraft.description || null,
+                  automated: caseDraft.automated,
                   priority: Number(caseDraft.priority || 3),
                   status: caseDraft.status,
                   requirement_id: caseDraft.requirement_id || null
@@ -1538,6 +1553,7 @@ export function DesignPage() {
           selectedTestCase={selectedTestCase}
           stepDrafts={stepDrafts}
           suites={suites}
+          testCaseAutomatedOptions={testCaseAutomatedOptions}
           testCaseStatusOptions={testCaseStatusOptions}
           updatePending={updateTestCaseMutation.isPending || updateStepMutation.isPending}
         />
@@ -2152,6 +2168,7 @@ function TestCaseList({
                     <th>ID</th>
                     <th>Case</th>
                     <th>Status</th>
+                    <th>Automated</th>
                     <th>Priority</th>
                     <th>Steps</th>
                     <th>Suites</th>
@@ -2179,6 +2196,7 @@ function TestCaseList({
                           <div className="catalog-row-subcopy">{requirement?.title || "No requirement linked"}</div>
                         </td>
                         <td>{formatTileCardLabel(caseStatusValue, "Active")}</td>
+                        <td>{testCase.automated === "yes" ? "Yes" : "No"}</td>
                         <td>{`P${testCase.priority || 3}`}</td>
                         <td>{stepCount}</td>
                         <td>{suiteCount}</td>
@@ -2218,6 +2236,7 @@ function SuiteCaseEditorModal({
   createPending,
   updatePending,
   deletePending,
+  testCaseAutomatedOptions,
   testCaseStatusOptions,
   onCaseDraftChange,
   onClose,
@@ -2258,6 +2277,7 @@ function SuiteCaseEditorModal({
   createPending: boolean;
   updatePending: boolean;
   deletePending: boolean;
+  testCaseAutomatedOptions: Array<{ value: string; label: string }>;
   testCaseStatusOptions: Array<{ value: string; label: string }>;
   onCaseDraftChange: (value: CaseDraft) => void;
   onClose: () => void;
@@ -2374,6 +2394,13 @@ function SuiteCaseEditorModal({
                   <FormField label="Status">
                     <select value={caseDraft.status} onChange={(event) => onCaseDraftChange({ ...caseDraft, status: event.target.value })}>
                       {testCaseStatusOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </FormField>
+                  <FormField label="Automated">
+                    <select value={caseDraft.automated} onChange={(event) => onCaseDraftChange({ ...caseDraft, automated: event.target.value as "yes" | "no" })}>
+                      {testCaseAutomatedOptions.map((option) => (
                         <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </select>

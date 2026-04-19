@@ -3,11 +3,12 @@ const { v4: uuid } = require("uuid");
 const requirementTestCaseService = require("./requirementTestCase.service");
 const suiteTestCaseService = require("./suiteTestCase.service");
 const sharedStepSyncService = require("./sharedStepSync.service");
-const { DOMAIN_METADATA, TEST_CASE_STATUS_VALUES } = require("../domain/catalog");
+const { DOMAIN_METADATA, TEST_CASE_AUTOMATED_VALUES, TEST_CASE_STATUS_VALUES } = require("../domain/catalog");
 const displayIdService = require("./displayId.service");
 
 const DEFAULT_PRIORITY = 3;
 const DEFAULT_STATUS = DOMAIN_METADATA.test_cases.default_status;
+const DEFAULT_AUTOMATED = DOMAIN_METADATA.test_cases.default_automated || "no";
 
 const selectAppType = db.prepare(`
   SELECT id, project_id
@@ -52,13 +53,13 @@ const selectSharedStepGroupsForAppType = db.prepare(`
 `);
 
 const insertTestCaseRecord = db.prepare(`
-  INSERT INTO test_cases (id, display_id, app_type_id, suite_id, title, description, priority, status, requirement_id)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO test_cases (id, display_id, app_type_id, suite_id, title, description, automated, priority, status, requirement_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const updateTestCaseRecord = db.prepare(`
   UPDATE test_cases
-  SET app_type_id = ?, suite_id = ?, title = ?, description = ?, priority = ?, status = ?, requirement_id = ?
+  SET app_type_id = ?, suite_id = ?, title = ?, description = ?, automated = ?, priority = ?, status = ?, requirement_id = ?
   WHERE id = ?
 `);
 
@@ -147,6 +148,28 @@ const normalizeStatus = (value, fallback = DEFAULT_STATUS) => {
 
   if (!TEST_CASE_STATUS_VALUES.includes(normalized)) {
     throw new Error(`Test case status must be one of: ${TEST_CASE_STATUS_VALUES.join(", ")}`);
+  }
+
+  return normalized;
+};
+
+const normalizeAutomated = (value, fallback = DEFAULT_AUTOMATED) => {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+
+  if (normalized === "true" || normalized === "y" || normalized === "1") {
+    return "yes";
+  }
+
+  if (normalized === "false" || normalized === "n" || normalized === "0") {
+    return "no";
+  }
+
+  if (!TEST_CASE_AUTOMATED_VALUES.includes(normalized)) {
+    throw new Error(`Test case automated value must be one of: ${TEST_CASE_AUTOMATED_VALUES.join(", ")}`);
   }
 
   return normalized;
@@ -442,6 +465,7 @@ const createPersistablePayload = async ({
   suite_ids = [],
   title,
   description,
+  automated,
   priority,
   status,
   requirement_id,
@@ -471,6 +495,7 @@ const createPersistablePayload = async ({
     requirement_ids: resolvedRequirementIds,
     title: resolvedTitle,
     description: normalizeText(description),
+    automated: normalizeAutomated(automated),
     priority: normalizePriority(priority),
     status: normalizeStatus(status),
     display_id,
@@ -488,6 +513,7 @@ const createOne = db.transaction(async (payload) => {
     payload.suite_ids[0] || null,
     payload.title,
     payload.description,
+    payload.automated,
     payload.priority,
     payload.status,
     payload.requirement_ids[0] || null
@@ -621,6 +647,7 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [] })
         app_type_id: resolvedAppTypeId,
         title: normalizedRow?.title,
         description: normalizedRow?.description,
+        automated: normalizedRow?.automated,
         priority: normalizedRow?.priority,
         status: normalizeStatus(normalizedRow?.status, "draft"),
         suite_ids: resolvedSuiteIds,
@@ -744,6 +771,7 @@ exports.updateTestCase = async (id, data) => {
     requirement_ids: requestedRequirementIds,
     title: normalizeText(data.title) || existing.title,
     description: data.description !== undefined ? normalizeText(data.description) : existing.description,
+    automated: data.automated !== undefined ? normalizeAutomated(data.automated, existing.automated || DEFAULT_AUTOMATED) : existing.automated || DEFAULT_AUTOMATED,
     priority: data.priority !== undefined ? normalizePriority(data.priority) : existing.priority ?? DEFAULT_PRIORITY,
     status: data.status !== undefined ? normalizeStatus(data.status) : existing.status || DEFAULT_STATUS
   };
@@ -754,6 +782,7 @@ exports.updateTestCase = async (id, data) => {
       payload.suite_ids[0] || null,
       payload.title,
       payload.description,
+      payload.automated,
       payload.priority,
       payload.status,
       payload.requirement_ids[0] || null,

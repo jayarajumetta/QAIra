@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AddIcon } from "../components/AppIcons";
 import { api } from "../lib/api";
@@ -7,6 +7,7 @@ import { DisplayIdBadge } from "../components/DisplayIdBadge";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { ProgressMeter } from "../components/ProgressMeter";
 import {
   TileCardAppTypesIcon,
   TileCardCaseIcon,
@@ -48,6 +49,12 @@ type ProjectRequirementCoverage = {
   coveragePercent: number;
 };
 
+type ProjectAutomationCoverage = {
+  totalCases: number;
+  automatedCases: number;
+  coveragePercent: number;
+};
+
 const createDraftId = () =>
   globalThis.crypto?.randomUUID?.() || `project-draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
@@ -71,26 +78,49 @@ const emptyRequirementCoverage: ProjectRequirementCoverage = {
   coveragePercent: 0
 };
 
-const getCoverageClassName = (coverage: ProjectRequirementCoverage) => {
-  if (!coverage.totalRequirements) {
-    return "project-coverage-circle is-empty";
-  }
-
-  if (coverage.coveragePercent >= 100) {
-    return "project-coverage-circle is-complete";
-  }
-
-  if (coverage.coveredRequirements > 0) {
-    return "project-coverage-circle is-partial";
-  }
-
-  return "project-coverage-circle is-uncovered";
+const emptyAutomationCoverage: ProjectAutomationCoverage = {
+  totalCases: 0,
+  automatedCases: 0,
+  coveragePercent: 0
 };
 
-const getCoverageTitle = (coverage: ProjectRequirementCoverage) =>
-  coverage.totalRequirements
-    ? `Requirements coverage: ${coverage.coveragePercent}% (${coverage.coveredRequirements}/${coverage.totalRequirements} requirements linked to test cases)`
-    : "Requirements coverage: 0% (no requirements yet)";
+const getMetricTone = (covered: number, total: number) => {
+  if (!total) {
+    return "neutral" as const;
+  }
+
+  if (covered >= total) {
+    return "success" as const;
+  }
+
+  if (covered > 0) {
+    return "info" as const;
+  }
+
+  return "danger" as const;
+};
+
+function ProjectProgressBar({
+  label,
+  value,
+  tone
+}: {
+  label: string;
+  value: number;
+  tone: "info" | "success" | "danger" | "neutral";
+}) {
+  const safeValue = Math.max(0, Math.min(100, Math.round(value)));
+
+  return (
+    <div className="project-progress-meter" aria-label={`${label} ${safeValue}%`}>
+      <div className="project-progress-meter-header">
+        <span>{label}</span>
+        <strong>{safeValue}%</strong>
+      </div>
+      <ProgressMeter hideCopy tone={tone} value={safeValue} />
+    </div>
+  );
+}
 
 export function ProjectsPage() {
   const queryClient = useQueryClient();
@@ -292,6 +322,30 @@ export function ProjectsPage() {
 
     return coverageByProjectId;
   }, [projectIdByAppTypeId, projectItems, requirementCountByProjectId, requirements.data, testCases.data]);
+
+  const automationCoverageByProjectId = useMemo(() => {
+    const coverageByProjectId: Record<string, ProjectAutomationCoverage> = {};
+
+    projectItems.forEach((project) => {
+      const projectTestCases = (testCases.data || []).filter((testCase) => {
+        if (!testCase.app_type_id) {
+          return false;
+        }
+
+        return projectIdByAppTypeId.get(testCase.app_type_id) === project.id;
+      });
+      const totalCases = projectTestCases.length;
+      const automatedCases = projectTestCases.filter((testCase) => testCase.automated === "yes").length;
+
+      coverageByProjectId[project.id] = {
+        totalCases,
+        automatedCases,
+        coveragePercent: totalCases ? Math.round((automatedCases / totalCases) * 100) : 0
+      };
+    });
+
+    return coverageByProjectId;
+  }, [projectIdByAppTypeId, projectItems, testCases.data]);
 
   const filteredProjectItems = useMemo(() => {
     const normalizedSearch = projectSearch.trim().toLowerCase();
@@ -607,7 +661,8 @@ export function ProjectsPage() {
           <Panel
             title="Projects list"
             subtitle="Browse workspace scope, then open a focused project workspace when you want to edit members or app types."
-            actions={(
+          >
+            <div className="project-list-toolbar">
               <CatalogSearchFilter
                 activeFilterCount={activeProjectFilterCount}
                 ariaLabel="Search projects"
@@ -656,8 +711,7 @@ export function ProjectsPage() {
                   </div>
                 </div>
               </CatalogSearchFilter>
-            )}
-          >
+            </div>
             {isProjectCatalogLoading ? <TileCardSkeletonGrid className="catalog-grid compact" /> : null}
             {!isProjectCatalogLoading ? (
               <div className="catalog-grid compact">
@@ -668,7 +722,7 @@ export function ProjectsPage() {
                   const requirementCount = requirementCountByProjectId[project.id] || 0;
                   const testCaseCount = testCaseCountByProjectId[project.id] || 0;
                   const coverage = requirementCoverageByProjectId[project.id] || emptyRequirementCoverage;
-                  const coverageTitle = getCoverageTitle(coverage);
+                  const automationCoverage = automationCoverageByProjectId[project.id] || emptyAutomationCoverage;
 
                   return (
                     <button
@@ -689,19 +743,22 @@ export function ProjectsPage() {
                             </TileCardIconFrame>
                             <DisplayIdBadge value={project.display_id || project.id} />
                           </div>
-                          <span
-                            aria-label={`${project.name} ${coverageTitle}`}
-                            className={getCoverageClassName(coverage)}
-                            style={{ "--project-coverage": `${coverage.coveragePercent}%` } as CSSProperties}
-                            title={coverageTitle}
-                          >
-                            <span>{coverage.coveragePercent}%</span>
-                          </span>
                         </div>
                         <div className="tile-card-title-group project-card-title-group">
                           <strong>{project.name}</strong>
                         </div>
-                        <p className="tile-card-description">{project.description || "No description yet."}</p>
+                        <div className="project-card-progress-stack" aria-label={`${project.name} coverage summary`}>
+                          <ProjectProgressBar
+                            label="Requirement coverage"
+                            tone={getMetricTone(coverage.coveredRequirements, coverage.totalRequirements)}
+                            value={coverage.coveragePercent}
+                          />
+                          <ProjectProgressBar
+                            label="Automation coverage"
+                            tone={getMetricTone(automationCoverage.automatedCases, automationCoverage.totalCases)}
+                            value={automationCoverage.coveragePercent}
+                          />
+                        </div>
                         <div className="tile-card-facts" aria-label={`${project.name} facts`}>
                           <TileCardFact label={String(memberCount)} title={`${memberCount} member${memberCount === 1 ? "" : "s"}`} tone={memberCount ? "info" : "neutral"}>
                             <TileCardUsersIcon />

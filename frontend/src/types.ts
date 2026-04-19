@@ -101,7 +101,9 @@ export type DomainMetadata = {
   };
   test_cases: {
     default_status: string;
+    default_automated: string;
     statuses: DomainOption[];
+    automated_options: DomainOption[];
     priority_scale: number[];
   };
   test_steps: {
@@ -219,6 +221,7 @@ export type TestCase = {
   requirement_ids?: string[];
   title: string;
   description: string | null;
+  automated: "yes" | "no" | null;
   priority: number | null;
   status: string | null;
   requirement_id: string | null;

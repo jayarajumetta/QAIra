@@ -147,6 +147,7 @@ CREATE TABLE test_cases (
   suite_id TEXT,
   title TEXT NOT NULL,
   description TEXT,
+  automated TEXT NOT NULL DEFAULT 'no' CHECK(automated IN ('yes','no')),
   priority INTEGER DEFAULT 3,
   status TEXT DEFAULT 'active',
   requirement_id TEXT,

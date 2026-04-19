@@ -9,6 +9,7 @@ export type ImportedTestCaseRow = {
   suites?: string;
   suite?: string;
   description?: string;
+  automated?: string;
   priority?: number;
   status?: string;
   step_group_name?: string;
@@ -31,6 +32,7 @@ const HEADER_ALIASES: Record<keyof ImportedTestCaseRow, string[]> = {
   suites: ["suites", "suitenames", "linkedsuites"],
   suite: ["suite", "suitename", "linkedsuite"],
   description: ["description", "details", "notes", "scenario"],
+  automated: ["automated", "automation", "isautomated", "automatedcase", "autocoverage"],
   priority: ["priority", "severity"],
   status: ["status", "state"],
   step_group_name: ["stepgroupname", "groupname", "sharedgroupname", "stepgroup", "group"],
