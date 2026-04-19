@@ -241,9 +241,11 @@ const statements = [
       priority INTEGER,
       status TEXT,
       sort_order INTEGER NOT NULL DEFAULT 1,
+      assigned_to TEXT,
       PRIMARY KEY (execution_id, test_case_id)
     )
   `,
+  `ALTER TABLE execution_case_snapshots ADD COLUMN IF NOT EXISTS assigned_to TEXT`,
   `
     CREATE TABLE IF NOT EXISTS execution_step_snapshots (
       execution_id TEXT NOT NULL,

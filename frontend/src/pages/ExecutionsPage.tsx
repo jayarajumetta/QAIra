@@ -11,7 +11,6 @@ import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { ProjectDropdown } from "../components/ProjectDropdown";
 import { ProgressMeter } from "../components/ProgressMeter";
-import { SharedStepsIcon as SharedStepsIconGraphic } from "../components/SharedStepsIcon";
 import { StepParameterizedText } from "../components/StepParameterizedText";
 import { StatusBadge } from "../components/StatusBadge";
 import { SubnavTabs } from "../components/SubnavTabs";
@@ -31,6 +30,7 @@ import {
   type ExecutionStepStatus
 } from "../lib/executionLogs";
 import { buildDataSetParameterValues, resolveStepParameterText } from "../lib/stepParameters";
+import { type AssigneeOption, buildAssigneeOptions, resolveUserInitials, resolveUserPrimaryLabel, resolveUserSecondaryLabel } from "../lib/userDisplay";
 import type {
   AppType,
   Execution,
@@ -46,8 +46,7 @@ import type {
   SmartExecutionImpactCase,
   SmartExecutionPreviewResponse,
   TestStep,
-  TestSuite,
-  User
+  TestSuite
 } from "../types";
 
 type ExecutionTab = "overview" | "logs" | "failures" | "history";
@@ -68,6 +67,8 @@ type ExecutionCaseView = {
   suite_name: string | null;
   suite_ids: string[];
   sort_order: number;
+  assigned_to: string | null;
+  assigned_user: Execution["assigned_user"];
 };
 
 type ExecutionRunSummary = {
@@ -95,13 +96,7 @@ type ExecutionEvidenceFilter = "all" | "with-evidence" | "no-evidence";
 type ExecutionCreateMode = "manual" | "smart";
 type TestRunsView = "executions" | "scheduled";
 
-type ExecutionAssigneeOption = {
-  id: string;
-  name: string | null;
-  email: string;
-  label: string;
-  caption: string | null;
-};
+type ExecutionAssigneeOption = AssigneeOption;
 
 type ExecutionEvidencePreviewState = {
   stepLabel: string;
@@ -227,7 +222,9 @@ function toCaseView(snapshot: ExecutionCaseSnapshot): ExecutionCaseView {
     suite_id: snapshot.suite_id,
     suite_name: snapshot.suite_name,
     suite_ids: snapshot.suite_id ? [snapshot.suite_id] : [],
-    sort_order: snapshot.sort_order
+    sort_order: snapshot.sort_order,
+    assigned_to: snapshot.assigned_to || null,
+    assigned_user: snapshot.assigned_user || null
   };
 }
 
@@ -396,20 +393,6 @@ function formatDuration(ms?: number | null, fallback = DEFAULT_DURATION_LABEL) {
   return `${seconds}s`;
 }
 
-function resolveUserPrimaryLabel(user?: { name?: string | null; email?: string | null } | null) {
-  const trimmedName = user?.name?.trim();
-  return trimmedName || user?.email || "Unassigned";
-}
-
-function resolveUserSecondaryLabel(user?: { name?: string | null; email?: string | null } | null) {
-  const trimmedName = user?.name?.trim();
-  if (trimmedName && user?.email) {
-    return user.email;
-  }
-
-  return null;
-}
-
 function executionImpactLevelLabel(level: SmartExecutionImpactCase["impact_level"]) {
   return level.charAt(0).toUpperCase() + level.slice(1);
 }
@@ -477,6 +460,8 @@ export function ExecutionsPage() {
   const [uploadingEvidenceStepId, setUploadingEvidenceStepId] = useState("");
   const [executionEvidencePreview, setExecutionEvidencePreview] = useState<ExecutionEvidencePreviewState | null>(null);
   const [isExecutionContextModalOpen, setIsExecutionContextModalOpen] = useState(false);
+  const [executionAssignmentDraft, setExecutionAssignmentDraft] = useState("");
+  const [caseAssignmentDraft, setCaseAssignmentDraft] = useState("");
   const executionCardMeasureRef = useRef<HTMLDivElement | null>(null);
   const deferredExecutionSearch = useDeferredValue(executionSearch);
 
@@ -547,6 +532,13 @@ export function ExecutionsPage() {
   });
 
   const createExecution = useMutation({ mutationFn: api.executions.create });
+  const updateExecutionAssignment = useMutation({
+    mutationFn: ({ id, assigned_to }: { id: string; assigned_to?: string }) => api.executions.update(id, { assigned_to })
+  });
+  const updateExecutionCaseAssignment = useMutation({
+    mutationFn: ({ executionId, testCaseId, assigned_to }: { executionId: string; testCaseId: string; assigned_to?: string }) =>
+      api.executions.updateCaseAssignment(executionId, testCaseId, { assigned_to })
+  });
   const createExecutionSchedule = useMutation({ mutationFn: api.executionSchedules.create });
   const runExecutionSchedule = useMutation({ mutationFn: api.executionSchedules.run });
   const deleteExecutionSchedule = useMutation({ mutationFn: api.executionSchedules.delete });
@@ -579,28 +571,9 @@ export function ExecutionsPage() {
   const integrations = integrationsQuery.data || [];
   const selectedProject = projects.find((project) => project.id === projectId) || null;
   const selectedAppType = appTypes.find((appType) => appType.id === appTypeId) || null;
-  const userById = useMemo(
-    () =>
-      users.reduce<Record<string, User>>((accumulator, user) => {
-        accumulator[user.id] = user;
-        return accumulator;
-      }, {}),
-    [users]
-  );
   const assigneeOptions = useMemo<ExecutionAssigneeOption[]>(
-    () =>
-      projectMembers
-        .map((member) => userById[member.user_id])
-        .filter((user): user is User => Boolean(user))
-        .map((user) => ({
-          id: user.id,
-          name: user.name || null,
-          email: user.email,
-          label: resolveUserPrimaryLabel(user),
-          caption: resolveUserSecondaryLabel(user)
-        }))
-        .sort((left, right) => left.label.localeCompare(right.label)),
-    [projectMembers, userById]
+    () => buildAssigneeOptions(projectMembers, users),
+    [projectMembers, users]
   );
   const projectNameById = useMemo(
     () =>
@@ -877,6 +850,20 @@ export function ExecutionsPage() {
   }, [assigneeOptions, projectMembersQuery.isPending, selectedExecutionAssigneeId, usersQuery.isPending]);
 
   useEffect(() => {
+    if (usersQuery.isPending || projectMembersQuery.isPending) {
+      return;
+    }
+
+    if (executionAssignmentDraft && !assigneeOptions.some((option) => option.id === executionAssignmentDraft)) {
+      setExecutionAssignmentDraft("");
+    }
+
+    if (caseAssignmentDraft && !assigneeOptions.some((option) => option.id === caseAssignmentDraft)) {
+      setCaseAssignmentDraft("");
+    }
+  }, [assigneeOptions, caseAssignmentDraft, executionAssignmentDraft, projectMembersQuery.isPending, usersQuery.isPending]);
+
+  useEffect(() => {
     const requestedExecutionId = searchParams.get("execution");
 
     if (requestedExecutionId) {
@@ -918,6 +905,10 @@ export function ExecutionsPage() {
     [selectedExecution?.case_snapshots]
   );
   const snapshotSteps = selectedExecution?.step_snapshots || [];
+
+  useEffect(() => {
+    setExecutionAssignmentDraft(selectedExecution?.assigned_to || "");
+  }, [selectedExecution?.assigned_to, selectedExecution?.id]);
 
   useEffect(() => {
     if (currentExecutionStatus !== "running") {
@@ -1231,6 +1222,51 @@ export function ExecutionsPage() {
 
   const refreshExecutionSchedules = async () => {
     await queryClient.invalidateQueries({ queryKey: ["execution-schedules"] });
+  };
+
+  const handleSaveExecutionAssignment = async () => {
+    if (!selectedExecution) {
+      return;
+    }
+
+    try {
+      await updateExecutionAssignment.mutateAsync({
+        id: selectedExecution.id,
+        assigned_to: executionAssignmentDraft || ""
+      });
+      await refreshExecutionScope(selectedExecution.id);
+      showSuccess(
+        executionAssignmentDraft
+          ? "Execution assignee updated. Unoverridden test cases now follow this owner."
+          : "Execution assignee cleared."
+      );
+    } catch (error) {
+      showError(error, "Unable to update execution assignee");
+    }
+  };
+
+  const handleSaveCaseAssignment = async () => {
+    if (!selectedExecution || !selectedExecutionCase) {
+      return;
+    }
+
+    try {
+      await updateExecutionCaseAssignment.mutateAsync({
+        executionId: selectedExecution.id,
+        testCaseId: selectedExecutionCase.id,
+        assigned_to: caseAssignmentDraft || ""
+      });
+      await refreshExecutionScope(selectedExecution.id);
+      showSuccess(
+        caseAssignmentDraft
+          ? "Test case assignee updated for this execution."
+          : selectedExecution.assigned_user
+            ? "Test case assignee reset to the execution owner."
+            : "Test case assignee cleared."
+      );
+    } catch (error) {
+      showError(error, "Unable to update test case assignee");
+    }
   };
 
   const handleFinalizeExecution = async (mode: "complete" | "abort") => {
@@ -1644,6 +1680,13 @@ export function ExecutionsPage() {
 
   const selectedExecutionCase = executionCaseOrder.find((testCase) => testCase.id === selectedTestCaseId) || null;
   const selectedExecutionResult = selectedExecutionCase ? resultByCaseId[selectedExecutionCase.id] : null;
+  const selectedExecutionCaseEffectiveUser = selectedExecutionCase?.assigned_user || selectedExecution?.assigned_user || null;
+  const selectedExecutionCaseExplicitAssigneeId = selectedExecutionCase?.assigned_to || "";
+
+  useEffect(() => {
+    setCaseAssignmentDraft(selectedExecutionCaseExplicitAssigneeId);
+  }, [selectedExecutionCase?.id, selectedExecutionCaseExplicitAssigneeId]);
+
   const focusExecutionCase = (testCaseId: string, executionId = selectedExecutionId) => {
     const scopedCase = executionCaseOrder.find((testCase) => testCase.id === testCaseId);
 
@@ -1769,6 +1812,13 @@ export function ExecutionsPage() {
     projects.find((project) => project.id === selectedExecution?.project_id)?.name ||
     selectedExecution?.project_id ||
     "No project scoped";
+  const hasExecutionAssignmentChange = executionAssignmentDraft !== (selectedExecution?.assigned_to || "");
+  const hasCaseAssignmentChange = caseAssignmentDraft !== selectedExecutionCaseExplicitAssigneeId;
+  const selectedExecutionCaseAssignmentHint = selectedExecutionCase?.assigned_to
+    ? "This case has its own execution-level assignee override."
+    : selectedExecution?.assigned_user
+      ? `This case is currently following ${resolveUserPrimaryLabel(selectedExecution.assigned_user)} from the execution.`
+      : "No assignee is set yet for this execution or this case.";
   const remainingCaseCount = Math.max(executionProgress.totalCases - executionProgress.completedCases, 0);
   const selectedCaseStatusLabel = selectedExecutionCase ? caseDerivedStatus(selectedExecutionCase) : executionProgress.derivedStatus;
   const activeExecutionStage = selectedExecutionCase ? "case" : selectedExecution ? "suites" : "executions";
@@ -2347,6 +2397,7 @@ export function ExecutionsPage() {
                         <div className="execution-health-status-row">
                           <StatusBadge value={selectedCaseStatusLabel} />
                           {selectedExecutionCase.suite_name ? <span className="count-pill">{selectedExecutionCase.suite_name}</span> : null}
+                          <ExecutionAssigneeChip className="execution-card-assignee--compact" user={selectedExecutionCaseEffectiveUser} />
                           <span className="execution-health-trigger">{selectedExecution?.name || "Selected execution"}</span>
                         </div>
                         <strong>{selectedExecutionCase.title}</strong>
@@ -2375,10 +2426,43 @@ export function ExecutionsPage() {
                         </div>
                       </div>
 
-                      <div className="action-row">
-                        <button className="ghost-button" onClick={() => setIsExecutionContextModalOpen(true)} type="button">
-                          View context snapshot
-                        </button>
+                      <div className="execution-assignment-panel execution-assignment-panel--case">
+                        <div className="execution-assignment-copy">
+                          <strong>Case assignee</strong>
+                          <span>{selectedExecutionCaseAssignmentHint}</span>
+                        </div>
+                        <div className="execution-assignment-actions">
+                          <select
+                            disabled={!assigneeOptions.length || updateExecutionCaseAssignment.isPending}
+                            value={caseAssignmentDraft}
+                            onChange={(event) => setCaseAssignmentDraft(event.target.value)}
+                          >
+                            <option value="">
+                              {selectedExecution?.assigned_user
+                                ? `Use execution assignee (${resolveUserPrimaryLabel(selectedExecution.assigned_user)})`
+                                : assigneeOptions.length
+                                  ? "Unassigned"
+                                  : "No project members available"}
+                            </option>
+                            {assigneeOptions.map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.caption ? `${option.label} · ${option.caption}` : option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            className="ghost-button"
+                            disabled={!assigneeOptions.length || !hasCaseAssignmentChange || updateExecutionCaseAssignment.isPending}
+                            onClick={() => void handleSaveCaseAssignment()}
+                            type="button"
+                          >
+                            <ExecutionAssigneeIcon />
+                            <span>{updateExecutionCaseAssignment.isPending ? "Saving…" : "Update assignee"}</span>
+                          </button>
+                          <button className="ghost-button" onClick={() => setIsExecutionContextModalOpen(true)} type="button">
+                            View context snapshot
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -2681,7 +2765,7 @@ export function ExecutionsPage() {
                         <div className="execution-health-status-row">
                           <StatusBadge value={currentExecutionStatus} />
                           <span className="count-pill">{selectedExecutionAppTypeLabel}</span>
-                          {selectedExecution?.assigned_user ? <span className="count-pill">Assigned: {resolveUserPrimaryLabel(selectedExecution.assigned_user)}</span> : null}
+                          <ExecutionAssigneeChip className="execution-card-assignee--compact" user={selectedExecution?.assigned_user || null} />
                           <span className="execution-health-trigger">{(selectedExecution.trigger || "manual").toUpperCase()} trigger</span>
                         </div>
 
@@ -2728,6 +2812,38 @@ export function ExecutionsPage() {
                     </div>
 
                     <ExecutionContextSnapshotSummary execution={selectedExecution} onViewFull={() => setIsExecutionContextModalOpen(true)} />
+
+                    <div className="execution-assignment-panel">
+                      <div className="execution-assignment-copy">
+                        <strong>Execution assignee</strong>
+                        <span>Set the default owner for this run. Test cases without their own override will follow this assignee.</span>
+                      </div>
+                      <div className="execution-assignment-actions">
+                        <select
+                          disabled={!assigneeOptions.length || updateExecutionAssignment.isPending}
+                          value={executionAssignmentDraft}
+                          onChange={(event) => setExecutionAssignmentDraft(event.target.value)}
+                        >
+                          <option value="">
+                            {assigneeOptions.length ? "Unassigned" : "No project members available"}
+                          </option>
+                          {assigneeOptions.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.caption ? `${option.label} · ${option.caption}` : option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          className="ghost-button"
+                          disabled={!assigneeOptions.length || !hasExecutionAssignmentChange || updateExecutionAssignment.isPending}
+                          onClick={() => void handleSaveExecutionAssignment()}
+                          type="button"
+                        >
+                          <ExecutionAssigneeIcon />
+                          <span>{updateExecutionAssignment.isPending ? "Saving…" : "Update assignee"}</span>
+                        </button>
+                      </div>
+                    </div>
 
                     <div className="execution-control-strip">
                       <div className="execution-control-copy">
@@ -2906,6 +3022,7 @@ export function ExecutionsPage() {
                                     <div className="tree-children">
                                       {suiteCases.map((testCase) => (
                                         <ExecutionSuiteCaseCard
+                                          assignedUser={testCase.assigned_user || selectedExecution?.assigned_user || null}
                                           caseStatus={caseDerivedStatus(testCase)}
                                           durationLabel={formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}
                                           isActive={selectedTestCaseId === testCase.id}
@@ -3156,6 +3273,28 @@ function ExecutionAccordionChevronIcon() {
   );
 }
 
+function ExecutionAssigneeChip({
+  user,
+  className = "",
+  fallback = "Unassigned"
+}: {
+  user?: { name?: string | null; email?: string | null } | null;
+  className?: string;
+  fallback?: string;
+}) {
+  const label = user ? resolveUserPrimaryLabel(user) : fallback;
+  const detail = user ? resolveUserSecondaryLabel(user) : null;
+
+  return (
+    <span className={["execution-card-assignee", className].filter(Boolean).join(" ")} title={detail || label}>
+      <span className="execution-card-assignee-avatar" aria-hidden="true">
+        {resolveUserInitials(user)}
+      </span>
+      <span>{label}</span>
+    </span>
+  );
+}
+
 function ExecutionListCard({
   execution,
   summary,
@@ -3184,16 +3323,6 @@ function ExecutionListCard({
   const latestEvidenceLabel = summary.latestActivityAt
     ? formatExecutionTimestamp(summary.latestActivityAt)
     : "No evidence yet";
-  const assigneeLabel = execution.assigned_user ? resolveUserPrimaryLabel(execution.assigned_user) : "Unassigned";
-  const assigneeDetail = execution.assigned_user ? resolveUserSecondaryLabel(execution.assigned_user) : null;
-  const assigneeInitials = execution.assigned_user
-    ? (execution.assigned_user.name || execution.assigned_user.email || "U")
-        .split(/\s+/)
-        .filter(Boolean)
-        .slice(0, 2)
-        .map((part) => part[0]?.toUpperCase() || "")
-        .join("")
-    : "U";
   const progressDetail = resolvedTotal
     ? `${summary.total}/${resolvedTotal} touched · ${summary.failed} failed · ${summary.blocked} blocked`
     : "No evidence recorded yet";
@@ -3216,16 +3345,7 @@ function ExecutionListCard({
           </div>
           <div className="tile-card-title-group">
             <strong>{execution.name || "Unnamed execution"}</strong>
-            <span className="execution-card-assignee" title={assigneeDetail || assigneeLabel}>
-              <span className="execution-card-assignee-avatar" aria-hidden="true">
-                {execution.assigned_user?.avatar_data_url ? (
-                  <img alt="" className="execution-card-assignee-photo" src={execution.assigned_user.avatar_data_url} />
-                ) : (
-                  assigneeInitials
-                )}
-              </span>
-              <span>{assigneeLabel}</span>
-            </span>
+            <ExecutionAssigneeChip user={execution.assigned_user} />
           </div>
           <ExecutionStatusIndicator status={executionStatus} />
         </div>
@@ -3598,7 +3718,7 @@ function StepKindIconBadge({
   label: string;
   tone: "default" | "shared" | "local";
 }) {
-  const icon = kind === "reusable" ? <SharedStepsIconGraphic size={16} /> : <ExecutionStepsIcon />;
+  const icon = <ExecutionStepsIcon />;
 
   return (
     <span
@@ -3709,6 +3829,7 @@ function ExecutionSuiteCaseCard({
   stepCount,
   durationLabel,
   caseStatus,
+  assignedUser,
   isActive,
   isNext,
   onSelect
@@ -3718,6 +3839,7 @@ function ExecutionSuiteCaseCard({
   stepCount: number;
   durationLabel: string;
   caseStatus: ExecutionResult["status"] | "queued";
+  assignedUser?: Execution["assigned_user"];
   isActive: boolean;
   isNext: boolean;
   onSelect: () => void;
@@ -3743,7 +3865,10 @@ function ExecutionSuiteCaseCard({
           </div>
           <div className="tile-card-title-group">
             <strong>{testCase.title}</strong>
-            <span className="tile-card-kicker">{isNext ? "Next recommended case" : suiteName || "Suite case"}</span>
+            <div className="execution-case-card-meta">
+              <span className="tile-card-kicker">{isNext ? "Next recommended case" : suiteName || "Suite case"}</span>
+              <ExecutionAssigneeChip className="execution-card-assignee--compact" user={assignedUser} />
+            </div>
           </div>
           <ExecutionStatusIndicator status={caseStatus} />
         </div>
@@ -4287,7 +4412,7 @@ function ExecutionCreateModal({
                 <input value={executionName} onChange={(event) => onExecutionNameChange(event.target.value)} />
               </FormField>
 
-              <FormField label="Assign to">
+              <FormField label="Assign to" hint="Sets the default owner for this execution and any snapped test case that does not override it later.">
                 <select
                   disabled={!projectId || !assigneeOptions.length}
                   value={selectedExecutionAssigneeId}
@@ -4707,7 +4832,7 @@ function CreateExecutionScheduleModal({
               <FormField label="Schedule name">
                 <input value={executionName} onChange={(event) => onExecutionNameChange(event.target.value)} />
               </FormField>
-              <FormField label="Assign to">
+              <FormField label="Assign to" hint="This user becomes the default owner each time the scheduled run creates a fresh execution.">
                 <select
                   disabled={!projectId || !assigneeOptions.length}
                   value={selectedAssigneeId}

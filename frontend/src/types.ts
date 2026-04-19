@@ -447,6 +447,13 @@ export type ExecutionCaseSnapshot = {
   priority: number | null;
   status: string | null;
   sort_order: number;
+  assigned_to?: string | null;
+  assigned_user?: {
+    id: string;
+    email: string;
+    name: string | null;
+    avatar_data_url?: string | null;
+  } | null;
 };
 
 export type ExecutionStepSnapshot = {

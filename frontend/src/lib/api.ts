@@ -425,6 +425,10 @@ export const api = {
       request<SmartExecutionPreviewResponse>("/executions/smart-plan-preview", { method: "POST", body: JSON.stringify(input) }),
     create: (input: { project_id: string; app_type_id?: string; suite_ids?: string[]; test_case_ids?: string[]; test_environment_id?: string; test_configuration_id?: string; test_data_set_id?: string; assigned_to?: string; name?: string; created_by: string }) =>
       request<{ id: string }>("/executions", { method: "POST", body: JSON.stringify(input) }),
+    update: (id: string, input: { assigned_to?: string }) =>
+      request<{ updated: boolean }>(`/executions/${id}`, { method: "PUT", body: JSON.stringify(input) }),
+    updateCaseAssignment: (executionId: string, testCaseId: string, input: { assigned_to?: string }) =>
+      request<{ updated: boolean }>(`/executions/${executionId}/cases/${testCaseId}/assignment`, { method: "PUT", body: JSON.stringify(input) }),
     rerun: (id: string, input: { failed_only?: boolean; created_by: string; name?: string }) =>
       request<{ id: string }>(`/executions/${id}/rerun`, { method: "POST", body: JSON.stringify(input) }),
     start: (id: string) => request<{ started: boolean }>(`/executions/${id}/start`, { method: "POST" }),

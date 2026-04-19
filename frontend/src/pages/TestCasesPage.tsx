@@ -44,6 +44,7 @@ import {
 import { api } from "../lib/api";
 import { appendUniqueImages, parseExternalLinks, readImageFiles, toggleRequirementOnPreviewCase } from "../lib/aiDesignStudio";
 import { upsertSharedStepGroupInCache } from "../lib/sharedStepGroupCache";
+import { type AssigneeOption, buildAssigneeOptions } from "../lib/userDisplay";
 import {
   collectStepParameters,
   filterStepParameterValues,
@@ -57,12 +58,14 @@ import type {
   AppType,
   Execution,
   ExecutionResult,
+  ProjectMember,
   Project,
   Requirement,
   SharedStepGroup,
   TestCase,
   TestStep,
-  TestSuite
+  TestSuite,
+  User
 } from "../types";
 
 type TestCaseDraft = {
@@ -117,6 +120,7 @@ type StepActionMenuAction = {
 
 type CaseStepFilter = "all" | "with-steps" | "no-steps";
 type CaseRunFilter = "all" | "with-runs" | "no-runs";
+type TestCaseExecutionAssigneeOption = AssigneeOption;
 
 type TestCaseEditorSectionKey = "case" | "steps" | "history";
 
@@ -414,6 +418,7 @@ export function TestCasesPage() {
   const [selectedExecutionEnvironmentId, setSelectedExecutionEnvironmentId] = useState("");
   const [selectedExecutionConfigurationId, setSelectedExecutionConfigurationId] = useState("");
   const [selectedExecutionDataSetId, setSelectedExecutionDataSetId] = useState("");
+  const [selectedExecutionAssigneeId, setSelectedExecutionAssigneeId] = useState("");
   const [expandedSections, setExpandedSections] = useState<Record<TestCaseEditorSectionKey, boolean>>(createDefaultTestCaseSections);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
@@ -473,6 +478,16 @@ export function TestCasesPage() {
   const projectsQuery = useQuery({
     queryKey: ["projects"],
     queryFn: api.projects.list
+  });
+  const usersQuery = useQuery({
+    queryKey: ["users"],
+    queryFn: api.users.list,
+    enabled: Boolean(session)
+  });
+  const projectMembersQuery = useQuery({
+    queryKey: ["project-members", projectId],
+    queryFn: () => api.projectMembers.list({ project_id: projectId }),
+    enabled: Boolean(projectId && session)
   });
   const appTypesQuery = useQuery({
     queryKey: ["app-types", projectId],
@@ -563,6 +578,8 @@ export function TestCasesPage() {
   const deleteStep = useMutation({ mutationFn: api.testSteps.delete });
 
   const projects = projectsQuery.data || [];
+  const users = (usersQuery.data || []) as User[];
+  const projectMembers = (projectMembersQuery.data || []) as ProjectMember[];
   const appTypes = appTypesQuery.data || [];
   const requirements = requirementsQuery.data || [];
   const suites = suitesQuery.data || [];
@@ -573,6 +590,10 @@ export function TestCasesPage() {
   const executionResults = executionResultsQuery.data || [];
   const allTestSteps = allTestStepsQuery.data || [];
   const integrations = integrationsQuery.data || [];
+  const assigneeOptions = useMemo<TestCaseExecutionAssigneeOption[]>(
+    () => buildAssigneeOptions(projectMembers, users),
+    [projectMembers, users]
+  );
   const steps = useMemo(
     () => ((stepsQuery.data || []) as TestStep[]).slice().sort((left, right) => left.step_order - right.step_order),
     [stepsQuery.data]
@@ -637,6 +658,7 @@ export function TestCasesPage() {
   const closeCreateExecutionModal = () => {
     setIsCreateExecutionModalOpen(false);
     setExecutionName("");
+    setSelectedExecutionAssigneeId("");
     resetExecutionContextSelection();
   };
 
@@ -684,6 +706,16 @@ export function TestCasesPage() {
   }, [appTypeId, appTypes]);
 
   useEffect(() => {
+    if (usersQuery.isPending || projectMembersQuery.isPending) {
+      return;
+    }
+
+    if (selectedExecutionAssigneeId && !assigneeOptions.some((option) => option.id === selectedExecutionAssigneeId)) {
+      setSelectedExecutionAssigneeId("");
+    }
+  }, [assigneeOptions, projectMembersQuery.isPending, selectedExecutionAssigneeId, usersQuery.isPending]);
+
+  useEffect(() => {
     const requestedProjectId = searchParams.get("project");
 
     if (!requestedProjectId || requestedProjectId === projectId) {
@@ -727,6 +759,7 @@ export function TestCasesPage() {
     setIsCreateSuiteModalOpen(false);
     setIsCreateExecutionModalOpen(false);
     setExecutionName("");
+    setSelectedExecutionAssigneeId("");
     resetExecutionContextSelection();
     setCaseDraft(emptyCaseDraft);
     setNewStepDraft(EMPTY_STEP_DRAFT);
@@ -1517,6 +1550,7 @@ export function TestCasesPage() {
         test_environment_id: selectedExecutionEnvironmentId || undefined,
         test_configuration_id: selectedExecutionConfigurationId || undefined,
         test_data_set_id: selectedExecutionDataSetId || undefined,
+        assigned_to: selectedExecutionAssigneeId || undefined,
         name: executionName.trim() || undefined,
         created_by: session.user.id
       });
@@ -3230,11 +3264,13 @@ export function TestCasesPage() {
           appTypes={appTypes}
           onAppTypeChange={(value) => {
             setAppTypeId(value);
+            setSelectedExecutionAssigneeId("");
             resetExecutionContextSelection();
           }}
           onProjectChange={(value) => {
             setProjectId(value);
             setAppTypeId("");
+            setSelectedExecutionAssigneeId("");
             resetExecutionContextSelection();
           }}
           projectId={projectId}
@@ -4062,9 +4098,11 @@ export function TestCasesPage() {
       {isCreateExecutionModalOpen ? (
         <TestCaseExecutionModal
           appTypeId={appTypeId}
+          assigneeOptions={assigneeOptions}
           canCreateExecution={Boolean(projectId && appTypeId && selectedActionCases.length && session?.user.id)}
           executionName={executionName}
           isSubmitting={createExecution.isPending}
+          onAssigneeChange={setSelectedExecutionAssigneeId}
           onClose={closeCreateExecutionModal}
           onConfigurationChange={setSelectedExecutionConfigurationId}
           onDataSetChange={setSelectedExecutionDataSetId}
@@ -4075,6 +4113,7 @@ export function TestCasesPage() {
           }
           onSubmit={handleCreateExecution}
           projectId={projectId}
+          selectedAssigneeId={selectedExecutionAssigneeId}
           selectedConfigurationId={selectedExecutionConfigurationId}
           selectedAppType={selectedAppType?.name || ""}
           selectedDataSetId={selectedExecutionDataSetId}
@@ -4375,11 +4414,14 @@ function TestCaseExecutionModal({
   projectId,
   appTypeId,
   executionName,
+  selectedAssigneeId,
+  assigneeOptions,
   selectedEnvironmentId,
   selectedConfigurationId,
   selectedDataSetId,
   canCreateExecution,
   isSubmitting,
+  onAssigneeChange,
   onEnvironmentChange,
   onConfigurationChange,
   onDataSetChange,
@@ -4394,11 +4436,14 @@ function TestCaseExecutionModal({
   projectId: string;
   appTypeId: string;
   executionName: string;
+  selectedAssigneeId: string;
+  assigneeOptions: TestCaseExecutionAssigneeOption[];
   selectedEnvironmentId: string;
   selectedConfigurationId: string;
   selectedDataSetId: string;
   canCreateExecution: boolean;
   isSubmitting: boolean;
+  onAssigneeChange: (value: string) => void;
   onEnvironmentChange: (value: string) => void;
   onConfigurationChange: (value: string) => void;
   onDataSetChange: (value: string) => void;
@@ -4435,14 +4480,32 @@ function TestCaseExecutionModal({
           </div>
 
           <div className="execution-create-body">
-            <FormField label="Run name">
-              <input
-                autoFocus
-                placeholder="Optional run name"
-                value={executionName}
-                onChange={(event) => onExecutionNameChange(event.target.value)}
-              />
-            </FormField>
+            <div className="execution-create-grid">
+              <FormField label="Run name">
+                <input
+                  autoFocus
+                  placeholder="Optional run name"
+                  value={executionName}
+                  onChange={(event) => onExecutionNameChange(event.target.value)}
+                />
+              </FormField>
+              <FormField label="Assign to" hint="Sets the default owner for this run and the snapped test cases inside it.">
+                <select
+                  disabled={!projectId || !assigneeOptions.length}
+                  value={selectedAssigneeId}
+                  onChange={(event) => onAssigneeChange(event.target.value)}
+                >
+                  <option value="">
+                    {!projectId ? "Select a project first" : assigneeOptions.length ? "Unassigned" : "No project members available"}
+                  </option>
+                  {assigneeOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.caption ? `${option.label} · ${option.caption}` : option.label}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+            </div>
 
             <div className="detail-summary">
               <strong>{selectedProject || "Select a project to continue"}</strong>
@@ -4781,7 +4844,7 @@ function StepGroupIcon() {
 }
 
 function StepSharedGroupIcon() {
-  return <SharedStepsIconGraphic size={16} />;
+  return <ExecutionStepsIcon />;
 }
 
 function StepGroupChevronIcon() {
@@ -4826,7 +4889,7 @@ function StepKindIconBadge({
   label: string;
   tone: "default" | "shared" | "local";
 }) {
-  const icon = kind === "reusable" ? <SharedStepsIconGraphic size={20} /> : <ExecutionStepsIcon />;
+  const icon = <ExecutionStepsIcon />;
 
   return (
     <span

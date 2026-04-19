@@ -89,6 +89,32 @@ module.exports = async function (fastify) {
     return execution;
   });
 
+  fastify.put("/executions/:id", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      assigned_to: { required: false, type: "string" }
+    }, req.body);
+
+    const execution = await service.getExecution(req.params.id);
+    await projectService.getProject(execution.project_id, req.user.id);
+
+    return service.updateExecution(req.params.id, req.body);
+  });
+
+  fastify.put("/executions/:id/cases/:testCaseId/assignment", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      assigned_to: { required: false, type: "string" }
+    }, req.body);
+
+    const execution = await service.getExecution(req.params.id);
+    await projectService.getProject(execution.project_id, req.user.id);
+
+    return service.updateExecutionCaseAssignment(req.params.id, req.params.testCaseId, req.body);
+  });
+
   fastify.post("/executions/:id/rerun", async (req) => {
     await fastify.authenticate(req);
 

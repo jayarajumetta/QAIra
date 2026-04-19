@@ -13,7 +13,7 @@ const getSuiteIdsForExecution = db.prepare(`
 `);
 
 const getCaseSnapshotsForExecution = db.prepare(`
-  SELECT execution_id, test_case_id, test_case_title, test_case_description, suite_id, suite_name, priority, status, sort_order
+  SELECT execution_id, test_case_id, test_case_title, test_case_description, suite_id, suite_name, priority, status, sort_order, assigned_to
   FROM execution_case_snapshots
   WHERE execution_id = ?
   ORDER BY sort_order ASC, test_case_title ASC
@@ -48,9 +48,10 @@ const insertExecutionCaseSnapshot = db.prepare(`
     suite_name,
     priority,
     status,
-    sort_order
+    sort_order,
+    assigned_to
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const insertExecutionStepSnapshot = db.prepare(`
@@ -125,6 +126,30 @@ const selectExecutionAssignee = db.prepare(`
   WHERE id = ?
 `);
 
+const selectExecutionRecord = db.prepare(`
+  SELECT *
+  FROM executions
+  WHERE id = ?
+`);
+
+const selectExecutionCaseSnapshot = db.prepare(`
+  SELECT execution_id, test_case_id, assigned_to
+  FROM execution_case_snapshots
+  WHERE execution_id = ? AND test_case_id = ?
+`);
+
+const updateExecutionAssignment = db.prepare(`
+  UPDATE executions
+  SET assigned_to = ?
+  WHERE id = ?
+`);
+
+const updateExecutionCaseAssignment = db.prepare(`
+  UPDATE execution_case_snapshots
+  SET assigned_to = ?
+  WHERE execution_id = ? AND test_case_id = ?
+`);
+
 const selectProjectMember = db.prepare(`
   SELECT id
   FROM project_members
@@ -161,6 +186,19 @@ function normalizeText(value) {
 
   const normalized = value.trim();
   return normalized || null;
+}
+
+function shapeAssignedUser(user) {
+  if (!user) {
+    return null;
+  }
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name || null,
+    avatar_data_url: user.avatar_data_url || null
+  };
 }
 
 function attachExecutionContext(execution) {
@@ -224,15 +262,46 @@ async function attachExecutionAssignee(execution) {
 
   return {
     ...execution,
-    assigned_user: assignedUser
-      ? {
-          id: assignedUser.id,
-          email: assignedUser.email,
-          name: assignedUser.name || null,
-          avatar_data_url: assignedUser.avatar_data_url || null
-        }
-      : null
+    assigned_user: shapeAssignedUser(assignedUser)
   };
+}
+
+async function attachExecutionCaseAssignees(caseSnapshots) {
+  if (!Array.isArray(caseSnapshots) || !caseSnapshots.length) {
+    return [];
+  }
+
+  const userIds = [...new Set(caseSnapshots.map((snapshot) => snapshot.assigned_to).filter(Boolean))];
+  const assignedUsersById = {};
+
+  for (const userId of userIds) {
+    assignedUsersById[userId] = shapeAssignedUser(await selectExecutionAssignee.get(userId));
+  }
+
+  return caseSnapshots.map((snapshot) => ({
+    ...snapshot,
+    assigned_user: snapshot.assigned_to ? assignedUsersById[snapshot.assigned_to] || null : null
+  }));
+}
+
+async function validateExecutionAssignee(projectId, assignedTo) {
+  if (!assignedTo) {
+    return null;
+  }
+
+  const assignedUser = await selectExecutionAssignee.get(assignedTo);
+
+  if (!assignedUser) {
+    throw new Error("Assigned user not found");
+  }
+
+  const member = await selectProjectMember.get(projectId, assignedTo);
+
+  if (!member) {
+    throw new Error("Assigned user must be a member of the selected project");
+  }
+
+  return assignedUser;
 }
 
 async function resolveExecutionContextResource({ id, label, projectId, appTypeId, lookup, snapshotBuilder }) {
@@ -387,11 +456,12 @@ async function attachDetailedScope(execution) {
   const suiteRows = await getSuiteIdsForExecution.all(execution.id);
   const storedCaseSnapshots = await getCaseSnapshotsForExecution.all(execution.id);
   const storedStepSnapshots = await getStepSnapshotsForExecution.all(execution.id);
+  const hydratedCaseSnapshots = await attachExecutionCaseAssignees(storedCaseSnapshots);
 
   if (storedCaseSnapshots.length || storedStepSnapshots.length || !suiteRows.length) {
     return {
       ...hydrated,
-      case_snapshots: storedCaseSnapshots,
+      case_snapshots: hydratedCaseSnapshots,
       step_snapshots: storedStepSnapshots
     };
   }
@@ -406,7 +476,7 @@ async function attachDetailedScope(execution) {
 
   return {
     ...hydrated,
-    case_snapshots: liveSnapshotPayload.caseSnapshots,
+    case_snapshots: await attachExecutionCaseAssignees(liveSnapshotPayload.caseSnapshots),
     step_snapshots: liveSnapshotPayload.stepSnapshots
   };
 }
@@ -439,19 +509,7 @@ exports.createExecution = async ({
 
   if (!user) throw new Error("Invalid user");
 
-  if (assigned_to) {
-    const assignedUser = await selectExecutionAssignee.get(assigned_to);
-
-    if (!assignedUser) {
-      throw new Error("Assigned user not found");
-    }
-
-    const member = await selectProjectMember.get(project_id, assigned_to);
-
-    if (!member) {
-      throw new Error("Assigned user must be a member of the selected project");
-    }
-  }
+  await validateExecutionAssignee(project_id, assigned_to);
 
   if (app_type_id) {
     const appType = await db.prepare(`
@@ -625,7 +683,8 @@ exports.createExecution = async ({
         caseSnapshot.suite_name,
         caseSnapshot.priority,
         caseSnapshot.status,
-        caseSnapshot.sort_order
+        caseSnapshot.sort_order,
+        caseSnapshot.assigned_to || null
       );
     }
 
@@ -671,9 +730,7 @@ exports.getExecutions = async ({ project_id, status }) => {
 };
 
 exports.getExecution = async (id) => {
-  const execution = await db.prepare(`
-    SELECT * FROM executions WHERE id = ?
-  `).get(id);
+  const execution = await selectExecutionRecord.get(id);
 
   if (!execution) throw new Error("Execution not found");
 
@@ -784,7 +841,8 @@ exports.rerunExecution = async (id, { failed_only = false, created_by, name } = 
         snapshot.suite_name,
         snapshot.priority,
         snapshot.status,
-        index + 1
+        index + 1,
+        snapshot.assigned_to || null
       );
     }
 
@@ -843,6 +901,48 @@ exports.completeExecution = async (id, status) => {
   `).run(status, id);
 
   return { completed: true };
+};
+
+exports.updateExecution = async (id, input = {}) => {
+  if (!Object.prototype.hasOwnProperty.call(input, "assigned_to")) {
+    throw new Error("assigned_to is required");
+  }
+
+  const execution = await selectExecutionRecord.get(id);
+
+  if (!execution) {
+    throw new Error("Execution not found");
+  }
+
+  const assignedTo = normalizeText(input.assigned_to);
+  await validateExecutionAssignee(execution.project_id, assignedTo);
+  await updateExecutionAssignment.run(assignedTo, id);
+
+  return { updated: true };
+};
+
+exports.updateExecutionCaseAssignment = async (executionId, testCaseId, input = {}) => {
+  if (!Object.prototype.hasOwnProperty.call(input, "assigned_to")) {
+    throw new Error("assigned_to is required");
+  }
+
+  const execution = await selectExecutionRecord.get(executionId);
+
+  if (!execution) {
+    throw new Error("Execution not found");
+  }
+
+  const caseSnapshot = await selectExecutionCaseSnapshot.get(executionId, testCaseId);
+
+  if (!caseSnapshot) {
+    throw new Error("Execution test case not found");
+  }
+
+  const assignedTo = normalizeText(input.assigned_to);
+  await validateExecutionAssignee(execution.project_id, assignedTo);
+  await updateExecutionCaseAssignment.run(assignedTo, executionId, testCaseId);
+
+  return { updated: true };
 };
 
 exports.deleteExecution = async (id) => {

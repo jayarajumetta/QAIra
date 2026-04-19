@@ -13,7 +13,7 @@ import { StepParameterDialog } from "../components/StepParameterDialog";
 import { StepParameterizedText } from "../components/StepParameterizedText";
 import { SharedStepsIcon as SharedStepsIconGraphic } from "../components/SharedStepsIcon";
 import { StatusBadge } from "../components/StatusBadge";
-import { TileCardLinkIcon } from "../components/TileCardPrimitives";
+import { TileCardFact, TileCardLinkIcon, TileCardRunsIcon, TileCardStepsIcon, getTileCardTone } from "../components/TileCardPrimitives";
 import { TileBrowserPane } from "../components/TileBrowserPane";
 import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
 import { ToastMessage } from "../components/ToastMessage";
@@ -25,7 +25,7 @@ import { api } from "../lib/api";
 import { removeSharedStepGroupFromCache, upsertSharedStepGroupInCache } from "../lib/sharedStepGroupCache";
 import { collectStepParameters, filterStepParameterValues, type StepParameterDefinition } from "../lib/stepParameters";
 import { TEST_AUTHORING_SECTION_ITEMS } from "../lib/workspaceSections";
-import type { SharedStepGroup, TestCase } from "../types";
+import type { ExecutionResult, SharedStepGroup, TestCase } from "../types";
 
 type SharedGroupDraftStep = {
   id: string;
@@ -112,6 +112,21 @@ const formatSharedStepDate = (value?: string) => {
   return Number.isNaN(parsed.getTime()) ? value : sharedStepDateFormatter.format(parsed);
 };
 
+const aggregateRunStatus = (
+  current: ExecutionResult["status"] | undefined,
+  next: ExecutionResult["status"]
+): ExecutionResult["status"] => {
+  if (current === "failed" || next === "failed") {
+    return "failed";
+  }
+
+  if (current === "blocked" || next === "blocked") {
+    return "blocked";
+  }
+
+  return "passed";
+};
+
 export function SharedStepsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -162,6 +177,11 @@ export function SharedStepsPage() {
     queryFn: () => api.testCases.list({ app_type_id: appTypeId }),
     enabled: Boolean(appTypeId)
   });
+  const executionResultsQuery = useQuery({
+    queryKey: ["shared-steps-execution-results", appTypeId],
+    queryFn: () => api.executionResults.list({ app_type_id: appTypeId }),
+    enabled: Boolean(appTypeId)
+  });
   const suitesQuery = useQuery({
     queryKey: ["shared-steps-test-suites", appTypeId],
     queryFn: () => api.testSuites.list({ app_type_id: appTypeId }),
@@ -180,6 +200,7 @@ export function SharedStepsPage() {
   const sharedGroups = sharedGroupsQuery.data || [];
   const requirements = requirementsQuery.data || [];
   const testCases = testCasesQuery.data || [];
+  const executionResults = executionResultsQuery.data || [];
   const suites = suitesQuery.data || [];
 
   const resetStepComposer = () => {
@@ -337,6 +358,41 @@ export function SharedStepsPage() {
     () => selectedGroupIds.filter((groupId) => visibleGroupIds.includes(groupId)),
     [selectedGroupIds, visibleGroupIds]
   );
+  const historyBySharedGroupId = useMemo(() => {
+    const groupIdsByCaseId = sharedGroups.reduce<Record<string, string[]>>((map, group) => {
+      (group.used_test_cases || []).forEach((testCase) => {
+        map[testCase.id] = map[testCase.id] || [];
+        map[testCase.id].push(group.id);
+      });
+      return map;
+    }, {});
+    const historyMap: Record<string, Record<string, { execution_id: string; status: ExecutionResult["status"]; created_at?: string }>> = {};
+
+    executionResults.forEach((result) => {
+      const linkedGroupIds = groupIdsByCaseId[result.test_case_id] || [];
+
+      linkedGroupIds.forEach((groupId) => {
+        historyMap[groupId] = historyMap[groupId] || {};
+        const current = historyMap[groupId][result.execution_id];
+
+        historyMap[groupId][result.execution_id] = {
+          execution_id: result.execution_id,
+          status: aggregateRunStatus(current?.status, result.status),
+          created_at:
+            String(result.created_at || "") > String(current?.created_at || "")
+              ? result.created_at
+              : current?.created_at || result.created_at
+        };
+      });
+    });
+
+    return Object.fromEntries(
+      Object.entries(historyMap).map(([groupId, resultsByExecution]) => [
+        groupId,
+        Object.values(resultsByExecution).sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")))
+      ])
+    ) as Record<string, Array<{ execution_id: string; status: ExecutionResult["status"]; created_at?: string }>>;
+  }, [executionResults, sharedGroups]);
 
   const selectedProject = projects.find((project) => project.id === projectId) || null;
   const selectedAppType = appTypes.find((appType) => appType.id === appTypeId) || null;
@@ -806,8 +862,8 @@ export function SharedStepsPage() {
             </div>
 
             <TileBrowserPane className="test-case-library-scroll">
-              {sharedGroupsQuery.isLoading ? <TileCardSkeletonGrid /> : null}
-              {!sharedGroupsQuery.isLoading && filteredGroups.length && catalogViewMode === "tile" ? (
+              {sharedGroupsQuery.isLoading || executionResultsQuery.isLoading ? <TileCardSkeletonGrid /> : null}
+              {!sharedGroupsQuery.isLoading && !executionResultsQuery.isLoading && filteredGroups.length && catalogViewMode === "tile" ? (
                 <div className="tile-browser-grid">
                   {filteredGroups.map((group) => {
                     const isActive = !isCreating && selectedGroupId === group.id;
@@ -815,6 +871,9 @@ export function SharedStepsPage() {
                     const stepCount = group.step_count || group.steps.length;
                     const usageCount = group.usage_count || 0;
                     const preview = group.steps[0]?.action || group.steps[0]?.expected_result || "No step preview yet";
+                    const history = (historyBySharedGroupId[group.id] || []).slice(0, 5);
+                    const runCount = (historyBySharedGroupId[group.id] || []).length;
+                    const latestRun = history[0];
 
                     return (
                       <button
@@ -847,28 +906,44 @@ export function SharedStepsPage() {
                             </label>
                           </div>
                           <div className="tile-card-header">
-                            <span aria-label="Shared Steps" className="step-kind-badge is-shared" title="Shared Steps">
-                              <SharedStepsIconGraphic size={16} />
-                            </span>
                             <div className="tile-card-title-group">
                               <strong>{group.name}</strong>
-                              <span className="tile-card-kicker">{formatSharedStepDate(group.updated_at)}</span>
                             </div>
                           </div>
                           <p className="tile-card-description">{group.description || preview}</p>
                           <div className="tile-card-facts" aria-label={`${group.name} facts`}>
-                            <span className="tile-card-fact">
-                              <strong>{stepCount}</strong>
-                              <small>steps</small>
-                            </span>
-                            <span className="tile-card-fact">
-                              <strong>{usageCount}</strong>
-                              <small>{usageCount === 1 ? "case" : "cases"}</small>
-                            </span>
-                            <span className="tile-card-fact">
-                              <strong>{selectedAppType?.name || "App type"}</strong>
-                              <small>scope</small>
-                            </span>
+                            <TileCardFact
+                              label={String(stepCount)}
+                              title={`${stepCount} step${stepCount === 1 ? "" : "s"}`}
+                              tone={stepCount ? "info" : "neutral"}
+                            >
+                              <TileCardStepsIcon />
+                            </TileCardFact>
+                            <TileCardFact
+                              label={String(usageCount)}
+                              title={`${usageCount} linked case${usageCount === 1 ? "" : "s"}`}
+                              tone={usageCount ? "success" : "neutral"}
+                            >
+                              <TileCardLinkIcon />
+                            </TileCardFact>
+                            <TileCardFact
+                              label={String(runCount)}
+                              title={`${runCount} recent run${runCount === 1 ? "" : "s"}`}
+                              tone={runCount ? getTileCardTone(latestRun?.status || "neutral") : "neutral"}
+                            >
+                              <TileCardRunsIcon />
+                            </TileCardFact>
+                          </div>
+                          <div className="tile-card-footer">
+                            <div className="history-bars" aria-label="Shared group execution history">
+                              {history.length ? history.map((result) => (
+                                <span
+                                  key={`${group.id}-${result.execution_id}`}
+                                  className={result.status === "passed" ? "history-bar is-passed" : result.status === "failed" ? "history-bar is-failed" : "history-bar is-blocked"}
+                                  title={`${result.status} · ${result.created_at || "recent"}`}
+                                />
+                              )) : <span className="history-bar" />}
+                            </div>
                           </div>
                         </div>
                       </button>
@@ -876,7 +951,7 @@ export function SharedStepsPage() {
                   })}
                 </div>
               ) : null}
-              {!sharedGroupsQuery.isLoading && filteredGroups.length && catalogViewMode === "list" ? (
+              {!sharedGroupsQuery.isLoading && !executionResultsQuery.isLoading && filteredGroups.length && catalogViewMode === "list" ? (
                 <div className="table-wrap catalog-table-wrap">
                   <table className="data-table catalog-data-table">
                     <thead>

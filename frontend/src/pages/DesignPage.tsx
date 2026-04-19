@@ -10,19 +10,16 @@ import { FormField } from "../components/FormField";
 import { ExecutionContextSelector } from "../components/ExecutionContextSelector";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
-import { SharedStepsIcon as SharedStepsIconGraphic } from "../components/SharedStepsIcon";
 import { StatusBadge } from "../components/StatusBadge";
 import {
   TileCardCaseIcon,
   TileCardFact,
-  TileCardHierarchyIcon,
   TileCardIconFrame,
   TileCardLinkIcon,
   TileCardPriorityIcon,
   TileCardRunsIcon,
   TileCardStatusIndicator,
   TileCardStepsIcon,
-  TileCardSuiteIcon,
   formatTileCardLabel,
   getTileCardTone
 } from "../components/TileCardPrimitives";
@@ -36,8 +33,9 @@ import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { api } from "../lib/api";
+import { type AssigneeOption, buildAssigneeOptions } from "../lib/userDisplay";
 import { TEST_AUTHORING_SECTION_ITEMS } from "../lib/workspaceSections";
-import type { AppType, ExecutionResult, Project, Requirement, TestCase, TestStep, TestSuite } from "../types";
+import type { AppType, ExecutionResult, Project, ProjectMember, Requirement, TestCase, TestStep, TestSuite, User } from "../types";
 
 type CaseDraft = {
   suite_id: string;
@@ -72,6 +70,7 @@ type SuiteMappedCasesFilter = "all" | "with-cases" | "empty";
 type SuiteChildrenFilter = "all" | "with-children" | "no-children";
 type SuiteCaseStepFilter = "all" | "with-steps" | "no-steps";
 type SuiteCaseRunFilter = "all" | "with-runs" | "no-runs";
+type SuiteExecutionAssigneeOption = AssigneeOption;
 
 const DEFAULT_CASE_STATUS = "active";
 const createEmptyCaseDraft = (defaultStatus = DEFAULT_CASE_STATUS, defaultAutomated: "yes" | "no" = "no"): CaseDraft => ({
@@ -86,6 +85,21 @@ const createEmptyCaseDraft = (defaultStatus = DEFAULT_CASE_STATUS, defaultAutoma
 const EMPTY_STEP_DRAFT = {
   action: "",
   expected_result: ""
+};
+
+const aggregateExecutionResultStatus = (
+  current: ExecutionResult["status"] | undefined,
+  next: ExecutionResult["status"]
+): ExecutionResult["status"] => {
+  if (current === "failed" || next === "failed") {
+    return "failed";
+  }
+
+  if (current === "blocked" || next === "blocked") {
+    return "blocked";
+  }
+
+  return "passed";
 };
 
 const createDefaultSuiteCaseSections = (): Record<SuiteCaseEditorSectionKey, boolean> => ({
@@ -144,7 +158,7 @@ function StepKindIconBadge({
   label: string;
   tone: "default" | "shared" | "local";
 }) {
-  const icon = kind === "reusable" ? <SharedStepsIconGraphic size={16} /> : <ExecutionStepsIcon />;
+  const icon = <ExecutionStepsIcon />;
 
   return (
     <span
@@ -185,6 +199,7 @@ export function DesignPage() {
   const [selectedExecutionEnvironmentId, setSelectedExecutionEnvironmentId] = useState("");
   const [selectedExecutionConfigurationId, setSelectedExecutionConfigurationId] = useState("");
   const [selectedExecutionDataSetId, setSelectedExecutionDataSetId] = useState("");
+  const [selectedExecutionAssigneeId, setSelectedExecutionAssigneeId] = useState("");
   const [suiteModalMode, setSuiteModalMode] = useState<SuiteModalMode>("create");
   const [isSuiteModalOpen, setIsSuiteModalOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<SuiteCaseEditorSectionKey, boolean>>(createDefaultSuiteCaseSections);
@@ -207,6 +222,16 @@ export function DesignPage() {
   const projectsQuery = useQuery({
     queryKey: ["projects"],
     queryFn: api.projects.list
+  });
+  const usersQuery = useQuery({
+    queryKey: ["users"],
+    queryFn: api.users.list,
+    enabled: Boolean(session)
+  });
+  const projectMembersQuery = useQuery({
+    queryKey: ["project-members", projectId],
+    queryFn: () => api.projectMembers.list({ project_id: projectId }),
+    enabled: Boolean(projectId && session)
   });
   const appTypesQuery = useQuery({
     queryKey: ["app-types", projectId],
@@ -285,6 +310,8 @@ export function DesignPage() {
   const createExecutionMutation = useMutation({ mutationFn: api.executions.create });
 
   const projects = projectsQuery.data || [];
+  const users = (usersQuery.data || []) as User[];
+  const projectMembers = (projectMembersQuery.data || []) as ProjectMember[];
   const appTypes = appTypesQuery.data || [];
   const requirements = requirementsQuery.data || [];
   const suites = suitesQuery.data || [];
@@ -293,6 +320,10 @@ export function DesignPage() {
   const allTestSteps = allTestStepsQuery.data || [];
   const suiteMappings = suiteMappingsQuery.data || [];
   const steps = stepsQuery.data || [];
+  const assigneeOptions = useMemo<SuiteExecutionAssigneeOption[]>(
+    () => buildAssigneeOptions(projectMembers, users),
+    [projectMembers, users]
+  );
 
   const showSuccess = (text: string) => {
     setMessageTone("success");
@@ -318,6 +349,7 @@ export function DesignPage() {
   const closeCreateExecutionModal = () => {
     setIsCreateExecutionModalOpen(false);
     setExecutionName("");
+    setSelectedExecutionAssigneeId("");
     resetExecutionContextSelection();
   };
 
@@ -354,6 +386,16 @@ export function DesignPage() {
       setAppTypeId(appTypes[0].id);
     }
   }, [appTypeId, appTypes]);
+
+  useEffect(() => {
+    if (usersQuery.isPending || projectMembersQuery.isPending) {
+      return;
+    }
+
+    if (selectedExecutionAssigneeId && !assigneeOptions.some((option) => option.id === selectedExecutionAssigneeId)) {
+      setSelectedExecutionAssigneeId("");
+    }
+  }, [assigneeOptions, projectMembersQuery.isPending, selectedExecutionAssigneeId, usersQuery.isPending]);
 
   const appTypeCases = useMemo(() => allTestCases, [allTestCases]);
 
@@ -506,6 +548,34 @@ export function DesignPage() {
     });
 
     return map;
+  }, [executionResults]);
+  const historyBySuiteId = useMemo(() => {
+    const map: Record<string, Record<string, { execution_id: string; status: ExecutionResult["status"]; created_at?: string }>> = {};
+
+    executionResults.forEach((result) => {
+      if (!result.suite_id) {
+        return;
+      }
+
+      map[result.suite_id] = map[result.suite_id] || {};
+      const current = map[result.suite_id][result.execution_id];
+
+      map[result.suite_id][result.execution_id] = {
+        execution_id: result.execution_id,
+        status: aggregateExecutionResultStatus(current?.status, result.status),
+        created_at:
+          String(result.created_at || "") > String(current?.created_at || "")
+            ? result.created_at
+            : current?.created_at || result.created_at
+      };
+    });
+
+    return Object.fromEntries(
+      Object.entries(map).map(([suiteId, resultsByExecution]) => [
+        suiteId,
+        Object.values(resultsByExecution).sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")))
+      ])
+    ) as Record<string, Array<{ execution_id: string; status: ExecutionResult["status"]; created_at?: string }>>;
   }, [executionResults]);
   const stepCountByCaseId = useMemo(() => {
     const scopedCaseIds = new Set(appTypeCases.map((testCase) => testCase.id));
@@ -817,6 +887,7 @@ export function DesignPage() {
     setIsTestCaseEditorModalOpen(false);
     setIsCreateExecutionModalOpen(false);
     setExecutionName("");
+    setSelectedExecutionAssigneeId("");
     resetExecutionContextSelection();
     setExpandedSections(createDefaultSuiteCaseSections());
     setExpandedStepIds([]);
@@ -835,6 +906,7 @@ export function DesignPage() {
     setIsTestCaseEditorModalOpen(false);
     setIsCreateExecutionModalOpen(false);
     setExecutionName("");
+    setSelectedExecutionAssigneeId("");
     resetExecutionContextSelection();
     setSearchTerm("");
     setStatusFilter("all");
@@ -1067,6 +1139,7 @@ export function DesignPage() {
         test_environment_id: selectedExecutionEnvironmentId || undefined,
         test_configuration_id: selectedExecutionConfigurationId || undefined,
         test_data_set_id: selectedExecutionDataSetId || undefined,
+        assigned_to: selectedExecutionAssigneeId || undefined,
         name: executionName.trim() || undefined,
         created_by: session.user.id
       });
@@ -1417,6 +1490,7 @@ export function DesignPage() {
             activeSuiteId={selectedSuiteId}
             counts={suiteCounts}
             childCounts={childSuiteCounts}
+            historyBySuiteId={historyBySuiteId}
             suiteSearchTerm={suiteSearchTerm}
             suitePlacementFilter={suitePlacementFilter}
             suiteMappedCasesFilter={suiteMappedCasesFilter}
@@ -1561,9 +1635,11 @@ export function DesignPage() {
 
       {isCreateExecutionModalOpen ? (
         <SuiteExecutionModal
+          assigneeOptions={assigneeOptions}
           canCreateExecution={Boolean(projectId && appTypeId && executionTargetSuiteIds.length && session?.user.id)}
           executionName={executionName}
           isSubmitting={createExecutionMutation.isPending}
+          onAssigneeChange={setSelectedExecutionAssigneeId}
           onClose={closeCreateExecutionModal}
           onConfigurationChange={setSelectedExecutionConfigurationId}
           onDataSetChange={setSelectedExecutionDataSetId}
@@ -1573,6 +1649,7 @@ export function DesignPage() {
           onSubmit={handleCreateExecution}
           appTypeId={appTypeId}
           projectId={projectId}
+          selectedAssigneeId={selectedExecutionAssigneeId}
           selectedConfigurationId={selectedExecutionConfigurationId}
           selectedAppType={selectedAppType?.name || ""}
           selectedDataSetId={selectedExecutionDataSetId}
@@ -1606,6 +1683,7 @@ function SuiteSidebar({
   activeSuiteId,
   counts,
   childCounts,
+  historyBySuiteId,
   suiteSearchTerm,
   suitePlacementFilter,
   suiteMappedCasesFilter,
@@ -1640,6 +1718,7 @@ function SuiteSidebar({
   activeSuiteId: string;
   counts: Record<string, number>;
   childCounts: Record<string, number>;
+  historyBySuiteId: Record<string, Array<{ execution_id: string; status: ExecutionResult["status"]; created_at?: string }>>;
   suiteSearchTerm: string;
   suitePlacementFilter: SuitePlacementFilter;
   suiteMappedCasesFilter: SuiteMappedCasesFilter;
@@ -1772,10 +1851,10 @@ function SuiteSidebar({
           {!isLoading && hasSuiteSearchResults && viewMode === "tile" ? (
             <div className="tile-browser-grid">
               {suites.map((suite) => {
-                const suitePlacementLabel = suite.parent_id ? "Nested suite" : "Root suite";
                 const mappedCaseCount = counts[suite.id] || 0;
-                const childSuiteCount = childCounts[suite.id] || 0;
-                const suiteTone = suite.parent_id ? "info" : "success";
+                const history = (historyBySuiteId[suite.id] || []).slice(0, 5);
+                const runCount = (historyBySuiteId[suite.id] || []).length;
+                const latestRun = history[0];
 
                 return (
                   <button
@@ -1800,15 +1879,8 @@ function SuiteSidebar({
                         </label>
                       </div>
                       <div className="tile-card-header">
-                        <TileCardIconFrame tone={suiteTone}>
-                          <TileCardSuiteIcon />
-                        </TileCardIconFrame>
                         <div className="tile-card-title-group">
                           <strong>{suite.name}</strong>
-                          <span className="tile-card-kicker">{suitePlacementLabel}</span>
-                        </div>
-                        <div className="tile-card-header-meta">
-                          <TileCardStatusIndicator icon={<TileCardHierarchyIcon />} title={suitePlacementLabel} tone={suite.parent_id ? "info" : "neutral"} />
                         </div>
                       </div>
                       <p className="tile-card-description">{selectedAppType ? `${selectedAppType.name} workspace suite` : "No app type selected"}</p>
@@ -1821,12 +1893,23 @@ function SuiteSidebar({
                           <TileCardCaseIcon />
                         </TileCardFact>
                         <TileCardFact
-                          label={String(childSuiteCount)}
-                          title={`${childSuiteCount} child suite${childSuiteCount === 1 ? "" : "s"}`}
-                          tone={childSuiteCount ? "info" : "neutral"}
+                          label={String(runCount)}
+                          title={`${runCount} suite run${runCount === 1 ? "" : "s"}`}
+                          tone={runCount ? getTileCardTone(latestRun?.status || "neutral") : "neutral"}
                         >
-                          <TileCardHierarchyIcon />
+                          <TileCardRunsIcon />
                         </TileCardFact>
+                      </div>
+                      <div className="tile-card-footer">
+                        <div className="history-bars" aria-label="Suite execution history">
+                          {history.length ? history.map((result) => (
+                            <span
+                              key={`${suite.id}-${result.execution_id}`}
+                              className={result.status === "passed" ? "history-bar is-passed" : result.status === "failed" ? "history-bar is-failed" : "history-bar is-blocked"}
+                              title={`${result.status} · ${result.created_at || "recent"}`}
+                            />
+                          )) : <span className="history-bar" />}
+                        </div>
                       </div>
                     </div>
                   </button>
@@ -2809,11 +2892,14 @@ function SuiteExecutionModal({
   projectId,
   selectedSuiteIds,
   executionName,
+  selectedAssigneeId,
+  assigneeOptions,
   selectedEnvironmentId,
   selectedConfigurationId,
   selectedDataSetId,
   canCreateExecution,
   isSubmitting,
+  onAssigneeChange,
   onEnvironmentChange,
   onConfigurationChange,
   onDataSetChange,
@@ -2829,11 +2915,14 @@ function SuiteExecutionModal({
   projectId: string;
   selectedSuiteIds: string[];
   executionName: string;
+  selectedAssigneeId: string;
+  assigneeOptions: SuiteExecutionAssigneeOption[];
   selectedEnvironmentId: string;
   selectedConfigurationId: string;
   selectedDataSetId: string;
   canCreateExecution: boolean;
   isSubmitting: boolean;
+  onAssigneeChange: (value: string) => void;
   onEnvironmentChange: (value: string) => void;
   onConfigurationChange: (value: string) => void;
   onDataSetChange: (value: string) => void;
@@ -2870,14 +2959,32 @@ function SuiteExecutionModal({
           </div>
 
           <div className="execution-create-body">
-            <FormField label="Execution name">
-              <input
-                autoFocus
-                placeholder="Optional run name"
-                value={executionName}
-                onChange={(event) => onExecutionNameChange(event.target.value)}
-              />
-            </FormField>
+            <div className="execution-create-grid">
+              <FormField label="Execution name">
+                <input
+                  autoFocus
+                  placeholder="Optional run name"
+                  value={executionName}
+                  onChange={(event) => onExecutionNameChange(event.target.value)}
+                />
+              </FormField>
+              <FormField label="Assign to" hint="Sets the default owner for this execution and the test cases snapped into it.">
+                <select
+                  disabled={!projectId || !assigneeOptions.length}
+                  value={selectedAssigneeId}
+                  onChange={(event) => onAssigneeChange(event.target.value)}
+                >
+                  <option value="">
+                    {!projectId ? "Select a project first" : assigneeOptions.length ? "Unassigned" : "No project members available"}
+                  </option>
+                  {assigneeOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.caption ? `${option.label} · ${option.caption}` : option.label}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+            </div>
 
             <div className="detail-summary">
               <strong>{selectedProject || "Select a project to continue"}</strong>
