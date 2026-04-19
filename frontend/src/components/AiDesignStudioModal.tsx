@@ -1,12 +1,12 @@
+import { useState } from "react";
 import type { AiDesignImageInput, AiDesignedTestCaseCandidate, Integration, Requirement, TestCase } from "../types";
 import { useDialogFocus } from "../hooks/useDialogFocus";
 import { FormField } from "./FormField";
-import { TileCardLinkIcon } from "./TileCardPrimitives";
 
 export function AiDesignStudioModal({
   eyebrow,
   requirementLabel,
-  requirementHelpText,
+  requirementHelpText: _requirementHelpText,
   requirements,
   selectedRequirementIds,
   allowMultipleRequirements,
@@ -23,7 +23,7 @@ export function AiDesignStudioModal({
   referenceImages,
   onAddImages,
   onRemoveImage,
-  appTypeName,
+  appTypeName: _appTypeName,
   existingCases,
   existingCasesTitle,
   existingCasesSubtitle,
@@ -85,7 +85,7 @@ export function AiDesignStudioModal({
   dialogClassName?: string;
 }) {
   const dialogRef = useDialogFocus<HTMLDivElement>();
-  const selectedRequirements = requirements.filter((requirement) => selectedRequirementIds.includes(requirement.id));
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   const handleRequirementToggle = (requirementId: string, checked: boolean) => {
     if (allowMultipleRequirements) {
@@ -122,151 +122,151 @@ export function AiDesignStudioModal({
           </button>
         </div>
 
-        <div className="ai-studio-shell">
-          <div className="ai-studio-sidebar">
-            <section className="ai-studio-panel">
-              <div className="panel-head">
-                <div>
-                  <h3>{requirementLabel}</h3>
-                  <p>{requirementHelpText}</p>
-                </div>
-              </div>
+        <div className={isSidebarCollapsed ? "ai-studio-shell is-sidebar-collapsed" : "ai-studio-shell"}>
+          <div className={isSidebarCollapsed ? "ai-studio-sidebar is-collapsed" : "ai-studio-sidebar"}>
+            {!isSidebarCollapsed ? (
+              <div className="ai-studio-sidebar-panels">
+                <section className="ai-studio-panel">
+                  {allowMultipleRequirements ? (
+                    <div className="modal-case-picker ai-studio-requirement-picker">
+                      {requirements.map((requirement) => (
+                        <label className="modal-case-option requirement-link-option" key={requirement.id}>
+                          <input
+                            checked={selectedRequirementIds.includes(requirement.id)}
+                            data-autofocus={requirements[0]?.id === requirement.id ? "true" : undefined}
+                            onChange={(event) => handleRequirementToggle(requirement.id, event.target.checked)}
+                            type="checkbox"
+                          />
+                          <div>
+                            <strong>{requirement.title}</strong>
+                            <span>{requirement.description || "No description available."}</span>
+                            <span className="requirement-link-option-meta">Priority P{requirement.priority ?? 3} · {requirement.status || "open"}</span>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <FormField label={requirementLabel}>
+                      <select
+                        data-autofocus="true"
+                        value={selectedRequirementIds[0] || ""}
+                        onChange={(event) => onRequirementSelectionChange(event.target.value ? [event.target.value] : [])}
+                      >
+                        {requirements.map((requirement) => (
+                          <option key={requirement.id} value={requirement.id}>
+                            {requirement.title}
+                          </option>
+                        ))}
+                      </select>
+                    </FormField>
+                  )}
 
-              {allowMultipleRequirements ? (
-                <div className="modal-case-picker ai-studio-requirement-picker">
-                  {requirements.map((requirement) => (
-                    <label className="modal-case-option requirement-link-option" key={requirement.id}>
-                      <input
-                        checked={selectedRequirementIds.includes(requirement.id)}
-                        data-autofocus={requirements[0]?.id === requirement.id ? "true" : undefined}
-                        onChange={(event) => handleRequirementToggle(requirement.id, event.target.checked)}
-                        type="checkbox"
-                      />
-                      <div>
-                        <strong>{requirement.title}</strong>
-                        <span>{requirement.description || "No description available."}</span>
-                        <span className="requirement-link-option-meta">Priority P{requirement.priority ?? 3} · {requirement.status || "open"}</span>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              ) : (
-                <FormField label={requirementLabel}>
-                  <select
-                    data-autofocus="true"
-                    value={selectedRequirementIds[0] || ""}
-                    onChange={(event) => onRequirementSelectionChange(event.target.value ? [event.target.value] : [])}
+                  <div className="record-grid">
+                    <FormField label="LLM integration">
+                      <select value={integrationId} onChange={(event) => onIntegrationIdChange(event.target.value)}>
+                        <option value="">Default active integration</option>
+                        {integrations.map((integration) => (
+                          <option key={integration.id} value={integration.id}>
+                            {integration.name}
+                          </option>
+                        ))}
+                      </select>
+                    </FormField>
+
+                    <FormField label="Draft cases to generate">
+                      <input min="1" max="20" type="number" value={maxCases} onChange={(event) => onMaxCasesChange(Number(event.target.value) || 6)} />
+                    </FormField>
+                  </div>
+                </section>
+
+                <div className="ai-studio-sidebar-divider" aria-hidden="true">
+                  <button
+                    aria-expanded={!isSidebarCollapsed}
+                    className="ghost-button ai-studio-sidebar-toggle"
+                    onClick={() => setIsSidebarCollapsed((current) => !current)}
+                    title="Collapse prompt sidebar"
+                    type="button"
                   >
-                    {requirements.map((requirement) => (
-                      <option key={requirement.id} value={requirement.id}>
-                        {requirement.title}
-                      </option>
-                    ))}
-                  </select>
-                </FormField>
-              )}
-
-              <div className="detail-summary">
-                <strong>{selectedRequirements.length ? `${selectedRequirements.length} requirement${selectedRequirements.length === 1 ? "" : "s"} selected` : "No requirements selected"}</strong>
-                <span>{appTypeName || "No app type selected"} controls where approved test cases will be created.</span>
-              </div>
-
-              {selectedRequirements.length ? (
-                <div className="selection-chip-row">
-                  {selectedRequirements.map((requirement) => (
-                    <span className="selection-chip is-selected" key={requirement.id}>
-                      {requirement.title}
-                    </span>
-                  ))}
+                    <AiSidebarChevronIcon />
+                  </button>
                 </div>
-              ) : null}
 
-              <div className="record-grid">
-                <FormField label="LLM integration">
-                  <select value={integrationId} onChange={(event) => onIntegrationIdChange(event.target.value)}>
-                    <option value="">Default active integration</option>
-                    {integrations.map((integration) => (
-                      <option key={integration.id} value={integration.id}>
-                        {integration.name}
-                      </option>
-                    ))}
-                  </select>
-                </FormField>
+                <section className="ai-studio-panel">
+                  <div className="panel-head">
+                    <div>
+                      <h3>Prompt context</h3>
+                      <p>Provide the extra guidance the model should consider while drafting cases.</p>
+                    </div>
+                  </div>
 
-                <FormField label="Draft cases to generate">
-                  <input min="1" max="20" type="number" value={maxCases} onChange={(event) => onMaxCasesChange(Number(event.target.value) || 6)} />
-                </FormField>
+                  <FormField label="Additional context">
+                    <textarea
+                      placeholder="Release goals, risky flows, browser/device notes, compliance rules, known gaps..."
+                      rows={5}
+                      value={additionalContext}
+                      onChange={(event) => onAdditionalContextChange(event.target.value)}
+                    />
+                  </FormField>
+
+                  <FormField label="External links">
+                    <textarea
+                      placeholder="One link per line"
+                      rows={4}
+                      value={externalLinksText}
+                      onChange={(event) => onExternalLinksTextChange(event.target.value)}
+                    />
+                  </FormField>
+
+                  <FormField label="Reference photos">
+                    <input
+                      accept="image/*"
+                      multiple
+                      onChange={(event) => {
+                        onAddImages(event.target.files);
+                        event.target.value = "";
+                      }}
+                      type="file"
+                    />
+                  </FormField>
+
+                  {referenceImages.length ? (
+                    <div className="ai-reference-image-list">
+                      {referenceImages.map((image) => (
+                        <article className="ai-reference-image-card" key={image.url}>
+                          <div className="ai-reference-image-preview">
+                            <img alt={image.name || "Reference upload"} src={image.url} />
+                          </div>
+                          <div className="ai-reference-image-copy">
+                            <strong>{image.name || "Reference image"}</strong>
+                            <span>Attached to the prompt</span>
+                          </div>
+                          <button className="ghost-button danger" onClick={() => onRemoveImage(image.url)} type="button">
+                            Remove
+                          </button>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="empty-state compact">Add screenshots or reference photos to give the model visual context.</div>
+                  )}
+                </section>
               </div>
-            </section>
-
-            <section className="ai-studio-panel">
-              <div className="panel-head">
-                <div>
-                  <h3>Prompt context</h3>
-                  <p>Provide the extra guidance the model should consider while drafting cases.</p>
-                </div>
+            ) : (
+              <div className="ai-studio-sidebar-collapsed-bar">
+                <button
+                  aria-expanded={!isSidebarCollapsed}
+                  className="ghost-button ai-studio-sidebar-toggle"
+                  onClick={() => setIsSidebarCollapsed((current) => !current)}
+                  title="Expand prompt sidebar"
+                  type="button"
+                >
+                  <AiSidebarChevronIcon />
+                </button>
               </div>
-
-              <FormField label="Additional context">
-                <textarea
-                  placeholder="Release goals, risky flows, browser/device notes, compliance rules, known gaps..."
-                  rows={5}
-                  value={additionalContext}
-                  onChange={(event) => onAdditionalContextChange(event.target.value)}
-                />
-              </FormField>
-
-              <FormField label="External links">
-                <textarea
-                  placeholder="One link per line"
-                  rows={4}
-                  value={externalLinksText}
-                  onChange={(event) => onExternalLinksTextChange(event.target.value)}
-                />
-              </FormField>
-
-              <FormField label="Reference photos">
-                <input
-                  accept="image/*"
-                  multiple
-                  onChange={(event) => {
-                    onAddImages(event.target.files);
-                    event.target.value = "";
-                  }}
-                  type="file"
-                />
-              </FormField>
-
-              {referenceImages.length ? (
-                <div className="ai-reference-image-list">
-                  {referenceImages.map((image) => (
-                    <article className="ai-reference-image-card" key={image.url}>
-                      <div className="ai-reference-image-preview">
-                        <img alt={image.name || "Reference upload"} src={image.url} />
-                      </div>
-                      <div className="ai-reference-image-copy">
-                        <strong>{image.name || "Reference image"}</strong>
-                        <span>Attached to the prompt</span>
-                      </div>
-                      <button className="ghost-button danger" onClick={() => onRemoveImage(image.url)} type="button">
-                        Remove
-                      </button>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty-state compact">Add screenshots or reference photos to give the model visual context.</div>
-              )}
-            </section>
+            )}
           </div>
 
           <div className="ai-studio-main">
-            <div className="detail-summary">
-              <strong>{appTypeName || "App type not selected"}</strong>
-              <span>Approved drafts will be created as reusable test cases in the current app type.</span>
-              <span>Preview each draft before acceptance and adjust requirement mapping when more than one source requirement is selected.</span>
-            </div>
-
             {previewMessage ? <p className={previewTone === "error" ? "inline-message error-message" : "inline-message success-message"}>{previewMessage}</p> : null}
 
             {!integrations.length ? (
@@ -275,7 +275,7 @@ export function AiDesignStudioModal({
               </div>
             ) : null}
 
-            <div className="action-row">
+            <div className="action-row ai-studio-actions">
               <button className="primary-button" disabled={disablePreview} onClick={onPreview} type="button">
                 {isPreviewing ? "Designing…" : "Generate Preview"}
               </button>
@@ -298,16 +298,14 @@ export function AiDesignStudioModal({
                     <div className="stack-item" key={testCase.id}>
                       <div>
                         <strong>{testCase.title}</strong>
-                        <span>{testCase.description || "No description available."}</span>
                       </div>
                       <button
                         className="ghost-button ai-existing-case-button"
                         onClick={() => onViewExistingCase?.(testCase.id)}
+                        title="View test case"
                         type="button"
                       >
                         <AiViewIcon />
-                        <TileCardLinkIcon />
-                        <span>TC</span>
                       </button>
                     </div>
                   ))}
@@ -396,6 +394,14 @@ export function AiDesignStudioModal({
         </div>
       </div>
     </div>
+  );
+}
+
+function AiSidebarChevronIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="18">
+      <path d="m9 6 6 6-6 6" />
+    </svg>
   );
 }
 

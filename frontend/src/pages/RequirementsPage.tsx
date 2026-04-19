@@ -1,4 +1,4 @@
-import { ChangeEvent, Dispatch, FormEvent, ReactNode, SetStateAction, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { ChangeEvent, Dispatch, FormEvent, ReactNode, SetStateAction, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
@@ -11,14 +11,12 @@ import { FormField } from "../components/FormField";
 import { LinkedTestCaseModal } from "../components/LinkedTestCaseModal";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { ProgressMeter } from "../components/ProgressMeter";
 import {
   TileCardFact,
   TileCardLinkIcon,
   TileCardPriorityIcon,
-  TileCardRequirementIcon,
-  TileCardStatusIndicator,
-  formatTileCardLabel,
-  getTileCardTone
+  formatTileCardLabel
 } from "../components/TileCardPrimitives";
 import { TileBrowserPane } from "../components/TileBrowserPane";
 import { TileCardSkeletonGrid } from "../components/TileCardSkeletonGrid";
@@ -41,12 +39,12 @@ type RequirementDraft = {
   status: string;
 };
 
-type RequirementSectionKey = "details" | "linked" | "library";
+type RequirementSectionKey = "details" | "library";
 type RequirementCoverageFilter = "all" | "linked" | "unlinked";
 
-type RequirementPassCoverage = {
+type RequirementCoverageMetric = {
   total: number;
-  passed: number;
+  covered: number;
   percent: number;
 };
 
@@ -59,25 +57,47 @@ const createEmptyRequirementDraft = (defaultStatus = "open"): RequirementDraft =
 
 const createDefaultRequirementSections = (): Record<RequirementSectionKey, boolean> => ({
   details: true,
-  linked: true,
   library: false
 });
 
-const getRequirementPassCoverageClassName = (coverage: RequirementPassCoverage) => {
-  if (!coverage.total) {
-    return "requirement-pass-circle is-empty";
+const getRequirementCoverageTone = (covered: number, total: number) => {
+  if (!total) {
+    return "neutral" as const;
   }
 
-  if (coverage.percent >= 100) {
-    return "requirement-pass-circle is-complete";
+  if (covered >= total) {
+    return "success" as const;
   }
 
-  if (coverage.passed > 0) {
-    return "requirement-pass-circle is-partial";
+  if (covered > 0) {
+    return "info" as const;
   }
 
-  return "requirement-pass-circle is-unpassed";
+  return "danger" as const;
 };
+
+function RequirementProgressBar({
+  label,
+  metric,
+  detail
+}: {
+  label: string;
+  metric: RequirementCoverageMetric;
+  detail: string;
+}) {
+  const safeValue = Math.max(0, Math.min(100, Math.round(metric.percent)));
+  const tone = getRequirementCoverageTone(metric.covered, metric.total);
+
+  return (
+    <div className="requirement-progress-meter" aria-label={`${label} ${safeValue}%`} title={detail}>
+      <div className="requirement-progress-meter-header">
+        <span>{label}</span>
+        <strong>{safeValue}%</strong>
+      </div>
+      <ProgressMeter hideCopy tone={tone} value={safeValue} />
+    </div>
+  );
+}
 
 export function RequirementsPage() {
   const navigate = useNavigate();
@@ -309,22 +329,41 @@ export function RequirementsPage() {
   }, [requirements, testCases]);
 
   const passCoverageByRequirementId = useMemo(() => {
-    const coverage: Record<string, RequirementPassCoverage> = {};
+    const coverage: Record<string, RequirementCoverageMetric> = {};
 
     requirements.forEach((requirement) => {
       const linkedCaseIds = linkedCaseIdsByRequirementId[requirement.id] || [];
-      const passed = linkedCaseIds.filter((testCaseId) => latestResultByCaseId[testCaseId]?.status === "passed").length;
+      const covered = linkedCaseIds.filter((testCaseId) => latestResultByCaseId[testCaseId]?.status === "passed").length;
       const total = linkedCaseIds.length;
 
       coverage[requirement.id] = {
         total,
-        passed,
-        percent: total ? Math.round((passed / total) * 100) : 0
+        covered,
+        percent: total ? Math.round((covered / total) * 100) : 0
       };
     });
 
     return coverage;
   }, [latestResultByCaseId, linkedCaseIdsByRequirementId, requirements]);
+
+  const automationCoverageByRequirementId = useMemo(() => {
+    const coverage: Record<string, RequirementCoverageMetric> = {};
+    const testCaseById = new Map(testCases.map((testCase) => [testCase.id, testCase]));
+
+    requirements.forEach((requirement) => {
+      const linkedCaseIds = linkedCaseIdsByRequirementId[requirement.id] || [];
+      const covered = linkedCaseIds.filter((testCaseId) => testCaseById.get(testCaseId)?.automated === "yes").length;
+      const total = linkedCaseIds.length;
+
+      coverage[requirement.id] = {
+        total,
+        covered,
+        percent: total ? Math.round((covered / total) * 100) : 0
+      };
+    });
+
+    return coverage;
+  }, [linkedCaseIdsByRequirementId, requirements, testCases]);
 
   const requirementStatusOptions = useMemo(
     () => Array.from(new Set(requirements.map((item) => item.status || defaultRequirementStatus))).sort((left, right) => left.localeCompare(right)),
@@ -390,6 +429,13 @@ export function RequirementsPage() {
 
   const currentAppTypeName = appTypes.find((item) => item.id === appTypeId)?.name || "No app type selected";
 
+  const selectedRequirementPassCoverage = selectedRequirement
+    ? passCoverageByRequirementId[selectedRequirement.id] || { total: 0, covered: 0, percent: 0 }
+    : { total: 0, covered: 0, percent: 0 };
+  const selectedRequirementAutomationCoverage = selectedRequirement
+    ? automationCoverageByRequirementId[selectedRequirement.id] || { total: 0, covered: 0, percent: 0 }
+    : { total: 0, covered: 0, percent: 0 };
+
   const associatedCases = useMemo(() => {
     if (!aiRequirement) {
       return [];
@@ -399,14 +445,6 @@ export function RequirementsPage() {
     return testCases.filter((testCase) => linkedIds.has(testCase.id));
   }, [aiRequirement, testCases]);
 
-  const selectedVisibleCases = useMemo(() => {
-    if (!selectedTestCaseIds.length) {
-      return [];
-    }
-
-    const linkedIds = new Set(selectedTestCaseIds);
-    return testCases.filter((testCase) => linkedIds.has(testCase.id));
-  }, [selectedTestCaseIds, testCases]);
   const linkedPreviewCase = useMemo(
     () => testCases.find((testCase) => testCase.id === linkedPreviewCaseId) || null,
     [linkedPreviewCaseId, testCases]
@@ -856,7 +894,7 @@ export function RequirementsPage() {
               type="button"
             >
               <ImportIcon />
-              Import from CSV
+              Bulk Import Requirements
             </button>
             <button
               className="ghost-button"
@@ -1004,13 +1042,15 @@ export function RequirementsPage() {
                   {filteredRequirements.map((item) => {
                     const isSelectedForDelete = deleteSelectedRequirementIds.includes(item.id);
                     const isActive = selectedRequirement?.id === item.id;
-                    const requirementStatusLabel = formatTileCardLabel(item.status, "Open");
-                    const requirementStatusTone = getTileCardTone(item.status);
                     const linkedCaseCount = (linkedCaseIdsByRequirementId[item.id] || []).length;
-                    const passCoverage = passCoverageByRequirementId[item.id] || { total: 0, passed: 0, percent: 0 };
+                    const passCoverage = passCoverageByRequirementId[item.id] || { total: 0, covered: 0, percent: 0 };
+                    const automationCoverage = automationCoverageByRequirementId[item.id] || { total: 0, covered: 0, percent: 0 };
                     const passCoverageTitle = passCoverage.total
-                      ? `${passCoverage.percent}% pass rate (${passCoverage.passed}/${passCoverage.total} linked test cases passed)`
-                      : "0% pass rate (no linked test cases)";
+                      ? `${passCoverage.covered}/${passCoverage.total} linked test cases passed`
+                      : "No linked test cases to measure pass coverage";
+                    const automationCoverageTitle = automationCoverage.total
+                      ? `${automationCoverage.covered}/${automationCoverage.total} linked test cases automated`
+                      : "No linked test cases to measure automation coverage";
 
                     return (
                       <button
@@ -1037,29 +1077,17 @@ export function RequirementsPage() {
                               />
                               <DisplayIdBadge value={item.display_id || item.id} />
                             </label>
-                            <div className="requirement-tile-top-meta">
-                              <span
-                                aria-label={`${item.title} ${passCoverageTitle}`}
-                                className={getRequirementPassCoverageClassName(passCoverage)}
-                                style={{ "--requirement-pass": `${passCoverage.percent}%` } as CSSProperties}
-                                title={passCoverageTitle}
-                              >
-                                <span>{passCoverage.percent}%</span>
-                              </span>
-                              <TileCardStatusIndicator title={requirementStatusLabel} tone={requirementStatusTone} />
-                            </div>
                           </div>
                           <div className="tile-card-header requirement-tile-header">
                             <div className="tile-card-title-group">
                               <strong>{item.title}</strong>
-                              <span className="tile-card-kicker requirement-tile-kicker">{currentAppTypeName}</span>
                             </div>
                           </div>
-                          <p className="tile-card-description">{item.description || "No description yet."}</p>
+                          <div className="requirement-progress-stack">
+                            <RequirementProgressBar detail={passCoverageTitle} label="Pass rate" metric={passCoverage} />
+                            <RequirementProgressBar detail={automationCoverageTitle} label="Automation coverage" metric={automationCoverage} />
+                          </div>
                           <div className="tile-card-facts" aria-label={`${item.title} facts`}>
-                            <TileCardFact label={requirementStatusLabel} title={`Requirement status ${requirementStatusLabel}`} tone={requirementStatusTone}>
-                              <TileCardRequirementIcon />
-                            </TileCardFact>
                             <TileCardFact
                               label={`P${item.priority ?? 3}`}
                               title={`Priority P${item.priority ?? 3}`}
@@ -1144,6 +1172,24 @@ export function RequirementsPage() {
           >
             {selectedRequirement ? (
               <div className="detail-stack">
+                <div className="metric-strip compact">
+                  <div className="mini-card">
+                    <strong>{`${selectedRequirementPassCoverage.percent}%`}</strong>
+                    <span>
+                      {selectedRequirementPassCoverage.total
+                        ? `Pass rate · ${selectedRequirementPassCoverage.covered}/${selectedRequirementPassCoverage.total} passed`
+                        : "Pass rate"}
+                    </span>
+                  </div>
+                  <div className="mini-card">
+                    <strong>{`${selectedRequirementAutomationCoverage.percent}%`}</strong>
+                    <span>
+                      {selectedRequirementAutomationCoverage.total
+                        ? `Automation coverage · ${selectedRequirementAutomationCoverage.covered}/${selectedRequirementAutomationCoverage.total} automated`
+                        : "Automation coverage"}
+                    </span>
+                  </div>
+                </div>
                 <div className="requirement-accordion">
                   <RequirementAccordionSection
                     countLabel={`${selectedTestCaseIds.length} linked`}
@@ -1180,30 +1226,6 @@ export function RequirementsPage() {
                   </RequirementAccordionSection>
 
                   <RequirementAccordionSection
-                    countLabel={`${selectedVisibleCases.length} visible`}
-                    isExpanded={expandedSections.linked}
-                    onToggle={() => setExpandedSections((current) => ({ ...current, linked: !current.linked }))}
-                    summary="Review the linked reusable cases currently staged for this requirement in the active app type."
-                    title="Linked test cases"
-                  >
-                    <div className="stack-list">
-                      {selectedVisibleCases.map((testCase) => (
-                        <div className="stack-item" key={testCase.id}>
-                          <div>
-                            <strong>{testCase.title}</strong>
-                            <span>{testCase.description || "No description available."}</span>
-                          </div>
-                          <button className="ghost-button inline-button" onClick={() => openTestCaseWorkspace(testCase.id)} type="button">
-                            <TileCardLinkIcon />
-                            <span>View test case</span>
-                          </button>
-                        </div>
-                      ))}
-                      {!selectedVisibleCases.length ? <div className="empty-state compact">No linked test cases are visible in the current app type yet.</div> : null}
-                    </div>
-                  </RequirementAccordionSection>
-
-                  <RequirementAccordionSection
                     countLabel={`${testCases.length} available`}
                     isExpanded={expandedSections.library}
                     onToggle={() => setExpandedSections((current) => ({ ...current, library: !current.library }))}
@@ -1211,9 +1233,12 @@ export function RequirementsPage() {
                     title="Link or unlink existing test cases"
                   >
                     <RequirementTestCasePicker
+                      compactTitlesOnly
                       emptyText={appTypeId ? "No reusable test cases are available for this app type." : "Select an app type first to link reusable test cases."}
+                      onView={openTestCaseWorkspace}
                       pickerClassName="requirement-link-picker--workspace"
                       selectedIds={selectedTestCaseIds}
+                      sortLinkedFirst
                       testCases={testCases}
                       onToggle={(testCaseId, checked) => toggleSelectedTestCase(setSelectedTestCaseIds, testCaseId, checked)}
                     />
@@ -1298,11 +1323,6 @@ export function RequirementsPage() {
                   </div>
                 </div>
 
-                <div className="detail-summary">
-                  <strong>Link reusable test cases while creating</strong>
-                  <span>Use the selector below to attach existing test cases now. You can always link or unlink more later from the selected requirement details.</span>
-                </div>
-
                 <section className="requirement-link-section">
                   <div className="panel-head">
                     <div>
@@ -1330,7 +1350,9 @@ export function RequirementsPage() {
                   </div>
 
                   <RequirementTestCasePicker
+                    compactTitlesOnly
                     emptyText={appTypeId ? "No reusable test cases are available for this app type." : "Select an app type first to link reusable test cases."}
+                    onView={openTestCaseWorkspace}
                     selectedIds={createSelectedTestCaseIds}
                     testCases={testCases}
                     onToggle={(testCaseId, checked) => toggleSelectedTestCase(setCreateSelectedTestCaseIds, testCaseId, checked)}
@@ -1521,41 +1543,87 @@ function RequirementTestCasePicker({
   selectedIds,
   onToggle,
   emptyText,
-  pickerClassName
+  pickerClassName,
+  onView,
+  sortLinkedFirst = false,
+  compactTitlesOnly = false
 }: {
   testCases: TestCase[];
   selectedIds: string[];
   onToggle: (testCaseId: string, checked: boolean) => void;
   emptyText: string;
   pickerClassName?: string;
+  onView?: (testCaseId: string) => void;
+  sortLinkedFirst?: boolean;
+  compactTitlesOnly?: boolean;
 }) {
   if (!testCases.length) {
     return <div className="empty-state compact">{emptyText}</div>;
   }
 
+  const orderedTestCases = sortLinkedFirst
+    ? [...testCases].sort((left, right) => {
+        const leftLinked = selectedIds.includes(left.id);
+        const rightLinked = selectedIds.includes(right.id);
+
+        if (leftLinked !== rightLinked) {
+          return leftLinked ? -1 : 1;
+        }
+
+        return left.title.localeCompare(right.title);
+      })
+    : testCases;
+
   return (
     <div className={pickerClassName ? `modal-case-picker requirement-link-picker ${pickerClassName}` : "modal-case-picker requirement-link-picker"}>
-      {testCases.map((testCase) => {
+      {orderedTestCases.map((testCase) => {
         const isLinked = selectedIds.includes(testCase.id);
 
         return (
-          <div className={isLinked ? "modal-case-option requirement-link-option is-linked" : "modal-case-option requirement-link-option"} key={testCase.id}>
-            <div>
+          <div
+            className={[
+              "modal-case-option requirement-link-option",
+              isLinked ? "is-linked" : "",
+              compactTitlesOnly ? "is-compact" : ""
+            ].filter(Boolean).join(" ")}
+            key={testCase.id}
+          >
+            <div className="requirement-link-option-copy">
               <strong>{testCase.title}</strong>
-              <span>{testCase.description || "No description available."}</span>
-              <span className="requirement-link-option-meta">
-                Priority P{testCase.priority ?? 3} · {testCase.status || "draft"}
-              </span>
+              {!compactTitlesOnly ? <span>{testCase.description || "No description available."}</span> : null}
+              {!compactTitlesOnly ? (
+                <span className="requirement-link-option-meta">
+                  Priority P{testCase.priority ?? 3} · {testCase.status || "draft"}
+                </span>
+              ) : null}
             </div>
-            <button
-              aria-label={isLinked ? `Unlink ${testCase.title}` : `Link ${testCase.title}`}
-              className={isLinked ? "ghost-button requirement-link-toggle is-linked" : "ghost-button requirement-link-toggle"}
-              onClick={() => onToggle(testCase.id, !isLinked)}
-              type="button"
-            >
-              {isLinked ? <RequirementUnlinkIcon /> : <RequirementLinkIcon />}
-              <span>{isLinked ? "Unlink" : "Link"}</span>
-            </button>
+            <div className="requirement-link-actions">
+              {onView ? (
+                <button
+                  aria-label={`View ${testCase.title}`}
+                  className="ghost-button requirement-link-icon-button requirement-link-view-button"
+                  onClick={() => onView(testCase.id)}
+                  title="View test case"
+                  type="button"
+                >
+                  <RequirementViewIcon />
+                </button>
+              ) : null}
+              <button
+                aria-label={isLinked ? `Unlink ${testCase.title}` : `Link ${testCase.title}`}
+                className={[
+                  "ghost-button requirement-link-toggle",
+                  isLinked ? "is-linked" : "",
+                  compactTitlesOnly ? "requirement-link-toggle--icon-only" : ""
+                ].filter(Boolean).join(" ")}
+                onClick={() => onToggle(testCase.id, !isLinked)}
+                title={isLinked ? "Unlink test case" : "Link test case"}
+                type="button"
+              >
+                {isLinked ? <RequirementUnlinkIcon /> : <RequirementLinkIcon />}
+                {!compactTitlesOnly ? <span>{isLinked ? "Unlink" : "Link"}</span> : null}
+              </button>
+            </div>
           </div>
         );
       })}
@@ -1578,6 +1646,15 @@ function RequirementUnlinkIcon() {
       <path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L10.8 5.12" />
       <path d="M14 11a5 5 0 0 0-7.07 0L4.8 13.12a5 5 0 1 0 7.07 7.07L13.2 18.9" />
       <path d="M6 6l12 12" />
+    </svg>
+  );
+}
+
+function RequirementViewIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
+      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+      <circle cx="12" cy="12" r="3" />
     </svg>
   );
 }
