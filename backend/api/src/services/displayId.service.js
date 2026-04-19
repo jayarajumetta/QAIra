@@ -8,7 +8,7 @@ const DISPLAY_ID_CONFIG = {
   },
   requirement: {
     table: "requirements",
-    prefix: "RC_",
+    prefix: "Req_",
     minDigits: 1
   },
   test_case: {

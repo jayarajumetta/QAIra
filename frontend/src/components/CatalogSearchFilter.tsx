@@ -1,4 +1,7 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+
+const POPOVER_VIEWPORT_PADDING = 12;
+const POPOVER_TRIGGER_GAP = 10;
 
 export function CatalogSearchFilter({
   value,
@@ -22,6 +25,7 @@ export function CatalogSearchFilter({
   children: ReactNode;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({});
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const inputId = useId();
@@ -63,6 +67,59 @@ export function CatalogSearchFilter({
     };
   }, [isOpen]);
 
+  useLayoutEffect(() => {
+    if (!isOpen) {
+      setPopoverStyle({});
+      return;
+    }
+
+    const updatePopoverPosition = () => {
+      const button = buttonRef.current;
+      const popover = popoverRef.current;
+
+      if (!button || !popover) {
+        return;
+      }
+
+      const triggerRect = button.getBoundingClientRect();
+      const popoverWidth = popover.offsetWidth;
+      const popoverHeight = popover.offsetHeight;
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const spaceBelow = viewportHeight - triggerRect.bottom - POPOVER_TRIGGER_GAP - POPOVER_VIEWPORT_PADDING;
+      const spaceAbove = triggerRect.top - POPOVER_TRIGGER_GAP - POPOVER_VIEWPORT_PADDING;
+      const shouldOpenAbove = spaceBelow < Math.min(popoverHeight, 260) && spaceAbove > spaceBelow;
+      const viewportMaxHeight = Math.max(120, viewportHeight - POPOVER_VIEWPORT_PADDING * 2);
+      const availableHeight = shouldOpenAbove ? spaceAbove : spaceBelow;
+      const maxHeight = Math.min(viewportMaxHeight, Math.max(120, Math.floor(availableHeight || viewportMaxHeight)));
+      const left = Math.min(
+        Math.max(POPOVER_VIEWPORT_PADDING, triggerRect.right - popoverWidth),
+        Math.max(POPOVER_VIEWPORT_PADDING, viewportWidth - popoverWidth - POPOVER_VIEWPORT_PADDING)
+      );
+      const top = shouldOpenAbove
+        ? Math.max(POPOVER_VIEWPORT_PADDING, triggerRect.top - POPOVER_TRIGGER_GAP - Math.min(popoverHeight, maxHeight))
+        : Math.min(triggerRect.bottom + POPOVER_TRIGGER_GAP, viewportHeight - POPOVER_VIEWPORT_PADDING - Math.min(popoverHeight, maxHeight));
+
+      setPopoverStyle({
+        left,
+        maxHeight,
+        overflowY: "auto",
+        position: "fixed",
+        right: "auto",
+        top
+      });
+    };
+
+    updatePopoverPosition();
+    window.addEventListener("resize", updatePopoverPosition);
+    window.addEventListener("scroll", updatePopoverPosition, true);
+
+    return () => {
+      window.removeEventListener("resize", updatePopoverPosition);
+      window.removeEventListener("scroll", updatePopoverPosition, true);
+    };
+  }, [isOpen]);
+
   return (
     <div className="catalog-search-filter">
       <div className="catalog-search-field">
@@ -97,6 +154,7 @@ export function CatalogSearchFilter({
           id={popoverId}
           ref={popoverRef}
           role="dialog"
+          style={popoverStyle}
         >
           <div className="catalog-filter-popover-header">
             <strong>{title}</strong>

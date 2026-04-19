@@ -70,7 +70,10 @@ exports.createProject = async ({ name, description, created_by, member_ids, app_
     throw new Error("No project roles are configured");
   }
 
-  const seenAppTypes = new Set();
+  if (!normalizedAppTypes.length) {
+    throw new Error("At least one app type is required");
+  }
+
   normalizedAppTypes.forEach((appType, index) => {
     if (!appType.name) {
       throw new Error(`App type ${index + 1} is missing a name`);
@@ -79,12 +82,6 @@ exports.createProject = async ({ name, description, created_by, member_ids, app_
     if (!VALID_APP_TYPES.has(appType.type)) {
       throw new Error(`App type ${index + 1} has an invalid type`);
     }
-
-    if (seenAppTypes.has(appType.type)) {
-      throw new Error(`App type '${appType.type}' can only be added once per project`);
-    }
-
-    seenAppTypes.add(appType.type);
   });
 
   for (const memberId of normalizedMemberIds) {

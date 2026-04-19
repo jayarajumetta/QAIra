@@ -1,9 +1,9 @@
-import { ChangeEvent, Dispatch, FormEvent, ReactNode, SetStateAction, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, Dispatch, FormEvent, ReactNode, SetStateAction, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
-import { AddIcon, SparkIcon, UploadIcon } from "../components/AppIcons";
+import { AddIcon, ImportIcon, SparkIcon } from "../components/AppIcons";
 import { CatalogViewToggle } from "../components/CatalogViewToggle";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
 import { DisplayIdBadge } from "../components/DisplayIdBadge";
@@ -32,7 +32,7 @@ import { api } from "../lib/api";
 import { appendUniqueImages, parseExternalLinks, readImageFiles } from "../lib/aiDesignStudio";
 import { parseRequirementCsv } from "../lib/requirementImport";
 import { TEST_AUTHORING_SECTION_ITEMS } from "../lib/workspaceSections";
-import type { AiDesignImageInput, AiDesignedTestCaseCandidate, Requirement, TestCase } from "../types";
+import type { AiDesignImageInput, AiDesignedTestCaseCandidate, ExecutionResult, Requirement, TestCase } from "../types";
 
 type RequirementDraft = {
   title: string;
@@ -43,6 +43,12 @@ type RequirementDraft = {
 
 type RequirementSectionKey = "details" | "linked" | "library";
 type RequirementCoverageFilter = "all" | "linked" | "unlinked";
+
+type RequirementPassCoverage = {
+  total: number;
+  passed: number;
+  percent: number;
+};
 
 const createEmptyRequirementDraft = (defaultStatus = "open"): RequirementDraft => ({
   title: "",
@@ -56,6 +62,22 @@ const createDefaultRequirementSections = (): Record<RequirementSectionKey, boole
   linked: true,
   library: false
 });
+
+const getRequirementPassCoverageClassName = (coverage: RequirementPassCoverage) => {
+  if (!coverage.total) {
+    return "requirement-pass-circle is-empty";
+  }
+
+  if (coverage.percent >= 100) {
+    return "requirement-pass-circle is-complete";
+  }
+
+  if (coverage.passed > 0) {
+    return "requirement-pass-circle is-partial";
+  }
+
+  return "requirement-pass-circle is-unpassed";
+};
 
 export function RequirementsPage() {
   const navigate = useNavigate();
@@ -117,6 +139,11 @@ export function RequirementsPage() {
     queryFn: () => api.testCases.list({ app_type_id: appTypeId }),
     enabled: Boolean(appTypeId)
   });
+  const executionResultsQuery = useQuery({
+    queryKey: ["requirements-execution-results", appTypeId],
+    queryFn: () => api.executionResults.list({ app_type_id: appTypeId }),
+    enabled: Boolean(appTypeId)
+  });
   const sharedGroupsQuery = useQuery({
     queryKey: ["requirements-shared-step-groups", appTypeId],
     queryFn: () => api.sharedStepGroups.list({ app_type_id: appTypeId }),
@@ -157,10 +184,14 @@ export function RequirementsPage() {
   const appTypes = appTypesQuery.data || [];
   const requirements = requirementsQuery.data || [];
   const testCases = testCasesQuery.data || [];
+  const executionResults = executionResultsQuery.data || [];
   const sharedGroups = sharedGroupsQuery.data || [];
   const suites = suitesQuery.data || [];
   const integrations = integrationsQuery.data || [];
-  const isRequirementCatalogLoading = projectsQuery.isLoading || (Boolean(projectId) && requirementsQuery.isLoading);
+  const isRequirementCatalogLoading =
+    projectsQuery.isLoading ||
+    (Boolean(projectId) && requirementsQuery.isLoading) ||
+    (Boolean(appTypeId) && executionResultsQuery.isLoading);
 
   const showSuccess = (text: string) => {
     setMessageTone("success");
@@ -233,6 +264,68 @@ export function RequirementsPage() {
     [requirements, selectedRequirementId]
   );
 
+  const latestResultByCaseId = useMemo(() => {
+    const map: Record<string, ExecutionResult> = {};
+
+    executionResults.forEach((result) => {
+      const current = map[result.test_case_id];
+      const currentTime = current?.created_at ? new Date(current.created_at).getTime() || 0 : 0;
+      const nextTime = result.created_at ? new Date(result.created_at).getTime() || 0 : 0;
+
+      if (!current || nextTime >= currentTime) {
+        map[result.test_case_id] = result;
+      }
+    });
+
+    return map;
+  }, [executionResults]);
+
+  const linkedCaseIdsByRequirementId = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    const requirementIds = new Set(requirements.map((requirement) => requirement.id));
+
+    requirements.forEach((requirement) => {
+      map[requirement.id] = [];
+    });
+
+    testCases.forEach((testCase) => {
+      const linkedRequirementIds = [...(testCase.requirement_ids || []), testCase.requirement_id].filter(Boolean) as string[];
+
+      linkedRequirementIds.forEach((requirementId) => {
+        if (!requirementIds.has(requirementId)) {
+          return;
+        }
+
+        map[requirementId] = [...new Set([...(map[requirementId] || []), testCase.id])];
+      });
+    });
+
+    requirements.forEach((requirement) => {
+      const scopedLinkedIds = (requirement.test_case_ids || []).filter((testCaseId) => testCases.some((testCase) => testCase.id === testCaseId));
+      map[requirement.id] = [...new Set([...(map[requirement.id] || []), ...scopedLinkedIds])];
+    });
+
+    return map;
+  }, [requirements, testCases]);
+
+  const passCoverageByRequirementId = useMemo(() => {
+    const coverage: Record<string, RequirementPassCoverage> = {};
+
+    requirements.forEach((requirement) => {
+      const linkedCaseIds = linkedCaseIdsByRequirementId[requirement.id] || [];
+      const passed = linkedCaseIds.filter((testCaseId) => latestResultByCaseId[testCaseId]?.status === "passed").length;
+      const total = linkedCaseIds.length;
+
+      coverage[requirement.id] = {
+        total,
+        passed,
+        percent: total ? Math.round((passed / total) * 100) : 0
+      };
+    });
+
+    return coverage;
+  }, [latestResultByCaseId, linkedCaseIdsByRequirementId, requirements]);
+
   const requirementStatusOptions = useMemo(
     () => Array.from(new Set(requirements.map((item) => item.status || defaultRequirementStatus))).sort((left, right) => left.localeCompare(right)),
     [defaultRequirementStatus, requirements]
@@ -247,7 +340,7 @@ export function RequirementsPage() {
     const normalizedSearch = requirementSearchTerm.trim().toLowerCase();
 
     return requirements.filter((item) => {
-      const linkedCaseCount = (item.test_case_ids || []).length;
+      const linkedCaseCount = (linkedCaseIdsByRequirementId[item.id] || []).length;
       const matchesSearch =
         !normalizedSearch ||
         [
@@ -280,7 +373,7 @@ export function RequirementsPage() {
 
       return true;
     });
-  }, [requirementCoverageFilter, requirementPriorityFilter, requirementSearchTerm, requirementStatusFilter, requirements]);
+  }, [defaultRequirementStatus, linkedCaseIdsByRequirementId, requirementCoverageFilter, requirementPriorityFilter, requirementSearchTerm, requirementStatusFilter, requirements]);
 
   const activeRequirementFilterCount =
     Number(requirementStatusFilter !== "all") +
@@ -762,7 +855,7 @@ export function RequirementsPage() {
               }}
               type="button"
             >
-              <UploadIcon />
+              <ImportIcon />
               Import from CSV
             </button>
             <button
@@ -913,7 +1006,11 @@ export function RequirementsPage() {
                     const isActive = selectedRequirement?.id === item.id;
                     const requirementStatusLabel = formatTileCardLabel(item.status, "Open");
                     const requirementStatusTone = getTileCardTone(item.status);
-                    const linkedCaseCount = (item.test_case_ids || []).length;
+                    const linkedCaseCount = (linkedCaseIdsByRequirementId[item.id] || []).length;
+                    const passCoverage = passCoverageByRequirementId[item.id] || { total: 0, passed: 0, percent: 0 };
+                    const passCoverageTitle = passCoverage.total
+                      ? `${passCoverage.percent}% pass rate (${passCoverage.passed}/${passCoverage.total} linked test cases passed)`
+                      : "0% pass rate (no linked test cases)";
 
                     return (
                       <button
@@ -927,7 +1024,7 @@ export function RequirementsPage() {
                         type="button"
                       >
                         <div className="tile-card-main">
-                          <div className="tile-card-select-row">
+                          <div className="tile-card-select-row requirement-tile-top-row">
                             <label className="checkbox-field requirement-delete-checkbox" onClick={(event) => event.stopPropagation()}>
                               <input
                                 checked={isSelectedForDelete}
@@ -940,14 +1037,22 @@ export function RequirementsPage() {
                               />
                               <DisplayIdBadge value={item.display_id || item.id} />
                             </label>
+                            <div className="requirement-tile-top-meta">
+                              <span
+                                aria-label={`${item.title} ${passCoverageTitle}`}
+                                className={getRequirementPassCoverageClassName(passCoverage)}
+                                style={{ "--requirement-pass": `${passCoverage.percent}%` } as CSSProperties}
+                                title={passCoverageTitle}
+                              >
+                                <span>{passCoverage.percent}%</span>
+                              </span>
+                              <TileCardStatusIndicator title={requirementStatusLabel} tone={requirementStatusTone} />
+                            </div>
                           </div>
-                          <div className="tile-card-header">
+                          <div className="tile-card-header requirement-tile-header">
                             <div className="tile-card-title-group">
                               <strong>{item.title}</strong>
                               <span className="tile-card-kicker requirement-tile-kicker">{currentAppTypeName}</span>
-                            </div>
-                            <div className="tile-card-header-meta">
-                              <TileCardStatusIndicator title={requirementStatusLabel} tone={requirementStatusTone} />
                             </div>
                           </div>
                           <p className="tile-card-description">{item.description || "No description yet."}</p>
@@ -963,7 +1068,7 @@ export function RequirementsPage() {
                               <TileCardPriorityIcon />
                             </TileCardFact>
                             <TileCardFact
-                              label={`${linkedCaseCount} linked`}
+                              label={String(linkedCaseCount)}
                               title={`${linkedCaseCount} linked test case${linkedCaseCount === 1 ? "" : "s"}`}
                               tone={linkedCaseCount ? "success" : "neutral"}
                             >
@@ -991,7 +1096,7 @@ export function RequirementsPage() {
                     </thead>
                     <tbody>
                       {filteredRequirements.map((item) => {
-                        const linkedCaseCount = (item.test_case_ids || []).length;
+                        const linkedCaseCount = (linkedCaseIdsByRequirementId[item.id] || []).length;
                         const requirementStatusLabel = formatTileCardLabel(item.status, "Open");
 
                         return (

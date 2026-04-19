@@ -1,7 +1,8 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { FolderIcon } from "../components/AppIcons";
+import { AddIcon } from "../components/AppIcons";
 import { api } from "../lib/api";
+import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
 import { DisplayIdBadge } from "../components/DisplayIdBadge";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
@@ -13,7 +14,6 @@ import {
   TileCardIconFrame,
   TileCardProjectIcon,
   TileCardRequirementIcon,
-  TileCardStatusIndicator,
   TileCardUsersIcon
 } from "../components/TileCardPrimitives";
 import { SubnavTabs } from "../components/SubnavTabs";
@@ -42,6 +42,12 @@ type ProjectCreateDraft = {
   appTypes: ProjectAppTypeDraft[];
 };
 
+type ProjectRequirementCoverage = {
+  totalRequirements: number;
+  coveredRequirements: number;
+  coveragePercent: number;
+};
+
 const createDraftId = () =>
   globalThis.crypto?.randomUUID?.() || `project-draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
@@ -59,6 +65,33 @@ const createInitialProjectDraft = (defaultType: string): ProjectCreateDraft => (
   appTypes: [createProjectAppTypeDraft(defaultType)]
 });
 
+const emptyRequirementCoverage: ProjectRequirementCoverage = {
+  totalRequirements: 0,
+  coveredRequirements: 0,
+  coveragePercent: 0
+};
+
+const getCoverageClassName = (coverage: ProjectRequirementCoverage) => {
+  if (!coverage.totalRequirements) {
+    return "project-coverage-circle is-empty";
+  }
+
+  if (coverage.coveragePercent >= 100) {
+    return "project-coverage-circle is-complete";
+  }
+
+  if (coverage.coveredRequirements > 0) {
+    return "project-coverage-circle is-partial";
+  }
+
+  return "project-coverage-circle is-uncovered";
+};
+
+const getCoverageTitle = (coverage: ProjectRequirementCoverage) =>
+  coverage.totalRequirements
+    ? `Requirements coverage: ${coverage.coveragePercent}% (${coverage.coveredRequirements}/${coverage.totalRequirements} requirements linked to test cases)`
+    : "Requirements coverage: 0% (no requirements yet)";
+
 export function ProjectsPage() {
   const queryClient = useQueryClient();
   const { session } = useAuth();
@@ -70,6 +103,9 @@ export function ProjectsPage() {
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [projectSearch, setProjectSearch] = useState("");
+  const [projectAppTypeFilter, setProjectAppTypeFilter] = useState("all");
+  const [projectMemberFilter, setProjectMemberFilter] = useState("all");
   const defaultAppTypeValue = domainMetadataQuery.data?.app_types.default_type || "web";
   const appTypeTypeOptions = domainMetadataQuery.data?.app_types.types || [];
   const [projectDraft, setProjectDraft] = useState<ProjectCreateDraft>(() => createInitialProjectDraft(defaultAppTypeValue));
@@ -131,15 +167,45 @@ export function ProjectsPage() {
     return counts;
   }, [projectMembers.data]);
 
-  const appTypeCountByProjectId = useMemo(() => {
-    const counts: Record<string, number> = {};
+  const projectMemberUserIdsByProjectId = useMemo(() => {
+    const map = new Map<string, Set<string>>();
 
-    (appTypes.data || []).forEach((appType) => {
-      counts[appType.project_id] = (counts[appType.project_id] || 0) + 1;
+    (projectMembers.data || []).forEach((member) => {
+      const current = map.get(member.project_id) || new Set<string>();
+      current.add(member.user_id);
+      map.set(member.project_id, current);
     });
 
-    return counts;
+    return map;
+  }, [projectMembers.data]);
+
+  const userSearchValueById = useMemo(() => {
+    const map = new Map<string, string>();
+
+    (users.data || []).forEach((user) => {
+      map.set(user.id, [user.name, user.email].filter(Boolean).join(" ").toLowerCase());
+    });
+
+    return map;
+  }, [users.data]);
+
+  const appTypesByProjectId = useMemo(() => {
+    const map: Record<string, AppType[]> = {};
+
+    (appTypes.data || []).forEach((appType) => {
+      map[appType.project_id] = [...(map[appType.project_id] || []), appType];
+    });
+
+    return map;
   }, [appTypes.data]);
+
+  const appTypeCountByProjectId = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(appTypesByProjectId).map(([currentProjectId, projectAppTypes]) => [currentProjectId, projectAppTypes.length])
+      ) as Record<string, number>,
+    [appTypesByProjectId]
+  );
 
   const requirementCountByProjectId = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -179,6 +245,123 @@ export function ProjectsPage() {
 
     return counts;
   }, [projectIdByAppTypeId, testCases.data]);
+
+  const requirementCoverageByProjectId = useMemo(() => {
+    const requirementProjectById = new Map((requirements.data || []).map((requirement) => [requirement.id, requirement.project_id]));
+    const coveredRequirementIdsByProjectId = new Map<string, Set<string>>();
+
+    const markRequirementCovered = (projectId: string, requirementId: string) => {
+      const current = coveredRequirementIdsByProjectId.get(projectId) || new Set<string>();
+      current.add(requirementId);
+      coveredRequirementIdsByProjectId.set(projectId, current);
+    };
+
+    (requirements.data || []).forEach((requirement) => {
+      if ((requirement.test_case_ids || []).filter(Boolean).length) {
+        markRequirementCovered(requirement.project_id, requirement.id);
+      }
+    });
+
+    (testCases.data || []).forEach((testCase) => {
+      const owningProjectId = testCase.app_type_id ? projectIdByAppTypeId.get(testCase.app_type_id) : "";
+      const linkedRequirementIds = [...(testCase.requirement_ids || []), testCase.requirement_id].filter(Boolean) as string[];
+
+      linkedRequirementIds.forEach((requirementId) => {
+        const requirementProjectId = requirementProjectById.get(requirementId);
+
+        if (!requirementProjectId || (owningProjectId && owningProjectId !== requirementProjectId)) {
+          return;
+        }
+
+        markRequirementCovered(requirementProjectId, requirementId);
+      });
+    });
+
+    const coverageByProjectId: Record<string, ProjectRequirementCoverage> = {};
+
+    projectItems.forEach((project) => {
+      const totalRequirements = requirementCountByProjectId[project.id] || 0;
+      const coveredRequirements = Math.min(coveredRequirementIdsByProjectId.get(project.id)?.size || 0, totalRequirements);
+
+      coverageByProjectId[project.id] = {
+        totalRequirements,
+        coveredRequirements,
+        coveragePercent: totalRequirements ? Math.round((coveredRequirements / totalRequirements) * 100) : 0
+      };
+    });
+
+    return coverageByProjectId;
+  }, [projectIdByAppTypeId, projectItems, requirementCountByProjectId, requirements.data, testCases.data]);
+
+  const filteredProjectItems = useMemo(() => {
+    const normalizedSearch = projectSearch.trim().toLowerCase();
+
+    return projectItems.filter((project) => {
+      const projectAppTypes = appTypesByProjectId[project.id] || [];
+      const projectMemberUserIds = projectMemberUserIdsByProjectId.get(project.id) || new Set<string>();
+      const searchContent = [
+        project.name,
+        project.display_id,
+        project.description,
+        ...projectAppTypes.flatMap((appType) => [appType.name, appType.type]),
+        ...Array.from(projectMemberUserIds).map((userId) => userSearchValueById.get(userId))
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      if (normalizedSearch && !searchContent.includes(normalizedSearch)) {
+        return false;
+      }
+
+      if (projectAppTypeFilter === "with-app-types" && !projectAppTypes.length) {
+        return false;
+      }
+
+      if (projectAppTypeFilter === "without-app-types" && projectAppTypes.length) {
+        return false;
+      }
+
+      if (
+        projectAppTypeFilter !== "all" &&
+        projectAppTypeFilter !== "with-app-types" &&
+        projectAppTypeFilter !== "without-app-types" &&
+        !projectAppTypes.some((appType) => appType.type === projectAppTypeFilter)
+      ) {
+        return false;
+      }
+
+      if (projectMemberFilter === "with-members" && !projectMemberUserIds.size) {
+        return false;
+      }
+
+      if (projectMemberFilter === "without-members" && projectMemberUserIds.size) {
+        return false;
+      }
+
+      if (
+        projectMemberFilter !== "all" &&
+        projectMemberFilter !== "with-members" &&
+        projectMemberFilter !== "without-members" &&
+        !projectMemberUserIds.has(projectMemberFilter)
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [
+    appTypesByProjectId,
+    projectAppTypeFilter,
+    projectItems,
+    projectMemberFilter,
+    projectMemberUserIdsByProjectId,
+    projectSearch,
+    userSearchValueById
+  ]);
+
+  const activeProjectFilterCount =
+    (projectAppTypeFilter !== "all" ? 1 : 0) + (projectMemberFilter !== "all" ? 1 : 0);
 
   const scopedMembers = useMemo(
     () => (projectMembers.data || []).filter((member) => member.project_id === projectId),
@@ -366,13 +549,9 @@ export function ProjectsPage() {
       }))
       .filter((appType) => appType.name);
 
-    const duplicateType = normalizedAppTypes.find(
-      (appType, index) => normalizedAppTypes.findIndex((candidate) => candidate.type === appType.type) !== index
-    );
-
-    if (duplicateType) {
+    if (!normalizedAppTypes.length) {
       setMessageTone("error");
-      setMessage(`App type '${duplicateType.type}' can only be added once while creating a project.`);
+      setMessage("At least one app type is required.");
       return;
     }
 
@@ -414,7 +593,7 @@ export function ProjectsPage() {
           { label: "Members in scope", value: selectedProject ? scopedMembers.length : 0 },
           { label: "App types", value: selectedProject ? selectedProjectAppTypeCount : 0 }
         ]}
-        actions={<button className="primary-button" onClick={openCreateProjectModal} type="button"><FolderIcon />Create Project</button>}
+        actions={<button className="primary-button" onClick={openCreateProjectModal} type="button"><AddIcon />Create Project</button>}
       />
 
       <ToastMessage
@@ -425,16 +604,71 @@ export function ProjectsPage() {
 
       <WorkspaceMasterDetail
         browseView={(
-          <Panel title="Project tiles" subtitle="Browse workspace scope as tiles first, then open a focused project workspace when you want to edit members or app types.">
+          <Panel
+            title="Projects list"
+            subtitle="Browse workspace scope, then open a focused project workspace when you want to edit members or app types."
+            actions={(
+              <CatalogSearchFilter
+                activeFilterCount={activeProjectFilterCount}
+                ariaLabel="Search projects"
+                onChange={setProjectSearch}
+                placeholder="Search projects"
+                subtitle="Filter projects by app type scope or project members."
+                title="Filter projects"
+                type="search"
+                value={projectSearch}
+              >
+                <div className="catalog-filter-grid">
+                  <label className="catalog-filter-field">
+                    <span>App type</span>
+                    <select onChange={(event) => setProjectAppTypeFilter(event.target.value)} value={projectAppTypeFilter}>
+                      <option value="all">All app types</option>
+                      <option value="with-app-types">Has app types</option>
+                      <option value="without-app-types">No app types</option>
+                      {appTypeTypeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="catalog-filter-field">
+                    <span>Project member</span>
+                    <select onChange={(event) => setProjectMemberFilter(event.target.value)} value={projectMemberFilter}>
+                      <option value="all">All members</option>
+                      <option value="with-members">Has members</option>
+                      <option value="without-members">No members</option>
+                      {projectMemberOptions.map((user) => (
+                        <option key={user.id} value={user.id}>{user.name || user.email}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="catalog-filter-actions">
+                    <button
+                      className="ghost-button"
+                      disabled={!activeProjectFilterCount}
+                      onClick={() => {
+                        setProjectAppTypeFilter("all");
+                        setProjectMemberFilter("all");
+                      }}
+                      type="button"
+                    >
+                      Clear filters
+                    </button>
+                  </div>
+                </div>
+              </CatalogSearchFilter>
+            )}
+          >
             {isProjectCatalogLoading ? <TileCardSkeletonGrid className="catalog-grid compact" /> : null}
             {!isProjectCatalogLoading ? (
               <div className="catalog-grid compact">
-                {projectItems.map((project) => {
+                {filteredProjectItems.map((project) => {
                   const isSelected = selectedProject?.id === project.id;
                   const memberCount = memberCountByProjectId[project.id] || 0;
                   const appTypeCount = appTypeCountByProjectId[project.id] || 0;
                   const requirementCount = requirementCountByProjectId[project.id] || 0;
                   const testCaseCount = testCaseCountByProjectId[project.id] || 0;
+                  const coverage = requirementCoverageByProjectId[project.id] || emptyRequirementCoverage;
+                  const coverageTitle = getCoverageTitle(coverage);
 
                   return (
                     <button
@@ -448,18 +682,24 @@ export function ProjectsPage() {
                       type="button"
                     >
                       <div className="tile-card-main">
-                        <div className="tile-card-header">
-                          <TileCardIconFrame className="project-card-icon" tone={isSelected ? "success" : "info"}>
-                            <TileCardProjectIcon />
-                          </TileCardIconFrame>
-                          <div className="tile-card-title-group">
-                            <strong>{project.name}</strong>
-                            <span className="tile-card-kicker">{appTypeCount} app type{appTypeCount === 1 ? "" : "s"} in scope</span>
-                          </div>
-                          <div className="tile-card-header-meta">
+                        <div className="tile-card-header project-card-header">
+                          <div className="project-card-icon-row">
+                            <TileCardIconFrame className="project-card-icon" tone={isSelected ? "success" : "info"}>
+                              <TileCardProjectIcon />
+                            </TileCardIconFrame>
                             <DisplayIdBadge value={project.display_id || project.id} />
-                            <TileCardStatusIndicator title={isSelected ? "Current project" : "Available project"} tone={isSelected ? "success" : "neutral"} />
                           </div>
+                          <span
+                            aria-label={`${project.name} ${coverageTitle}`}
+                            className={getCoverageClassName(coverage)}
+                            style={{ "--project-coverage": `${coverage.coveragePercent}%` } as CSSProperties}
+                            title={coverageTitle}
+                          >
+                            <span>{coverage.coveragePercent}%</span>
+                          </span>
+                        </div>
+                        <div className="tile-card-title-group project-card-title-group">
+                          <strong>{project.name}</strong>
                         </div>
                         <p className="tile-card-description">{project.description || "No description yet."}</p>
                         <div className="tile-card-facts" aria-label={`${project.name} facts`}>
@@ -483,12 +723,13 @@ export function ProjectsPage() {
               </div>
             ) : null}
             {!isProjectCatalogLoading && !projectItems.length ? <div className="empty-state compact">No projects yet. Create the first project to add scope, app types, and the initial team in one flow.</div> : null}
+            {!isProjectCatalogLoading && projectItems.length > 0 && !filteredProjectItems.length ? <div className="empty-state compact">No projects match the current search or filters.</div> : null}
           </Panel>
         )}
         detailView={(
           <div className="stack-grid">
             <Panel
-              actions={<WorkspaceBackButton label="Back to project tiles" onClick={() => setFocusedProjectId("")} />}
+              actions={<WorkspaceBackButton label="Back to projects list" onClick={() => setFocusedProjectId("")} />}
               title={focusedProject ? focusedProject.name : "Project summary"}
               subtitle={focusedProject ? "Quick orientation before you dive into related records." : "Select a project to reveal its scoped data."}
             >
@@ -725,12 +966,14 @@ export function ProjectsPage() {
                             <input
                               onChange={(event) => updateProjectAppType(appType.id, { name: event.target.value })}
                               placeholder="Web app"
+                              required
                               value={appType.name}
                             />
                           </FormField>
                           <FormField label="Platform type">
                             <select
                               onChange={(event) => updateProjectAppType(appType.id, { type: event.target.value as AppType["type"] })}
+                              required
                               value={appType.type}
                             >
                               {appTypeTypeOptions.map((option) => (
@@ -813,7 +1056,7 @@ export function ProjectsPage() {
               </div>
 
               <div className="action-row project-create-modal-actions">
-                <button className="ghost-button" disabled={createProject.isPending} onClick={closeCreateProjectModal} type="button">
+                <button className="ghost-button danger" disabled={createProject.isPending} onClick={closeCreateProjectModal} type="button">
                   Cancel
                 </button>
                 <button className="primary-button" disabled={createProject.isPending} type="submit">

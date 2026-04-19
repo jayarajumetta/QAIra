@@ -60,7 +60,7 @@ export function SubnavTabs<T extends string>({
           {item.icon ? <span aria-hidden="true" className="subnav-tab-icon">{item.icon}</span> : null}
           <span className="subnav-tab-copy">
             <strong>{item.label}</strong>
-            {item.meta ? <span>{item.meta}</span> : null}
+            {item.meta ? <span className="subnav-tab-meta">{item.meta}</span> : null}
           </span>
           <span aria-hidden="true" className="subnav-tab-indicator" />
         </button>

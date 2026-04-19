@@ -754,8 +754,8 @@ export function SharedStepsPage() {
       <WorkspaceMasterDetail
         browseView={(
           <Panel
-            title="Shared step tiles"
-            subtitle={appTypeId ? "Browse shared groups as tiles first, including ones promoted from test cases, then open one for editing." : "Choose an app type to begin."}
+            title="Shared step list"
+            subtitle={appTypeId ? undefined : "Choose an app type to begin."}
           >
             <div className="design-list-toolbar test-case-catalog-toolbar">
               <CatalogViewToggle onChange={setCatalogViewMode} value={catalogViewMode} />
@@ -948,7 +948,7 @@ export function SharedStepsPage() {
             {selectedGroupId || isCreating ? (
               <form className="detail-stack shared-step-workspace-form" onSubmit={(event) => void handleSaveGroup(event)}>
                 <div className="shared-step-workspace-nav">
-                  <WorkspaceBackButton label="Back to shared step tiles" onClick={closeWorkspace} />
+                  <WorkspaceBackButton label="Back to shared step list" onClick={closeWorkspace} />
                 </div>
                 <SharedStepAccordionSection
                   countLabel={groupDraft.name.trim() ? "Ready" : "Draft"}

@@ -15,16 +15,6 @@ exports.createAppType = async ({ project_id, name, type, is_unified }) => {
 
   if (!project) throw new Error("Project not found");
 
-  // Prevent duplicate type per project
-  const exists = await db.prepare(`
-    SELECT id FROM app_types 
-    WHERE project_id = ? AND type = ?
-  `).get(project_id, type);
-
-  if (exists) {
-    throw new Error(`App type '${type}' already exists in project`);
-  }
-
   const id = uuid();
 
   await db.prepare(`

@@ -60,6 +60,16 @@ export function UploadIcon({ size, strokeWidth }: IconProps) {
   );
 }
 
+export function ImportIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <path d="M12 4v12" />
+      <path d="m7 11 5 5 5-5" />
+      <path d="M5 20h14" />
+    </IconFrame>
+  );
+}
+
 export function SparkIcon({ size, strokeWidth }: IconProps) {
   return (
     <IconFrame size={size} strokeWidth={strokeWidth}>
