@@ -63,6 +63,7 @@ type ExecutionCaseView = {
   description: string | null;
   priority: number | null;
   status: string | null;
+  parameter_values: Record<string, string>;
   suite_id: string | null;
   suite_name: string | null;
   suite_ids: string[];
@@ -219,6 +220,7 @@ function toCaseView(snapshot: ExecutionCaseSnapshot): ExecutionCaseView {
     description: snapshot.test_case_description,
     priority: snapshot.priority,
     status: snapshot.status,
+    parameter_values: snapshot.parameter_values || {},
     suite_id: snapshot.suite_id,
     suite_name: snapshot.suite_name,
     suite_ids: snapshot.suite_id ? [snapshot.suite_id] : [],
@@ -889,10 +891,6 @@ export function ExecutionsPage() {
 
   const selectedExecution = selectedExecutionQuery.data || executions.find((execution) => execution.id === selectedExecutionId) || null;
   const selectedSchedule = executionSchedules.find((schedule) => schedule.id === selectedScheduleId) || null;
-  const executionStepParameterValues = useMemo(
-    () => buildDataSetParameterValues(selectedExecution?.test_data_set?.snapshot || null),
-    [selectedExecution?.test_data_set?.snapshot]
-  );
   const selectedExecutionSuiteIds = selectedExecution?.suite_ids || [];
   const selectedExecutionSuites = selectedExecution?.suite_snapshots || [];
   const currentExecutionStatus = normalizeExecutionStatus(selectedExecution?.status);
@@ -905,6 +903,22 @@ export function ExecutionsPage() {
     [selectedExecution?.case_snapshots]
   );
   const snapshotSteps = selectedExecution?.step_snapshots || [];
+  const hasExecutionLevelTestData = Boolean(selectedExecution?.test_data_set);
+  const selectedExecutionCaseSnapshot = useMemo(
+    () => snapshotCases.find((snapshot) => snapshot.test_case_id === selectedTestCaseId) || null,
+    [selectedTestCaseId, snapshotCases]
+  );
+  const executionStepParameterValues = useMemo(
+    () =>
+      hasExecutionLevelTestData
+        ? buildDataSetParameterValues(selectedExecution?.test_data_set?.snapshot || null)
+        : selectedExecutionCaseSnapshot?.parameter_values || {},
+    [hasExecutionLevelTestData, selectedExecution?.test_data_set?.snapshot, selectedExecutionCaseSnapshot?.parameter_values]
+  );
+  const selectedExecutionCaseParameterEntries = useMemo(
+    () => Object.entries(selectedExecutionCaseSnapshot?.parameter_values || {}).sort(([left], [right]) => left.localeCompare(right)),
+    [selectedExecutionCaseSnapshot?.parameter_values]
+  );
 
   useEffect(() => {
     setExecutionAssignmentDraft(selectedExecution?.assigned_to || "");
@@ -2491,6 +2505,43 @@ export function ExecutionsPage() {
                             value={selectedStepProgress.percent}
                           />
                         </div>
+
+                        {!hasExecutionLevelTestData ? (
+                          <div className="resource-table-shell execution-context-table-shell">
+                            <div className="resource-table-toolbar">
+                              <div>
+                                <strong>Test case data fallback</strong>
+                                <span>Using saved test case values because this execution has no attached test data set.</span>
+                              </div>
+                              <span className="count-pill">
+                                {selectedExecutionCaseParameterEntries.length} item{selectedExecutionCaseParameterEntries.length === 1 ? "" : "s"}
+                              </span>
+                            </div>
+                            {!selectedExecutionCaseParameterEntries.length ? (
+                              <div className="empty-state compact resource-table-empty">No saved test case-level data is available for this case.</div>
+                            ) : null}
+                            {selectedExecutionCaseParameterEntries.length ? (
+                              <div className="table-wrap execution-context-table-wrap">
+                                <table className="data-table resource-data-table">
+                                  <thead>
+                                    <tr>
+                                      <th>Key</th>
+                                      <th>Value</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {selectedExecutionCaseParameterEntries.map(([key, value]) => (
+                                      <tr key={key}>
+                                        <td>{key}</td>
+                                        <td>{value || "—"}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
 
                         {!selectedSteps.length ? <div className="empty-state compact">No snapshot steps are available for this case.</div> : null}
 

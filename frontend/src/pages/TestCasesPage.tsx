@@ -422,6 +422,9 @@ export function TestCasesPage() {
   const [expandedSections, setExpandedSections] = useState<Record<TestCaseEditorSectionKey, boolean>>(createDefaultTestCaseSections);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
+  const lastTestCaseParameterSeedRef = useRef("");
+  const generationJobAlertScopeRef = useRef("");
+  const surfacedGenerationJobFailureIdsRef = useRef<Set<string>>(new Set());
   const defaultTestCaseStatus = domainMetadataQuery.data?.test_cases.default_status || "active";
   const defaultTestCaseAutomated = (domainMetadataQuery.data?.test_cases.default_automated || "no") as "yes" | "no";
   const testCaseStatusOptions = domainMetadataQuery.data?.test_cases.statuses || [];
@@ -994,9 +997,38 @@ export function TestCasesPage() {
   ]);
 
   useEffect(() => {
-    setTestCaseParameterValues({});
+    if (isCreating) {
+      if (lastTestCaseParameterSeedRef.current !== "__create__") {
+        setTestCaseParameterValues({});
+        setIsCaseParameterDialogOpen(false);
+        lastTestCaseParameterSeedRef.current = "__create__";
+      }
+      return;
+    }
+
+    if (!selectedTestCaseId) {
+      if (lastTestCaseParameterSeedRef.current !== "__none__") {
+        setTestCaseParameterValues({});
+        setIsCaseParameterDialogOpen(false);
+        lastTestCaseParameterSeedRef.current = "__none__";
+      }
+      return;
+    }
+
+    if (testCasesQuery.isLoading || testCasesQuery.isFetching || !selectedTestCase) {
+      return;
+    }
+
+    const nextSeedKey = `case:${selectedTestCase.id}`;
+
+    if (lastTestCaseParameterSeedRef.current === nextSeedKey) {
+      return;
+    }
+
+    setTestCaseParameterValues(selectedTestCase.parameter_values || {});
     setIsCaseParameterDialogOpen(false);
-  }, [isCreating, selectedTestCaseId]);
+    lastTestCaseParameterSeedRef.current = nextSeedKey;
+  }, [isCreating, selectedTestCase, selectedTestCaseId, testCasesQuery.isFetching, testCasesQuery.isLoading]);
 
   useEffect(() => {
     if (!searchParams.get("case")) {
@@ -1156,6 +1188,38 @@ export function TestCasesPage() {
       queryClient.invalidateQueries({ queryKey: ["requirements", projectId] })
     ]);
   }, [appTypeId, generationJobSyncToken, projectId, queryClient]);
+
+  useEffect(() => {
+    if (!appTypeId) {
+      generationJobAlertScopeRef.current = "";
+      surfacedGenerationJobFailureIdsRef.current = new Set();
+      return;
+    }
+
+    if (!generationJobsQuery.isFetched) {
+      return;
+    }
+
+    if (generationJobAlertScopeRef.current !== appTypeId) {
+      generationJobAlertScopeRef.current = appTypeId;
+      surfacedGenerationJobFailureIdsRef.current = new Set(
+        generationJobs.filter((job) => job.status === "failed").map((job) => job.id)
+      );
+      return;
+    }
+
+    const latestUnsurfacedFailure = generationJobs.find(
+      (job) => job.status === "failed" && !surfacedGenerationJobFailureIdsRef.current.has(job.id)
+    );
+
+    if (!latestUnsurfacedFailure) {
+      return;
+    }
+
+    surfacedGenerationJobFailureIdsRef.current = new Set(surfacedGenerationJobFailureIdsRef.current).add(latestUnsurfacedFailure.id);
+    setMessageTone("error");
+    setMessage(latestUnsurfacedFailure.error || "One or more queued AI generations failed.");
+  }, [appTypeId, generationJobs, generationJobsQuery.isFetched]);
 
   const resolveStepInsertIndex = (items: Array<{ id: string }>) => {
     if (stepInsertIndex !== null) {
@@ -1371,6 +1435,7 @@ export function TestCasesPage() {
           suite_ids: createSuiteContextId ? [createSuiteContextId] : [],
           title: caseDraft.title,
           description: caseDraft.description || undefined,
+          parameter_values: testCaseParameterValues,
           automated: caseDraft.automated,
           priority: Number(caseDraft.priority),
           status: caseDraft.status,
@@ -1394,6 +1459,7 @@ export function TestCasesPage() {
             app_type_id: appTypeId,
             title: caseDraft.title,
             description: caseDraft.description,
+            parameter_values: testCaseParameterValues,
             automated: caseDraft.automated,
             priority: Number(caseDraft.priority),
             status: caseDraft.status,
@@ -3024,14 +3090,6 @@ export function TestCasesPage() {
       };
     }
 
-    if (latestGenerationJob?.status === "failed") {
-      return {
-        tone: "error" as const,
-        title: "Latest AI generation job needs attention",
-        detail: latestGenerationJob.error || "One or more queued AI generations failed."
-      };
-    }
-
     if (latestGenerationJob?.status === "completed") {
       return {
         tone: "success" as const,
@@ -3252,7 +3310,7 @@ export function TestCasesPage() {
       <ToastMessage message={message} onDismiss={() => setMessage("")} tone={messageTone} />
 
       {generationQueueSummary ? (
-        <div className={generationQueueSummary.tone === "error" ? "inline-message error-message" : "inline-message success-message"}>
+        <div className="inline-message success-message">
           <strong>{generationQueueSummary.title}</strong>
           <span>{generationQueueSummary.detail}</span>
         </div>

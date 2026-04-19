@@ -60,6 +60,7 @@ const insertTestCaseRecord = db.prepare(`
     suite_id,
     title,
     description,
+    parameter_values,
     automated,
     priority,
     status,
@@ -69,12 +70,12 @@ const insertTestCaseRecord = db.prepare(`
     ai_generation_job_id,
     ai_generated_at
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const updateTestCaseRecord = db.prepare(`
   UPDATE test_cases
-  SET app_type_id = ?, suite_id = ?, title = ?, description = ?, automated = ?, priority = ?, status = ?, requirement_id = ?
+  SET app_type_id = ?, suite_id = ?, title = ?, description = ?, parameter_values = ?, automated = ?, priority = ?, status = ?, requirement_id = ?
   WHERE id = ?
 `);
 
@@ -127,6 +128,7 @@ const hydrateSuiteIds = async (testCase) => {
 
   return {
     ...testCase,
+    parameter_values: normalizeParameterValues(testCase.parameter_values),
     suite_ids: await suiteTestCaseService.getSuiteIdsForTestCase(testCase.id),
     requirement_ids: await requirementTestCaseService.getRequirementIdsForTestCase(testCase.id)
   };
@@ -139,6 +141,28 @@ const normalizeText = (value) => {
 
   const normalized = value.trim();
   return normalized ? normalized : null;
+};
+
+const normalizeParameterName = (value) => {
+  const normalized = String(value || "").trim().replace(/^@+/, "").toLowerCase();
+  return normalized ? normalized : null;
+};
+
+const normalizeParameterValues = (values = {}) => {
+  if (!values || typeof values !== "object" || Array.isArray(values)) {
+    return {};
+  }
+
+  return Object.entries(values).reduce((next, [key, value]) => {
+    const normalizedKey = normalizeParameterName(key);
+
+    if (!normalizedKey) {
+      return next;
+    }
+
+    next[normalizedKey] = value === undefined || value === null ? "" : String(value);
+    return next;
+  }, {});
 };
 
 const normalizeTextList = (values = []) => {
@@ -530,6 +554,7 @@ const createPersistablePayload = async ({
   status,
   requirement_id,
   requirement_ids = [],
+  parameter_values,
   steps = [],
   ai_generation_source,
   ai_generation_review_status,
@@ -564,6 +589,7 @@ const createPersistablePayload = async ({
     requirement_ids: resolvedRequirementIds,
     title: resolvedTitle,
     description: normalizeText(description),
+    parameter_values: normalizeParameterValues(parameter_values),
     automated: normalizeAutomated(automated),
     priority: normalizePriority(priority),
     status: normalizeStatus(status),
@@ -586,6 +612,7 @@ const createOne = db.transaction(async (payload) => {
     payload.suite_ids[0] || null,
     payload.title,
     payload.description,
+    payload.parameter_values,
     payload.automated,
     payload.priority,
     payload.status,
@@ -848,6 +875,7 @@ exports.updateTestCase = async (id, data) => {
     requirement_ids: requestedRequirementIds,
     title: normalizeText(data.title) || existing.title,
     description: data.description !== undefined ? normalizeText(data.description) : existing.description,
+    parameter_values: data.parameter_values !== undefined ? normalizeParameterValues(data.parameter_values) : normalizeParameterValues(existing.parameter_values),
     automated: data.automated !== undefined ? normalizeAutomated(data.automated, existing.automated || DEFAULT_AUTOMATED) : existing.automated || DEFAULT_AUTOMATED,
     priority: data.priority !== undefined ? normalizePriority(data.priority) : existing.priority ?? DEFAULT_PRIORITY,
     status: data.status !== undefined ? normalizeStatus(data.status) : existing.status || DEFAULT_STATUS
@@ -859,6 +887,7 @@ exports.updateTestCase = async (id, data) => {
       payload.suite_ids[0] || null,
       payload.title,
       payload.description,
+      payload.parameter_values,
       payload.automated,
       payload.priority,
       payload.status,

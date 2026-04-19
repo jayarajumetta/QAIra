@@ -147,6 +147,7 @@ CREATE TABLE test_cases (
   suite_id TEXT,
   title TEXT NOT NULL,
   description TEXT,
+  parameter_values JSONB NOT NULL DEFAULT '{}'::jsonb,
   automated TEXT NOT NULL DEFAULT 'no' CHECK(automated IN ('yes','no')),
   priority INTEGER DEFAULT 3,
   status TEXT DEFAULT 'active',
@@ -303,6 +304,7 @@ CREATE TABLE execution_case_snapshots (
   suite_name TEXT,
   priority INTEGER,
   status TEXT,
+  parameter_values JSONB NOT NULL DEFAULT '{}'::jsonb,
   sort_order INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (execution_id, test_case_id),
   FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE

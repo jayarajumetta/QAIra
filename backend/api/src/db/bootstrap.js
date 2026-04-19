@@ -240,11 +240,16 @@ const statements = [
       suite_name TEXT,
       priority INTEGER,
       status TEXT,
+      parameter_values JSONB NOT NULL DEFAULT '{}'::jsonb,
       sort_order INTEGER NOT NULL DEFAULT 1,
       assigned_to TEXT,
       PRIMARY KEY (execution_id, test_case_id)
     )
   `,
+  `ALTER TABLE execution_case_snapshots ADD COLUMN IF NOT EXISTS parameter_values JSONB`,
+  `UPDATE execution_case_snapshots SET parameter_values = '{}'::jsonb WHERE parameter_values IS NULL`,
+  `ALTER TABLE execution_case_snapshots ALTER COLUMN parameter_values SET DEFAULT '{}'::jsonb`,
+  `ALTER TABLE execution_case_snapshots ALTER COLUMN parameter_values SET NOT NULL`,
   `ALTER TABLE execution_case_snapshots ADD COLUMN IF NOT EXISTS assigned_to TEXT`,
   `
     CREATE TABLE IF NOT EXISTS execution_step_snapshots (
@@ -297,6 +302,17 @@ const statements = [
   `CREATE INDEX IF NOT EXISTS idx_ai_test_case_generation_jobs_scope_status ON ai_test_case_generation_jobs (app_type_id, status, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_ai_test_case_generation_jobs_project_created ON ai_test_case_generation_jobs (project_id, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_test_cases_app_status_created ON test_cases (app_type_id, status, created_at DESC)`,
+  `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS parameter_values JSONB`,
+  `UPDATE test_cases SET parameter_values = '{}'::jsonb WHERE parameter_values IS NULL`,
+  `ALTER TABLE test_cases ALTER COLUMN parameter_values SET DEFAULT '{}'::jsonb`,
+  `ALTER TABLE test_cases ALTER COLUMN parameter_values SET NOT NULL`,
+  `
+    UPDATE execution_case_snapshots
+    SET parameter_values = COALESCE(test_cases.parameter_values, '{}'::jsonb)
+    FROM test_cases
+    WHERE execution_case_snapshots.test_case_id = test_cases.id
+      AND (execution_case_snapshots.parameter_values IS NULL OR execution_case_snapshots.parameter_values = '{}'::jsonb)
+  `,
   `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS automated TEXT NOT NULL DEFAULT 'no'`,
   `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS ai_generation_source TEXT`,
   `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS ai_generation_review_status TEXT`,

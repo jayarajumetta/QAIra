@@ -13,7 +13,7 @@ const getSuiteIdsForExecution = db.prepare(`
 `);
 
 const getCaseSnapshotsForExecution = db.prepare(`
-  SELECT execution_id, test_case_id, test_case_title, test_case_description, suite_id, suite_name, priority, status, sort_order, assigned_to
+  SELECT execution_id, test_case_id, test_case_title, test_case_description, suite_id, suite_name, priority, status, parameter_values, sort_order, assigned_to
   FROM execution_case_snapshots
   WHERE execution_id = ?
   ORDER BY sort_order ASC, test_case_title ASC
@@ -48,10 +48,11 @@ const insertExecutionCaseSnapshot = db.prepare(`
     suite_name,
     priority,
     status,
+    parameter_values,
     sort_order,
     assigned_to
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const insertExecutionStepSnapshot = db.prepare(`
@@ -81,6 +82,7 @@ const selectCasesForSuite = db.prepare(`
     test_cases.id AS test_case_id,
     test_cases.title AS test_case_title,
     test_cases.description AS test_case_description,
+    test_cases.parameter_values,
     test_cases.priority,
     test_cases.status,
     suite_test_cases.sort_order
@@ -96,6 +98,7 @@ const selectCaseForExecution = db.prepare(`
     app_type_id,
     title AS test_case_title,
     description AS test_case_description,
+    parameter_values,
     priority,
     status
   FROM test_cases
@@ -186,6 +189,25 @@ function normalizeText(value) {
 
   const normalized = value.trim();
   return normalized || null;
+}
+
+function normalizeParameterValues(values = {}) {
+  const parsed = parseJsonValue(values, {});
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {};
+  }
+
+  return Object.entries(parsed).reduce((next, [key, value]) => {
+    const normalizedKey = String(key || "").trim().replace(/^@+/, "").toLowerCase();
+
+    if (!normalizedKey) {
+      return next;
+    }
+
+    next[normalizedKey] = value === undefined || value === null ? "" : String(value);
+    return next;
+  }, {});
 }
 
 function shapeAssignedUser(user) {
@@ -356,6 +378,7 @@ async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
         suite_name: suiteRow.suite_name,
         priority: suiteCase.priority,
         status: suiteCase.status,
+        parameter_values: normalizeParameterValues(suiteCase.parameter_values),
         sort_order: sortOrder
       });
 
@@ -401,6 +424,7 @@ async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
         suite_name: directSuiteRow.suite_name,
         priority: directCase.priority,
         status: directCase.status,
+        parameter_values: normalizeParameterValues(directCase.parameter_values),
         sort_order: sortOrder
       });
 
@@ -683,6 +707,7 @@ exports.createExecution = async ({
         caseSnapshot.suite_name,
         caseSnapshot.priority,
         caseSnapshot.status,
+        caseSnapshot.parameter_values || {},
         caseSnapshot.sort_order,
         caseSnapshot.assigned_to || null
       );
@@ -841,6 +866,7 @@ exports.rerunExecution = async (id, { failed_only = false, created_by, name } = 
         snapshot.suite_name,
         snapshot.priority,
         snapshot.status,
+        snapshot.parameter_values || {},
         index + 1,
         snapshot.assigned_to || null
       );

@@ -244,6 +244,7 @@ export type TestCase = {
   requirement_ids?: string[];
   title: string;
   description: string | null;
+  parameter_values?: Record<string, string>;
   automated: "yes" | "no" | null;
   priority: number | null;
   status: string | null;
@@ -446,6 +447,7 @@ export type ExecutionCaseSnapshot = {
   suite_name: string | null;
   priority: number | null;
   status: string | null;
+  parameter_values?: Record<string, string>;
   sort_order: number;
   assigned_to?: string | null;
   assigned_user?: {
