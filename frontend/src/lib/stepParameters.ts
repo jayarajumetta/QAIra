@@ -21,7 +21,8 @@ export type StepParameterSegment =
       resolvedValue: string | null;
     };
 
-type StepParameterSource = Pick<TestStep, "id" | "action" | "expected_result">;
+type StepParameterSource = Pick<TestStep, "id" | "action" | "expected_result" | "automation_code" | "api_request">;
+type StepApiLike = NonNullable<TestStep["api_request"]>;
 
 const STEP_PARAMETER_PATTERN = /(?<![A-Za-z0-9_])@([A-Za-z][A-Za-z0-9_-]*)/g;
 
@@ -48,27 +49,49 @@ export function extractStepParameterMatches(text?: string | null) {
 export function collectStepParameters(steps: StepParameterSource[]): StepParameterDefinition[] {
   const parameterMap = new Map<string, StepParameterDefinition>();
 
-  steps.forEach((step) => {
-    [step.action, step.expected_result].forEach((value) => {
-      extractStepParameterMatches(value).forEach((match) => {
-        const current =
-          parameterMap.get(match.name) || {
-            name: match.name,
-            label: match.label,
-            token: `@${match.label}`,
-            stepIds: [],
-            occurrenceCount: 0
-          };
+  const registerValue = (stepId: string, value?: string | null) => {
+    extractStepParameterMatches(value).forEach((match) => {
+      const current =
+        parameterMap.get(match.name) || {
+          name: match.name,
+          label: match.label,
+          token: `@${match.label}`,
+          stepIds: [],
+          occurrenceCount: 0
+        };
 
-        current.occurrenceCount += 1;
+      current.occurrenceCount += 1;
 
-        if (!current.stepIds.includes(step.id)) {
-          current.stepIds.push(step.id);
-        }
+      if (!current.stepIds.includes(stepId)) {
+        current.stepIds.push(stepId);
+      }
 
-        parameterMap.set(match.name, current);
-      });
+      parameterMap.set(match.name, current);
     });
+  };
+
+  const registerApiRequest = (stepId: string, apiRequest?: StepApiLike | null) => {
+    if (!apiRequest) {
+      return;
+    }
+
+    registerValue(stepId, apiRequest.url);
+    registerValue(stepId, apiRequest.body);
+
+    (apiRequest.headers || []).forEach((header) => {
+      registerValue(stepId, header.key);
+      registerValue(stepId, header.value);
+    });
+
+    (apiRequest.validations || []).forEach((validation) => {
+      registerValue(stepId, validation.target);
+      registerValue(stepId, validation.expected);
+    });
+  };
+
+  steps.forEach((step) => {
+    [step.action, step.expected_result, step.automation_code].forEach((value) => registerValue(step.id, value));
+    registerApiRequest(step.id, step.api_request);
   });
 
   return [...parameterMap.values()].sort((left, right) => left.label.localeCompare(right.label));

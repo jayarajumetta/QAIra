@@ -3,8 +3,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
+import { CopyIcon, ExportIcon, MoveIcon, OpenIcon, TrashIcon } from "../components/AppIcons";
+import { CatalogActionMenu } from "../components/CatalogActionMenu";
 import { CatalogViewToggle } from "../components/CatalogViewToggle";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
+import { DataTable, type DataTableColumn } from "../components/DataTable";
 import { DisplayIdBadge } from "../components/DisplayIdBadge";
 import { ExecutionContextSelector } from "../components/ExecutionContextSelector";
 import { FormField } from "../components/FormField";
@@ -13,6 +16,15 @@ import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StepParameterDialog } from "../components/StepParameterDialog";
 import { StepParameterizedText } from "../components/StepParameterizedText";
+import {
+  AutomationCodeIcon,
+  CodePreviewDialog,
+  SharedGroupLevelIcon,
+  StandardStepIcon,
+  StepAutomationDialog,
+  StepIconButton as InlineStepToolButton,
+  StepTypePickerButton
+} from "../components/StepAutomationEditor";
 import { SharedStepsIcon as SharedStepsIconGraphic } from "../components/SharedStepsIcon";
 import { StatusBadge } from "../components/StatusBadge";
 import {
@@ -34,6 +46,7 @@ import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { useDialogFocus } from "../hooks/useDialogFocus";
+import { parseJUnitXmlTestCases } from "../lib/junitImport";
 import {
   countImportedGroups,
   countImportedSteps,
@@ -44,6 +57,14 @@ import {
 import { api } from "../lib/api";
 import { appendUniqueImages, parseExternalLinks, readImageFiles, toggleRequirementOnPreviewCase } from "../lib/aiDesignStudio";
 import { upsertSharedStepGroupInCache } from "../lib/sharedStepGroupCache";
+import {
+  buildCaseAutomationCode,
+  buildGroupAutomationCode,
+  normalizeApiRequest,
+  normalizeAutomationCode,
+  normalizeStepType,
+  stepHasAutomation
+} from "../lib/stepAutomation";
 import { type AssigneeOption, buildAssigneeOptions } from "../lib/userDisplay";
 import {
   collectStepParameters,
@@ -80,12 +101,18 @@ type TestCaseDraft = {
 type StepDraft = {
   action: string;
   expected_result: string;
+  step_type: TestStep["step_type"];
+  automation_code: string;
+  api_request: TestStep["api_request"];
 };
 
 type DraftTestStep = {
   id: string;
   action: string;
   expected_result: string;
+  step_type: TestStep["step_type"];
+  automation_code: string;
+  api_request: TestStep["api_request"];
   group_id: string | null;
   group_name: string | null;
   group_kind: "local" | "reusable" | null;
@@ -95,6 +122,9 @@ type DraftTestStep = {
 type CopiedTestStep = {
   action: string;
   expected_result: string;
+  step_type: TestStep["step_type"];
+  automation_code: string;
+  api_request: TestStep["api_request"];
   group_id: string | null;
   group_name: string | null;
   group_kind: "local" | "reusable" | null;
@@ -135,7 +165,10 @@ const createEmptyCaseDraft = (defaultStatus = "active", defaultAutomated: "yes" 
 
 const EMPTY_STEP_DRAFT: StepDraft = {
   action: "",
-  expected_result: ""
+  expected_result: "",
+  step_type: "web",
+  automation_code: "",
+  api_request: null
 };
 
 const executionHistoryDateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -170,12 +203,28 @@ const normalizeSharedGroupComparableText = (value?: string | null) =>
     .replace(/\s+/g, " ")
     .toLowerCase();
 
+const normalizeComparableAutomationCode = (value?: string | null) => normalizeAutomationCode(value).trim();
+
+const normalizeComparableApiRequest = (value?: TestStep["api_request"]) =>
+  JSON.stringify(normalizeApiRequest(value) || null);
+
+const areComparableStepAutomationEqual = (
+  left: Pick<TestStep, "step_type" | "automation_code" | "api_request">,
+  right: Pick<TestStep, "step_type" | "automation_code" | "api_request">
+) =>
+  normalizeStepType(left.step_type) === normalizeStepType(right.step_type)
+  && normalizeComparableAutomationCode(left.automation_code) === normalizeComparableAutomationCode(right.automation_code)
+  && normalizeComparableApiRequest(left.api_request) === normalizeComparableApiRequest(right.api_request);
+
 const normalizeDraftSteps = (steps: DraftTestStep[]) =>
   steps
     .map((step, index) => ({
       step_order: index + 1,
       action: step.action.trim(),
       expected_result: step.expected_result.trim(),
+      step_type: normalizeStepType(step.step_type),
+      automation_code: normalizeAutomationCode(step.automation_code) || undefined,
+      api_request: normalizeApiRequest(step.api_request) || undefined,
       group_id: step.group_id || undefined,
       group_name: step.group_name?.trim() || undefined,
       group_kind: step.group_kind || undefined,
@@ -184,7 +233,7 @@ const normalizeDraftSteps = (steps: DraftTestStep[]) =>
     .filter((step) => step.action || step.expected_result);
 
 const normalizeCopiedSteps = (
-  steps: Array<Pick<TestStep, "action" | "expected_result" | "group_id" | "group_name" | "group_kind" | "reusable_group_id">>,
+  steps: Array<Pick<TestStep, "action" | "expected_result" | "step_type" | "automation_code" | "api_request" | "group_id" | "group_name" | "group_kind" | "reusable_group_id">>,
   mode: "copy" | "cut"
 ): CopiedTestStep[] =>
   steps.map((step) => {
@@ -192,6 +241,9 @@ const normalizeCopiedSteps = (
       return {
         action: step.action || "",
         expected_result: step.expected_result || "",
+        step_type: normalizeStepType(step.step_type),
+        automation_code: normalizeAutomationCode(step.automation_code),
+        api_request: normalizeApiRequest(step.api_request),
         group_id: step.group_id || null,
         group_name: step.group_name || null,
         group_kind: step.group_kind || null,
@@ -202,6 +254,9 @@ const normalizeCopiedSteps = (
     return {
       action: step.action || "",
       expected_result: step.expected_result || "",
+      step_type: normalizeStepType(step.step_type),
+      automation_code: normalizeAutomationCode(step.automation_code),
+      api_request: normalizeApiRequest(step.api_request),
       group_id: null,
       group_name: null,
       group_kind: null,
@@ -456,6 +511,8 @@ export function TestCasesPage() {
   const [isSharedGroupPickerOpen, setIsSharedGroupPickerOpen] = useState(false);
   const [selectedSharedGroupId, setSelectedSharedGroupId] = useState("");
   const [sharedGroupSearchTerm, setSharedGroupSearchTerm] = useState("");
+  const [editingAutomationStepId, setEditingAutomationStepId] = useState("");
+  const [codePreviewState, setCodePreviewState] = useState<{ title: string; subtitle: string; code: string } | null>(null);
   const caseSectionRef = useRef<HTMLDivElement | null>(null);
   const suppressCaseSelectionFromUrlRef = useRef(false);
   const [createSuiteContextId, setCreateSuiteContextId] = useState("");
@@ -464,6 +521,7 @@ export function TestCasesPage() {
   const [importRows, setImportRows] = useState<ImportedTestCaseRow[]>([]);
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [importRequirementId, setImportRequirementId] = useState("");
+  const [importSource, setImportSource] = useState<"csv" | "junit_xml">("csv");
   const [isAiStudioOpen, setIsAiStudioOpen] = useState(false);
   const [aiRequirementIds, setAiRequirementIds] = useState<string[]>([]);
   const [integrationId, setIntegrationId] = useState("");
@@ -610,6 +668,9 @@ export function TestCasesPage() {
             step_order: index + 1,
             action: step.action,
             expected_result: step.expected_result,
+            step_type: step.step_type,
+            automation_code: step.automation_code,
+            api_request: step.api_request,
             group_id: step.group_id,
             group_name: step.group_name,
             group_kind: step.group_kind,
@@ -759,6 +820,7 @@ export function TestCasesPage() {
     setSelectedTestCaseId("");
     setIsCreating(false);
     setIsImportModalOpen(false);
+    setImportSource("csv");
     setIsCreateSuiteModalOpen(false);
     setIsCreateExecutionModalOpen(false);
     setExecutionName("");
@@ -835,20 +897,35 @@ export function TestCasesPage() {
     return map;
   }, [executionResults]);
 
-  const stepCountByCaseId = useMemo(() => {
-    const scopedCaseIds = new Set(testCases.map((testCase) => testCase.id));
-    const counts: Record<string, number> = {};
+  const sharedGroupNameById = useMemo(
+    () =>
+      sharedStepGroups.reduce<Record<string, string>>((accumulator, group) => {
+        accumulator[group.id] = group.name;
+        return accumulator;
+      }, {}),
+    [sharedStepGroups]
+  );
+
+  const allStepsByCaseId = useMemo(() => {
+    const stepsByCaseId: Record<string, TestStep[]> = {};
 
     allTestSteps.forEach((step) => {
-      if (!scopedCaseIds.has(step.test_case_id)) {
-        return;
-      }
-
-      counts[step.test_case_id] = (counts[step.test_case_id] || 0) + 1;
+      stepsByCaseId[step.test_case_id] = stepsByCaseId[step.test_case_id] || [];
+      stepsByCaseId[step.test_case_id].push(step);
     });
 
-    return counts;
-  }, [allTestSteps, testCases]);
+    Object.values(stepsByCaseId).forEach((steps) => steps.sort((left, right) => left.step_order - right.step_order));
+    return stepsByCaseId;
+  }, [allTestSteps]);
+
+  const stepCountByCaseId = useMemo(
+    () =>
+      testCases.reduce<Record<string, number>>((counts, testCase) => {
+        counts[testCase.id] = (allStepsByCaseId[testCase.id] || []).length;
+        return counts;
+      }, {}),
+    [allStepsByCaseId, testCases]
+  );
 
   const requirementTitleById = useMemo(
     () =>
@@ -857,6 +934,14 @@ export function TestCasesPage() {
         return map;
       }, {}),
     [requirements]
+  );
+  const suiteNameById = useMemo(
+    () =>
+      suites.reduce<Record<string, string>>((accumulator, suite) => {
+        accumulator[suite.id] = suite.name;
+        return accumulator;
+      }, {}),
+    [suites]
   );
 
   const caseStatusOptions = useMemo(
@@ -1065,6 +1150,8 @@ export function TestCasesPage() {
     setExpandedStepIds([]);
     setExpandedStepGroupIds([]);
     setStepDrafts({});
+    setEditingAutomationStepId("");
+    setCodePreviewState(null);
     setExpandedSections(isCreating ? createCreateModeTestCaseSections() : createDefaultTestCaseSections());
   }, [isCreating, selectedTestCaseId]);
 
@@ -1087,7 +1174,10 @@ export function TestCasesPage() {
         if (!next[step.id]) {
           next[step.id] = {
             action: step.action || "",
-            expected_result: step.expected_result || ""
+            expected_result: step.expected_result || "",
+            step_type: normalizeStepType(step.step_type),
+            automation_code: normalizeAutomationCode(step.automation_code),
+            api_request: normalizeApiRequest(step.api_request)
           };
         }
       });
@@ -1278,7 +1368,10 @@ export function TestCasesPage() {
     };
   };
 
-  const getOrCreateSharedGroupRecord = async (name: string, selectedSteps: Array<{ action: string | null; expected_result: string | null }>) => {
+  const getOrCreateSharedGroupRecord = async (
+    name: string,
+    selectedSteps: Array<Pick<TestStep, "action" | "expected_result" | "step_type" | "automation_code" | "api_request">>
+  ) => {
     if (!appTypeId) {
       throw new Error("Select an app type before creating a shared group.");
     }
@@ -1296,7 +1389,12 @@ export function TestCasesPage() {
         const candidate = selectedSteps[index];
         return (
           normalizeSharedGroupComparableText(step.action) === normalizeSharedGroupComparableText(candidate?.action) &&
-          normalizeSharedGroupComparableText(step.expected_result) === normalizeSharedGroupComparableText(candidate?.expected_result)
+          normalizeSharedGroupComparableText(step.expected_result) === normalizeSharedGroupComparableText(candidate?.expected_result) &&
+          areComparableStepAutomationEqual(step, {
+            step_type: candidate?.step_type,
+            automation_code: candidate?.automation_code,
+            api_request: candidate?.api_request
+          })
         );
       });
     });
@@ -1311,7 +1409,10 @@ export function TestCasesPage() {
       steps: selectedSteps.map((step, index) => ({
         step_order: index + 1,
         action: step.action || undefined,
-        expected_result: step.expected_result || undefined
+        expected_result: step.expected_result || undefined,
+        step_type: normalizeStepType(step.step_type),
+        automation_code: normalizeAutomationCode(step.automation_code) || undefined,
+        api_request: normalizeApiRequest(step.api_request) || undefined
       }))
     });
 
@@ -1332,7 +1433,8 @@ export function TestCasesPage() {
 
       return (
         (draft.action || "").trim() !== (step.action || "").trim() ||
-        (draft.expected_result || "").trim() !== (step.expected_result || "").trim()
+        (draft.expected_result || "").trim() !== (step.expected_result || "").trim() ||
+        !areComparableStepAutomationEqual(draft, step)
       );
     });
 
@@ -1363,7 +1465,10 @@ export function TestCasesPage() {
               resolvedName,
               groupItems.map((step) => ({
                 action: step.action,
-                expected_result: step.expected_result
+                expected_result: step.expected_result,
+                step_type: step.step_type,
+                automation_code: step.automation_code,
+                api_request: step.api_request
               }))
             )
           : null;
@@ -1387,6 +1492,7 @@ export function TestCasesPage() {
           step_ids: groupItems.map((step) => step.id),
           name: resolvedName,
           kind: targetKind,
+          group_id: groupId,
           reusable_group_id: reusableGroupId || undefined
         });
         setExpandedStepGroupIds((current) =>
@@ -1647,7 +1753,10 @@ export function TestCasesPage() {
 
     const normalizedDraft = {
       action: newStepDraft.action.trim(),
-      expected_result: newStepDraft.expected_result.trim()
+      expected_result: newStepDraft.expected_result.trim(),
+      step_type: normalizeStepType(newStepDraft.step_type),
+      automation_code: normalizeAutomationCode(newStepDraft.automation_code),
+      api_request: normalizeApiRequest(newStepDraft.api_request)
     };
 
     if (!normalizedDraft.action && !normalizedDraft.expected_result) {
@@ -1700,6 +1809,9 @@ export function TestCasesPage() {
         step_order: nextStepOrder,
         action: normalizedDraft.action || undefined,
         expected_result: normalizedDraft.expected_result || undefined,
+        step_type: normalizedDraft.step_type,
+        automation_code: normalizedDraft.automation_code || undefined,
+        api_request: normalizedDraft.api_request || undefined,
         group_id: insertionGroupContext?.group_id || undefined,
         group_name: insertionGroupContext?.group_name || undefined,
         group_kind: insertionGroupContext?.group_kind || undefined,
@@ -1730,14 +1842,20 @@ export function TestCasesPage() {
         id: step.id,
         input: {
           action: input.action,
-          expected_result: input.expected_result
+          expected_result: input.expected_result,
+          step_type: normalizeStepType(input.step_type),
+          automation_code: normalizeAutomationCode(input.automation_code),
+          api_request: normalizeApiRequest(input.api_request) || {}
         }
       });
       setStepDrafts((current) => ({
         ...current,
         [step.id]: {
           action: input.action,
-          expected_result: input.expected_result
+          expected_result: input.expected_result,
+          step_type: normalizeStepType(input.step_type),
+          automation_code: normalizeAutomationCode(input.automation_code),
+          api_request: normalizeApiRequest(input.api_request)
         }
       }));
       showSuccess("Step updated.");
@@ -1765,12 +1883,21 @@ export function TestCasesPage() {
         .filter((step): step is TestStep => Boolean(step));
 
       for (const step of resolvedSteps) {
-        const draft = stepDrafts[step.id] || { action: step.action || "", expected_result: step.expected_result || "" };
+        const draft = stepDrafts[step.id] || {
+          action: step.action || "",
+          expected_result: step.expected_result || "",
+          step_type: normalizeStepType(step.step_type),
+          automation_code: normalizeAutomationCode(step.automation_code),
+          api_request: normalizeApiRequest(step.api_request)
+        };
         await updateStep.mutateAsync({
           id: step.id,
           input: {
             action: draft.action,
-            expected_result: draft.expected_result
+            expected_result: draft.expected_result,
+            step_type: normalizeStepType(draft.step_type),
+            automation_code: normalizeAutomationCode(draft.automation_code),
+            api_request: normalizeApiRequest(draft.api_request) || {}
           }
         });
       }
@@ -1978,7 +2105,10 @@ export function TestCasesPage() {
           ? {
               ...step,
               action: input.action,
-              expected_result: input.expected_result
+              expected_result: input.expected_result,
+              step_type: normalizeStepType(input.step_type),
+              automation_code: normalizeAutomationCode(input.automation_code),
+              api_request: normalizeApiRequest(input.api_request)
             }
           : step
       )
@@ -2132,6 +2262,9 @@ export function TestCasesPage() {
             step_order: insertionIndex + offset + 1,
             action: step.action || undefined,
             expected_result: step.expected_result || undefined,
+            step_type: normalizeStepType(step.step_type),
+            automation_code: normalizeAutomationCode(step.automation_code) || undefined,
+            api_request: normalizeApiRequest(step.api_request) || undefined,
             group_id: step.group_id || undefined,
             group_name: step.group_name || undefined,
             group_kind: step.group_kind || undefined,
@@ -2218,7 +2351,10 @@ export function TestCasesPage() {
             name,
             selectedStepsForGrouping.map((step) => ({
               action: step.action,
-              expected_result: step.expected_result
+              expected_result: step.expected_result,
+              step_type: step.step_type,
+              automation_code: step.automation_code,
+              api_request: step.api_request
             }))
           )
         : null;
@@ -2374,6 +2510,9 @@ export function TestCasesPage() {
           id: createDraftStepId(),
           action: step.action || "",
           expected_result: step.expected_result || "",
+          step_type: normalizeStepType(step.step_type),
+          automation_code: normalizeAutomationCode(step.automation_code),
+          api_request: normalizeApiRequest(step.api_request),
           group_id: groupInstanceId,
           group_name: sharedGroup.name,
           group_kind: "reusable" as const,
@@ -2420,19 +2559,26 @@ export function TestCasesPage() {
 
     try {
       const text = await file.text();
-      const parsed = parseTestCaseCsv(text);
+      const fileName = file.name.toLowerCase();
+      const isXmlImport =
+        file.type.includes("xml")
+        || fileName.endsWith(".xml");
+      const parsed = isXmlImport ? parseJUnitXmlTestCases(text) : parseTestCaseCsv(text);
+      const nextImportSource = isXmlImport ? "junit_xml" : "csv";
 
       setImportRows(parsed.rows);
       setImportWarnings(parsed.warnings);
       setImportFileName(file.name);
+      setImportSource(nextImportSource);
       setMessageTone(parsed.rows.length ? "success" : "error");
       setMessage(
         parsed.rows.length
           ? `Prepared ${parsed.rows.length} test cases from ${file.name}.`
-          : parsed.warnings[0] || "No test cases could be parsed from the CSV file."
+          : parsed.warnings[0]
+            || `No test cases could be parsed from the ${nextImportSource === "junit_xml" ? "JUnit XML file" : "CSV file"}.`
       );
     } catch (error) {
-      showError(error, "Unable to read the CSV file");
+      showError(error, "Unable to read the import file");
     } finally {
       event.target.value = "";
     }
@@ -2447,6 +2593,7 @@ export function TestCasesPage() {
       const response = await importTestCases.mutateAsync({
         app_type_id: appTypeId,
         requirement_id: importRequirementId || undefined,
+        import_source: importSource,
         rows: importRows
       });
 
@@ -2459,6 +2606,7 @@ export function TestCasesPage() {
       setImportWarnings(response.errors.map((item) => `Row ${item.row}: ${item.message}`));
       setImportRows([]);
       setImportFileName("");
+      setImportSource("csv");
       if (response.created[0]) {
         syncTestCaseSearchParams(response.created[0].id);
         setSelectedTestCaseId(response.created[0].id);
@@ -2472,35 +2620,20 @@ export function TestCasesPage() {
     }
   };
 
-  const handleExportCsv = async () => {
-    if (!filteredCases.length) {
+  const exportCasesToCsv = async (
+    testCasesToExport: TestCase[],
+    options?: {
+      fileLabel?: string;
+      successMessage?: string;
+    }
+  ) => {
+    if (!testCasesToExport.length) {
       setMessageTone("error");
-      setMessage("No test cases match the current scope to export.");
+      setMessage("No test cases are available to export.");
       return;
     }
 
     try {
-      const allSteps = await api.testSteps.list();
-      const stepsByCaseId = allSteps.reduce<Record<string, TestStep[]>>((accumulator, step) => {
-        accumulator[step.test_case_id] = accumulator[step.test_case_id] || [];
-        accumulator[step.test_case_id].push(step);
-        return accumulator;
-      }, {});
-
-      Object.values(stepsByCaseId).forEach((items) => items.sort((left, right) => left.step_order - right.step_order));
-      const sharedGroupNameById = sharedStepGroups.reduce<Record<string, string>>((accumulator, group) => {
-        accumulator[group.id] = group.name;
-        return accumulator;
-      }, {});
-      const requirementTitleById = requirements.reduce<Record<string, string>>((accumulator, requirement) => {
-        accumulator[requirement.id] = requirement.title;
-        return accumulator;
-      }, {});
-      const suiteNameById = suites.reduce<Record<string, string>>((accumulator, suite) => {
-        accumulator[suite.id] = suite.name;
-        return accumulator;
-      }, {});
-
       const header = [
         "title",
         "description",
@@ -2512,14 +2645,14 @@ export function TestCasesPage() {
         "action",
         "expected_result"
       ];
-      const rows = filteredCases.map((testCase) => {
+      const rows = testCasesToExport.map((testCase) => {
         const linkedRequirementNames = (testCase.requirement_ids || [testCase.requirement_id])
           .map((id) => (id ? requirementTitleById[id] || "" : ""))
           .filter(Boolean);
-        const linkedSuiteNames = (testCase.suite_ids || [])
+        const linkedSuiteNames = (testCase.suite_ids || (testCase.suite_id ? [testCase.suite_id] : []))
           .map((id) => suiteNameById[id] || "")
           .filter(Boolean);
-        const scopedSteps = stepsByCaseId[testCase.id] || [];
+        const scopedSteps = allStepsByCaseId[testCase.id] || [];
 
         return [
           testCase.title,
@@ -2538,17 +2671,109 @@ export function TestCasesPage() {
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
       const href = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      const appTypeName = appTypes.find((item) => item.id === appTypeId)?.name || "library";
+      const fallbackFileLabel = testCasesToExport.length === 1
+        ? testCasesToExport[0].title
+        : appTypes.find((item) => item.id === appTypeId)?.name || "library";
+      const fileLabel = (options?.fileLabel || fallbackFileLabel)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/gi, "-")
+        .replace(/^-+|-+$/g, "")
+        || "test-cases";
 
       link.href = href;
-      link.download = `${appTypeName.toLowerCase().replace(/[^a-z0-9]+/gi, "-")}-test-cases.csv`;
+      link.download = `${fileLabel}-test-cases.csv`;
       document.body.appendChild(link);
       link.click();
       link.remove();
       URL.revokeObjectURL(href);
-      showSuccess(`Exported ${filteredCases.length} test cases to a user-friendly CSV format.`);
+      showSuccess(
+        options?.successMessage
+          || `Exported ${testCasesToExport.length} test case${testCasesToExport.length === 1 ? "" : "s"} to CSV.`
+      );
     } catch (error) {
       showError(error, "Unable to export test cases");
+    }
+  };
+
+  const handleExportCsv = async () => {
+    if (!filteredCases.length) {
+      setMessageTone("error");
+      setMessage("No test cases match the current scope to export.");
+      return;
+    }
+
+    await exportCasesToCsv(filteredCases, {
+      successMessage: `Exported ${filteredCases.length} test case${filteredCases.length === 1 ? "" : "s"} to a user-friendly CSV format.`
+    });
+  };
+
+  const handleCloneCase = async (testCase: TestCase) => {
+    const nextAppTypeId = testCase.app_type_id || appTypeId;
+
+    if (!nextAppTypeId) {
+      showError(new Error("Select an app type before cloning a test case."), "Unable to clone test case");
+      return;
+    }
+
+    try {
+      const response = await createTestCase.mutateAsync({
+        app_type_id: nextAppTypeId,
+        suite_ids: testCase.suite_ids || (testCase.suite_id ? [testCase.suite_id] : []),
+        title: `${testCase.title} (Copy)`,
+        description: testCase.description || undefined,
+        parameter_values: testCase.parameter_values || undefined,
+        automated: testCase.automated || defaultTestCaseAutomated,
+        priority: testCase.priority || 3,
+        status: testCase.status || defaultTestCaseStatus,
+        requirement_ids: testCase.requirement_ids || (testCase.requirement_id ? [testCase.requirement_id] : []),
+        steps: (allStepsByCaseId[testCase.id] || []).map((step) => ({
+          step_order: step.step_order,
+          action: step.action || undefined,
+          expected_result: step.expected_result || undefined,
+          step_type: step.step_type,
+          automation_code: step.automation_code || undefined,
+          api_request: step.api_request || undefined,
+          group_id: step.group_id || undefined,
+          group_name: step.group_name || undefined,
+          group_kind: step.group_kind || undefined,
+          reusable_group_id: step.reusable_group_id || undefined
+        }))
+      });
+
+      syncTestCaseSearchParams(response.id);
+      setSelectedTestCaseId(response.id);
+      setIsCreating(false);
+      setDraftSteps([]);
+      showSuccess(`Cloned "${testCase.title}" with its current steps.`);
+      await refreshCases();
+    } catch (error) {
+      showError(error, "Unable to clone test case");
+    }
+  };
+
+  const handleDeleteCaseItem = async (testCase: TestCase) => {
+    if (!window.confirm(`Delete test case "${testCase.title}"? Historical execution evidence will stay preserved.`)) {
+      return;
+    }
+
+    try {
+      await deleteTestCase.mutateAsync(testCase.id);
+      setSelectedActionTestCaseIds((current) => current.filter((id) => id !== testCase.id));
+
+      if (selectedTestCaseId === testCase.id) {
+        syncTestCaseSearchParams(null);
+        setSelectedTestCaseId("");
+        setCaseDraft(emptyCaseDraft);
+        setIsCreating(false);
+        setSelectedStepIds([]);
+        setStepInsertIndex(null);
+        setStepInsertGroupContext(null);
+      }
+
+      showSuccess("Test case deleted. Execution snapshots remain available.");
+      await refreshCases();
+    } catch (error) {
+      showError(error, "Unable to delete test case");
     }
   };
 
@@ -2877,7 +3102,9 @@ export function TestCasesPage() {
         displaySteps.map((step) => ({
           id: step.id,
           action: stepDrafts[step.id]?.action ?? step.action,
-          expected_result: stepDrafts[step.id]?.expected_result ?? step.expected_result
+          expected_result: stepDrafts[step.id]?.expected_result ?? step.expected_result,
+          automation_code: stepDrafts[step.id]?.automation_code ?? step.automation_code,
+          api_request: stepDrafts[step.id]?.api_request ?? step.api_request
         }))
       ),
     [displaySteps, stepDrafts]
@@ -2910,7 +3137,8 @@ export function TestCasesPage() {
             return false;
           }
           return (draft.action || "").trim() !== (step.action || "").trim()
-            || (draft.expected_result || "").trim() !== (step.expected_result || "").trim();
+            || (draft.expected_result || "").trim() !== (step.expected_result || "").trim()
+            || !areComparableStepAutomationEqual(draft, step);
         })
         .map((step) => step.id),
     [displaySteps, stepDrafts]
@@ -3164,6 +3392,234 @@ export function TestCasesPage() {
       ) : null}
     </div>
   );
+  const getRequirementTitleForCase = (testCase: TestCase) =>
+    (testCase.requirement_ids || [testCase.requirement_id]).map((id) => (id ? requirementTitleById[id] || "" : "")).find(Boolean) || "";
+  const openLibraryCase = (testCaseId: string) => {
+    syncTestCaseSearchParams(testCaseId);
+    setSelectedTestCaseId(testCaseId);
+    setIsCreating(false);
+    setDraftSteps([]);
+  };
+  const testCaseListColumns = useMemo<Array<DataTableColumn<TestCase>>>(() => [
+    {
+      key: "select",
+      label: "",
+      canToggle: false,
+      render: (testCase) => (
+        <div onClick={(event) => event.stopPropagation()}>
+          <input
+            checked={selectedActionTestCaseIds.includes(testCase.id)}
+            onChange={(event) =>
+              setSelectedActionTestCaseIds((current) =>
+                event.target.checked ? [...new Set([...current, testCase.id])] : current.filter((id) => id !== testCase.id)
+              )
+            }
+            type="checkbox"
+          />
+        </div>
+      )
+    },
+    {
+      key: "id",
+      label: "ID",
+      render: (testCase) => <DisplayIdBadge value={testCase.display_id || testCase.id} />
+    },
+    {
+      key: "title",
+      label: "Test case",
+      canToggle: false,
+      render: (testCase) => <strong>{testCase.title}</strong>
+    },
+    {
+      key: "requirement",
+      label: "Requirement",
+      render: (testCase) => getRequirementTitleForCase(testCase) || "No requirement linked"
+    },
+    {
+      key: "description",
+      label: "Description",
+      defaultVisible: false,
+      render: (testCase) => testCase.description || "No description yet for this test case."
+    },
+    {
+      key: "status",
+      label: "Status",
+      render: (testCase) => {
+        const history = historyByCaseId[testCase.id] || [];
+        const latest = history[0];
+        return formatTileCardLabel(latest?.status || testCase.status || defaultTestCaseStatus, "Active");
+      }
+    },
+    {
+      key: "automated",
+      label: "Automated",
+      render: (testCase) => (testCase.automated === "yes" ? "Yes" : "No")
+    },
+    {
+      key: "priority",
+      label: "Priority",
+      render: (testCase) => `P${testCase.priority || 3}`
+    },
+    {
+      key: "steps",
+      label: "Steps",
+      render: (testCase) => stepCountByCaseId[testCase.id] || 0
+    },
+    {
+      key: "testSteps",
+      label: "Test steps",
+      defaultVisible: false,
+      render: (testCase) => {
+        const steps = allStepsByCaseId[testCase.id] || [];
+
+        if (!steps.length) {
+          return "No steps yet";
+        }
+
+        return (
+          <div className="data-table-multiline">
+            {steps.map((step, index) => {
+              const actionLabel = formatBulkStepActionLabel(step, sharedGroupNameById) || `Step ${index + 1}`;
+              const detail = step.expected_result ? `${actionLabel} -> ${step.expected_result}` : actionLabel;
+
+              return (
+                <span className="data-table-multiline-line" key={step.id}>
+                  {`${index + 1}. ${detail}`}
+                </span>
+              );
+            })}
+          </div>
+        );
+      }
+    },
+    {
+      key: "testData",
+      label: "Test data",
+      defaultVisible: false,
+      render: (testCase) => {
+        const parameterEntries = Object.entries(testCase.parameter_values || {}).sort(([left], [right]) => left.localeCompare(right));
+
+        if (!parameterEntries.length) {
+          return "No test data";
+        }
+
+        return (
+          <div className="data-table-multiline">
+            {parameterEntries.map(([name, value]) => (
+              <span className="data-table-multiline-line" key={name}>{`${name} = ${value}`}</span>
+            ))}
+          </div>
+        );
+      }
+    },
+    {
+      key: "suites",
+      label: "Suites",
+      render: (testCase) => (testCase.suite_ids || (testCase.suite_id ? [testCase.suite_id] : [])).length || 0
+    },
+    {
+      key: "runs",
+      label: "Runs",
+      render: (testCase) => (historyByCaseId[testCase.id] || []).length
+    },
+    {
+      key: "actions",
+      label: "Actions",
+      canToggle: false,
+      render: (testCase) => {
+        const isPendingSchedulerCase =
+          testCase.ai_generation_source === "scheduler" && testCase.ai_generation_review_status === "pending";
+        const isAcceptingCase = schedulerActionCaseId === testCase.id && schedulerActionKind === "accept";
+        const isRejectingCase = schedulerActionCaseId === testCase.id && schedulerActionKind === "reject";
+        const rowActions = [
+          {
+            label: "Open case",
+            description: "Open this test case in the workspace.",
+            icon: <OpenIcon />,
+            onClick: () => openLibraryCase(testCase.id)
+          },
+          ...(isPendingSchedulerCase
+            ? [
+              {
+                label: "Accept generated case",
+                description: "Approve the scheduler-generated test case and keep it.",
+                icon: <TestCaseAcceptIcon />,
+                onClick: () => void handleReviewGeneratedCase(testCase.id, "accept"),
+                disabled: isAcceptingCase || isRejectingCase,
+                tone: "primary" as const
+              },
+              {
+                label: "Reject generated case",
+                description: "Reject and permanently delete this scheduler-generated case.",
+                icon: <TestCaseRejectIcon />,
+                onClick: () => void handleReviewGeneratedCase(testCase.id, "reject"),
+                disabled: isAcceptingCase || isRejectingCase,
+                tone: "danger" as const
+              }
+            ]
+            : [
+              {
+                label: "Clone case",
+                description: "Create a copy with the same steps and test data.",
+                icon: <CopyIcon />,
+                onClick: () => void handleCloneCase(testCase),
+                disabled: createTestCase.isPending
+              },
+              {
+                label: "Export case",
+                description: "Download this test case as a CSV file.",
+                icon: <ExportIcon />,
+                onClick: () => void exportCasesToCsv([testCase], {
+                  fileLabel: testCase.title,
+                  successMessage: `Exported "${testCase.title}" to CSV.`
+                })
+              },
+              {
+                label: "Move to suite",
+                description: "Create or pick a suite, then link this case into it.",
+                icon: <MoveIcon />,
+                onClick: () => {
+                  setSelectedActionTestCaseIds([testCase.id]);
+                  setIsCreateSuiteModalOpen(true);
+                }
+              },
+              {
+                label: "Delete case",
+                description: "Remove this test case while preserving execution history.",
+                icon: <TrashIcon />,
+                onClick: () => void handleDeleteCaseItem(testCase),
+                disabled: deleteTestCase.isPending,
+                tone: "danger" as const
+              }
+            ])
+        ];
+
+        return (
+          <div onClick={(event) => event.stopPropagation()}>
+            <CatalogActionMenu actions={rowActions} label={`${testCase.title} actions`} />
+          </div>
+        );
+      }
+    }
+  ], [
+    allStepsByCaseId,
+    createTestCase.isPending,
+    defaultTestCaseAutomated,
+    defaultTestCaseStatus,
+    deleteTestCase.isPending,
+    exportCasesToCsv,
+    handleCloneCase,
+    handleDeleteCaseItem,
+    handleReviewGeneratedCase,
+    historyByCaseId,
+    openLibraryCase,
+    requirementTitleById,
+    schedulerActionCaseId,
+    schedulerActionKind,
+    selectedActionTestCaseIds,
+    sharedGroupNameById,
+    stepCountByCaseId
+  ]);
 
   const isMatchingStepInsertContext = (groupContext: StepInsertionGroupContext | null = null) =>
     (stepInsertGroupContext?.group_id || null) === (groupContext?.group_id || null);
@@ -3182,7 +3638,13 @@ export function TestCasesPage() {
   const renderStepCard = (step: TestStep, index: number, groupContext: StepInsertionGroupContext | null = null) => {
     const insertAboveIndex = Math.max(0, step.step_order - 1);
     const insertBelowIndex = step.step_order;
-    const stepDraft = stepDrafts[step.id] || { action: step.action || "", expected_result: step.expected_result || "" };
+    const stepDraft = stepDrafts[step.id] || {
+      action: step.action || "",
+      expected_result: step.expected_result || "",
+      step_type: normalizeStepType(step.step_type),
+      automation_code: normalizeAutomationCode(step.automation_code),
+      api_request: normalizeApiRequest(step.api_request)
+    };
     const previousStep = displaySteps[index - 1];
     const nextStep = displaySteps[index + 1];
     const canMoveUp = step.group_id ? Boolean(previousStep && previousStep.group_id === step.group_id) : index > 0;
@@ -3205,6 +3667,8 @@ export function TestCasesPage() {
           onInsertBelow={() => activateStepInsert(insertBelowIndex, groupContext)}
           onMoveDown={() => handleReorderDraftStep(step.id, "down")}
           onMoveUp={() => handleReorderDraftStep(step.id, "up")}
+          onChangeStepType={(nextType) => void handleChangeStepType(step.id, nextType)}
+          onEditAutomation={() => setEditingAutomationStepId(step.id)}
           onPasteAbove={() => void handlePasteSteps(insertAboveIndex, groupContext)}
           onPasteBelow={() => void handlePasteSteps(insertBelowIndex, groupContext)}
           onToggle={() =>
@@ -3222,6 +3686,9 @@ export function TestCasesPage() {
             step_order: step.step_order,
             action: step.action || "",
             expected_result: step.expected_result || "",
+            step_type: normalizeStepType(step.step_type),
+            automation_code: normalizeAutomationCode(step.automation_code),
+            api_request: normalizeApiRequest(step.api_request),
             group_id: step.group_id || null,
             group_name: step.group_name || null,
             group_kind: step.group_kind || null,
@@ -3240,9 +3707,11 @@ export function TestCasesPage() {
         draft={stepDraft}
         isExpanded={expandedStepIds.includes(step.id)}
         isSelected={selectedStepIds.includes(step.id)}
+        onChangeStepType={(nextType) => void handleChangeStepType(step.id, nextType)}
         onCopy={() => handleCopySteps([step.id])}
         onCut={() => handleCutSteps([step.id])}
         onDelete={() => void handleDeleteStep(step.id)}
+        onEditAutomation={() => setEditingAutomationStepId(step.id)}
         onInsertAbove={() => activateStepInsert(insertAboveIndex, groupContext)}
         onInsertBelow={() => activateStepInsert(insertBelowIndex, groupContext)}
         onMoveDown={() => void handleReorderStep(step.id, "down")}
@@ -3271,6 +3740,158 @@ export function TestCasesPage() {
     );
   };
 
+  const editingAutomationStep = editingAutomationStepId
+    ? displaySteps.find((step) => step.id === editingAutomationStepId) || null
+    : null;
+
+  const openCaseAutomationPreview = () => {
+    setCodePreviewState({
+      title: "Test case automation",
+      subtitle: "This consolidated view is read-only here. Edit automation from individual steps.",
+      code: buildCaseAutomationCode(caseDraft.title || selectedTestCase?.title || "Test case", displaySteps)
+    });
+  };
+
+  const openGroupAutomationPreview = (groupName: string, groupSteps: TestStep[]) => {
+    setCodePreviewState({
+      title: `${groupName} automation`,
+      subtitle: "This consolidated group view is read-only. Update code from the steps inside the group.",
+      code: buildGroupAutomationCode(groupName, groupSteps)
+    });
+  };
+
+  const handleChangeStepType = async (stepId: string, nextType: TestStep["step_type"]) => {
+    const targetStep = displaySteps.find((step) => step.id === stepId);
+
+    if (!targetStep || !nextType) {
+      return;
+    }
+
+    if (isCreating) {
+      setDraftSteps((current) =>
+        current.map((step) =>
+          step.id === stepId
+            ? {
+                ...step,
+                step_type: normalizeStepType(nextType)
+              }
+            : step
+        )
+      );
+      setStepDrafts((current) => ({
+        ...current,
+        [stepId]: {
+          ...(current[stepId] || {
+            action: targetStep.action || "",
+            expected_result: targetStep.expected_result || "",
+            automation_code: normalizeAutomationCode(targetStep.automation_code),
+            api_request: normalizeApiRequest(targetStep.api_request),
+            step_type: normalizeStepType(targetStep.step_type)
+          }),
+          step_type: normalizeStepType(nextType)
+        }
+      }));
+      return;
+    }
+
+    try {
+      await updateStep.mutateAsync({
+        id: stepId,
+        input: {
+          step_type: normalizeStepType(nextType)
+        }
+      });
+      setStepDrafts((current) => ({
+        ...current,
+        [stepId]: {
+          ...(current[stepId] || {
+            action: targetStep.action || "",
+            expected_result: targetStep.expected_result || "",
+            automation_code: normalizeAutomationCode(targetStep.automation_code),
+            api_request: normalizeApiRequest(targetStep.api_request),
+            step_type: normalizeStepType(targetStep.step_type)
+          }),
+          step_type: normalizeStepType(nextType)
+        }
+      }));
+      await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+      if (targetStep.reusable_group_id) {
+        await refreshSharedGroups();
+      }
+    } catch (error) {
+      showError(error, "Unable to update step type");
+    }
+  };
+
+  const handleSaveStepAutomation = async (
+    stepId: string,
+    input: { step_type: TestStep["step_type"]; automation_code: string; api_request: TestStep["api_request"] }
+  ) => {
+    const targetStep = displaySteps.find((step) => step.id === stepId);
+
+    if (!targetStep || !input.step_type) {
+      return;
+    }
+
+    const nextDraft = {
+      ...(stepDrafts[stepId] || {
+        action: targetStep.action || "",
+        expected_result: targetStep.expected_result || "",
+        step_type: normalizeStepType(targetStep.step_type),
+        automation_code: normalizeAutomationCode(targetStep.automation_code),
+        api_request: normalizeApiRequest(targetStep.api_request)
+      }),
+      step_type: normalizeStepType(input.step_type),
+      automation_code: normalizeAutomationCode(input.automation_code),
+      api_request: normalizeApiRequest(input.api_request)
+    };
+
+    if (isCreating) {
+      setDraftSteps((current) =>
+        current.map((step) =>
+          step.id === stepId
+            ? {
+                ...step,
+                step_type: nextDraft.step_type,
+                automation_code: nextDraft.automation_code,
+                api_request: nextDraft.api_request
+              }
+            : step
+        )
+      );
+      setStepDrafts((current) => ({
+        ...current,
+        [stepId]: nextDraft
+      }));
+      setEditingAutomationStepId("");
+      showSuccess("Step automation updated.");
+      return;
+    }
+
+    try {
+      await updateStep.mutateAsync({
+        id: stepId,
+        input: {
+          step_type: nextDraft.step_type,
+          automation_code: nextDraft.automation_code,
+          api_request: nextDraft.api_request || {}
+        }
+      });
+      setStepDrafts((current) => ({
+        ...current,
+        [stepId]: nextDraft
+      }));
+      setEditingAutomationStepId("");
+      showSuccess("Step automation updated.");
+      await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+      if (targetStep.reusable_group_id) {
+        await refreshSharedGroups();
+      }
+    } catch (error) {
+      showError(error, "Unable to update step automation");
+    }
+  };
+
   return (
     <div className={["page-content", "page-content--library-full", isCaseWorkspaceOpen ? "page-content--workspace-focus" : ""].join(" ")}>
       {!isCaseWorkspaceOpen ? (
@@ -3286,7 +3907,10 @@ export function TestCasesPage() {
           ]}
           actions={
             <>
-              <button className="ghost-button" disabled={!appTypeId} onClick={() => setIsImportModalOpen(true)} type="button">
+              <button className="ghost-button" disabled={!appTypeId} onClick={() => {
+                setImportSource("csv");
+                setIsImportModalOpen(true);
+              }} type="button">
                 <TestCaseImportIcon />
                 <span>Bulk Import</span>
               </button>
@@ -3620,99 +4244,15 @@ export function TestCasesPage() {
                 </div>
               ) : null}
               {!isLibraryLoading && filteredCases.length && catalogViewMode === "list" ? (
-                <div className="table-wrap catalog-table-wrap">
-                  <table className="data-table catalog-data-table">
-                    <thead>
-                      <tr>
-                        <th />
-                        <th>ID</th>
-                        <th>Test case</th>
-                        <th>Status</th>
-                        <th>Automated</th>
-                        <th>Priority</th>
-                        <th>Steps</th>
-                        <th>Suites</th>
-                        <th>Runs</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredCases.map((testCase) => {
-                        const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
-                        const latest = history[0];
-                        const requirementTitle =
-                          (testCase.requirement_ids || [testCase.requirement_id]).map((id) => (id ? requirementTitleById[id] || "" : "")).find(Boolean) || "";
-                        const stepCount = stepCountByCaseId[testCase.id] || 0;
-                        const caseStatusValue = latest?.status || testCase.status || defaultTestCaseStatus;
-                        const suiteCount = (testCase.suite_ids || []).length || 0;
-                        const isPendingSchedulerCase =
-                          testCase.ai_generation_source === "scheduler" && testCase.ai_generation_review_status === "pending";
-                        const isAcceptingCase = schedulerActionCaseId === testCase.id && schedulerActionKind === "accept";
-                        const isRejectingCase = schedulerActionCaseId === testCase.id && schedulerActionKind === "reject";
-
-                        return (
-                          <tr
-                            className={selectedTestCaseId === testCase.id && !isCreating ? "is-active-row" : ""}
-                            key={testCase.id}
-                            onClick={() => {
-                              syncTestCaseSearchParams(testCase.id);
-                              setSelectedTestCaseId(testCase.id);
-                              setIsCreating(false);
-                              setDraftSteps([]);
-                            }}
-                          >
-                            <td onClick={(event) => event.stopPropagation()}>
-                              <input
-                                checked={selectedActionTestCaseIds.includes(testCase.id)}
-                                onChange={(event) =>
-                                  setSelectedActionTestCaseIds((current) =>
-                                    event.target.checked ? [...new Set([...current, testCase.id])] : current.filter((id) => id !== testCase.id)
-                                  )
-                                }
-                                type="checkbox"
-                              />
-                            </td>
-                            <td><DisplayIdBadge value={testCase.display_id || testCase.id} /></td>
-                            <td>
-                              <strong>{testCase.title}</strong>
-                              <div className="catalog-row-subcopy">{requirementTitle || "No requirement linked"}</div>
-                            </td>
-                            <td>{formatTileCardLabel(caseStatusValue, "Active")}</td>
-                            <td>{testCase.automated === "yes" ? "Yes" : "No"}</td>
-                            <td>{`P${testCase.priority || 3}`}</td>
-                            <td>{stepCount}</td>
-                            <td>{suiteCount}</td>
-                            <td>{history.length}</td>
-                            <td onClick={(event) => event.stopPropagation()}>
-                              <div className="catalog-inline-actions">
-                                {isPendingSchedulerCase ? (
-                                  <>
-                                    <TestCaseTileActionButton
-                                      className="is-accept"
-                                      disabled={isAcceptingCase || isRejectingCase}
-                                      onClick={() => void handleReviewGeneratedCase(testCase.id, "accept")}
-                                      title="Accept scheduler-generated test case"
-                                    >
-                                      <TestCaseAcceptIcon />
-                                    </TestCaseTileActionButton>
-                                    <TestCaseTileActionButton
-                                      className="is-reject"
-                                      disabled={isAcceptingCase || isRejectingCase}
-                                      onClick={() => void handleReviewGeneratedCase(testCase.id, "reject")}
-                                      title="Reject and permanently delete scheduler-generated test case"
-                                    >
-                                      <TestCaseRejectIcon />
-                                    </TestCaseTileActionButton>
-                                  </>
-                                ) : null}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable
+                  columns={testCaseListColumns}
+                  emptyMessage="No test cases match the current search."
+                  getRowClassName={(testCase) => (selectedTestCaseId === testCase.id && !isCreating ? "is-active-row" : "")}
+                  getRowKey={(testCase) => testCase.id}
+                  onRowClick={(testCase) => openLibraryCase(testCase.id)}
+                  rows={filteredCases}
+                  storageKey="qaira:test-cases:list-columns"
+                />
               ) : null}
               {!isLibraryLoading && !filteredCases.length ? (
                 <div className="empty-state compact">{testCases.length ? "No test cases match the current search." : "No test cases found for this app type."}</div>
@@ -3852,6 +4392,17 @@ export function TestCasesPage() {
                   </div>
 
                   <EditorAccordionSection
+                    actions={(
+                      <button
+                        className="ghost-button"
+                        disabled={!displaySteps.length}
+                        onClick={openCaseAutomationPreview}
+                        type="button"
+                      >
+                        <AutomationCodeIcon />
+                        <span>Automation code</span>
+                      </button>
+                    )}
                     countLabel={stepCountLabel}
                     isExpanded={expandedSections.steps}
                     onToggle={() => setExpandedSections((current) => ({ ...current, steps: !current.steps }))}
@@ -3879,15 +4430,6 @@ export function TestCasesPage() {
                           actions={editorStepActions}
                         />
                       </div>
-
-                      {detectedStepParameters.length ? (
-                        <div className="detail-summary step-parameter-summary">
-                          <strong>{detectedStepParameters.length} parameter{detectedStepParameters.length === 1 ? "" : "s"} detected</strong>
-                          <span>
-                            {detectedStepParameters.map((parameter) => parameter.token).join(", ")}
-                          </span>
-                        </div>
-                      ) : null}
 
       {copiedSteps.length ? null : null}
 
@@ -3960,6 +4502,7 @@ export function TestCasesPage() {
                                     }
                                     onMoveUp={() => void handleMoveStepGroup(block.group_id as string, "up")}
                                     onMoveDown={() => void handleMoveStepGroup(block.group_id as string, "down")}
+                                    onPreviewCode={() => openGroupAutomationPreview(block.group_name || "Step group", block.steps)}
                                     onRemoveGroup={() => void handleRemoveStepGroup(block.group_id as string, block.steps, block.group_kind)}
                                     onUngroup={() => void handleUngroupStepGroup(block.group_id as string, block.group_kind)}
                                     onToggleSelect={(checked) => {
@@ -4142,6 +4685,31 @@ export function TestCasesPage() {
         />
       ) : null}
 
+      {editingAutomationStep ? (
+        <StepAutomationDialog
+          onClose={() => setEditingAutomationStepId("")}
+          onSave={(input) => void handleSaveStepAutomation(editingAutomationStep.id, input)}
+          step={{
+            action: stepDrafts[editingAutomationStep.id]?.action ?? editingAutomationStep.action,
+            expected_result: stepDrafts[editingAutomationStep.id]?.expected_result ?? editingAutomationStep.expected_result,
+            step_type: stepDrafts[editingAutomationStep.id]?.step_type ?? editingAutomationStep.step_type,
+            automation_code: stepDrafts[editingAutomationStep.id]?.automation_code ?? editingAutomationStep.automation_code,
+            api_request: stepDrafts[editingAutomationStep.id]?.api_request ?? editingAutomationStep.api_request
+          }}
+          subtitle="Use the same @param names from the manual step when the automation needs case-level data."
+          title={`Step ${editingAutomationStep.step_order} automation`}
+        />
+      ) : null}
+
+      {codePreviewState ? (
+        <CodePreviewDialog
+          code={codePreviewState.code}
+          onClose={() => setCodePreviewState(null)}
+          subtitle={codePreviewState.subtitle}
+          title={codePreviewState.title}
+        />
+      ) : null}
+
       {isCreateSuiteModalOpen ? (
         <TestCaseSuiteModal
           appTypeCases={testCases}
@@ -4184,7 +4752,14 @@ export function TestCasesPage() {
       {isImportModalOpen ? (
         <div
           className="modal-backdrop"
-          onClick={() => !importTestCases.isPending && setIsImportModalOpen(false)}
+          onClick={() => {
+            if (importTestCases.isPending) {
+              return;
+            }
+
+            setImportSource("csv");
+            setIsImportModalOpen(false);
+          }}
         >
           <div
             aria-labelledby="bulk-import-title"
@@ -4196,18 +4771,21 @@ export function TestCasesPage() {
             <div className="import-modal-header">
               <div className="import-modal-title">
                 <p className="eyebrow">Bulk Import</p>
-                <h3 id="bulk-import-title">Import test cases from CSV</h3>
-                <p>Upload reusable cases in bulk. Use one Action line and one Expected Result line per step. Prefix action lines with `[Group: Name]` or `[Shared: Name]` to rebuild grouped and shared steps automatically. Optional `Automated` values accept `yes` or `no` and default to `no`.</p>
+                <h3 id="bulk-import-title">Import test cases from CSV or JUnit XML</h3>
+                <p>Upload reusable cases from CSV, or convert a JUnit XML report into automated draft cases. CSV imports support one Action line and one Expected Result line per step, plus `[Group: Name]` or `[Shared: Name]` prefixes to rebuild grouped steps automatically.</p>
               </div>
-              <button aria-label="Close bulk import dialog" className="ghost-button" disabled={importTestCases.isPending} onClick={() => setIsImportModalOpen(false)} type="button">
+              <button aria-label="Close bulk import dialog" className="ghost-button" disabled={importTestCases.isPending} onClick={() => {
+                setImportSource("csv");
+                setIsImportModalOpen(false);
+              }} type="button">
                 Close
               </button>
             </div>
 
             <div className="import-modal-body">
               <div className="record-grid">
-                <FormField label="CSV file">
-                  <input accept=".csv,text/csv" onChange={(event) => void handleImportFile(event)} type="file" />
+                <FormField label="Import file">
+                  <input accept=".csv,.xml,text/csv,text/xml,application/xml" onChange={(event) => void handleImportFile(event)} type="file" />
                 </FormField>
 
                 <FormField label="Default requirement">
@@ -4232,8 +4810,12 @@ export function TestCasesPage() {
               </div>
 
               <div className="detail-summary">
-                <strong>{importFileName || "No CSV loaded yet"}</strong>
-                <span>Use new lines or the `|` character in Action and Expected Result to create multiple steps. `Requirements` and `Suites` can also contain multiple names separated by new lines. If the CSV omits `Automated`, the imported case is saved as `no`.</span>
+                <strong>{importFileName || "No import file loaded yet"}</strong>
+                <span>
+                  {importSource === "junit_xml"
+                    ? "JUnit XML imports create automated draft cases with one generated execution step per report test case."
+                    : "Use new lines or the `|` character in Action and Expected Result to create multiple steps. `Requirements` and `Suites` can also contain multiple names separated by new lines. If the CSV omits `Automated`, the imported case is saved as `no`."}
+                </span>
               </div>
 
               {importWarnings.length ? (
@@ -4283,6 +4865,7 @@ export function TestCasesPage() {
                   setImportRows([]);
                   setImportWarnings([]);
                   setImportFileName("");
+                  setImportSource("csv");
                 }}
                 type="button"
               >
@@ -4625,6 +5208,7 @@ function EditorAccordionSection({
   countLabel,
   isExpanded,
   onToggle,
+  actions,
   children
 }: {
   title: string;
@@ -4632,30 +5216,36 @@ function EditorAccordionSection({
   countLabel: string;
   isExpanded: boolean;
   onToggle: () => void;
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className={isExpanded ? "editor-accordion-section is-expanded" : "editor-accordion-section"}>
-      <button
-        aria-expanded={isExpanded}
-        className="editor-accordion-toggle"
-        onClick={onToggle}
-        type="button"
-      >
-        <div className="editor-accordion-toggle-main">
-          <span aria-hidden="true" className={isExpanded ? "editor-accordion-icon is-expanded" : "editor-accordion-icon"}>
-            <EditorAccordionChevronIcon />
-          </span>
-          <div className="editor-accordion-toggle-copy">
-            <strong>{title}</strong>
-            <span>{summary}</span>
+      <div className="editor-accordion-head">
+        <button
+          aria-expanded={isExpanded}
+          className="editor-accordion-toggle"
+          onClick={onToggle}
+          type="button"
+        >
+          <div className="editor-accordion-toggle-main">
+            <span aria-hidden="true" className={isExpanded ? "editor-accordion-icon is-expanded" : "editor-accordion-icon"}>
+              <EditorAccordionChevronIcon />
+            </span>
+            <div className="editor-accordion-toggle-copy">
+              <strong>{title}</strong>
+              <span>{summary}</span>
+            </div>
           </div>
-        </div>
+        </button>
         <div className="editor-accordion-toggle-meta">
           <span className="editor-accordion-toggle-count">{countLabel}</span>
-          <span className="editor-accordion-toggle-state">{isExpanded ? "Collapse" : "Expand"}</span>
+          {actions ? <div className="editor-accordion-actions">{actions}</div> : null}
+          <button className="editor-accordion-toggle-state" onClick={onToggle} type="button">
+            {isExpanded ? "Collapse" : "Expand"}
+          </button>
         </div>
-      </button>
+      </div>
       {isExpanded ? <div className="editor-accordion-body">{children}</div> : null}
     </section>
   );
@@ -4902,7 +5492,7 @@ function StepGroupIcon() {
 }
 
 function StepSharedGroupIcon() {
-  return <ExecutionStepsIcon />;
+  return <SharedStepsIconGraphic size={16} />;
 }
 
 function StepGroupChevronIcon() {
@@ -4939,23 +5529,19 @@ function getStepKindMeta(groupKind?: TestStep["group_kind"] | null) {
 }
 
 function StepKindIconBadge({
-  kind,
   label,
-  tone
+  tone: _tone
 }: {
-  kind?: TestStep["group_kind"] | null;
   label: string;
   tone: "default" | "shared" | "local";
 }) {
-  const icon = <ExecutionStepsIcon />;
-
   return (
     <span
       aria-label={label}
-      className={["step-kind-badge", tone === "default" ? "" : `is-${tone}`].filter(Boolean).join(" ")}
+      className="step-kind-badge is-standard"
       title={label}
     >
-      {icon}
+      <StandardStepIcon />
     </span>
   );
 }
@@ -5188,6 +5774,7 @@ function StepGroupHeader({
   onToggle,
   onMoveUp,
   onMoveDown,
+  onPreviewCode,
   onRemoveGroup,
   onUngroup,
   onToggleSelect
@@ -5204,6 +5791,7 @@ function StepGroupHeader({
   onToggle: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
+  onPreviewCode: () => void;
   onRemoveGroup: () => void;
   onUngroup: () => void;
   onToggleSelect: (checked: boolean) => void;
@@ -5251,7 +5839,7 @@ function StepGroupHeader({
         <span className="step-group-title">
           <span className="step-group-title-row">
             <span aria-hidden="true" className={isSharedGroup ? "step-group-icon is-shared" : "step-group-icon is-local"}>
-              {isSharedGroup ? <StepSharedGroupIcon /> : <StepGroupIcon />}
+              <SharedGroupLevelIcon kind={kind} />
             </span>
             <strong>{name}</strong>
           </span>
@@ -5261,6 +5849,14 @@ function StepGroupHeader({
         <span className="step-group-count">
           {stepCount} step{stepCount === 1 ? "" : "s"}
         </span>
+        <InlineStepToolButton
+          ariaLabel={`Preview automation for ${name}`}
+          className="step-inline-tool--group"
+          onClick={onPreviewCode}
+          title="Preview consolidated automation"
+        >
+          <AutomationCodeIcon />
+        </InlineStepToolButton>
         <StepActionMenu
           className="step-group-header-actions step-card-menu--flat"
           label="Group actions"
@@ -5326,6 +5922,8 @@ function EditableStepCard({
   onToggleSelect,
   onMoveUp,
   onMoveDown,
+  onChangeStepType,
+  onEditAutomation,
   onPasteAbove,
   onPasteBelow
 }: {
@@ -5348,13 +5946,16 @@ function EditableStepCard({
   onToggleSelect: (checked: boolean) => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
+  onChangeStepType: (nextType: TestStep["step_type"]) => void;
+  onEditAutomation: () => void;
   onPasteAbove: () => void;
   onPasteBelow: () => void;
 }) {
   const stepKind = getStepKindMeta(step.group_kind);
   const isDirty =
     (draft.action || "").trim() !== (step.action || "").trim()
-    || (draft.expected_result || "").trim() !== (step.expected_result || "").trim();
+    || (draft.expected_result || "").trim() !== (step.expected_result || "").trim()
+    || !areComparableStepAutomationEqual(draft, step);
   const stepActions: StepActionMenuAction[] = [
     {
       label: "Insert above",
@@ -5441,6 +6042,9 @@ function EditableStepCard({
             type="checkbox"
           />
         </label>
+        <div className="step-card-type-tool">
+          <StepTypePickerButton value={draft.step_type || step.step_type} onChange={onChangeStepType} />
+        </div>
         <button
           aria-label={isExpanded ? `Hide step ${step.step_order} details` : `Show step ${step.step_order} details`}
           className="step-card-toggle"
@@ -5448,21 +6052,30 @@ function EditableStepCard({
           type="button"
         >
           <div className="step-card-summary">
-            <div className="step-card-summary-top">
-              <StepKindIconBadge kind={step.group_kind} label={stepKind.label} tone={stepKind.tone} />
-              <strong>Step {step.step_order}</strong>
+            <div className="step-card-summary-row">
+              <div className="step-card-summary-top">
+                <StepKindIconBadge label={stepKind.label} tone={stepKind.tone} />
+                <strong>Step {step.step_order}</strong>
+              </div>
+              <StepParameterizedText
+                className="step-card-parameterized"
+                fallback="No action written yet"
+                text={draft.action}
+                values={parameterValues}
+              />
             </div>
-            <StepParameterizedText
-              className="step-card-parameterized"
-              fallback="No action written yet"
-              text={draft.action}
-              values={parameterValues}
-            />
           </div>
-          <span aria-hidden="true" className="step-card-toggle-state">
-            <StepKebabIcon />
-          </span>
         </button>
+        <div className="step-inline-tools">
+          <InlineStepToolButton
+            ariaLabel={`Edit automation for step ${step.step_order}`}
+            className={stepHasAutomation(draft) ? "is-active" : ""}
+            onClick={onEditAutomation}
+            title="Edit step automation"
+          >
+            <AutomationCodeIcon />
+          </InlineStepToolButton>
+        </div>
         <StepActionMenu
           className="step-card-menu--floating"
           label={`Step ${step.step_order} actions`}
@@ -5504,10 +6117,12 @@ function DraftStepCard({
   onToggleSelect,
   onMoveUp,
   onMoveDown,
+  onChangeStepType,
+  onEditAutomation,
   onPasteAbove,
   onPasteBelow
 }: {
-  step: { id: string; step_order: number; action: string; expected_result: string; group_id: string | null; group_name: string | null; group_kind: "local" | "reusable" | null; reusable_group_id: string | null };
+  step: { id: string; step_order: number; action: string; expected_result: string; step_type: TestStep["step_type"]; automation_code: string; api_request: TestStep["api_request"]; group_id: string | null; group_name: string | null; group_kind: "local" | "reusable" | null; reusable_group_id: string | null };
   parameterValues: Record<string, string>;
   isSelected: boolean;
   isExpanded: boolean;
@@ -5524,6 +6139,8 @@ function DraftStepCard({
   onToggleSelect: (checked: boolean) => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
+  onChangeStepType: (nextType: TestStep["step_type"]) => void;
+  onEditAutomation: () => void;
   onPasteAbove: () => void;
   onPasteBelow: () => void;
 }) {
@@ -5606,6 +6223,9 @@ function DraftStepCard({
             type="checkbox"
           />
         </label>
+        <div className="step-card-type-tool">
+          <StepTypePickerButton value={step.step_type} onChange={onChangeStepType} />
+        </div>
         <button
           aria-label={isExpanded ? `Hide step ${step.step_order} details` : `Show step ${step.step_order} details`}
           className="step-card-toggle"
@@ -5613,21 +6233,30 @@ function DraftStepCard({
           type="button"
         >
           <div className="step-card-summary">
-            <div className="step-card-summary-top">
-              <StepKindIconBadge kind={step.group_kind} label={stepKind.label} tone={stepKind.tone} />
-              <strong>Step {step.step_order}</strong>
+            <div className="step-card-summary-row">
+              <div className="step-card-summary-top">
+                <StepKindIconBadge label={stepKind.label} tone={stepKind.tone} />
+                <strong>Step {step.step_order}</strong>
+              </div>
+              <StepParameterizedText
+                className="step-card-parameterized"
+                fallback="Draft step details"
+                text={step.action || step.expected_result}
+                values={parameterValues}
+              />
             </div>
-            <StepParameterizedText
-              className="step-card-parameterized"
-              fallback="Draft step details"
-              text={step.action || step.expected_result}
-              values={parameterValues}
-            />
           </div>
-          <span aria-hidden="true" className="step-card-toggle-state">
-            <StepKebabIcon />
-          </span>
         </button>
+        <div className="step-inline-tools">
+          <InlineStepToolButton
+            ariaLabel={`Edit automation for step ${step.step_order}`}
+            className={stepHasAutomation(step) ? "is-active" : ""}
+            onClick={onEditAutomation}
+            title="Edit step automation"
+          >
+            <AutomationCodeIcon />
+          </InlineStepToolButton>
+        </div>
         <StepActionMenu
           className="step-card-menu--floating"
           label={`Step ${step.step_order} actions`}
@@ -5642,14 +6271,30 @@ function DraftStepCard({
           <FormField label="Action">
             <input
               value={step.action}
-              onChange={(event) => onChange({ action: event.target.value, expected_result: step.expected_result })}
+              onChange={(event) =>
+                onChange({
+                  action: event.target.value,
+                  expected_result: step.expected_result,
+                  step_type: step.step_type,
+                  automation_code: step.automation_code,
+                  api_request: step.api_request
+                })
+              }
             />
           </FormField>
           <FormField label="Expected result">
             <textarea
               rows={3}
               value={step.expected_result}
-              onChange={(event) => onChange({ action: step.action, expected_result: event.target.value })}
+              onChange={(event) =>
+                onChange({
+                  action: step.action,
+                  expected_result: event.target.value,
+                  step_type: step.step_type,
+                  automation_code: step.automation_code,
+                  api_request: step.api_request
+                })
+              }
             />
           </FormField>
         </div>

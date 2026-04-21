@@ -20,7 +20,7 @@ const getCaseSnapshotsForExecution = db.prepare(`
 `);
 
 const getStepSnapshotsForExecution = db.prepare(`
-  SELECT execution_id, test_case_id, snapshot_step_id, step_order, action, expected_result, group_id, group_name, group_kind, reusable_group_id
+  SELECT execution_id, test_case_id, snapshot_step_id, step_order, action, expected_result, step_type, automation_code, api_request, group_id, group_name, group_kind, reusable_group_id
   FROM execution_step_snapshots
   WHERE execution_id = ?
   ORDER BY test_case_id ASC, step_order ASC
@@ -63,12 +63,15 @@ const insertExecutionStepSnapshot = db.prepare(`
     step_order,
     action,
     expected_result,
+    step_type,
+    automation_code,
+    api_request,
     group_id,
     group_name,
     group_kind,
     reusable_group_id
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const validateSuite = db.prepare(`
@@ -160,7 +163,7 @@ const selectProjectMember = db.prepare(`
 `);
 
 const selectStepsForCase = db.prepare(`
-  SELECT id, step_order, action, expected_result, group_id, group_name, group_kind, reusable_group_id
+  SELECT id, step_order, action, expected_result, step_type, automation_code, api_request, group_id, group_name, group_kind, reusable_group_id
   FROM test_steps
   WHERE test_case_id = ?
   ORDER BY step_order ASC, id ASC
@@ -394,6 +397,9 @@ async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
           step_order: step.step_order,
           action: step.action,
           expected_result: step.expected_result,
+          step_type: step.step_type,
+          automation_code: step.automation_code,
+          api_request: step.api_request,
           group_id: step.group_id,
           group_name: step.group_name,
           group_kind: step.group_kind,
@@ -440,6 +446,9 @@ async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
           step_order: step.step_order,
           action: step.action,
           expected_result: step.expected_result,
+          step_type: step.step_type,
+          automation_code: step.automation_code,
+          api_request: step.api_request,
           group_id: step.group_id,
           group_name: step.group_name,
           group_kind: step.group_kind,
@@ -721,6 +730,9 @@ exports.createExecution = async ({
         stepSnapshot.step_order,
         stepSnapshot.action,
         stepSnapshot.expected_result,
+        stepSnapshot.step_type,
+        stepSnapshot.automation_code,
+        stepSnapshot.api_request,
         stepSnapshot.group_id,
         stepSnapshot.group_name,
         stepSnapshot.group_kind,
@@ -880,6 +892,9 @@ exports.rerunExecution = async (id, { failed_only = false, created_by, name } = 
         snapshot.step_order,
         snapshot.action,
         snapshot.expected_result,
+        snapshot.step_type,
+        snapshot.automation_code,
+        snapshot.api_request,
         snapshot.group_id,
         snapshot.group_name,
         snapshot.group_kind,

@@ -177,3 +177,99 @@ export function ListIcon({ size, strokeWidth }: IconProps) {
     </IconFrame>
   );
 }
+
+export function ColumnsIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <rect height="14" rx="2" width="16" x="4" y="5" />
+      <path d="M10 5v14" />
+      <path d="M16 5v14" />
+    </IconFrame>
+  );
+}
+
+export function PinIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <path d="m15 4 5 5-3 1-3 5-2-2-5 3-1-1 3-5-2-2 5-3z" />
+      <path d="M6 18 4 20" />
+    </IconFrame>
+  );
+}
+
+export function MoreIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <circle cx="12" cy="6" r="1.5" />
+      <circle cx="12" cy="12" r="1.5" />
+      <circle cx="12" cy="18" r="1.5" />
+    </IconFrame>
+  );
+}
+
+export function DragHandleIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <circle cx="9" cy="8" r="1" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="8" r="1" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="12" r="1" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="12" r="1" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="16" r="1" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="16" r="1" fill="currentColor" stroke="none" />
+    </IconFrame>
+  );
+}
+
+export function CopyIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <rect height="11" rx="2" width="11" x="9" y="9" />
+      <path d="M15 9V7A2 2 0 0 0 13 5H7A2 2 0 0 0 5 7v6a2 2 0 0 0 2 2h2" />
+    </IconFrame>
+  );
+}
+
+export function TrashIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <path d="M5 7h14" />
+      <path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7" />
+      <path d="m7.5 7 .8 11.1A1.5 1.5 0 0 0 9.8 19.5h4.4a1.5 1.5 0 0 0 1.5-1.4L16.5 7" />
+      <path d="M10 10.5v5" />
+      <path d="M14 10.5v5" />
+    </IconFrame>
+  );
+}
+
+export function ExportIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <path d="M12 4v12" />
+      <path d="m7 9 5-5 5 5" />
+      <path d="M5 20h14" />
+    </IconFrame>
+  );
+}
+
+export function OpenIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <path d="M14 5h5v5" />
+      <path d="M10 14 19 5" />
+      <path d="M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4" />
+    </IconFrame>
+  );
+}
+
+export function MoveIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <path d="m7 7 5-4 5 4" />
+      <path d="m7 17 5 4 5-4" />
+      <path d="m17 7 4 5-4 5" />
+      <path d="m7 7-4 5 4 5" />
+      <path d="M12 3v18" />
+      <path d="M3 12h18" />
+    </IconFrame>
+  );
+}

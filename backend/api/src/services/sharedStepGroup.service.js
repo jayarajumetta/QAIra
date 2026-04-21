@@ -2,6 +2,12 @@ const db = require("../db");
 const { v4: uuid } = require("uuid");
 const sharedStepSyncService = require("./sharedStepSync.service");
 const displayIdService = require("./displayId.service");
+const {
+  normalizeApiRequest,
+  normalizeRichText,
+  normalizeTestStepType,
+  parseJsonValue
+} = require("../utils/testStepAutomation");
 
 const selectAppType = db.prepare(`
   SELECT id, project_id
@@ -63,30 +69,17 @@ const normalizeSteps = (steps = []) => {
     .map((step, index) => ({
       step_order: Number.isFinite(Number(step?.step_order)) ? Number(step.step_order) : index + 1,
       action: normalizeText(step?.action),
-      expected_result: normalizeText(step?.expected_result || step?.expectedResult)
+      expected_result: normalizeText(step?.expected_result || step?.expectedResult),
+      step_type: normalizeTestStepType(step?.step_type || step?.stepType, "web"),
+      automation_code: normalizeRichText(step?.automation_code || step?.automationCode),
+      api_request: normalizeApiRequest(step?.api_request || step?.apiRequest)
     }))
-    .filter((step) => step.action || step.expected_result)
+    .filter((step) => step.action || step.expected_result || step.automation_code || step.api_request)
     .sort((left, right) => left.step_order - right.step_order)
     .map((step, index) => ({
       ...step,
       step_order: index + 1
     }));
-};
-
-const parseJsonValue = (value, fallback) => {
-  if (value === null || value === undefined || value === "") {
-    return fallback;
-  }
-
-  if (typeof value === "string") {
-    try {
-      return JSON.parse(value);
-    } catch {
-      return fallback;
-    }
-  }
-
-  return value;
 };
 
 const buildUsageMap = (rows = []) => {

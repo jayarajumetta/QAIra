@@ -181,6 +181,9 @@ CREATE TABLE test_steps (
   step_order INTEGER NOT NULL,
   action TEXT,
   expected_result TEXT,
+  step_type TEXT,
+  automation_code TEXT,
+  api_request JSONB,
   group_id TEXT,
   group_name TEXT,
   group_kind TEXT,
@@ -317,6 +320,9 @@ CREATE TABLE execution_step_snapshots (
   step_order INTEGER NOT NULL,
   action TEXT,
   expected_result TEXT,
+  step_type TEXT,
+  automation_code TEXT,
+  api_request JSONB,
   group_id TEXT,
   group_name TEXT,
   group_kind TEXT,
@@ -349,6 +355,31 @@ CREATE TABLE execution_results (
   FOREIGN KEY (app_type_id) REFERENCES app_types(id),
   FOREIGN KEY (executed_by) REFERENCES users(id)
 );
+
+CREATE TABLE workspace_transactions (
+  id TEXT PRIMARY KEY,
+  project_id TEXT,
+  app_type_id TEXT,
+  category TEXT NOT NULL,
+  action TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed')),
+  title TEXT NOT NULL,
+  description TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  related_kind TEXT,
+  related_id TEXT,
+  created_by TEXT,
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (app_type_id) REFERENCES app_types(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id)
+);
+
+CREATE INDEX idx_workspace_transactions_scope
+  ON workspace_transactions (project_id, app_type_id, created_at DESC);
 
 CREATE TABLE app_settings (
   key TEXT PRIMARY KEY,

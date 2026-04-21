@@ -35,7 +35,10 @@ module.exports = async function (fastify) {
 
     await projectService.getProject(req.body.project_id, req.user.id);
 
-    return service.bulkImportRequirements(req.body);
+    return service.bulkImportRequirements({
+      ...req.body,
+      created_by: req.user.id
+    });
   });
 
   fastify.get("/requirements", async (req) => {

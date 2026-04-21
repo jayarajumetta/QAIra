@@ -191,6 +191,26 @@ export type AiTestCaseGenerationJob = {
   updated_at?: string;
 };
 
+export type WorkspaceTransaction = {
+  id: string;
+  project_id: string | null;
+  app_type_id: string | null;
+  category: string;
+  action: string;
+  status: "queued" | "running" | "completed" | "failed" | string;
+  title: string;
+  description: string | null;
+  metadata: Record<string, unknown>;
+  related_kind: string | null;
+  related_id: string | null;
+  created_by: string | null;
+  created_user: User | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type SmartExecutionImpactCase = {
   test_case_id: string;
   title: string;
@@ -262,16 +282,46 @@ export type TestStep = {
   step_order: number;
   action: string | null;
   expected_result: string | null;
+  step_type?: TestStepType | null;
+  automation_code?: string | null;
+  api_request?: StepApiRequest | null;
   group_id?: string | null;
   group_name?: string | null;
   group_kind?: "local" | "reusable" | null;
   reusable_group_id?: string | null;
 };
 
+export type TestStepType = "web" | "api" | "android" | "ios";
+
+export type StepApiRequestHeader = {
+  key: string;
+  value: string;
+};
+
+export type StepApiValidationKind = "status" | "header" | "body_contains" | "json_path";
+
+export type StepApiValidation = {
+  kind: StepApiValidationKind;
+  target?: string | null;
+  expected?: string | null;
+};
+
+export type StepApiRequest = {
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+  url?: string | null;
+  headers?: StepApiRequestHeader[];
+  body_mode?: "none" | "json" | "text" | "xml" | "form";
+  body?: string | null;
+  validations?: StepApiValidation[];
+};
+
 export type SharedStepGroupStep = {
   step_order: number;
   action: string | null;
   expected_result: string | null;
+  step_type?: TestStepType | null;
+  automation_code?: string | null;
+  api_request?: StepApiRequest | null;
 };
 
 export type SharedStepGroup = {
@@ -465,6 +515,9 @@ export type ExecutionStepSnapshot = {
   step_order: number;
   action: string | null;
   expected_result: string | null;
+  step_type?: TestStepType | null;
+  automation_code?: string | null;
+  api_request?: StepApiRequest | null;
   group_id?: string | null;
   group_name?: string | null;
   group_kind?: "local" | "reusable" | null;

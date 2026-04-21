@@ -3,8 +3,14 @@ const { v4: uuid } = require("uuid");
 const requirementTestCaseService = require("./requirementTestCase.service");
 const suiteTestCaseService = require("./suiteTestCase.service");
 const sharedStepSyncService = require("./sharedStepSync.service");
+const workspaceTransactionService = require("./workspaceTransaction.service");
 const { DOMAIN_METADATA, TEST_CASE_AUTOMATED_VALUES, TEST_CASE_STATUS_VALUES } = require("../domain/catalog");
 const displayIdService = require("./displayId.service");
+const {
+  normalizeApiRequest,
+  normalizeRichText,
+  normalizeTestStepType
+} = require("../utils/testStepAutomation");
 
 const DEFAULT_PRIORITY = 3;
 const DEFAULT_STATUS = DOMAIN_METADATA.test_cases.default_status;
@@ -101,8 +107,21 @@ const deleteRequirementMappings = db.prepare(`
 `);
 
 const insertStep = db.prepare(`
-  INSERT INTO test_steps (id, test_case_id, step_order, action, expected_result, group_id, group_name, group_kind, reusable_group_id)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO test_steps (
+    id,
+    test_case_id,
+    step_order,
+    action,
+    expected_result,
+    step_type,
+    automation_code,
+    api_request,
+    group_id,
+    group_name,
+    group_kind,
+    reusable_group_id
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const deleteStepsForTestCase = db.prepare(`
@@ -289,12 +308,15 @@ const normalizeSteps = (steps = []) => {
       step_order: Number.isFinite(Number(step?.step_order)) ? Number(step.step_order) : index + 1,
       action: normalizeText(step?.action),
       expected_result: normalizeText(step?.expected_result || step?.expectedResult),
+      step_type: normalizeTestStepType(step?.step_type || step?.stepType, "web"),
+      automation_code: normalizeRichText(step?.automation_code || step?.automationCode),
+      api_request: normalizeApiRequest(step?.api_request || step?.apiRequest),
       group_id: normalizeText(step?.group_id || step?.groupId),
       group_name: normalizeText(step?.group_name || step?.groupName),
       group_kind: normalizeGroupKind(step?.group_kind || step?.groupKind || (step?.group_id || step?.groupId ? "local" : null)),
       reusable_group_id: normalizeText(step?.reusable_group_id || step?.reusableGroupId)
     }))
-    .filter((step) => step.action || step.expected_result)
+    .filter((step) => step.action || step.expected_result || step.automation_code || step.api_request)
     .sort((left, right) => left.step_order - right.step_order)
     .map((step, index) => ({
       ...step,
@@ -633,6 +655,9 @@ const createOne = db.transaction(async (payload) => {
       step.step_order,
       step.action,
       step.expected_result,
+      step.step_type || "web",
+      step.automation_code,
+      step.api_request,
       step.group_id,
       step.group_name,
       step.group_kind,
@@ -674,9 +699,10 @@ exports.createTestCase = async (input) => {
   return response;
 };
 
-exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [] }) => {
+exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], created_by, import_source } = {}) => {
   const resolvedAppTypeId = normalizeText(app_type_id);
   const defaultRequirementId = normalizeText(requirement_id);
+  const resolvedImportSource = normalizeText(import_source) || "csv";
   const sharedGroupCache = new Map();
 
   if (!resolvedAppTypeId) {
@@ -701,6 +727,25 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [] })
   const suiteLookup = buildNameLookup(availableSuites, "name");
   const requirementLookup = buildNameLookup(availableRequirements, "title");
   const sharedGroupLookup = buildNameLookup(availableSharedGroups, "name");
+  const transaction = await workspaceTransactionService.createTransaction({
+    project_id: appType.project_id,
+    app_type_id: resolvedAppTypeId,
+    category: "bulk_import",
+    action: "test_case_import",
+    status: "running",
+    title: resolvedImportSource === "junit_xml" ? "JUnit XML test case import" : "CSV test case import",
+    description:
+      resolvedImportSource === "junit_xml"
+        ? `Importing ${rows.length} test case${rows.length === 1 ? "" : "s"} from a JUnit XML report.`
+        : `Importing ${rows.length} test case${rows.length === 1 ? "" : "s"} from CSV.`,
+    metadata: {
+      import_source: resolvedImportSource,
+      total_rows: rows.length,
+      requirement_id: defaultRequirementId
+    },
+    created_by,
+    started_at: new Date().toISOString()
+  });
 
   const created = [];
   const errors = [];
@@ -778,12 +823,29 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [] })
     }
   }
 
-  return {
+  const response = {
     imported: created.length,
     failed: errors.length,
     created,
     errors
   };
+
+  await workspaceTransactionService.updateTransaction(transaction.id, {
+    status: created.length ? "completed" : "failed",
+    description: created.length
+      ? `Imported ${created.length} of ${rows.length} test case${rows.length === 1 ? "" : "s"} from ${resolvedImportSource === "junit_xml" ? "JUnit XML" : "CSV"}.`
+      : `No test cases were imported from ${resolvedImportSource === "junit_xml" ? "the JUnit XML report" : "the CSV file"}.`,
+    metadata: {
+      import_source: resolvedImportSource,
+      total_rows: rows.length,
+      imported: created.length,
+      failed: errors.length,
+      requirement_id: defaultRequirementId
+    },
+    completed_at: new Date().toISOString()
+  });
+
+  return response;
 };
 
 exports.getTestCases = async ({ suite_id, requirement_id, status, app_type_id }) => {

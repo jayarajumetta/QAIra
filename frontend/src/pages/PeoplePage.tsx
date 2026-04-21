@@ -1,7 +1,7 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { AddIcon, UsersIcon } from "../components/AppIcons";
+import { AddIcon, ImportIcon, UsersIcon } from "../components/AppIcons";
 import { api } from "../lib/api";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
@@ -12,6 +12,7 @@ import { TileCardFact, TileCardIconFrame, TileCardStatusIndicator, TileCardUsers
 import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/WorkspaceMasterDetail";
 import { useAuth } from "../auth/AuthContext";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
+import { parseUserCsv, type ImportedUserRow } from "../lib/userImport";
 import type { Role, User } from "../types";
 
 type PeopleView = "users" | "roles";
@@ -33,8 +34,13 @@ export function PeoplePage() {
   const [roleDraft, setRoleDraft] = useState(EMPTY_ROLE_DRAFT);
   const [isCreateUserModalOpen, setIsCreateUserModalOpen] = useState(false);
   const [isCreateRoleModalOpen, setIsCreateRoleModalOpen] = useState(false);
+  const [isImportUsersModalOpen, setIsImportUsersModalOpen] = useState(false);
   const [createUserDraft, setCreateUserDraft] = useState(createEmptyUserDraft());
   const [createRoleDraft, setCreateRoleDraft] = useState(EMPTY_ROLE_DRAFT);
+  const [importUsersDefaultRoleId, setImportUsersDefaultRoleId] = useState("");
+  const [importUsersFileName, setImportUsersFileName] = useState("");
+  const [importUserRows, setImportUserRows] = useState<ImportedUserRow[]>([]);
+  const [importUserWarnings, setImportUserWarnings] = useState<string[]>([]);
 
   const userItems = users.data || [];
   const roleItems = roles.data || [];
@@ -61,6 +67,14 @@ export function PeoplePage() {
         return counts;
       }, {}),
     [userItems]
+  );
+  const importUsersPasswordCount = useMemo(
+    () => importUserRows.filter((row) => row.password || row.password_hash).length,
+    [importUserRows]
+  );
+  const importUsersExplicitRoleCount = useMemo(
+    () => importUserRows.filter((row) => row.role || row.role_id).length,
+    [importUserRows]
   );
 
   useEffect(() => {
@@ -231,6 +245,26 @@ export function PeoplePage() {
     setCreateRoleDraft(EMPTY_ROLE_DRAFT);
   };
 
+  const openImportUsersModal = () => {
+    setImportUsersDefaultRoleId(defaultMemberRoleId);
+    setImportUsersFileName("");
+    setImportUserRows([]);
+    setImportUserWarnings([]);
+    setIsImportUsersModalOpen(true);
+  };
+
+  const closeImportUsersModal = (force = false) => {
+    if (importUsers.isPending && !force) {
+      return;
+    }
+
+    setIsImportUsersModalOpen(false);
+    setImportUsersDefaultRoleId(defaultMemberRoleId);
+    setImportUsersFileName("");
+    setImportUserRows([]);
+    setImportUserWarnings([]);
+  };
+
   const createUser = useMutation({
     mutationFn: api.users.create,
     onSuccess: async (response) => {
@@ -251,6 +285,27 @@ export function PeoplePage() {
       await invalidate();
     },
     onError: (error) => showFeedback(error instanceof Error ? error.message : "Unable to update user", "error")
+  });
+
+  const importUsers = useMutation({
+    mutationFn: api.users.bulkImport,
+    onSuccess: async (response) => {
+      showFeedback(
+        response.failed
+          ? `${response.imported} users imported, ${response.failed} rows skipped.`
+          : `${response.imported} users imported successfully.`,
+        response.failed ? "error" : "success"
+      );
+      setImportUserWarnings(response.errors.map((item) => `Row ${item.row}: ${item.message}`));
+      if (!response.failed) {
+        closeImportUsersModal(true);
+      }
+      if (response.created[0]) {
+        openUserWorkspace(response.created[0].id);
+      }
+      await invalidate();
+    },
+    onError: (error) => showFeedback(error instanceof Error ? error.message : "Unable to import users", "error")
   });
 
   const deleteUser = useMutation({
@@ -362,6 +417,21 @@ export function PeoplePage() {
     return () => window.removeEventListener("keydown", handleEscape);
   }, [createRole.isPending, isCreateRoleModalOpen]);
 
+  useEffect(() => {
+    if (!isImportUsersModalOpen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !importUsers.isPending) {
+        closeImportUsersModal();
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [importUsers.isPending, isImportUsersModalOpen]);
+
   const closeUserWorkspace = () => {
     setSelectedUserId("");
     setUserDraft(createEmptyUserDraft(defaultMemberRoleId));
@@ -372,6 +442,40 @@ export function PeoplePage() {
     setSelectedRoleId("");
     setRoleDraft(EMPTY_ROLE_DRAFT);
     syncPeopleSearchParams("roles", null, null);
+  };
+
+  const handleImportUsersFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      const parsed = parseUserCsv(await file.text());
+      setImportUsersFileName(file.name);
+      setImportUserRows(parsed.rows);
+      setImportUserWarnings(parsed.warnings);
+    } catch (error) {
+      showFeedback(error instanceof Error ? error.message : "Unable to read the CSV file", "error");
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const handleBulkImportUsers = async () => {
+    if (!importUserRows.length) {
+      return;
+    }
+
+    try {
+      await importUsers.mutateAsync({
+        rows: importUserRows,
+        default_role_id: importUsersDefaultRoleId || undefined
+      });
+    } catch {
+      // handled in mutation callbacks
+    }
   };
 
   return (
@@ -388,7 +492,10 @@ export function PeoplePage() {
         actions={
           isAdmin ? (
             view === "users" ? (
-              <button className="primary-button" onClick={openCreateUserModal} type="button"><UsersIcon />Create user</button>
+              <>
+                <button className="ghost-button" onClick={openImportUsersModal} type="button"><ImportIcon />Import CSV</button>
+                <button className="primary-button" onClick={openCreateUserModal} type="button"><UsersIcon />Create user</button>
+              </>
             ) : (
               <button className="primary-button" onClick={openCreateRoleModal} type="button"><AddIcon />Create role</button>
             )
@@ -700,6 +807,125 @@ export function PeoplePage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {isImportUsersModalOpen ? (
+        <div className="modal-backdrop" onClick={() => closeImportUsersModal()} role="presentation">
+          <div
+            aria-labelledby="import-users-title"
+            aria-modal="true"
+            className="modal-card people-modal-card import-modal-card"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="people-modal-header">
+              <div className="people-modal-title">
+                <p className="eyebrow">People & Access</p>
+                <h3 id="import-users-title">Import users from CSV</h3>
+                <p>Upload a CSV with `Email`, optional `Name`, `Password` or `Password Hash`, and optional `Role` or `Role ID`. Plain passwords are hashed before users are stored.</p>
+              </div>
+              <button
+                aria-label="Close user import dialog"
+                className="ghost-button"
+                disabled={importUsers.isPending}
+                onClick={() => closeImportUsersModal()}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="people-modal-body">
+              <div className="record-grid">
+                <FormField label="CSV file">
+                  <input accept=".csv,text/csv" onChange={(event) => void handleImportUsersFile(event)} type="file" />
+                </FormField>
+
+                <FormField label="Default role">
+                  <select value={importUsersDefaultRoleId} onChange={(event) => setImportUsersDefaultRoleId(event.target.value)}>
+                    <option value="">Require role per row</option>
+                    {roleItems.map((role) => (
+                      <option key={role.id} value={role.id}>
+                        {role.name.charAt(0).toUpperCase() + role.name.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+              </div>
+
+              <div className="metric-strip compact">
+                <div className="mini-card">
+                  <strong>{importUserRows.length}</strong>
+                  <span>Rows ready</span>
+                </div>
+                <div className="mini-card">
+                  <strong>{importUsersPasswordCount}</strong>
+                  <span>Password values</span>
+                </div>
+                <div className="mini-card">
+                  <strong>{importUsersExplicitRoleCount}</strong>
+                  <span>Rows with roles</span>
+                </div>
+              </div>
+
+              <div className="detail-summary">
+                <strong>{importUsersFileName || "No CSV loaded yet"}</strong>
+                <span>Accepted columns: `Email`, `Name`, `Password`, `Password Hash`, `Role`, and `Role ID`. Any row without a role uses the selected default role when one is provided.</span>
+              </div>
+
+              {importUserWarnings.length ? (
+                <div className="empty-state compact">
+                  {importUserWarnings.slice(0, 4).map((warning) => (
+                    <div key={warning}>{warning}</div>
+                  ))}
+                </div>
+              ) : null}
+
+              {importUserRows.length ? (
+                <div className="table-wrap import-preview-table">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Email</th>
+                        <th>Name</th>
+                        <th>Role</th>
+                        <th>Password source</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importUserRows.slice(0, 5).map((row, index) => (
+                        <tr key={`${row.email}-${index}`}>
+                          <td>{row.email}</td>
+                          <td>{row.name || "—"}</td>
+                          <td>{row.role || row.role_id || "Default role"}</td>
+                          <td>{row.password_hash ? "Password hash" : row.password ? "Plain password" : "Missing"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="action-row people-modal-actions">
+              <button className="primary-button" disabled={!importUserRows.length || importUsers.isPending} onClick={() => void handleBulkImportUsers()} type="button">
+                {importUsers.isPending ? "Importing…" : `Import ${importUserRows.length || ""} Users`}
+              </button>
+              <button
+                className="ghost-button"
+                disabled={!importUserRows.length || importUsers.isPending}
+                onClick={() => {
+                  setImportUsersFileName("");
+                  setImportUserRows([]);
+                  setImportUserWarnings([]);
+                }}
+                type="button"
+              >
+                Clear preview
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

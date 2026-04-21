@@ -1,5 +1,11 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
+const {
+  normalizeApiRequest,
+  normalizeRichText,
+  normalizeTestStepType,
+  parseJsonValue
+} = require("../utils/testStepAutomation");
 
 const selectSharedStepGroup = db.prepare(`
   SELECT id, name, steps
@@ -33,6 +39,9 @@ const updateReferenceStep = db.prepare(`
     step_order = ?,
     action = ?,
     expected_result = ?,
+    step_type = ?,
+    automation_code = ?,
+    api_request = ?,
     group_name = ?,
     group_kind = 'reusable',
     reusable_group_id = ?
@@ -46,12 +55,15 @@ const insertReferenceStep = db.prepare(`
     step_order,
     action,
     expected_result,
+    step_type,
+    automation_code,
+    api_request,
     group_id,
     group_name,
     group_kind,
     reusable_group_id
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const deleteReferenceStep = db.prepare(`
@@ -82,22 +94,6 @@ const normalizeText = (value) => {
   return normalized ? normalized : null;
 };
 
-const parseJsonValue = (value, fallback) => {
-  if (value === null || value === undefined || value === "") {
-    return fallback;
-  }
-
-  if (typeof value === "string") {
-    try {
-      return JSON.parse(value);
-    } catch {
-      return fallback;
-    }
-  }
-
-  return value;
-};
-
 const normalizeSharedSteps = (steps = []) => {
   if (!Array.isArray(steps)) {
     return [];
@@ -107,9 +103,12 @@ const normalizeSharedSteps = (steps = []) => {
     .map((step, index) => ({
       step_order: Number.isFinite(Number(step?.step_order)) ? Number(step.step_order) : index + 1,
       action: normalizeText(step?.action),
-      expected_result: normalizeText(step?.expected_result || step?.expectedResult)
+      expected_result: normalizeText(step?.expected_result || step?.expectedResult),
+      step_type: normalizeTestStepType(step?.step_type || step?.stepType, "web"),
+      automation_code: normalizeRichText(step?.automation_code || step?.automationCode),
+      api_request: normalizeApiRequest(step?.api_request || step?.apiRequest)
     }))
-    .filter((step) => step.action || step.expected_result)
+    .filter((step) => step.action || step.expected_result || step.automation_code || step.api_request)
     .sort((left, right) => left.step_order - right.step_order)
     .map((step, index) => ({
       ...step,
@@ -167,6 +166,9 @@ const syncReferenceInstance = async ({ sharedGroupId, sharedGroupName, instanceS
       startOrder + index,
       nextStep.action,
       nextStep.expected_result,
+      nextStep.step_type || "web",
+      nextStep.automation_code,
+      nextStep.api_request,
       sharedGroupName,
       sharedGroupId,
       currentStep.id
@@ -183,6 +185,9 @@ const syncReferenceInstance = async ({ sharedGroupId, sharedGroupName, instanceS
         startOrder + index,
         nextStep.action,
         nextStep.expected_result,
+        nextStep.step_type || "web",
+        nextStep.automation_code,
+        nextStep.api_request,
         groupId,
         sharedGroupName,
         "reusable",
@@ -242,7 +247,10 @@ exports.syncSharedGroupFromReference = async (sharedGroupId, testCaseId, groupId
     sourceSteps.map((step, index) => ({
       step_order: index + 1,
       action: step.action,
-      expected_result: step.expected_result
+      expected_result: step.expected_result,
+      step_type: step.step_type,
+      automation_code: step.automation_code,
+      api_request: parseJsonValue(step.api_request, null)
     }))
   );
 

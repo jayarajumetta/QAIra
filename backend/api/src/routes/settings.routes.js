@@ -17,4 +17,21 @@ module.exports = async function (fastify) {
 
     return settingsService.updateLocalizationStrings(req.body.strings);
   });
+
+  fastify.get("/settings/workspace-preferences", async (req) => {
+    await fastify.authenticate(req);
+    return {
+      preferences: await settingsService.getWorkspacePreferences(req.user.id)
+    };
+  });
+
+  fastify.put("/settings/workspace-preferences", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      preferences: { required: true, type: "object" }
+    }, req.body);
+
+    return settingsService.updateWorkspacePreferences(req.user.id, req.body.preferences);
+  });
 };

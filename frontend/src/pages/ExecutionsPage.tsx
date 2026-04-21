@@ -2,13 +2,23 @@ import { FormEvent, Fragment, useDeferredValue, useEffect, useMemo, useRef, useS
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { CalendarIcon, PlayIcon } from "../components/AppIcons";
+import { CalendarIcon, ImportIcon, OpenIcon, PlayIcon, SparkIcon, TrashIcon, UsersIcon } from "../components/AppIcons";
+import { CatalogActionMenu } from "../components/CatalogActionMenu";
 import { CatalogViewToggle } from "../components/CatalogViewToggle";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
+import { DataTable, type DataTableColumn } from "../components/DataTable";
 import { FormField } from "../components/FormField";
 import { ExecutionContextSelector } from "../components/ExecutionContextSelector";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import {
+  AutomationCodeIcon,
+  CodePreviewDialog,
+  SharedGroupLevelIcon,
+  StandardStepIcon,
+  StepIconButton as InlineStepToolButton,
+  StepTypeIcon
+} from "../components/StepAutomationEditor";
 import { ProjectDropdown } from "../components/ProjectDropdown";
 import { ProgressMeter } from "../components/ProgressMeter";
 import { StepParameterizedText } from "../components/StepParameterizedText";
@@ -22,6 +32,7 @@ import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/Worksp
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { api } from "../lib/api";
+import { buildCaseAutomationCode, buildGroupAutomationCode, resolveStepAutomationCode } from "../lib/stepAutomation";
 import {
   deriveCaseStatusFromSteps,
   parseExecutionLogs,
@@ -46,7 +57,8 @@ import type {
   SmartExecutionImpactCase,
   SmartExecutionPreviewResponse,
   TestStep,
-  TestSuite
+  TestSuite,
+  WorkspaceTransaction
 } from "../types";
 
 type ExecutionTab = "overview" | "logs" | "failures" | "history";
@@ -237,6 +249,9 @@ function toStepView(snapshot: ExecutionStepSnapshot): TestStep {
     step_order: snapshot.step_order,
     action: snapshot.action,
     expected_result: snapshot.expected_result,
+    step_type: snapshot.step_type,
+    automation_code: snapshot.automation_code,
+    api_request: snapshot.api_request,
     group_id: snapshot.group_id,
     group_name: snapshot.group_name,
     group_kind: snapshot.group_kind,
@@ -395,6 +410,89 @@ function formatDuration(ms?: number | null, fallback = DEFAULT_DURATION_LABEL) {
   return `${seconds}s`;
 }
 
+function readWorkspaceTransactionCount(transaction: WorkspaceTransaction, key: string) {
+  const value = transaction.metadata?.[key];
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatCountLabel(count: number, singular: string, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function describeWorkspaceTransaction(
+  transaction: WorkspaceTransaction,
+  {
+    appTypeNameById,
+    projectNameById
+  }: {
+    appTypeNameById: Record<string, string>;
+    projectNameById: Record<string, string>;
+  }
+) {
+  const importSource = String(transaction.metadata?.import_source || "").toLowerCase();
+  const requirementCount = readWorkspaceTransactionCount(transaction, "requirement_count");
+  const generatedCaseCount = readWorkspaceTransactionCount(transaction, "generated_cases_count");
+  const importedCount = readWorkspaceTransactionCount(transaction, "imported");
+  const failedCount = readWorkspaceTransactionCount(transaction, "failed");
+  const totalRows = readWorkspaceTransactionCount(transaction, "total_rows");
+  const scopeLabel = transaction.app_type_id
+    ? appTypeNameById[transaction.app_type_id] || "App type scope"
+    : transaction.project_id
+      ? projectNameById[transaction.project_id] || "Project scope"
+      : "Workspace scope";
+
+  if (transaction.action === "scheduled_test_case_generation" || transaction.category === "ai_generation") {
+    return {
+      icon: <SparkIcon />,
+      eyebrow: "Scheduled AI generation",
+      detail:
+        generatedCaseCount || requirementCount
+          ? `${formatCountLabel(requirementCount, "requirement")} queued or processed · ${formatCountLabel(generatedCaseCount, "case")} generated`
+          : "AI-assisted test case generation workflow"
+    };
+  }
+
+  if (transaction.action === "test_case_import") {
+    return {
+      icon: <ImportIcon />,
+      eyebrow: importSource === "junit_xml" ? "JUnit XML import" : "Test case CSV import",
+      detail:
+        importedCount || failedCount || totalRows
+          ? `${formatCountLabel(importedCount, "case")} imported · ${formatCountLabel(failedCount, "row")} failed`
+          : "Bulk test case import"
+    };
+  }
+
+  if (transaction.action === "requirement_import") {
+    return {
+      icon: <ImportIcon />,
+      eyebrow: "Requirement import",
+      detail:
+        importedCount || failedCount || totalRows
+          ? `${formatCountLabel(importedCount, "requirement")} imported · ${formatCountLabel(failedCount, "row")} failed`
+          : "Bulk requirement import"
+    };
+  }
+
+  if (transaction.action === "user_import") {
+    return {
+      icon: <UsersIcon />,
+      eyebrow: "User import",
+      detail:
+        importedCount || failedCount || totalRows
+          ? `${formatCountLabel(importedCount, "user")} imported · ${formatCountLabel(failedCount, "row")} failed`
+          : "Bulk user import"
+    };
+  }
+
+  return {
+    icon: transaction.category === "bulk_import" ? <ImportIcon /> : <SparkIcon />,
+    eyebrow: transaction.title,
+    detail: transaction.description || scopeLabel
+  };
+}
+
 function executionImpactLevelLabel(level: SmartExecutionImpactCase["impact_level"]) {
   return level.charAt(0).toUpperCase() + level.slice(1);
 }
@@ -462,6 +560,7 @@ export function ExecutionsPage() {
   const [uploadingEvidenceStepId, setUploadingEvidenceStepId] = useState("");
   const [executionEvidencePreview, setExecutionEvidencePreview] = useState<ExecutionEvidencePreviewState | null>(null);
   const [isExecutionContextModalOpen, setIsExecutionContextModalOpen] = useState(false);
+  const [codePreviewState, setCodePreviewState] = useState<{ title: string; subtitle: string; code: string } | null>(null);
   const [executionAssignmentDraft, setExecutionAssignmentDraft] = useState("");
   const [caseAssignmentDraft, setCaseAssignmentDraft] = useState("");
   const executionCardMeasureRef = useRef<HTMLDivElement | null>(null);
@@ -532,6 +631,14 @@ export function ExecutionsPage() {
     queryFn: () => api.integrations.list({ type: "llm", is_active: true }),
     enabled: Boolean(session)
   });
+  const workspaceTransactionsQuery = useQuery({
+    queryKey: ["workspace-transactions", projectId],
+    queryFn: () => api.workspaceTransactions.list({
+      project_id: projectId || undefined,
+      limit: 24
+    }),
+    enabled: Boolean(projectId && session)
+  });
 
   const createExecution = useMutation({ mutationFn: api.executions.create });
   const updateExecutionAssignment = useMutation({
@@ -592,6 +699,21 @@ export function ExecutionsPage() {
         return accumulator;
       }, {}),
     [appTypes]
+  );
+  const workspaceTransactions = useMemo(
+    () =>
+      (workspaceTransactionsQuery.data || []).filter(
+        (transaction) => transaction.category === "bulk_import" || transaction.category === "ai_generation"
+      ),
+    [workspaceTransactionsQuery.data]
+  );
+  const workspaceTransactionStatusCounts = useMemo(
+    () =>
+      workspaceTransactions.reduce<Record<string, number>>((accumulator, transaction) => {
+        accumulator[transaction.status] = (accumulator[transaction.status] || 0) + 1;
+        return accumulator;
+      }, {}),
+    [workspaceTransactions]
   );
   const smartExecutionRequirementOptions = useMemo<SmartExecutionRequirementOption[]>(() => {
     const linkedCaseIdsByRequirementId = smartExecutionLibraryCases.reduce<Map<string, Set<string>>>((accumulator, testCase) => {
@@ -1437,14 +1559,14 @@ export function ExecutionsPage() {
     }
   };
 
-  const handleRerunExecution = async (failedOnly: boolean) => {
-    if (!selectedExecution || !session?.user.id) {
+  const handleRerunExecutionItem = async (execution: Execution, failedOnly: boolean) => {
+    if (!session?.user.id) {
       return;
     }
 
     try {
       const response = await rerunExecution.mutateAsync({
-        id: selectedExecution.id,
+        id: execution.id,
         input: {
           failed_only: failedOnly,
           created_by: session.user.id
@@ -1457,6 +1579,14 @@ export function ExecutionsPage() {
     } catch (error) {
       showError(error, failedOnly ? "Unable to rerun failed cases" : "Unable to rerun execution");
     }
+  };
+
+  const handleRerunExecution = async (failedOnly: boolean) => {
+    if (!selectedExecution) {
+      return;
+    }
+
+    await handleRerunExecutionItem(selectedExecution, failedOnly);
   };
 
   const handleRunExecutionSchedule = async (scheduleId: string) => {
@@ -1697,9 +1827,41 @@ export function ExecutionsPage() {
   const selectedExecutionCaseEffectiveUser = selectedExecutionCase?.assigned_user || selectedExecution?.assigned_user || null;
   const selectedExecutionCaseExplicitAssigneeId = selectedExecutionCase?.assigned_to || "";
 
+  const openExecutionCaseAutomationPreview = () => {
+    if (!selectedSteps.length) {
+      return;
+    }
+
+    setCodePreviewState({
+      title: `${selectedExecutionCase?.title || "Selected case"} automation`,
+      subtitle: "Execution snapshots are read-only here. Update the source test case or shared group to change this code.",
+      code: buildCaseAutomationCode(selectedExecutionCase?.title || "Selected case", selectedSteps)
+    });
+  };
+
+  const openExecutionGroupAutomationPreview = (groupName: string, steps: TestStep[]) => {
+    setCodePreviewState({
+      title: `${groupName} automation`,
+      subtitle: "This is the snapped automation for the selected execution.",
+      code: buildGroupAutomationCode(groupName, steps)
+    });
+  };
+
+  const openExecutionStepAutomationPreview = (step: TestStep) => {
+    setCodePreviewState({
+      title: `Step ${step.step_order} automation`,
+      subtitle: "Execution snapshots are read-only. This preview reflects the preserved step automation for this run.",
+      code: resolveStepAutomationCode(step)
+    });
+  };
+
   useEffect(() => {
     setCaseAssignmentDraft(selectedExecutionCaseExplicitAssigneeId);
   }, [selectedExecutionCase?.id, selectedExecutionCaseExplicitAssigneeId]);
+
+  useEffect(() => {
+    setCodePreviewState(null);
+  }, [selectedExecutionId, selectedTestCaseId]);
 
   const focusExecutionCase = (testCaseId: string, executionId = selectedExecutionId) => {
     const scopedCase = executionCaseOrder.find((testCase) => testCase.id === testCaseId);
@@ -1931,6 +2093,194 @@ export function ExecutionsPage() {
       return !search || [schedule.name, appTypeName, assigneeLabel, nextRunLabel].some((value) => value.toLowerCase().includes(search));
     });
   }, [appTypeNameById, deferredExecutionSearch, executionSchedules]);
+  const executionListColumns = useMemo<Array<DataTableColumn<Execution>>>(() => [
+    {
+      key: "execution",
+      label: "Execution",
+      canToggle: false,
+      render: (execution) => <strong>{execution.name || "Unnamed execution"}</strong>
+    },
+    {
+      key: "trigger",
+      label: "Trigger",
+      defaultVisible: false,
+      render: (execution) => execution.trigger || "manual"
+    },
+    {
+      key: "status",
+      label: "Status",
+      render: (execution) => executionStatusLabel(execution.status)
+    },
+    {
+      key: "assignee",
+      label: "Assignee",
+      render: (execution) => (execution.assigned_user ? resolveUserPrimaryLabel(execution.assigned_user) : "Unassigned")
+    },
+    {
+      key: "suites",
+      label: "Suites",
+      render: (execution) => execution.suite_ids.length
+    },
+    {
+      key: "touched",
+      label: "Touched",
+      render: (execution) => {
+        const summary = executionSummaryById[execution.id] || EMPTY_EXECUTION_RUN_SUMMARY;
+        const totalCases = (execution.case_snapshots || []).length;
+        return totalCases ? `${summary.total}/${totalCases}` : summary.total;
+      }
+    },
+    {
+      key: "issues",
+      label: "Issues",
+      render: (execution) => {
+        const summary = executionSummaryById[execution.id] || EMPTY_EXECUTION_RUN_SUMMARY;
+        return summary.failed + summary.blocked;
+      }
+    },
+    {
+      key: "started",
+      label: "Started",
+      render: (execution) => formatExecutionTimestamp(execution.started_at, "Not started yet")
+    },
+    {
+      key: "duration",
+      label: "Duration",
+      render: (execution) => formatDuration(computeExecutionDurationMs(execution.started_at, execution.ended_at, liveNow), DEFAULT_DURATION_LABEL)
+    },
+    {
+      key: "latestActivity",
+      label: "Latest activity",
+      defaultVisible: false,
+      render: (execution) => {
+        const summary = executionSummaryById[execution.id] || EMPTY_EXECUTION_RUN_SUMMARY;
+        return formatExecutionTimestamp(summary.latestActivityAt, "No evidence yet");
+      }
+    },
+    {
+      key: "actions",
+      label: "Actions",
+      canToggle: false,
+      render: (execution) => {
+        const summary = executionSummaryById[execution.id] || EMPTY_EXECUTION_RUN_SUMMARY;
+
+        return (
+          <div onClick={(event) => event.stopPropagation()}>
+            <CatalogActionMenu
+              actions={[
+                {
+                  label: "Open run",
+                  description: "Open this execution and review its evidence.",
+                  icon: <OpenIcon />,
+                  onClick: () => {
+                    setTestRunsView("executions");
+                    focusExecution(execution.id);
+                  }
+                },
+                {
+                  label: "Rerun execution",
+                  description: "Create a fresh execution with the same scope.",
+                  icon: <PlayIcon />,
+                  onClick: () => void handleRerunExecutionItem(execution, false),
+                  disabled: !session?.user.id || rerunExecution.isPending
+                },
+                {
+                  label: "Rerun failed",
+                  description: summary.failed
+                    ? `Create a new run using the ${summary.failed} failed case${summary.failed === 1 ? "" : "s"}.`
+                    : "No failed cases are available for a targeted rerun.",
+                  icon: <PlayIcon />,
+                  onClick: () => void handleRerunExecutionItem(execution, true),
+                  disabled: !session?.user.id || !summary.failed || rerunExecution.isPending
+                }
+              ]}
+              label={`${execution.name || "Execution"} actions`}
+            />
+          </div>
+        );
+      }
+    }
+  ], [executionSummaryById, handleRerunExecutionItem, liveNow, rerunExecution.isPending, session?.user.id]);
+  const executionScheduleListColumns = useMemo<Array<DataTableColumn<ExecutionSchedule>>>(() => [
+    {
+      key: "schedule",
+      label: "Schedule",
+      canToggle: false,
+      render: (schedule) => <strong>{schedule.name}</strong>
+    },
+    {
+      key: "status",
+      label: "Status",
+      render: (schedule) => (schedule.is_active ? "Active" : "Inactive")
+    },
+    {
+      key: "cadence",
+      label: "Cadence",
+      render: (schedule) => schedule.cadence
+    },
+    {
+      key: "assignee",
+      label: "Assignee",
+      render: (schedule) => (schedule.assigned_user ? resolveUserPrimaryLabel(schedule.assigned_user) : "Unassigned")
+    },
+    {
+      key: "suites",
+      label: "Suites",
+      render: (schedule) => schedule.suite_ids.length
+    },
+    {
+      key: "directCases",
+      label: "Direct cases",
+      render: (schedule) => schedule.test_case_ids.length
+    },
+    {
+      key: "nextRun",
+      label: "Next run",
+      render: (schedule) => formatExecutionTimestamp(schedule.next_run_at, "Not scheduled")
+    },
+    {
+      key: "lastRun",
+      label: "Last run",
+      defaultVisible: false,
+      render: (schedule) => formatExecutionTimestamp(schedule.last_run_at, "No runs yet")
+    },
+    {
+      key: "actions",
+      label: "Actions",
+      canToggle: false,
+      render: (schedule) => (
+        <div onClick={(event) => event.stopPropagation()}>
+          <CatalogActionMenu
+            actions={[
+              {
+                label: "Open schedule",
+                description: "Review cadence, suites, and direct cases for this schedule.",
+                icon: <CalendarIcon />,
+                onClick: () => {
+                  setTestRunsView("scheduled");
+                  setSelectedScheduleId(schedule.id);
+                }
+              },
+              {
+                label: "Run now",
+                description: "Launch this schedule immediately as a fresh execution.",
+                icon: <PlayIcon />,
+                onClick: () => void handleRunExecutionSchedule(schedule.id)
+              },
+              {
+                label: "Delete schedule",
+                description: "Remove this schedule from future execution planning.",
+                icon: <TrashIcon />,
+                onClick: () => void handleDeleteExecutionSchedule(schedule.id, schedule.name),
+                tone: "danger" as const
+              }
+            ]}
+            label={`${schedule.name} actions`}
+          />
+        </div>
+      )
+    }
+  ], [handleDeleteExecutionSchedule, handleRunExecutionSchedule]);
 
   const activeExecutionFilterCount =
     Number(executionStatusFilter !== "all") +
@@ -2265,94 +2615,134 @@ export function ExecutionsPage() {
                     ))
                   : null}
                 {testRunsView === "executions" && catalogViewMode === "list" ? (
-                  <div className="table-wrap catalog-table-wrap">
-                    <table className="data-table catalog-data-table">
-                      <thead>
-                        <tr>
-                          <th>Execution</th>
-                          <th>Status</th>
-                          <th>Assignee</th>
-                          <th>Suites</th>
-                          <th>Touched</th>
-                          <th>Issues</th>
-                          <th>Started</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredExecutions.map((execution) => {
-                          const summary = executionSummaryById[execution.id] || EMPTY_EXECUTION_RUN_SUMMARY;
-                          const executionStatus = normalizeExecutionStatus(execution.status);
-                          const totalCases = (execution.case_snapshots || []).length;
-
-                          return (
-                            <tr
-                              className={selectedExecution?.id === execution.id ? "is-active-row" : ""}
-                              key={execution.id}
-                              onClick={() => focusExecution(execution.id)}
-                            >
-                              <td>
-                                <strong>{execution.name || "Unnamed execution"}</strong>
-                                <div className="catalog-row-subcopy">{execution.trigger || "manual"} trigger</div>
-                              </td>
-                              <td>{executionStatusLabel(executionStatus)}</td>
-                              <td>{execution.assigned_user ? resolveUserPrimaryLabel(execution.assigned_user) : "Unassigned"}</td>
-                              <td>{execution.suite_ids.length}</td>
-                              <td>{totalCases ? `${summary.total}/${totalCases}` : summary.total}</td>
-                              <td>{summary.failed + summary.blocked}</td>
-                              <td>{formatExecutionTimestamp(execution.started_at, "Not started yet")}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                  <DataTable
+                    columns={executionListColumns}
+                    emptyMessage="No executions created yet."
+                    getRowClassName={(execution) => (selectedExecution?.id === execution.id ? "is-active-row" : "")}
+                    getRowKey={(execution) => execution.id}
+                    onRowClick={(execution) => focusExecution(execution.id)}
+                    rows={filteredExecutions}
+                    storageKey="qaira:executions:list-columns"
+                  />
                 ) : null}
                 {testRunsView === "scheduled" && catalogViewMode === "list" ? (
-                  <div className="table-wrap catalog-table-wrap">
-                    <table className="data-table catalog-data-table">
-                      <thead>
-                        <tr>
-                          <th>Schedule</th>
-                          <th>Cadence</th>
-                          <th>Assignee</th>
-                          <th>Suites</th>
-                          <th>Direct cases</th>
-                          <th>Next run</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredSchedules.map((schedule) => (
-                          <tr
-                            className={selectedSchedule?.id === schedule.id ? "is-active-row" : ""}
-                            key={schedule.id}
-                            onClick={() => setSelectedScheduleId(schedule.id)}
-                          >
-                            <td>
-                              <strong>{schedule.name}</strong>
-                              <div className="catalog-row-subcopy">{schedule.is_active ? "Active schedule" : "Inactive schedule"}</div>
-                            </td>
-                            <td>{schedule.cadence}</td>
-                            <td>{schedule.assigned_user ? resolveUserPrimaryLabel(schedule.assigned_user) : "Unassigned"}</td>
-                            <td>{schedule.suite_ids.length}</td>
-                            <td>{schedule.test_case_ids.length}</td>
-                            <td>{formatExecutionTimestamp(schedule.next_run_at, "Not scheduled")}</td>
-                            <td onClick={(event) => event.stopPropagation()}>
-                              <div className="action-row compact">
-                                <button className="ghost-button" onClick={() => void handleRunExecutionSchedule(schedule.id)} type="button">Run</button>
-                                <button className="ghost-button danger" onClick={() => void handleDeleteExecutionSchedule(schedule.id, schedule.name)} type="button">Delete</button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  <DataTable
+                    columns={executionScheduleListColumns}
+                    emptyMessage="No schedules created yet."
+                    getRowClassName={(schedule) => (selectedSchedule?.id === schedule.id ? "is-active-row" : "")}
+                    getRowKey={(schedule) => schedule.id}
+                    onRowClick={(schedule) => setSelectedScheduleId(schedule.id)}
+                    rows={filteredSchedules}
+                    storageKey="qaira:execution-schedules:list-columns"
+                  />
                 ) : null}
                 {testRunsView === "executions" && !filteredExecutions.length ? <div className="empty-state compact">No executions created yet.</div> : null}
                 {testRunsView === "scheduled" && !filteredSchedules.length ? <div className="empty-state compact">No schedules created yet.</div> : null}
               </div>
             ) : null}
+
+            <section className="execution-operations-shell">
+              <div className="execution-context-summary-head">
+                <div className="execution-context-summary-copy">
+                  <strong>Operations activity</strong>
+                  <span>
+                    {projectId
+                      ? `Recent bulk imports and scheduled AI generation for ${selectedProject?.name || "the selected project"}${selectedAppType ? ` · ${selectedAppType.name}` : ""}.`
+                      : "Select a project to review import and AI generation activity."}
+                  </span>
+                </div>
+                <span className="count-pill">
+                  {workspaceTransactionsQuery.isLoading ? "Loading…" : `${workspaceTransactions.length} event${workspaceTransactions.length === 1 ? "" : "s"}`}
+                </span>
+              </div>
+
+              {projectId ? (
+                <>
+                  <div className="metric-strip compact">
+                    <div className="mini-card">
+                      <strong>{workspaceTransactionStatusCounts.queued || 0}</strong>
+                      <span>Queued</span>
+                    </div>
+                    <div className="mini-card">
+                      <strong>{workspaceTransactionStatusCounts.running || 0}</strong>
+                      <span>Running</span>
+                    </div>
+                    <div className="mini-card">
+                      <strong>{workspaceTransactionStatusCounts.completed || 0}</strong>
+                      <span>Completed</span>
+                    </div>
+                    <div className="mini-card">
+                      <strong>{workspaceTransactionStatusCounts.failed || 0}</strong>
+                      <span>Failed</span>
+                    </div>
+                  </div>
+
+                  {workspaceTransactionsQuery.error instanceof Error ? (
+                    <div className="empty-state compact">{workspaceTransactionsQuery.error.message}</div>
+                  ) : null}
+
+                  {!workspaceTransactionsQuery.error && workspaceTransactions.length ? (
+                    <div className="stack-list execution-activity-list">
+                      {workspaceTransactions.map((transaction) => {
+                        const presentation = describeWorkspaceTransaction(transaction, {
+                          appTypeNameById,
+                          projectNameById
+                        });
+                        const importedCount = readWorkspaceTransactionCount(transaction, "imported");
+                        const failedCount = readWorkspaceTransactionCount(transaction, "failed");
+                        const generatedCaseCount = readWorkspaceTransactionCount(transaction, "generated_cases_count");
+                        const requirementCount = readWorkspaceTransactionCount(transaction, "requirement_count");
+                        const createdByLabel = transaction.created_user
+                          ? resolveUserPrimaryLabel(transaction.created_user)
+                          : "System";
+                        const scopeLabel = transaction.app_type_id
+                          ? appTypeNameById[transaction.app_type_id] || "App type scope"
+                          : transaction.project_id
+                            ? projectNameById[transaction.project_id] || "Project scope"
+                            : "Workspace scope";
+
+                        return (
+                          <div className="stack-item execution-activity-row execution-activity-card" key={transaction.id}>
+                            <div aria-hidden="true" className="execution-activity-icon">
+                              {presentation.icon}
+                            </div>
+                            <div className="execution-activity-body">
+                              <div className="execution-activity-head">
+                                <div className="execution-activity-copy">
+                                  <strong>{transaction.title}</strong>
+                                  <span>{presentation.eyebrow}</span>
+                                </div>
+                                <StatusBadge value={transaction.status} />
+                              </div>
+                              <span className="execution-card-time">
+                                {transaction.description || presentation.detail}
+                              </span>
+                              <div className="execution-activity-tags">
+                                <span className="count-pill">{scopeLabel}</span>
+                                <span className="count-pill">{formatExecutionTimestamp(transaction.completed_at || transaction.started_at || transaction.created_at, "Timestamp unavailable")}</span>
+                                {transaction.metadata?.import_source ? <span className="count-pill">{String(transaction.metadata.import_source).replace("_", " ").toUpperCase()}</span> : null}
+                                {importedCount || failedCount ? <span className="count-pill">{`${importedCount} imported · ${failedCount} failed`}</span> : null}
+                                {generatedCaseCount ? <span className="count-pill">{`${generatedCaseCount} generated`}</span> : null}
+                                {requirementCount ? <span className="count-pill">{formatCountLabel(requirementCount, "requirement")}</span> : null}
+                              </div>
+                              <small className="execution-activity-footnote">
+                                {createdByLabel} · {scopeLabel}
+                              </small>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+
+                  {!workspaceTransactionsQuery.error && !workspaceTransactions.length && !workspaceTransactionsQuery.isLoading ? (
+                    <div className="empty-state compact">No bulk import or scheduled AI generation activity has been recorded for this project yet.</div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="empty-state compact">Select a project to see bulk imports, JUnit XML imports, and scheduled AI generation history.</div>
+              )}
+            </section>
           </Panel>
         )}
         detailView={(
@@ -2475,6 +2865,10 @@ export function ExecutionsPage() {
                           </button>
                           <button className="ghost-button" onClick={() => setIsExecutionContextModalOpen(true)} type="button">
                             View context snapshot
+                          </button>
+                          <button className="ghost-button" disabled={!selectedSteps.length} onClick={openExecutionCaseAutomationPreview} type="button">
+                            <AutomationCodeIcon />
+                            <span>Automation code</span>
                           </button>
                         </div>
                       </div>
@@ -2645,6 +3039,7 @@ export function ExecutionsPage() {
                                       isExpanded={isExpanded}
                                       kind={block.groupKind}
                                       name={block.groupName || "Step group"}
+                                      onPreviewCode={() => openExecutionGroupAutomationPreview(block.groupName || "Step group", block.steps)}
                                       onToggle={() =>
                                         setExpandedExecutionStepGroupIds((current) =>
                                           current.includes(block.groupId as string)
@@ -2671,6 +3066,7 @@ export function ExecutionsPage() {
                                               onDeleteEvidence={() => void handleDeleteStepEvidence(step)}
                                               onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
                                               onPass={() => void handleRecordStep(step.id, "passed")}
+                                              onPreviewCode={() => openExecutionStepAutomationPreview(step)}
                                               onUploadEvidence={(file) => void handleUploadStepEvidence(step, file)}
                                               onToggleSelect={(checked) =>
                                                 setBulkSelectedStepIds((current) =>
@@ -2704,6 +3100,7 @@ export function ExecutionsPage() {
                                     onDeleteEvidence={() => void handleDeleteStepEvidence(step)}
                                     onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
                                     onPass={() => void handleRecordStep(step.id, "passed")}
+                                    onPreviewCode={() => openExecutionStepAutomationPreview(step)}
                                     onUploadEvidence={(file) => void handleUploadStepEvidence(step, file)}
                                     onToggleSelect={(checked) =>
                                       setBulkSelectedStepIds((current) =>
@@ -3135,6 +3532,15 @@ export function ExecutionsPage() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {codePreviewState ? (
+        <CodePreviewDialog
+          code={codePreviewState.code}
+          onClose={() => setCodePreviewState(null)}
+          subtitle={codePreviewState.subtitle}
+          title={codePreviewState.title}
+        />
       ) : null}
 
       {selectedExecution && isExecutionContextModalOpen ? (
@@ -3761,23 +4167,19 @@ function ExecutionStepsIcon() {
 }
 
 function StepKindIconBadge({
-  kind,
   label,
-  tone
+  tone: _tone
 }: {
-  kind?: TestStep["group_kind"] | null;
   label: string;
   tone: "default" | "shared" | "local";
 }) {
-  const icon = <ExecutionStepsIcon />;
-
   return (
     <span
       aria-label={label}
-      className={["step-kind-badge", tone === "default" ? "" : `is-${tone}`].filter(Boolean).join(" ")}
+      className="step-kind-badge is-standard"
       title={label}
     >
-      {icon}
+      <StandardStepIcon />
     </span>
   );
 }
@@ -3957,40 +4359,55 @@ function ExecutionStepGroupRow({
   kind,
   isExpanded,
   stepCount,
+  onPreviewCode,
   onToggle
 }: {
   name: string;
   kind: TestStep["group_kind"];
   isExpanded: boolean;
   stepCount: number;
+  onPreviewCode: () => void;
   onToggle: () => void;
 }) {
   const stepKind = getExecutionStepKindMeta(kind || "local");
 
   return (
     <div className={["execution-step-group-row", kind === "reusable" ? "is-shared-group" : "is-local-group"].join(" ")} role="row">
-      <button
-        aria-expanded={isExpanded}
-        className="execution-step-group-toggle-button"
-        onClick={onToggle}
-        type="button"
-      >
-        <span className="execution-step-group-label" role="cell">
-          <span className="execution-step-group-label-main">
-            <span className="execution-step-group-toggle">
-              <span aria-hidden="true" className={isExpanded ? "execution-step-group-chevron is-expanded" : "execution-step-group-chevron"}>
-                <ExecutionAccordionChevronIcon />
+      <div className="execution-step-group-toggle-button">
+        <button
+          aria-expanded={isExpanded}
+          className="execution-step-group-button-main"
+          onClick={onToggle}
+          type="button"
+        >
+          <span className="execution-step-group-label" role="cell">
+            <span className="execution-step-group-label-main">
+              <span className="execution-step-group-toggle">
+                <span aria-hidden="true" className={isExpanded ? "execution-step-group-chevron is-expanded" : "execution-step-group-chevron"}>
+                  <ExecutionAccordionChevronIcon />
+                </span>
+                <span aria-hidden="true" className={kind === "reusable" ? "step-group-icon is-shared" : "step-group-icon is-local"}>
+                  <SharedGroupLevelIcon kind={kind} />
+                </span>
+                <strong>{name}</strong>
               </span>
-              <StepKindIconBadge kind={kind} label={stepKind.label} tone={stepKind.tone} />
-              <strong>{name}</strong>
             </span>
-            <span className="execution-step-group-meta">
-              <span className="execution-step-group-count">{stepCount} step{stepCount === 1 ? "" : "s"}</span>
-            </span>
+            <span>{stepKind.detail} · {isExpanded ? "Expanded" : "Collapsed"}</span>
           </span>
-          <span>{stepKind.detail} · {isExpanded ? "Expanded" : "Collapsed"}</span>
+        </button>
+        <span className="execution-step-group-meta" role="cell">
+          <span className="execution-step-group-count">{stepCount} step{stepCount === 1 ? "" : "s"}</span>
+          <button
+            aria-label={`Preview automation for ${name}`}
+            className="step-inline-tool is-active"
+            onClick={onPreviewCode}
+            title="Preview group automation"
+            type="button"
+          >
+            <AutomationCodeIcon />
+          </button>
         </span>
-      </button>
+      </div>
     </div>
   );
 }
@@ -4010,7 +4427,8 @@ function ExecutionCompactStepRow({
   onDeleteEvidence,
   onNoteBlur,
   onUploadEvidence,
-  onViewEvidence
+  onViewEvidence,
+  onPreviewCode
 }: {
   step: TestStep;
   status: ExecutionResult["status"] | "queued";
@@ -4027,14 +4445,11 @@ function ExecutionCompactStepRow({
   onNoteBlur: (value: string) => void;
   onUploadEvidence: (file: File) => void;
   onViewEvidence: () => void;
+  onPreviewCode: () => void;
 }) {
   const evidenceInputRef = useRef<HTMLInputElement | null>(null);
-  const isGroupedStep = Boolean(step.group_id);
   const resolvedKind = step.group_name ? step.group_kind || "local" : step.group_kind;
   const stepKind = getExecutionStepKindMeta(resolvedKind);
-  const stepBadgeKind = isGroupedStep ? undefined : resolvedKind;
-  const stepBadgeLabel = isGroupedStep ? "Standard step" : stepKind.label;
-  const stepBadgeTone = isGroupedStep ? "default" : stepKind.tone;
   const resolvedExpectedResult = resolveStepParameterText(step.expected_result, parameterValues);
   const toneClass = [
     "execution-step-row",
@@ -4060,7 +4475,18 @@ function ExecutionCompactStepRow({
       </span>
       <div className="execution-step-col-action execution-step-copy" role="cell">
         <div className="execution-step-badges">
-          <StepKindIconBadge kind={stepBadgeKind} label={stepBadgeLabel} tone={stepBadgeTone} />
+          <StepKindIconBadge label="Standard step" tone={stepKind.tone} />
+          <span className="execution-step-type-chip" title={`Step type: ${String(step.step_type || "web").toUpperCase()}`}>
+            <StepTypeIcon size={14} type={step.step_type} />
+          </span>
+          <InlineStepToolButton
+            ariaLabel={`Preview automation for step ${step.step_order}`}
+            className="is-active"
+            onClick={onPreviewCode}
+            title="Preview step automation"
+          >
+            <AutomationCodeIcon />
+          </InlineStepToolButton>
         </div>
         <StepParameterizedText
           className="execution-step-clamp"
@@ -4212,11 +4638,9 @@ function ExecutionStructuredLogView({
           {isStepGroupStart(steps, index) ? (
             <div className="execution-structured-log-row execution-structured-log-row--group">
               <strong>{step.group_name || "Step group"}</strong>
-              <StepKindIconBadge
-                kind={step.group_kind}
-                label={step.group_kind === "reusable" ? "Shared group" : "Local group"}
-                tone={step.group_kind === "reusable" ? "shared" : "local"}
-              />
+              <span aria-hidden="true" className={step.group_kind === "reusable" ? "step-group-icon is-shared" : "step-group-icon is-local"}>
+                <SharedGroupLevelIcon kind={step.group_kind} />
+              </span>
               <span className="execution-structured-note">
                 {step.group_kind === "reusable" ? "Shared group snapshot" : "Local group snapshot"}
               </span>

@@ -279,14 +279,56 @@ const statements = [
   `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]'::jsonb`,
   `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
   `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
+  `ALTER TABLE test_steps ADD COLUMN IF NOT EXISTS step_type TEXT`,
+  `ALTER TABLE test_steps ADD COLUMN IF NOT EXISTS automation_code TEXT`,
+  `ALTER TABLE test_steps ADD COLUMN IF NOT EXISTS api_request JSONB`,
   `ALTER TABLE test_steps ADD COLUMN IF NOT EXISTS group_id TEXT`,
   `ALTER TABLE test_steps ADD COLUMN IF NOT EXISTS group_name TEXT`,
   `ALTER TABLE test_steps ADD COLUMN IF NOT EXISTS group_kind TEXT`,
   `ALTER TABLE test_steps ADD COLUMN IF NOT EXISTS reusable_group_id TEXT`,
+  `ALTER TABLE execution_step_snapshots ADD COLUMN IF NOT EXISTS step_type TEXT`,
+  `ALTER TABLE execution_step_snapshots ADD COLUMN IF NOT EXISTS automation_code TEXT`,
+  `ALTER TABLE execution_step_snapshots ADD COLUMN IF NOT EXISTS api_request JSONB`,
   `ALTER TABLE execution_step_snapshots ADD COLUMN IF NOT EXISTS group_id TEXT`,
   `ALTER TABLE execution_step_snapshots ADD COLUMN IF NOT EXISTS group_name TEXT`,
   `ALTER TABLE execution_step_snapshots ADD COLUMN IF NOT EXISTS group_kind TEXT`,
   `ALTER TABLE execution_step_snapshots ADD COLUMN IF NOT EXISTS reusable_group_id TEXT`,
+  `
+    UPDATE test_steps
+    SET step_type = CASE
+      WHEN LOWER(COALESCE(BTRIM(test_steps.step_type), '')) IN ('web', 'api', 'android', 'ios') THEN LOWER(BTRIM(test_steps.step_type))
+      WHEN LOWER(COALESCE(BTRIM(app_types.type), '')) = 'api' THEN 'api'
+      WHEN LOWER(COALESCE(BTRIM(app_types.type), '')) = 'android' THEN 'android'
+      WHEN LOWER(COALESCE(BTRIM(app_types.type), '')) = 'ios' THEN 'ios'
+      ELSE 'web'
+    END
+    FROM test_cases
+    LEFT JOIN app_types ON app_types.id = test_cases.app_type_id
+    WHERE test_steps.test_case_id = test_cases.id
+      AND (
+        test_steps.step_type IS NULL
+        OR BTRIM(test_steps.step_type) = ''
+        OR LOWER(BTRIM(test_steps.step_type)) NOT IN ('web', 'api', 'android', 'ios')
+      )
+  `,
+  `
+    UPDATE execution_step_snapshots
+    SET step_type = CASE
+      WHEN LOWER(COALESCE(BTRIM(execution_step_snapshots.step_type), '')) IN ('web', 'api', 'android', 'ios') THEN LOWER(BTRIM(execution_step_snapshots.step_type))
+      WHEN LOWER(COALESCE(BTRIM(app_types.type), '')) = 'api' THEN 'api'
+      WHEN LOWER(COALESCE(BTRIM(app_types.type), '')) = 'android' THEN 'android'
+      WHEN LOWER(COALESCE(BTRIM(app_types.type), '')) = 'ios' THEN 'ios'
+      ELSE 'web'
+    END
+    FROM test_cases
+    LEFT JOIN app_types ON app_types.id = test_cases.app_type_id
+    WHERE execution_step_snapshots.test_case_id = test_cases.id
+      AND (
+        execution_step_snapshots.step_type IS NULL
+        OR BTRIM(execution_step_snapshots.step_type) = ''
+        OR LOWER(BTRIM(execution_step_snapshots.step_type)) NOT IN ('web', 'api', 'android', 'ios')
+      )
+  `,
   `CREATE INDEX IF NOT EXISTS idx_execution_case_snapshots_execution_id ON execution_case_snapshots (execution_id, sort_order)`,
   `CREATE INDEX IF NOT EXISTS idx_execution_step_snapshots_execution_case ON execution_step_snapshots (execution_id, test_case_id, step_order)`,
   `CREATE INDEX IF NOT EXISTS idx_execution_schedules_project_next_run ON execution_schedules (project_id, next_run_at ASC)`,
@@ -333,6 +375,54 @@ const statements = [
   `ALTER TABLE test_cases DROP CONSTRAINT IF EXISTS test_cases_ai_generation_review_status_check`,
   `ALTER TABLE test_cases ADD CONSTRAINT test_cases_ai_generation_review_status_check CHECK (ai_generation_review_status IS NULL OR ai_generation_review_status IN ('pending', 'accepted'))`,
   `CREATE INDEX IF NOT EXISTS idx_test_cases_ai_generation_review ON test_cases (app_type_id, ai_generation_source, ai_generation_review_status, created_at DESC)`,
+  `
+    CREATE TABLE IF NOT EXISTS workspace_transactions (
+      id TEXT PRIMARY KEY,
+      project_id TEXT,
+      app_type_id TEXT,
+      category TEXT NOT NULL,
+      action TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'completed',
+      title TEXT NOT NULL,
+      description TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      related_kind TEXT,
+      related_id TEXT,
+      created_by TEXT,
+      started_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    )
+  `,
+  `ALTER TABLE workspace_transactions ADD COLUMN IF NOT EXISTS project_id TEXT`,
+  `ALTER TABLE workspace_transactions ADD COLUMN IF NOT EXISTS app_type_id TEXT`,
+  `ALTER TABLE workspace_transactions ADD COLUMN IF NOT EXISTS category TEXT`,
+  `ALTER TABLE workspace_transactions ADD COLUMN IF NOT EXISTS action TEXT`,
+  `ALTER TABLE workspace_transactions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'completed'`,
+  `ALTER TABLE workspace_transactions ADD COLUMN IF NOT EXISTS title TEXT`,
+  `ALTER TABLE workspace_transactions ADD COLUMN IF NOT EXISTS description TEXT`,
+  `ALTER TABLE workspace_transactions ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb`,
+  `ALTER TABLE workspace_transactions ADD COLUMN IF NOT EXISTS related_kind TEXT`,
+  `ALTER TABLE workspace_transactions ADD COLUMN IF NOT EXISTS related_id TEXT`,
+  `ALTER TABLE workspace_transactions ADD COLUMN IF NOT EXISTS created_by TEXT`,
+  `ALTER TABLE workspace_transactions ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ`,
+  `ALTER TABLE workspace_transactions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`,
+  `ALTER TABLE workspace_transactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
+  `ALTER TABLE workspace_transactions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
+  `UPDATE workspace_transactions SET category = 'general' WHERE category IS NULL OR BTRIM(category) = ''`,
+  `UPDATE workspace_transactions SET action = 'event' WHERE action IS NULL OR BTRIM(action) = ''`,
+  `UPDATE workspace_transactions SET title = 'Workspace transaction' WHERE title IS NULL OR BTRIM(title) = ''`,
+  `UPDATE workspace_transactions SET status = 'completed' WHERE status IS NULL OR BTRIM(status) = ''`,
+  `ALTER TABLE workspace_transactions ALTER COLUMN category SET NOT NULL`,
+  `ALTER TABLE workspace_transactions ALTER COLUMN action SET NOT NULL`,
+  `ALTER TABLE workspace_transactions ALTER COLUMN title SET NOT NULL`,
+  `ALTER TABLE workspace_transactions ALTER COLUMN metadata SET DEFAULT '{}'::jsonb`,
+  `ALTER TABLE workspace_transactions ALTER COLUMN metadata SET NOT NULL`,
+  `ALTER TABLE workspace_transactions DROP CONSTRAINT IF EXISTS workspace_transactions_status_check`,
+  `ALTER TABLE workspace_transactions ADD CONSTRAINT workspace_transactions_status_check CHECK (status IN ('queued', 'running', 'completed', 'failed'))`,
+  `CREATE INDEX IF NOT EXISTS idx_workspace_transactions_scope ON workspace_transactions (project_id, app_type_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_workspace_transactions_related ON workspace_transactions (related_kind, related_id, created_at DESC)`,
   `
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,

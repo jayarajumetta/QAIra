@@ -21,7 +21,7 @@ export function StepParameterizedText({
     <span className={className}>
       {segments.map((segment, index) => {
         if (segment.type === "text") {
-          return <span key={`text-${index}`}>{segment.value}</span>;
+          return <span className="step-parameter-text-segment" key={`text-${index}`}>{segment.value}</span>;
         }
 
         return (

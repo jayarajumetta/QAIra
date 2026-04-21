@@ -3,9 +3,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
-import { AddIcon, ImportIcon, SparkIcon } from "../components/AppIcons";
+import { AddIcon, ImportIcon, OpenIcon, SparkIcon, TrashIcon } from "../components/AppIcons";
+import { CatalogActionMenu } from "../components/CatalogActionMenu";
 import { CatalogViewToggle } from "../components/CatalogViewToggle";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
+import { DataTable, type DataTableColumn } from "../components/DataTable";
 import { DisplayIdBadge } from "../components/DisplayIdBadge";
 import { FormField } from "../components/FormField";
 import { LinkedTestCaseModal } from "../components/LinkedTestCaseModal";
@@ -428,6 +430,121 @@ export function RequirementsPage() {
   );
 
   const currentAppTypeName = appTypes.find((item) => item.id === appTypeId)?.name || "No app type selected";
+  const requirementListColumns = useMemo<Array<DataTableColumn<Requirement>>>(() => [
+    {
+      key: "select",
+      label: "",
+      canToggle: false,
+      render: (item) => (
+        <div onClick={(event) => event.stopPropagation()}>
+          <input
+            checked={deleteSelectedRequirementIds.includes(item.id)}
+            onChange={(event) =>
+              setDeleteSelectedRequirementIds((current) =>
+                event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id)
+              )
+            }
+            type="checkbox"
+          />
+        </div>
+      )
+    },
+    {
+      key: "id",
+      label: "ID",
+      render: (item) => <DisplayIdBadge value={item.display_id || item.id} />
+    },
+    {
+      key: "title",
+      label: "Requirement",
+      canToggle: false,
+      render: (item) => <strong>{item.title}</strong>
+    },
+    {
+      key: "description",
+      label: "Description",
+      defaultVisible: false,
+      render: (item) => item.description || currentAppTypeName
+    },
+    {
+      key: "status",
+      label: "Status",
+      render: (item) => formatTileCardLabel(item.status, "Open")
+    },
+    {
+      key: "priority",
+      label: "Priority",
+      render: (item) => `P${item.priority ?? 3}`
+    },
+    {
+      key: "linkedCases",
+      label: "Linked cases",
+      render: (item) => (linkedCaseIdsByRequirementId[item.id] || []).length
+    },
+    {
+      key: "passRate",
+      label: "Pass rate",
+      defaultVisible: false,
+      render: (item) => {
+        const metric = passCoverageByRequirementId[item.id] || { total: 0, covered: 0, percent: 0 };
+        const safeValue = Math.max(0, Math.min(100, Math.round(metric.percent)));
+        return `${safeValue}%`;
+      }
+    },
+    {
+      key: "automationCoverage",
+      label: "Automation coverage",
+      defaultVisible: false,
+      render: (item) => {
+        const metric = automationCoverageByRequirementId[item.id] || { total: 0, covered: 0, percent: 0 };
+        const safeValue = Math.max(0, Math.min(100, Math.round(metric.percent)));
+        return `${safeValue}%`;
+      }
+    },
+    {
+      key: "actions",
+      label: "Actions",
+      canToggle: false,
+      render: (item) => (
+        <div onClick={(event) => event.stopPropagation()}>
+          <CatalogActionMenu
+            actions={[
+              {
+                label: "Open requirement",
+                description: "Open this requirement in the detail workspace.",
+                icon: <OpenIcon />,
+                onClick: () => setSelectedRequirementId(item.id)
+              },
+              {
+                label: "AI test cases",
+                description: "Generate or review AI-designed test cases for this requirement.",
+                icon: <SparkIcon />,
+                onClick: () => openRequirementAiStudio(item.id)
+              },
+              {
+                label: "Delete requirement",
+                description: "Delete this requirement while keeping linked test cases in the library.",
+                icon: <TrashIcon />,
+                onClick: () => void handleDeleteRequirementItem(item),
+                disabled: deleteRequirement.isPending,
+                tone: "danger" as const
+              }
+            ]}
+            label={`${item.title} actions`}
+          />
+        </div>
+      )
+    }
+  ], [
+    automationCoverageByRequirementId,
+    currentAppTypeName,
+    deleteSelectedRequirementIds,
+    deleteRequirement.isPending,
+    handleDeleteRequirementItem,
+    linkedCaseIdsByRequirementId,
+    openRequirementAiStudio,
+    passCoverageByRequirementId
+  ]);
 
   const selectedRequirementPassCoverage = selectedRequirement
     ? passCoverageByRequirementId[selectedRequirement.id] || { total: 0, covered: 0, percent: 0 }
@@ -728,6 +845,39 @@ export function RequirementsPage() {
       showError(error, "Unable to delete requirement");
     }
   };
+
+  function openRequirementAiStudio(requirementId: string) {
+    setSelectedRequirementId(requirementId);
+    setAiRequirementId(requirementId);
+    setIsAiStudioOpen(true);
+  }
+
+  async function handleDeleteRequirementItem(requirement: Requirement) {
+    if (!window.confirm(`Delete requirement "${requirement.title}"? Linked test cases will remain in the library.`)) {
+      return;
+    }
+
+    try {
+      await deleteRequirement.mutateAsync(requirement.id);
+      setDeleteSelectedRequirementIds((current) => current.filter((id) => id !== requirement.id));
+
+      if (selectedRequirementId === requirement.id) {
+        setSelectedRequirementId("");
+        setDraft(emptyRequirementDraft);
+        setSelectedTestCaseIds([]);
+        setPreviewCases([]);
+      }
+
+      if (aiRequirementId === requirement.id) {
+        setAiRequirementId("");
+      }
+
+      showSuccess("Requirement deleted.");
+      await refresh();
+    } catch (error) {
+      showError(error, "Unable to delete requirement");
+    }
+  }
 
   const handleDeleteSelectedRequirements = async () => {
     const selectedRequirements = requirements.filter((item) => deleteSelectedRequirementIds.includes(item.id));
@@ -1110,54 +1260,15 @@ export function RequirementsPage() {
                 </div>
               ) : null}
               {!isRequirementCatalogLoading && filteredRequirements.length && catalogViewMode === "list" ? (
-                <div className="table-wrap catalog-table-wrap">
-                  <table className="data-table catalog-data-table">
-                    <thead>
-                      <tr>
-                        <th />
-                        <th>ID</th>
-                        <th>Requirement</th>
-                        <th>Status</th>
-                        <th>Priority</th>
-                        <th>Linked cases</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredRequirements.map((item) => {
-                        const linkedCaseCount = (linkedCaseIdsByRequirementId[item.id] || []).length;
-                        const requirementStatusLabel = formatTileCardLabel(item.status, "Open");
-
-                        return (
-                          <tr
-                            className={selectedRequirement?.id === item.id ? "is-active-row" : ""}
-                            key={item.id}
-                            onClick={() => setSelectedRequirementId(item.id)}
-                          >
-                            <td onClick={(event) => event.stopPropagation()}>
-                              <input
-                                checked={deleteSelectedRequirementIds.includes(item.id)}
-                                onChange={(event) =>
-                                  setDeleteSelectedRequirementIds((current) =>
-                                    event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id)
-                                  )
-                                }
-                                type="checkbox"
-                              />
-                            </td>
-                            <td><DisplayIdBadge value={item.display_id || item.id} /></td>
-                            <td>
-                              <strong>{item.title}</strong>
-                              <div className="catalog-row-subcopy">{item.description || currentAppTypeName}</div>
-                            </td>
-                            <td>{requirementStatusLabel}</td>
-                            <td>{`P${item.priority ?? 3}`}</td>
-                            <td>{linkedCaseCount}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable
+                  columns={requirementListColumns}
+                  emptyMessage="No requirements match the current search."
+                  getRowClassName={(item) => (selectedRequirement?.id === item.id ? "is-active-row" : "")}
+                  getRowKey={(item) => item.id}
+                  onRowClick={(item) => setSelectedRequirementId(item.id)}
+                  rows={filteredRequirements}
+                  storageKey="qaira:requirements:list-columns"
+                />
               ) : null}
               {!isRequirementCatalogLoading && !requirements.length ? <div className="empty-state compact">No requirements yet for this project.</div> : null}
               {!isRequirementCatalogLoading && requirements.length && !filteredRequirements.length ? <div className="empty-state compact">No requirements match the current search.</div> : null}

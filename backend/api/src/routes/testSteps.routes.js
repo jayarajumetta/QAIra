@@ -1,5 +1,5 @@
 const service = require("../services/testStep.service");
-const { TEST_STEP_GROUP_KIND_VALUES } = require("../domain/catalog");
+const { TEST_STEP_GROUP_KIND_VALUES, TEST_STEP_TYPE_VALUES } = require("../domain/catalog");
 
 module.exports = async function (fastify) {
   fastify.post("/test-steps", async (req) => {
@@ -9,6 +9,9 @@ module.exports = async function (fastify) {
       step_order: { required: true, type: "number" },
       action: { required: false, type: "string" },
       expected_result: { required: false, type: "string" },
+      step_type: { required: false, type: "string", enum: TEST_STEP_TYPE_VALUES },
+      automation_code: { required: false, type: "string" },
+      api_request: { required: false, type: "object" },
       group_id: { required: false, type: "string" },
       group_name: { required: false, type: "string" },
       group_kind: { required: false, enum: TEST_STEP_GROUP_KIND_VALUES },
@@ -36,6 +39,9 @@ module.exports = async function (fastify) {
       step_order: { required: false, type: "number" },
       action: { required: false, type: "string" },
       expected_result: { required: false, type: "string" },
+      step_type: { required: false, type: "string", enum: TEST_STEP_TYPE_VALUES },
+      automation_code: { required: false, type: "string" },
+      api_request: { required: false, type: "object" },
       group_id: { required: false, type: "string" },
       group_name: { required: false, type: "string" },
       group_kind: { required: false, enum: TEST_STEP_GROUP_KIND_VALUES },
@@ -63,6 +69,7 @@ module.exports = async function (fastify) {
       step_ids: { required: true, type: "array", items: "string" },
       name: { required: true, type: "string", minLength: 2 },
       kind: { required: false, enum: TEST_STEP_GROUP_KIND_VALUES },
+      group_id: { required: false, type: "string" },
       reusable_group_id: { required: false, type: "string" }
     }, req.body);
 

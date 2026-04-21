@@ -2,6 +2,7 @@ const db = require("../db");
 const { v4: uuid } = require("uuid");
 const requirementTestCaseService = require("./requirementTestCase.service");
 const displayIdService = require("./displayId.service");
+const workspaceTransactionService = require("./workspaceTransaction.service");
 
 const hydrateTestCaseIds = async (requirement) => {
   if (!requirement) {
@@ -14,7 +15,7 @@ const hydrateTestCaseIds = async (requirement) => {
   };
 };
 
-exports.bulkImportRequirements = async ({ project_id, rows = [] }) => {
+exports.bulkImportRequirements = async ({ project_id, rows = [], created_by } = {}) => {
   if (!project_id) {
     throw new Error("project_id is required");
   }
@@ -33,6 +34,20 @@ exports.bulkImportRequirements = async ({ project_id, rows = [] }) => {
 
   const created = [];
   const errors = [];
+  const transaction = await workspaceTransactionService.createTransaction({
+    project_id,
+    category: "bulk_import",
+    action: "requirement_import",
+    status: "running",
+    title: "Requirement import",
+    description: `Importing ${rows.length} requirement${rows.length === 1 ? "" : "s"} from CSV.`,
+    metadata: {
+      import_source: "csv",
+      total_rows: rows.length
+    },
+    created_by,
+    started_at: new Date().toISOString()
+  });
 
   for (const [index, row] of rows.entries()) {
     const title = typeof row?.title === "string" ? row.title.trim() : "";
@@ -64,12 +79,28 @@ exports.bulkImportRequirements = async ({ project_id, rows = [] }) => {
     }
   }
 
-  return {
+  const response = {
     imported: created.length,
     failed: errors.length,
     created,
     errors
   };
+
+  await workspaceTransactionService.updateTransaction(transaction.id, {
+    status: created.length ? "completed" : "failed",
+    description: created.length
+      ? `Imported ${created.length} of ${rows.length} requirement${rows.length === 1 ? "" : "s"} from CSV.`
+      : "No requirements were imported from the CSV file.",
+    metadata: {
+      import_source: "csv",
+      total_rows: rows.length,
+      imported: created.length,
+      failed: errors.length
+    },
+    completed_at: new Date().toISOString()
+  });
+
+  return response;
 };
 
 exports.createRequirement = async ({ project_id, title, description, priority, status }) => {

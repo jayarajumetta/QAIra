@@ -62,6 +62,7 @@ module.exports = async function (fastify) {
     fastify.validate({
       app_type_id: { required: true, type: "string" },
       requirement_id: { required: false, type: "string" },
+      import_source: { required: false, type: "string" },
       rows: { required: true, type: "array" }
     }, req.body);
 
@@ -72,7 +73,10 @@ module.exports = async function (fastify) {
     const appType = await appTypeService.getAppType(req.body.app_type_id);
     await projectService.getProject(appType.project_id, req.user.id);
 
-    return service.bulkImportTestCases(req.body);
+    return service.bulkImportTestCases({
+      ...req.body,
+      created_by: req.user.id
+    });
   });
 
   fastify.get("/test-cases", async (req) => {

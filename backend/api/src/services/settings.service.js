@@ -1,6 +1,7 @@
 const db = require("../db");
 
 const LOCALIZATION_SETTINGS_KEY = "localization_strings";
+const WORKSPACE_PREFERENCES_KEY_PREFIX = "workspace_preferences:";
 
 const normalizeLocalizationStrings = (input) => {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -13,6 +14,40 @@ const normalizeLocalizationStrings = (input) => {
       .map(([key, value]) => [key.trim(), value])
   );
 };
+
+const isSerializablePreferenceValue = (value) => {
+  if (value === null) {
+    return true;
+  }
+
+  if (["string", "number", "boolean"].includes(typeof value)) {
+    return true;
+  }
+
+  if (Array.isArray(value)) {
+    return value.every((item) => isSerializablePreferenceValue(item));
+  }
+
+  if (typeof value === "object") {
+    return Object.entries(value).every(([key, nestedValue]) => typeof key === "string" && isSerializablePreferenceValue(nestedValue));
+  }
+
+  return false;
+};
+
+const normalizeWorkspacePreferences = (input) => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(input)
+      .filter(([key, value]) => typeof key === "string" && key.trim() && isSerializablePreferenceValue(value))
+      .map(([key, value]) => [key.trim(), value])
+  );
+};
+
+const workspacePreferenceKeyForUser = (userId) => `${WORKSPACE_PREFERENCES_KEY_PREFIX}${userId}`;
 
 exports.getLocalizationStrings = async () => {
   const row = await db.prepare(`
@@ -37,5 +72,35 @@ exports.updateLocalizationStrings = async (strings) => {
   return {
     updated: true,
     strings: normalizedStrings
+  };
+};
+
+exports.getWorkspacePreferences = async (userId) => {
+  const row = await db.prepare(`
+    SELECT value
+    FROM app_settings
+    WHERE key = ?
+  `).get(workspacePreferenceKeyForUser(userId));
+
+  return normalizeWorkspacePreferences(row?.value);
+};
+
+exports.updateWorkspacePreferences = async (userId, preferences) => {
+  const currentPreferences = await exports.getWorkspacePreferences(userId);
+  const nextPreferences = {
+    ...currentPreferences,
+    ...normalizeWorkspacePreferences(preferences)
+  };
+
+  await db.prepare(`
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT (key)
+    DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
+  `).run(workspacePreferenceKeyForUser(userId), nextPreferences);
+
+  return {
+    updated: true,
+    preferences: nextPreferences
   };
 };

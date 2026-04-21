@@ -1,5 +1,7 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
+const workspaceTransactionService = require("./workspaceTransaction.service");
+const { hashPassword } = require("../utils/token");
 
 const normalizeEmail = (email) => {
   return email.toLowerCase().trim();
@@ -24,6 +26,14 @@ const normalizeName = (value) => {
 
 const IMAGE_DATA_URL_PATTERN = /^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+$/i;
 const MAX_AVATAR_DATA_URL_LENGTH = 2_000_000;
+
+const selectRoleById = db.prepare(`
+  SELECT id, name FROM roles WHERE id = ?
+`);
+
+const selectRoleByName = db.prepare(`
+  SELECT id, name FROM roles WHERE LOWER(name) = LOWER(?)
+`);
 
 const normalizeAvatarDataUrl = (value) => {
   if (value === undefined) {
@@ -237,4 +247,153 @@ exports.deleteUser = async (id) => {
   `).run(id);
 
   return { deleted: true };
+};
+
+const normalizeImportValue = (value) => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  const normalized = String(value).trim();
+  return normalized || null;
+};
+
+const resolveImportRoleId = async (row, defaultRoleId) => {
+  const directRoleId = normalizeImportValue(row?.role_id ?? row?.roleId);
+
+  if (directRoleId) {
+    const role = await selectRoleById.get(directRoleId);
+
+    if (!role) {
+      throw new Error(`Role not found: ${directRoleId}`);
+    }
+
+    return role.id;
+  }
+
+  const roleName = normalizeImportValue(row?.role);
+
+  if (roleName) {
+    const role = await selectRoleByName.get(roleName);
+
+    if (!role) {
+      throw new Error(`Role not found: ${roleName}`);
+    }
+
+    return role.id;
+  }
+
+  if (defaultRoleId) {
+    const role = await selectRoleById.get(defaultRoleId);
+
+    if (!role) {
+      throw new Error("Default role not found");
+    }
+
+    return role.id;
+  }
+
+  throw new Error("Each imported user must include a role or you must choose a default role.");
+};
+
+const resolveImportPasswordHash = (row) => {
+  const existingHash = normalizeImportValue(row?.password_hash ?? row?.passwordHash);
+
+  if (existingHash) {
+    return existingHash;
+  }
+
+  const password = normalizeImportValue(row?.password);
+
+  if (!password) {
+    throw new Error("Each imported user must include a password or password hash.");
+  }
+
+  return hashPassword(password);
+};
+
+exports.bulkImportUsers = async ({ rows = [], default_role_id, created_by } = {}) => {
+  const defaultRoleId = normalizeImportValue(default_role_id);
+
+  if (!Array.isArray(rows) || !rows.length) {
+    throw new Error("At least one CSV row is required");
+  }
+
+  if (defaultRoleId) {
+    const role = await selectRoleById.get(defaultRoleId);
+
+    if (!role) {
+      throw new Error("Default role not found");
+    }
+  }
+
+  const transaction = await workspaceTransactionService.createTransaction({
+    category: "bulk_import",
+    action: "user_import",
+    status: "running",
+    title: "Bulk user import",
+    description: `Importing ${rows.length} user${rows.length === 1 ? "" : "s"} from CSV.`,
+    metadata: {
+      import_source: "csv",
+      total_rows: rows.length
+    },
+    created_by,
+    started_at: new Date().toISOString()
+  });
+
+  const created = [];
+  const errors = [];
+
+  for (const [index, row] of rows.entries()) {
+    const email = normalizeImportValue(row?.email);
+
+    try {
+      if (!email) {
+        throw new Error("Email is required");
+      }
+
+      const roleId = await resolveImportRoleId(row, defaultRoleId);
+      const password_hash = resolveImportPasswordHash(row);
+      const response = await exports.createUser({
+        email,
+        password_hash,
+        name: normalizeImportValue(row?.name),
+        role_id: roleId
+      });
+
+      created.push({
+        row: index + 1,
+        id: response.id,
+        email
+      });
+    } catch (error) {
+      errors.push({
+        row: index + 1,
+        email,
+        message: error.message || "Unable to import user"
+      });
+    }
+  }
+
+  await workspaceTransactionService.updateTransaction(transaction.id, {
+    status: created.length ? "completed" : "failed",
+    description: created.length
+      ? `Imported ${created.length} of ${rows.length} user${rows.length === 1 ? "" : "s"} from CSV.`
+      : "No users were imported from the CSV file.",
+    metadata: {
+      import_source: "csv",
+      total_rows: rows.length,
+      imported: created.length,
+      failed: errors.length,
+      default_role_id: defaultRoleId
+    },
+    completed_at: new Date().toISOString()
+  });
+
+  return {
+    imported: created.length,
+    failed: errors.length,
+    created,
+    errors
+  };
 };

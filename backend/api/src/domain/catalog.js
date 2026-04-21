@@ -63,6 +63,13 @@ const TEST_STEP_GROUP_KIND_OPTIONS = freezeOptions([
   { value: "reusable", label: "Reusable", description: "Linked shared group reused across test cases." }
 ]);
 
+const TEST_STEP_TYPE_OPTIONS = freezeOptions([
+  { value: "web", label: "Web", description: "Browser-driven UI automation step." },
+  { value: "api", label: "API", description: "HTTP request and response validation step." },
+  { value: "android", label: "Android", description: "Android app automation step." },
+  { value: "ios", label: "iOS", description: "iOS app automation step." }
+]);
+
 const TEST_DATA_SET_MODE_OPTIONS = freezeOptions([
   { value: "table", label: "Spreadsheet table", description: "Column-based row data set." },
   { value: "key_value", label: "Key / value", description: "Simple variable-style pairs." }
@@ -139,7 +146,8 @@ const DOMAIN_METADATA = Object.freeze({
     priority_scale: PRIORITY_SCALE
   },
   test_steps: {
-    group_kinds: TEST_STEP_GROUP_KIND_OPTIONS
+    group_kinds: TEST_STEP_GROUP_KIND_OPTIONS,
+    types: TEST_STEP_TYPE_OPTIONS
   },
   test_data_sets: {
     default_mode: "table",
@@ -176,6 +184,8 @@ module.exports = {
   TEST_CASE_AUTOMATED_VALUES: optionValues(TEST_CASE_AUTOMATED_OPTIONS),
   TEST_STEP_GROUP_KIND_OPTIONS,
   TEST_STEP_GROUP_KIND_VALUES: optionValues(TEST_STEP_GROUP_KIND_OPTIONS),
+  TEST_STEP_TYPE_OPTIONS,
+  TEST_STEP_TYPE_VALUES: optionValues(TEST_STEP_TYPE_OPTIONS),
   TEST_DATA_SET_MODE_OPTIONS,
   TEST_DATA_SET_MODE_VALUES: optionValues(TEST_DATA_SET_MODE_OPTIONS),
   EXECUTION_STATUS_OPTIONS,

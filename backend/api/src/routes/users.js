@@ -18,6 +18,22 @@ module.exports = async function (fastify) {
     return service.createUser(req.body);
   });
 
+  fastify.post("/users/import", { preHandler: [fastify.requireAdmin] }, async (req) => {
+    fastify.validate({
+      rows: { required: true, type: "array" },
+      default_role_id: { required: false, type: "string" }
+    }, req.body);
+
+    if (!req.body.rows.every((row) => row && typeof row === "object" && !Array.isArray(row))) {
+      throw new Error("rows must contain user objects");
+    }
+
+    return service.bulkImportUsers({
+      ...req.body,
+      created_by: req.user.id
+    });
+  });
+
   fastify.get("/users", { preHandler: [fastify.authenticate] }, async () => {
     return service.getUsers();
   });

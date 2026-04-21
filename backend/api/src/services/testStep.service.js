@@ -1,6 +1,12 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 const sharedStepSyncService = require("./sharedStepSync.service");
+const {
+  normalizeApiRequest,
+  normalizeRichText,
+  normalizeTestStepType,
+  parseJsonValue
+} = require("../utils/testStepAutomation");
 
 const selectTestCase = db.prepare(`
   SELECT id, app_type_id
@@ -34,12 +40,15 @@ const insertStep = db.prepare(`
     step_order,
     action,
     expected_result,
+    step_type,
+    automation_code,
+    api_request,
     group_id,
     group_name,
     group_kind,
     reusable_group_id
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const updateStep = db.prepare(`
@@ -49,6 +58,9 @@ const updateStep = db.prepare(`
     step_order = ?,
     action = ?,
     expected_result = ?,
+    step_type = ?,
+    automation_code = ?,
+    api_request = ?,
     group_id = ?,
     group_name = ?,
     group_kind = ?,
@@ -130,22 +142,6 @@ const normalizeStepOrder = (value, fallback = 1) => {
   return Math.max(1, Math.trunc(numeric));
 };
 
-const parseJsonValue = (value, fallback) => {
-  if (value === null || value === undefined || value === "") {
-    return fallback;
-  }
-
-  if (typeof value === "string") {
-    try {
-      return JSON.parse(value);
-    } catch {
-      return fallback;
-    }
-  }
-
-  return value;
-};
-
 const normalizeSharedSteps = (steps = []) => {
   if (!Array.isArray(steps)) {
     return [];
@@ -155,9 +151,12 @@ const normalizeSharedSteps = (steps = []) => {
     .map((step, index) => ({
       step_order: Number.isFinite(Number(step?.step_order)) ? Number(step.step_order) : index + 1,
       action: normalizeText(step?.action),
-      expected_result: normalizeText(step?.expected_result || step?.expectedResult)
+      expected_result: normalizeText(step?.expected_result || step?.expectedResult),
+      step_type: normalizeTestStepType(step?.step_type || step?.stepType, "web"),
+      automation_code: normalizeRichText(step?.automation_code || step?.automationCode),
+      api_request: normalizeApiRequest(step?.api_request || step?.apiRequest)
     }))
-    .filter((step) => step.action || step.expected_result)
+    .filter((step) => step.action || step.expected_result || step.automation_code || step.api_request)
     .sort((left, right) => left.step_order - right.step_order)
     .map((step, index) => ({
       ...step,
@@ -206,6 +205,9 @@ exports.createTestStep = async ({
   step_order,
   action,
   expected_result,
+  step_type,
+  automation_code,
+  api_request,
   group_id,
   group_name,
   group_kind,
@@ -230,6 +232,9 @@ exports.createTestStep = async ({
       boundedOrder,
       normalizeText(action),
       normalizeText(expected_result),
+      normalizeTestStepType(step_type, "web"),
+      normalizeRichText(automation_code),
+      normalizeApiRequest(api_request),
       normalizeText(group_id),
       normalizeText(group_name),
       normalizeGroupKind(group_kind || (group_id ? "local" : null)),
@@ -283,6 +288,9 @@ exports.updateTestStep = async (id, data = {}) => {
         boundedOrder,
         data.action !== undefined ? normalizeText(data.action) : existing.action,
         data.expected_result !== undefined ? normalizeText(data.expected_result) : existing.expected_result,
+        data.step_type !== undefined ? normalizeTestStepType(data.step_type, existing.step_type || "web") : existing.step_type,
+        data.automation_code !== undefined ? normalizeRichText(data.automation_code) : existing.automation_code,
+        data.api_request !== undefined ? normalizeApiRequest(data.api_request) : parseJsonValue(existing.api_request, null),
         data.group_id !== undefined ? normalizeText(data.group_id) : existing.group_id,
         data.group_name !== undefined ? normalizeText(data.group_name) : existing.group_name,
         data.group_kind !== undefined ? normalizeGroupKind(data.group_kind) : existing.group_kind,
@@ -303,6 +311,9 @@ exports.updateTestStep = async (id, data = {}) => {
       nextStepOrder,
       data.action !== undefined ? normalizeText(data.action) : existing.action,
       data.expected_result !== undefined ? normalizeText(data.expected_result) : existing.expected_result,
+      data.step_type !== undefined ? normalizeTestStepType(data.step_type, existing.step_type || "web") : existing.step_type,
+      data.automation_code !== undefined ? normalizeRichText(data.automation_code) : existing.automation_code,
+      data.api_request !== undefined ? normalizeApiRequest(data.api_request) : parseJsonValue(existing.api_request, null),
       data.group_id !== undefined ? normalizeText(data.group_id) : existing.group_id,
       data.group_name !== undefined ? normalizeText(data.group_name) : existing.group_name,
       data.group_kind !== undefined ? normalizeGroupKind(data.group_kind) : existing.group_kind,
@@ -421,6 +432,9 @@ exports.duplicateTestSteps = async ({ test_case_id, step_ids = [], insert_after_
         insertionOrder + index,
         step.action,
         step.expected_result,
+        step.step_type || "web",
+        step.automation_code,
+        parseJsonValue(step.api_request, null),
         step.group_id ? nextGroupIds.get(step.group_id) : null,
         step.group_name,
         step.group_kind,
@@ -433,7 +447,7 @@ exports.duplicateTestSteps = async ({ test_case_id, step_ids = [], insert_after_
   return { duplicated: true };
 };
 
-exports.groupTestSteps = async ({ test_case_id, step_ids = [], name, kind = "local", reusable_group_id }) => {
+exports.groupTestSteps = async ({ test_case_id, step_ids = [], name, kind = "local", reusable_group_id, group_id }) => {
   if (!test_case_id || !Array.isArray(step_ids) || !step_ids.length) {
     throw new Error("test_case_id and step_ids are required");
   }
@@ -459,7 +473,7 @@ exports.groupTestSteps = async ({ test_case_id, step_ids = [], name, kind = "loc
     throw new Error("Select a continuous step range before grouping");
   }
 
-  const groupId = uuid();
+  const groupId = normalizeText(group_id) || uuid();
   const resolvedKind = normalizeGroupKind(kind) || "local";
 
   const transaction = db.transaction(async () => {
@@ -533,6 +547,9 @@ exports.insertSharedStepGroup = async ({ test_case_id, shared_step_group_id, ins
         insertionOrder + index,
         step.action,
         step.expected_result,
+        step.step_type || "web",
+        step.automation_code,
+        step.api_request || null,
         groupInstanceId,
         sharedGroup.name,
         "reusable",
