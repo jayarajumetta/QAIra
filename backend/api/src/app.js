@@ -10,6 +10,7 @@ const db = require("./db");
 const { ensureRuntimeSchema } = require("./db/bootstrap");
 const executionScheduleService = require("./services/executionSchedule.service");
 const aiTestCaseGenerationService = require("./services/aiTestCaseGeneration.service");
+const projectSyncService = require("./services/projectSync.service");
 const { verifyToken, generateRequestId } = require("./utils/token");
 
 const createError = (message, statusCode) => {
@@ -163,6 +164,7 @@ fastify.addHook("onReady", async () => {
 
 let scheduleProcessorTimer = null;
 let aiGenerationProcessorTimer = null;
+let projectSyncTimer = null;
 
 fastify.addHook("onReady", async () => {
   const runDueSchedules = async () => {
@@ -190,6 +192,20 @@ fastify.addHook("onReady", async () => {
   aiGenerationProcessorTimer = setInterval(runQueuedAiGeneration, 15 * 1000);
 });
 
+fastify.addHook("onReady", async () => {
+  const runProjectSyncs = async () => {
+    try {
+      await projectSyncService.processScheduledIntegrations();
+      await projectSyncService.processQueuedSyncs();
+    } catch (error) {
+      fastify.log.error(error, "Unable to process queued project sync jobs");
+    }
+  };
+
+  await runProjectSyncs();
+  projectSyncTimer = setInterval(runProjectSyncs, 60 * 1000);
+});
+
 fastify.addHook("onClose", async () => {
   if (scheduleProcessorTimer) {
     clearInterval(scheduleProcessorTimer);
@@ -199,6 +215,11 @@ fastify.addHook("onClose", async () => {
   if (aiGenerationProcessorTimer) {
     clearInterval(aiGenerationProcessorTimer);
     aiGenerationProcessorTimer = null;
+  }
+
+  if (projectSyncTimer) {
+    clearInterval(projectSyncTimer);
+    projectSyncTimer = null;
   }
 });
 

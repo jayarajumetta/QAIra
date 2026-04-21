@@ -185,6 +185,14 @@ const statements = [
   `ALTER TABLE execution_schedules ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE`,
   `ALTER TABLE execution_schedules ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
   `ALTER TABLE execution_schedules ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
+  `ALTER TABLE requirements ADD COLUMN IF NOT EXISTS created_by TEXT`,
+  `ALTER TABLE requirements ADD COLUMN IF NOT EXISTS updated_by TEXT`,
+  `ALTER TABLE requirements ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
+  `UPDATE requirements SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)`,
+  `ALTER TABLE test_suites ADD COLUMN IF NOT EXISTS created_by TEXT`,
+  `ALTER TABLE test_suites ADD COLUMN IF NOT EXISTS updated_by TEXT`,
+  `ALTER TABLE test_suites ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
+  `UPDATE test_suites SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)`,
   `
     CREATE TABLE IF NOT EXISTS ai_test_case_generation_jobs (
       id TEXT PRIMARY KEY,
@@ -277,8 +285,11 @@ const statements = [
   `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS name TEXT`,
   `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS description TEXT`,
   `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]'::jsonb`,
+  `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS created_by TEXT`,
+  `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS updated_by TEXT`,
   `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
   `ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
+  `UPDATE shared_step_groups SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)`,
   `ALTER TABLE test_steps ADD COLUMN IF NOT EXISTS step_type TEXT`,
   `ALTER TABLE test_steps ADD COLUMN IF NOT EXISTS automation_code TEXT`,
   `ALTER TABLE test_steps ADD COLUMN IF NOT EXISTS api_request JSONB`,
@@ -360,6 +371,10 @@ const statements = [
   `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS ai_generation_review_status TEXT`,
   `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS ai_generation_job_id TEXT`,
   `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS ai_generated_at TIMESTAMPTZ`,
+  `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS created_by TEXT`,
+  `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS updated_by TEXT`,
+  `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
+  `UPDATE test_cases SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)`,
   `
     UPDATE test_cases
     SET automated = CASE
@@ -423,6 +438,32 @@ const statements = [
   `ALTER TABLE workspace_transactions ADD CONSTRAINT workspace_transactions_status_check CHECK (status IN ('queued', 'running', 'completed', 'failed'))`,
   `CREATE INDEX IF NOT EXISTS idx_workspace_transactions_scope ON workspace_transactions (project_id, app_type_id, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_workspace_transactions_related ON workspace_transactions (related_kind, related_id, created_at DESC)`,
+  `
+    CREATE TABLE IF NOT EXISTS workspace_transaction_events (
+      id TEXT PRIMARY KEY,
+      transaction_id TEXT NOT NULL,
+      level TEXT NOT NULL DEFAULT 'info',
+      phase TEXT,
+      message TEXT NOT NULL,
+      details JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    )
+  `,
+  `ALTER TABLE workspace_transaction_events ADD COLUMN IF NOT EXISTS transaction_id TEXT`,
+  `ALTER TABLE workspace_transaction_events ADD COLUMN IF NOT EXISTS level TEXT NOT NULL DEFAULT 'info'`,
+  `ALTER TABLE workspace_transaction_events ADD COLUMN IF NOT EXISTS phase TEXT`,
+  `ALTER TABLE workspace_transaction_events ADD COLUMN IF NOT EXISTS message TEXT`,
+  `ALTER TABLE workspace_transaction_events ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::jsonb`,
+  `ALTER TABLE workspace_transaction_events ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
+  `UPDATE workspace_transaction_events SET level = 'info' WHERE level IS NULL OR BTRIM(level) = ''`,
+  `UPDATE workspace_transaction_events SET message = 'Transaction event' WHERE message IS NULL OR BTRIM(message) = ''`,
+  `ALTER TABLE workspace_transaction_events ALTER COLUMN level SET NOT NULL`,
+  `ALTER TABLE workspace_transaction_events ALTER COLUMN message SET NOT NULL`,
+  `ALTER TABLE workspace_transaction_events ALTER COLUMN details SET DEFAULT '{}'::jsonb`,
+  `ALTER TABLE workspace_transaction_events ALTER COLUMN details SET NOT NULL`,
+  `ALTER TABLE workspace_transaction_events DROP CONSTRAINT IF EXISTS workspace_transaction_events_level_check`,
+  `ALTER TABLE workspace_transaction_events ADD CONSTRAINT workspace_transaction_events_level_check CHECK (level IN ('info', 'success', 'warning', 'error'))`,
+  `CREATE INDEX IF NOT EXISTS idx_workspace_transaction_events_lookup ON workspace_transaction_events (transaction_id, created_at ASC)`,
   `
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,

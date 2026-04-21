@@ -53,7 +53,10 @@ module.exports = async function (fastify) {
       await projectService.getProject(appType.project_id, req.user.id);
     }
 
-    return service.createTestCase(req.body);
+    return service.createTestCase({
+      ...req.body,
+      created_by: req.user.id
+    });
   });
 
   fastify.post("/test-cases/import", async (req) => {
@@ -222,7 +225,10 @@ module.exports = async function (fastify) {
       await projectService.getProject(appType.project_id, req.user.id);
     }
 
-    return service.updateTestCase(req.params.id, req.body);
+    return service.updateTestCase(req.params.id, {
+      ...req.body,
+      updated_by: req.user.id
+    });
   });
 
   fastify.post("/test-cases/:id/accept-generated", async (req) => {

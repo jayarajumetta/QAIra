@@ -27,7 +27,8 @@ import type {
   TestStep,
   TestSuite,
   User,
-  WorkspaceTransaction
+  WorkspaceTransaction,
+  WorkspaceTransactionEvent
 } from "../types";
 
 declare global {
@@ -216,6 +217,8 @@ export const api = {
     list: () => request<Project[]>("/projects"),
     create: (input: { name: string; description?: string; created_by?: string; member_ids?: string[]; app_types?: Array<{ name: string; type: AppType["type"]; is_unified?: boolean }> }) =>
       request<{ id: string; members_added: number; app_types_created: number }>("/projects", { method: "POST", body: JSON.stringify(input) }),
+    sync: (id: string, provider: "google_drive" | "github") =>
+      request<{ id: string; duplicate?: boolean }>(`/projects/${id}/sync/${provider}`, { method: "POST" }),
     update: (id: string, input: Partial<{ name: string; description: string }>) =>
       request<{ updated: boolean }>(`/projects/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/projects/${id}`, { method: "DELETE" })
@@ -437,7 +440,7 @@ export const api = {
     delete: (id: string) => request<{ deleted: boolean }>(`/test-data-sets/${id}`, { method: "DELETE" })
   },
   executions: {
-    list: (query?: { project_id?: string; status?: string }) =>
+    list: (query?: { project_id?: string; app_type_id?: string; status?: string }) =>
       request<Execution[]>(`/executions${toQueryString(query)}`),
     get: (id: string) =>
       request<Execution>(`/executions/${id}`),
@@ -478,7 +481,9 @@ export const api = {
   },
   workspaceTransactions: {
     list: (query?: { project_id?: string; app_type_id?: string; category?: string; limit?: number }) =>
-      request<WorkspaceTransaction[]>(`/workspace-transactions${toQueryString(query)}`)
+      request<WorkspaceTransaction[]>(`/workspace-transactions${toQueryString(query)}`),
+    events: (id: string) =>
+      request<WorkspaceTransactionEvent[]>(`/workspace-transactions/${id}/events`)
   }
 };
 

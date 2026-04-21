@@ -30,9 +30,10 @@ import { useCurrentProject } from "../hooks/useCurrentProject";
 import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { api } from "../lib/api";
 import { appendUniqueImages, parseExternalLinks, readImageFiles } from "../lib/aiDesignStudio";
+import { formatAuditTimestamp, resolveAuditUserLabel } from "../lib/auditDisplay";
 import { parseRequirementCsv } from "../lib/requirementImport";
 import { TEST_AUTHORING_SECTION_ITEMS } from "../lib/workspaceSections";
-import type { AiDesignImageInput, AiDesignedTestCaseCandidate, ExecutionResult, Requirement, TestCase } from "../types";
+import type { AiDesignImageInput, AiDesignedTestCaseCandidate, ExecutionResult, Requirement, TestCase, User } from "../types";
 
 type RequirementDraft = {
   title: string;
@@ -181,6 +182,11 @@ export function RequirementsPage() {
     queryFn: () => api.integrations.list({ type: "llm", is_active: true }),
     enabled: Boolean(session)
   });
+  const usersQuery = useQuery({
+    queryKey: ["users"],
+    queryFn: api.users.list,
+    enabled: Boolean(session)
+  });
 
   const createRequirement = useMutation({ mutationFn: api.requirements.create });
   const bulkImportRequirements = useMutation({ mutationFn: api.requirements.bulkImport });
@@ -210,6 +216,15 @@ export function RequirementsPage() {
   const sharedGroups = sharedGroupsQuery.data || [];
   const suites = suitesQuery.data || [];
   const integrations = integrationsQuery.data || [];
+  const users = (usersQuery.data || []) as User[];
+  const userById = useMemo(
+    () =>
+      users.reduce<Record<string, User>>((accumulator, user) => {
+        accumulator[user.id] = user;
+        return accumulator;
+      }, {}),
+    [users]
+  );
   const isRequirementCatalogLoading =
     projectsQuery.isLoading ||
     (Boolean(projectId) && requirementsQuery.isLoading) ||
@@ -435,6 +450,22 @@ export function RequirementsPage() {
       key: "select",
       label: "",
       canToggle: false,
+      headerRender: () => (
+        <label className="data-table-header-checkbox" onClick={(event) => event.stopPropagation()}>
+          <input
+            aria-label="Select all filtered requirements"
+            checked={areAllFilteredRequirementsSelected}
+            onChange={(event) =>
+              setDeleteSelectedRequirementIds((current) =>
+                event.target.checked
+                  ? [...new Set([...current, ...filteredRequirements.map((item) => item.id)])]
+                  : current.filter((id) => !filteredRequirements.some((item) => item.id === id))
+              )
+            }
+            type="checkbox"
+          />
+        </label>
+      ),
       render: (item) => (
         <div onClick={(event) => event.stopPropagation()}>
           <input
@@ -502,6 +533,30 @@ export function RequirementsPage() {
       }
     },
     {
+      key: "createdBy",
+      label: "Created by",
+      defaultVisible: false,
+      render: (item) => resolveAuditUserLabel(item.created_by, userById)
+    },
+    {
+      key: "createdAt",
+      label: "Created at",
+      defaultVisible: false,
+      render: (item) => formatAuditTimestamp(item.created_at)
+    },
+    {
+      key: "updatedBy",
+      label: "Last updated by",
+      defaultVisible: false,
+      render: (item) => resolveAuditUserLabel(item.updated_by || item.created_by, userById)
+    },
+    {
+      key: "updatedAt",
+      label: "Last updated at",
+      defaultVisible: false,
+      render: (item) => formatAuditTimestamp(item.updated_at || item.created_at)
+    },
+    {
       key: "actions",
       label: "Actions",
       canToggle: false,
@@ -543,7 +598,8 @@ export function RequirementsPage() {
     handleDeleteRequirementItem,
     linkedCaseIdsByRequirementId,
     openRequirementAiStudio,
-    passCoverageByRequirementId
+    passCoverageByRequirementId,
+    userById
   ]);
 
   const selectedRequirementPassCoverage = selectedRequirement

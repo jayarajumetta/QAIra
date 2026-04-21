@@ -6,6 +6,7 @@ export type DataTableColumn<T> = {
   key: string;
   label: string;
   render: (row: T) => ReactNode;
+  headerRender?: () => ReactNode;
   canToggle?: boolean;
   defaultVisible?: boolean;
   canReorder?: boolean;
@@ -145,7 +146,9 @@ export function DataTable<T>({
   storageKey,
   getRowKey,
   onRowClick,
-  getRowClassName
+  getRowClassName,
+  hideToolbarCopy = false,
+  hideVisibleColumnPreview = true
 }: {
   columns: Array<DataTableColumn<T>>;
   rows: T[];
@@ -154,6 +157,8 @@ export function DataTable<T>({
   getRowKey?: (row: T, index: number) => string;
   onRowClick?: (row: T) => void;
   getRowClassName?: (row: T) => string;
+  hideToolbarCopy?: boolean;
+  hideVisibleColumnPreview?: boolean;
 }) {
   const [isColumnConfigOpen, setIsColumnConfigOpen] = useState(false);
   const [draggedColumnKey, setDraggedColumnKey] = useState("");
@@ -306,12 +311,14 @@ export function DataTable<T>({
     <div className="data-table-shell">
       {configurableColumns.length ? (
         <div className="data-table-toolbar">
-          <div className="data-table-toolbar-copy">
-            <strong>List layout</strong>
-            <span>{columnPreference.visibleColumnKeys.length} of {configurableColumns.length} details visible</span>
-          </div>
+          {!hideToolbarCopy ? (
+            <div className="data-table-toolbar-copy">
+              <strong>List layout</strong>
+              <span>{columnPreference.visibleColumnKeys.length} of {configurableColumns.length} details visible</span>
+            </div>
+          ) : <span />}
           <div className="data-table-toolbar-meta">
-            {visibleColumnPreview.length ? (
+            {!hideVisibleColumnPreview && visibleColumnPreview.length ? (
               <div aria-label="Visible columns" className="data-table-visible-columns">
                 {visibleColumnPreview.map((columnLabel) => (
                   <span className="data-table-visible-column-chip" key={columnLabel}>{columnLabel}</span>
@@ -379,7 +386,6 @@ export function DataTable<T>({
                           </span>
                           <div className="data-table-config-option-copy">
                             <strong>{columnLabel}</strong>
-                            <span>{isPinned ? "Always visible" : isVisible ? "Visible in list view" : "Hidden from list view"}</span>
                           </div>
                           {isPinned ? (
                             <span aria-label="Pinned column" className="data-table-config-option-state" title="Pinned column">
@@ -393,7 +399,6 @@ export function DataTable<T>({
                                 onChange={() => toggleColumn(column.key)}
                                 type="checkbox"
                               />
-                              <span>{isVisible ? "Shown" : "Hidden"}</span>
                             </label>
                           )}
                         </div>
@@ -421,7 +426,7 @@ export function DataTable<T>({
               <tr>
                 {activeColumns.map((column) => (
                   <th key={column.key}>
-                    <span className="data-table-header-label">{column.label}</span>
+                    {column.headerRender ? column.headerRender() : <span className="data-table-header-label">{column.label}</span>}
                   </th>
                 ))}
               </tr>

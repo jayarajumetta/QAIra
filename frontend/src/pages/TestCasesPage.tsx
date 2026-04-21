@@ -46,6 +46,7 @@ import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { useDialogFocus } from "../hooks/useDialogFocus";
+import { formatAuditTimestamp, resolveAuditUserLabel } from "../lib/auditDisplay";
 import { parseJUnitXmlTestCases } from "../lib/junitImport";
 import {
   countImportedGroups,
@@ -651,6 +652,14 @@ export function TestCasesPage() {
   const executionResults = executionResultsQuery.data || [];
   const allTestSteps = allTestStepsQuery.data || [];
   const integrations = integrationsQuery.data || [];
+  const userById = useMemo(
+    () =>
+      users.reduce<Record<string, User>>((accumulator, user) => {
+        accumulator[user.id] = user;
+        return accumulator;
+      }, {}),
+    [users]
+  );
   const assigneeOptions = useMemo<TestCaseExecutionAssigneeOption[]>(
     () => buildAssigneeOptions(projectMembers, users),
     [projectMembers, users]
@@ -3305,7 +3314,6 @@ export function TestCasesPage() {
     () => generationJobs.filter((job): job is AiTestCaseGenerationJob => ["queued", "running"].includes(job.status)),
     [generationJobs]
   );
-  const latestGenerationJob = generationJobs[0] || null;
   const generationQueueSummary = useMemo(() => {
     if (activeGenerationJobs.length) {
       const processed = activeGenerationJobs.reduce((total, job) => total + job.processed_requirements, 0);
@@ -3318,16 +3326,8 @@ export function TestCasesPage() {
       };
     }
 
-    if (latestGenerationJob?.status === "completed") {
-      return {
-        tone: "success" as const,
-        title: "Latest AI generation job completed",
-        detail: `${latestGenerationJob.generated_cases_count} scheduler-generated test case${latestGenerationJob.generated_cases_count === 1 ? "" : "s"} are ready for review.`
-      };
-    }
-
     return null;
-  }, [activeGenerationJobs, latestGenerationJob]);
+  }, [activeGenerationJobs]);
 
   const openExistingCaseFromAi = (testCaseId: string) => setLinkedPreviewCaseId(testCaseId);
   const authoringSectionItems = useMemo(
@@ -3405,6 +3405,22 @@ export function TestCasesPage() {
       key: "select",
       label: "",
       canToggle: false,
+      headerRender: () => (
+        <label className="data-table-header-checkbox" onClick={(event) => event.stopPropagation()}>
+          <input
+            aria-label="Select all filtered test cases"
+            checked={areAllFilteredCasesSelected}
+            onChange={(event) =>
+              setSelectedActionTestCaseIds((current) =>
+                event.target.checked
+                  ? [...new Set([...current, ...filteredCases.map((item) => item.id)])]
+                  : current.filter((id) => !filteredCases.some((item) => item.id === id))
+              )
+            }
+            type="checkbox"
+          />
+        </label>
+      ),
       render: (testCase) => (
         <div onClick={(event) => event.stopPropagation()}>
           <input
@@ -3523,6 +3539,30 @@ export function TestCasesPage() {
       render: (testCase) => (historyByCaseId[testCase.id] || []).length
     },
     {
+      key: "createdBy",
+      label: "Created by",
+      defaultVisible: false,
+      render: (testCase) => resolveAuditUserLabel(testCase.created_by, userById)
+    },
+    {
+      key: "createdAt",
+      label: "Created at",
+      defaultVisible: false,
+      render: (testCase) => formatAuditTimestamp(testCase.created_at)
+    },
+    {
+      key: "updatedBy",
+      label: "Last updated by",
+      defaultVisible: false,
+      render: (testCase) => resolveAuditUserLabel(testCase.updated_by || testCase.created_by, userById)
+    },
+    {
+      key: "updatedAt",
+      label: "Last updated at",
+      defaultVisible: false,
+      render: (testCase) => formatAuditTimestamp(testCase.updated_at || testCase.created_at)
+    },
+    {
       key: "actions",
       label: "Actions",
       canToggle: false,
@@ -3618,7 +3658,8 @@ export function TestCasesPage() {
     schedulerActionKind,
     selectedActionTestCaseIds,
     sharedGroupNameById,
-    stepCountByCaseId
+    stepCountByCaseId,
+    userById
   ]);
 
   const isMatchingStepInsertContext = (groupContext: StepInsertionGroupContext | null = null) =>
@@ -4249,6 +4290,7 @@ export function TestCasesPage() {
                   emptyMessage="No test cases match the current search."
                   getRowClassName={(testCase) => (selectedTestCaseId === testCase.id && !isCreating ? "is-active-row" : "")}
                   getRowKey={(testCase) => testCase.id}
+                  hideToolbarCopy
                   onRowClick={(testCase) => openLibraryCase(testCase.id)}
                   rows={filteredCases}
                   storageKey="qaira:test-cases:list-columns"

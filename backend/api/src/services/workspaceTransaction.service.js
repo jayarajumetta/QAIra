@@ -2,13 +2,24 @@ const db = require("../db");
 const { v4: uuid } = require("uuid");
 
 const WORKSPACE_TRANSACTION_STATUSES = new Set(["queued", "running", "completed", "failed"]);
+const WORKSPACE_TRANSACTION_EVENT_LEVELS = new Set(["info", "success", "warning", "error"]);
 
 const selectTransaction = db.prepare(`
   SELECT
     workspace_transactions.*,
     users.email AS created_user_email,
     users.name AS created_user_name,
-    users.avatar_data_url AS created_user_avatar_data_url
+    users.avatar_data_url AS created_user_avatar_data_url,
+    (
+      SELECT COUNT(*)
+      FROM workspace_transaction_events
+      WHERE workspace_transaction_events.transaction_id = workspace_transactions.id
+    ) AS event_count,
+    (
+      SELECT MAX(created_at)
+      FROM workspace_transaction_events
+      WHERE workspace_transaction_events.transaction_id = workspace_transactions.id
+    ) AS latest_event_at
   FROM workspace_transactions
   LEFT JOIN users ON users.id = workspace_transactions.created_by
   WHERE workspace_transactions.id = ?
@@ -19,7 +30,17 @@ const selectTransactionByRelated = db.prepare(`
     workspace_transactions.*,
     users.email AS created_user_email,
     users.name AS created_user_name,
-    users.avatar_data_url AS created_user_avatar_data_url
+    users.avatar_data_url AS created_user_avatar_data_url,
+    (
+      SELECT COUNT(*)
+      FROM workspace_transaction_events
+      WHERE workspace_transaction_events.transaction_id = workspace_transactions.id
+    ) AS event_count,
+    (
+      SELECT MAX(created_at)
+      FROM workspace_transaction_events
+      WHERE workspace_transaction_events.transaction_id = workspace_transactions.id
+    ) AS latest_event_at
   FROM workspace_transactions
   LEFT JOIN users ON users.id = workspace_transactions.created_by
   WHERE workspace_transactions.related_kind = ?
@@ -67,6 +88,25 @@ const updateTransaction = db.prepare(`
   WHERE id = ?
 `);
 
+const insertTransactionEvent = db.prepare(`
+  INSERT INTO workspace_transaction_events (
+    id,
+    transaction_id,
+    level,
+    phase,
+    message,
+    details
+  )
+  VALUES (?, ?, ?, ?, ?, ?)
+`);
+
+const selectTransactionEvents = db.prepare(`
+  SELECT *
+  FROM workspace_transaction_events
+  WHERE transaction_id = ?
+  ORDER BY created_at ASC, id ASC
+`);
+
 const normalizeText = (value) => {
   if (value === undefined) {
     return undefined;
@@ -100,6 +140,11 @@ const normalizeMetadata = (value) => {
 const normalizeStatus = (value, fallback = "completed") => {
   const normalized = String(value || "").trim().toLowerCase();
   return WORKSPACE_TRANSACTION_STATUSES.has(normalized) ? normalized : fallback;
+};
+
+const normalizeEventLevel = (value, fallback = "info") => {
+  const normalized = String(value || "").trim().toLowerCase();
+  return WORKSPACE_TRANSACTION_EVENT_LEVELS.has(normalized) ? normalized : fallback;
 };
 
 const normalizeTimestamp = (value) => {
@@ -139,6 +184,7 @@ const hydrateTransaction = (transaction) => {
   return {
     ...transaction,
     metadata: parseJsonValue(transaction.metadata, {}),
+    event_count: Number(transaction.event_count) || 0,
     created_user: transaction.created_by
       ? {
           id: transaction.created_by,
@@ -147,6 +193,18 @@ const hydrateTransaction = (transaction) => {
           avatar_data_url: transaction.created_user_avatar_data_url || null
         }
       : null
+  };
+};
+
+const hydrateTransactionEvent = (event) => {
+  if (!event) {
+    return null;
+  }
+
+  return {
+    ...event,
+    level: normalizeEventLevel(event.level),
+    details: parseJsonValue(event.details, {})
   };
 };
 
@@ -218,6 +276,36 @@ exports.updateTransaction = async (id, updates = {}) => {
   return exports.getTransaction(id);
 };
 
+exports.appendTransactionEvent = async (transactionId, input = {}) => {
+  const transaction = await exports.getTransaction(transactionId);
+  const message = normalizeText(input.message) || "Transaction event";
+
+  await insertTransactionEvent.run(
+    uuid(),
+    transaction.id,
+    normalizeEventLevel(input.level),
+    normalizeText(input.phase),
+    message,
+    normalizeMetadata(input.details)
+  );
+
+  if (input.description !== undefined || input.status !== undefined || input.metadata !== undefined) {
+    await exports.updateTransaction(transaction.id, {
+      description: input.description,
+      status: input.status,
+      metadata: input.metadata
+    });
+  }
+
+  return exports.getTransaction(transaction.id);
+};
+
+exports.listTransactionEvents = async (transactionId) => {
+  await exports.getTransaction(transactionId);
+  const rows = await selectTransactionEvents.all(transactionId);
+  return rows.map(hydrateTransactionEvent);
+};
+
 exports.listTransactions = async ({
   project_id,
   app_type_id,
@@ -229,7 +317,17 @@ exports.listTransactions = async ({
       workspace_transactions.*,
       users.email AS created_user_email,
       users.name AS created_user_name,
-      users.avatar_data_url AS created_user_avatar_data_url
+      users.avatar_data_url AS created_user_avatar_data_url,
+      (
+        SELECT COUNT(*)
+        FROM workspace_transaction_events
+        WHERE workspace_transaction_events.transaction_id = workspace_transactions.id
+      ) AS event_count,
+      (
+        SELECT MAX(created_at)
+        FROM workspace_transaction_events
+        WHERE workspace_transaction_events.transaction_id = workspace_transactions.id
+      ) AS latest_event_at
     FROM workspace_transactions
     LEFT JOIN users ON users.id = workspace_transactions.created_by
     WHERE 1 = 1

@@ -8,6 +8,7 @@ import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
 import { DisplayIdBadge } from "../components/DisplayIdBadge";
 import { FormField } from "../components/FormField";
 import { ExecutionContextSelector } from "../components/ExecutionContextSelector";
+import { LinkedTestCaseModal } from "../components/LinkedTestCaseModal";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StatusBadge } from "../components/StatusBadge";
@@ -1572,7 +1573,7 @@ export function DesignPage() {
             }}
             onCreateCase={beginCreateCase}
             onOpenCaseEditor={openSelectedCaseEditor}
-            canOpenCaseEditor={Boolean(selectedTestCaseId) || isCreatingCase}
+            canOpenCaseEditor={Boolean(selectedTestCaseId)}
             onReorderCases={handleReorderCases}
             viewMode={suiteCaseCatalogViewMode}
             onViewModeChange={setSuiteCaseCatalogViewMode}
@@ -1581,55 +1582,14 @@ export function DesignPage() {
         isDetailOpen={Boolean(selectedSuiteId)}
       />
 
-      {isTestCaseEditorModalOpen ? (
-        <SuiteCaseEditorModal
-          appType={selectedAppType}
-          caseDraft={caseDraft}
-          createPending={createTestCaseMutation.isPending}
-          defaultCaseStatus={defaultCaseStatus}
-          deletePending={deleteTestCaseMutation.isPending}
-          displaySteps={displaySteps}
-          draftSteps={draftSteps}
-          expandedSections={expandedSections}
-          expandedStepIds={expandedStepIds}
-          history={selectedHistory}
-          isCreatingCase={isCreatingCase}
-          isLoadingSteps={stepsQuery.isLoading}
-          isStepCreateVisible={isStepCreateVisible}
-          newStepDraft={newStepDraft}
-          onCaseDraftChange={setCaseDraft}
+      {isTestCaseEditorModalOpen && selectedTestCase ? (
+        <LinkedTestCaseModal
+          appTypeName={selectedAppType?.name || ""}
           onClose={closeTestCaseEditorModal}
-          onCreateStep={() => void handleCreateStep()}
-          onCloseStepCreate={() => {
-            setIsStepCreateVisible(false);
-            setNewStepDraft(EMPTY_STEP_DRAFT);
-          }}
-          onDeleteStep={(stepId) => void handleDeleteStep(stepId)}
-          onDeleteTestCase={() => void handleDeleteTestCase()}
-          onDraftStepChange={handleUpdateDraftStep}
-          onDraftStepMove={(stepId, direction) => handleReorderDraftStep(stepId, direction)}
-          onExpandAllSteps={() => setExpandedStepIds(displaySteps.map((step) => step.id))}
-          onCollapseAllSteps={() => setExpandedStepIds([])}
-          onNewStepDraftChange={setNewStepDraft}
-          onOpenStepCreate={() => setIsStepCreateVisible(true)}
-          onSaveTestCase={() => void handleSaveTestCase()}
-          onStepMove={(stepId, direction) => void handleReorderStep(stepId, direction)}
-          onStepSave={(stepId, draft) => void handleUpdateStep(stepId, draft)}
-          onToggleSection={(section) => setExpandedSections((current) => ({ ...current, [section]: !current[section] }))}
-          onToggleStep={(stepId) =>
-            setExpandedStepIds((current) =>
-              current.includes(stepId) ? current.filter((id) => id !== stepId) : [...current, stepId]
-            )
-          }
-          project={selectedProject}
+          projectName={selectedProject?.name || ""}
           requirements={requirements}
-          selectedSuite={selectedSuite}
-          selectedTestCase={selectedTestCase}
-          stepDrafts={stepDrafts}
           suites={suites}
-          testCaseAutomatedOptions={testCaseAutomatedOptions}
-          testCaseStatusOptions={testCaseStatusOptions}
-          updatePending={updateTestCaseMutation.isPending || updateStepMutation.isPending}
+          testCase={selectedTestCase}
         />
       ) : null}
 
@@ -1922,12 +1882,12 @@ function SuiteSidebar({
               <table className="data-table catalog-data-table">
                 <thead>
                   <tr>
-                    <th />
-                    <th>ID</th>
-                    <th>Suite</th>
-                    <th>Placement</th>
-                    <th>Mapped cases</th>
-                    <th>Child suites</th>
+                    <th><span className="data-table-header-label" /></th>
+                    <th><span className="data-table-header-label">ID</span></th>
+                    <th><span className="data-table-header-label">Suite</span></th>
+                    <th><span className="data-table-header-label">Placement</span></th>
+                    <th><span className="data-table-header-label">Mapped cases</span></th>
+                    <th><span className="data-table-header-label">Child suites</span></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2058,7 +2018,7 @@ function TestCaseList({
           </div>
           <div className="mini-card">
             <strong>{selectedSuite ? "Ordered" : "Library"}</strong>
-            <span>{selectedSuite ? "Drag cards to reorder the suite" : "Open any case in the editor modal"}</span>
+            <span>{selectedSuite ? "Drag cards to reorder the suite" : "View any case in the reusable case viewer"}</span>
           </div>
         </div>
 
@@ -2134,7 +2094,7 @@ function TestCaseList({
             </div>
           </CatalogSearchFilter>
           <button className="primary-button" onClick={onCreateCase} type="button"><AddIcon />New Test Case</button>
-          <button className="ghost-button" disabled={!canOpenCaseEditor} onClick={onOpenCaseEditor} type="button">Open Case Editor</button>
+          <button className="ghost-button" disabled={!canOpenCaseEditor} onClick={onOpenCaseEditor} type="button">View Test Case</button>
         </div>
 
         {selectedSuite ? (
@@ -2248,14 +2208,14 @@ function TestCaseList({
               <table className="data-table catalog-data-table">
                 <thead>
                   <tr>
-                    <th>ID</th>
-                    <th>Case</th>
-                    <th>Status</th>
-                    <th>Automated</th>
-                    <th>Priority</th>
-                    <th>Steps</th>
-                    <th>Suites</th>
-                    <th>Runs</th>
+                    <th><span className="data-table-header-label">ID</span></th>
+                    <th><span className="data-table-header-label">Case</span></th>
+                    <th><span className="data-table-header-label">Status</span></th>
+                    <th><span className="data-table-header-label">Automated</span></th>
+                    <th><span className="data-table-header-label">Priority</span></th>
+                    <th><span className="data-table-header-label">Steps</span></th>
+                    <th><span className="data-table-header-label">Suites</span></th>
+                    <th><span className="data-table-header-label">Runs</span></th>
                   </tr>
                 </thead>
                 <tbody>

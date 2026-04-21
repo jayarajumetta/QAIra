@@ -2,7 +2,7 @@ import { FormEvent, Fragment, useDeferredValue, useEffect, useMemo, useRef, useS
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { CalendarIcon, ImportIcon, OpenIcon, PlayIcon, SparkIcon, TrashIcon, UsersIcon } from "../components/AppIcons";
+import { ActivityIcon, ArchiveIcon, CalendarIcon, GithubIcon, GoogleDriveIcon, ImportIcon, OpenIcon, PlayIcon, SparkIcon, TrashIcon, UsersIcon } from "../components/AppIcons";
 import { CatalogActionMenu } from "../components/CatalogActionMenu";
 import { CatalogViewToggle } from "../components/CatalogViewToggle";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
@@ -107,7 +107,7 @@ type ExecutionStepBlock = {
 type ExecutionIssueFilter = "all" | "with-issues" | "clean";
 type ExecutionEvidenceFilter = "all" | "with-evidence" | "no-evidence";
 type ExecutionCreateMode = "manual" | "smart";
-type TestRunsView = "executions" | "scheduled";
+type TestRunsView = "executions" | "scheduled" | "operations";
 
 type ExecutionAssigneeOption = AssigneeOption;
 
@@ -443,13 +443,24 @@ function describeWorkspaceTransaction(
       : "Workspace scope";
 
   if (transaction.action === "scheduled_test_case_generation" || transaction.category === "ai_generation") {
+    const readyForReviewDetail = generatedCaseCount
+      ? `${formatCountLabel(generatedCaseCount, "scheduler-generated test case")} ready for review.`
+      : "No scheduler-generated test cases are ready for review yet.";
+
     return {
       icon: <SparkIcon />,
-      eyebrow: "Scheduled AI generation",
+      eyebrow:
+        transaction.status === "completed"
+          ? "Latest AI generation job completed"
+          : transaction.status === "failed"
+            ? "AI generation finished with issues"
+            : "Scheduled AI generation",
       detail:
-        generatedCaseCount || requirementCount
-          ? `${formatCountLabel(requirementCount, "requirement")} queued or processed · ${formatCountLabel(generatedCaseCount, "case")} generated`
-          : "AI-assisted test case generation workflow"
+        transaction.status === "completed"
+          ? readyForReviewDetail
+          : generatedCaseCount || requirementCount
+            ? `${formatCountLabel(requirementCount, "requirement")} queued or processed · ${formatCountLabel(generatedCaseCount, "case")} generated`
+            : "AI-assisted test case generation workflow"
     };
   }
 
@@ -486,11 +497,50 @@ function describeWorkspaceTransaction(
     };
   }
 
+  if (transaction.category === "backup" || transaction.action === "project_artifact_backup" || transaction.action === "project_code_sync") {
+    const provider = String(transaction.metadata?.provider || "").toLowerCase();
+    const repository = String(transaction.metadata?.repository || "");
+    const fileName = String(transaction.metadata?.file_name || "");
+
+    if (provider === "google_drive" || transaction.action === "project_artifact_backup") {
+      return {
+        icon: <GoogleDriveIcon />,
+        eyebrow: "Google Drive backup",
+        detail: fileName ? `Uploaded ${fileName}` : "Compressed project artifact backup"
+      };
+    }
+
+    if (provider === "github" || transaction.action === "project_code_sync") {
+      return {
+        icon: <GithubIcon />,
+        eyebrow: "GitHub sync",
+        detail: repository ? `Automation code synced to ${repository}` : "Project automation code sync"
+      };
+    }
+
+    return {
+      icon: <ArchiveIcon />,
+      eyebrow: "Project backup",
+      detail: transaction.description || "Project backup activity"
+    };
+  }
+
   return {
     icon: transaction.category === "bulk_import" ? <ImportIcon /> : <SparkIcon />,
     eyebrow: transaction.title,
     detail: transaction.description || scopeLabel
   };
+}
+
+function resolveWorkspaceTransactionSummary(
+  transaction: WorkspaceTransaction,
+  presentation: ReturnType<typeof describeWorkspaceTransaction>
+) {
+  if (transaction.action === "scheduled_test_case_generation" || transaction.category === "ai_generation") {
+    return presentation.detail;
+  }
+
+  return transaction.description || presentation.detail;
 }
 
 function executionImpactLevelLabel(level: SmartExecutionImpactCase["impact_level"]) {
@@ -520,6 +570,7 @@ export function ExecutionsPage() {
   const [isCreateScheduleModalOpen, setIsCreateScheduleModalOpen] = useState(false);
   const [selectedExecutionId, setSelectedExecutionId] = useState("");
   const [selectedScheduleId, setSelectedScheduleId] = useState("");
+  const [selectedOperationId, setSelectedOperationId] = useState("");
   const [focusedSuiteId, setFocusedSuiteId] = useState("");
   const [expandedExecutionSuiteIds, setExpandedExecutionSuiteIds] = useState<string[]>([]);
   const [selectedTestCaseId, setSelectedTestCaseId] = useState("");
@@ -581,8 +632,8 @@ export function ExecutionsPage() {
     enabled: Boolean(projectId && session)
   });
   const executionsQuery = useQuery({
-    queryKey: ["executions", projectId],
-    queryFn: () => api.executions.list(projectId ? { project_id: projectId } : undefined)
+    queryKey: ["executions", projectId, appTypeId],
+    queryFn: () => api.executions.list(projectId ? { project_id: projectId, app_type_id: appTypeId || undefined } : undefined)
   });
   const executionSchedulesQuery = useQuery({
     queryKey: ["execution-schedules", projectId, appTypeId],
@@ -632,12 +683,18 @@ export function ExecutionsPage() {
     enabled: Boolean(session)
   });
   const workspaceTransactionsQuery = useQuery({
-    queryKey: ["workspace-transactions", projectId],
+    queryKey: ["workspace-transactions", projectId, appTypeId],
     queryFn: () => api.workspaceTransactions.list({
       project_id: projectId || undefined,
+      app_type_id: appTypeId || undefined,
       limit: 24
     }),
     enabled: Boolean(projectId && session)
+  });
+  const selectedWorkspaceTransactionEventsQuery = useQuery({
+    queryKey: ["workspace-transaction-events", selectedOperationId],
+    queryFn: () => api.workspaceTransactions.events(selectedOperationId),
+    enabled: Boolean(selectedOperationId && session)
   });
 
   const createExecution = useMutation({ mutationFn: api.executions.create });
@@ -703,7 +760,10 @@ export function ExecutionsPage() {
   const workspaceTransactions = useMemo(
     () =>
       (workspaceTransactionsQuery.data || []).filter(
-        (transaction) => transaction.category === "bulk_import" || transaction.category === "ai_generation"
+        (transaction) =>
+          transaction.category === "bulk_import" ||
+          transaction.category === "ai_generation" ||
+          transaction.category === "backup"
       ),
     [workspaceTransactionsQuery.data]
   );
@@ -714,6 +774,30 @@ export function ExecutionsPage() {
         return accumulator;
       }, {}),
     [workspaceTransactions]
+  );
+  const filteredWorkspaceTransactions = useMemo(() => {
+    const search = deferredExecutionSearch.trim().toLowerCase();
+
+    if (!search) {
+      return workspaceTransactions;
+    }
+
+    return workspaceTransactions.filter((transaction) =>
+      [
+        transaction.title,
+        transaction.description,
+        transaction.status,
+        transaction.category,
+        transaction.action,
+        String(transaction.metadata?.provider || ""),
+        String(transaction.metadata?.repository || ""),
+        String(transaction.metadata?.file_name || "")
+      ].some((value) => String(value || "").toLowerCase().includes(search))
+    );
+  }, [deferredExecutionSearch, workspaceTransactions]);
+  const selectedWorkspaceTransaction = useMemo(
+    () => filteredWorkspaceTransactions.find((transaction) => transaction.id === selectedOperationId) || workspaceTransactions.find((transaction) => transaction.id === selectedOperationId) || null,
+    [filteredWorkspaceTransactions, selectedOperationId, workspaceTransactions]
   );
   const smartExecutionRequirementOptions = useMemo<SmartExecutionRequirementOption[]>(() => {
     const linkedCaseIdsByRequirementId = smartExecutionLibraryCases.reduce<Map<string, Set<string>>>((accumulator, testCase) => {
@@ -744,6 +828,30 @@ export function ExecutionsPage() {
         return left.title.localeCompare(right.title);
       });
   }, [requirements, smartExecutionLibraryCases]);
+
+  useEffect(() => {
+    if (testRunsView !== "operations") {
+      return;
+    }
+
+    if (selectedOperationId && workspaceTransactions.some((transaction) => transaction.id === selectedOperationId)) {
+      return;
+    }
+
+    setSelectedOperationId(workspaceTransactions[0]?.id || "");
+  }, [selectedOperationId, testRunsView, workspaceTransactions]);
+
+  useEffect(() => {
+    if (testRunsView !== "scheduled") {
+      return;
+    }
+
+    if (selectedScheduleId && executionSchedules.some((schedule) => schedule.id === selectedScheduleId)) {
+      return;
+    }
+
+    setSelectedScheduleId(executionSchedules[0]?.id || "");
+  }, [executionSchedules, selectedScheduleId, testRunsView]);
 
   useEffect(() => {
     const validRequirementIds = new Set(smartExecutionRequirementOptions.map((requirement) => requirement.id));
@@ -1016,7 +1124,7 @@ export function ExecutionsPage() {
   const selectedExecutionSuiteIds = selectedExecution?.suite_ids || [];
   const selectedExecutionSuites = selectedExecution?.suite_snapshots || [];
   const currentExecutionStatus = normalizeExecutionStatus(selectedExecution?.status);
-  const isExecutionScopeReadOnly = Boolean(selectedExecution);
+  const isExecutionScopeReadOnly = testRunsView === "executions" && Boolean(selectedExecution);
   const isExecutionStarted = currentExecutionStatus === "running";
   const isExecutionLocked =
     currentExecutionStatus === "completed" || currentExecutionStatus === "failed" || currentExecutionStatus === "aborted";
@@ -1998,7 +2106,12 @@ export function ExecutionsPage() {
   const remainingCaseCount = Math.max(executionProgress.totalCases - executionProgress.completedCases, 0);
   const selectedCaseStatusLabel = selectedExecutionCase ? caseDerivedStatus(selectedExecutionCase) : executionProgress.derivedStatus;
   const activeExecutionStage = selectedExecutionCase ? "case" : selectedExecution ? "suites" : "executions";
-  const showExecutionListHeader = testRunsView === "scheduled" ? !selectedSchedule : !selectedExecution;
+  const showExecutionListHeader =
+    testRunsView === "scheduled"
+      ? !selectedSchedule
+      : testRunsView === "operations"
+        ? !selectedWorkspaceTransaction
+        : !selectedExecution;
   const executionControlTitle =
     currentExecutionStatus === "running"
       ? "Execution is live"
@@ -2281,6 +2394,70 @@ export function ExecutionsPage() {
       )
     }
   ], [handleDeleteExecutionSchedule, handleRunExecutionSchedule]);
+  const operationListColumns = useMemo<Array<DataTableColumn<WorkspaceTransaction>>>(() => [
+    {
+      key: "operation",
+      label: "Operation",
+      canToggle: false,
+      render: (transaction) => {
+        const presentation = describeWorkspaceTransaction(transaction, {
+          appTypeNameById,
+          projectNameById
+        });
+
+        return (
+          <div className="data-table-multiline">
+            <strong>{transaction.title}</strong>
+            <span className="data-table-multiline-line">{presentation.eyebrow}</span>
+          </div>
+        );
+      }
+    },
+    {
+      key: "status",
+      label: "Status",
+      render: (transaction) => transaction.status
+    },
+    {
+      key: "provider",
+      label: "Provider",
+      defaultVisible: false,
+      render: (transaction) => String(transaction.metadata?.provider || transaction.category).replace(/_/g, " ")
+    },
+    {
+      key: "events",
+      label: "Events",
+      render: (transaction) => transaction.event_count || 0
+    },
+    {
+      key: "updated",
+      label: "Last activity",
+      render: (transaction) => formatExecutionTimestamp(transaction.latest_event_at || transaction.updated_at || transaction.completed_at || transaction.created_at, "Not recorded")
+    },
+    {
+      key: "actions",
+      label: "Actions",
+      canToggle: false,
+      render: (transaction) => (
+        <div onClick={(event) => event.stopPropagation()}>
+          <CatalogActionMenu
+            actions={[
+              {
+                label: "Open operation",
+                description: "Inspect transaction metadata and event logs.",
+                icon: <ActivityIcon />,
+                onClick: () => {
+                  setTestRunsView("operations");
+                  setSelectedOperationId(transaction.id);
+                }
+              }
+            ]}
+            label={`${transaction.title} actions`}
+          />
+        </div>
+      )
+    }
+  ], [appTypeNameById, projectNameById]);
 
   const activeExecutionFilterCount =
     Number(executionStatusFilter !== "all") +
@@ -2426,40 +2603,69 @@ export function ExecutionsPage() {
       {showExecutionListHeader ? (
         <PageHeader
           eyebrow="Test Runs"
-          title={testRunsView === "executions" ? "Test Executions" : "Scheduled Executions"}
+          title={
+            testRunsView === "executions"
+              ? "Test Executions"
+              : testRunsView === "scheduled"
+                ? "Scheduled Executions"
+                : "Operations Activity"
+          }
           description={
             testRunsView === "executions"
               ? "Launch scoped runs, monitor live progress, and capture failure evidence without losing the surrounding suite and case context."
-              : "Plan recurring release checks separately from live runs so teams can see what is scheduled next without cluttering the active execution board."
+              : testRunsView === "scheduled"
+                ? "Plan recurring release checks separately from live runs so teams can see what is scheduled next without cluttering the active execution board."
+                : "Review imports, scheduled AI generation, and project backup syncs with full traceable logs."
           }
           meta={[
-            { label: testRunsView === "executions" ? "Runs" : "Schedules", value: testRunsView === "executions" ? executions.length : executionSchedules.length },
-            { label: testRunsView === "executions" ? "Blocking cases" : "Active schedules", value: testRunsView === "executions" ? blockingCases.length : executionSchedules.filter((schedule) => schedule.is_active).length },
-            { label: testRunsView === "executions" ? "Completion" : "Next due", value: testRunsView === "executions" ? `${executionProgress.percent}%` : (filteredSchedules[0]?.next_run_at ? formatExecutionTimestamp(filteredSchedules[0].next_run_at, "Not set") : "Not set") }
+            {
+              label: testRunsView === "executions" ? "Runs" : testRunsView === "scheduled" ? "Schedules" : "Operations",
+              value: testRunsView === "executions" ? executions.length : testRunsView === "scheduled" ? executionSchedules.length : workspaceTransactions.length
+            },
+            {
+              label: testRunsView === "executions" ? "Blocking cases" : testRunsView === "scheduled" ? "Active schedules" : "Running now",
+              value:
+                testRunsView === "executions"
+                  ? blockingCases.length
+                  : testRunsView === "scheduled"
+                    ? executionSchedules.filter((schedule) => schedule.is_active).length
+                    : workspaceTransactionStatusCounts.running || 0
+            },
+            {
+              label: testRunsView === "executions" ? "Completion" : testRunsView === "scheduled" ? "Next due" : "Failures",
+              value:
+                testRunsView === "executions"
+                  ? `${executionProgress.percent}%`
+                  : testRunsView === "scheduled"
+                    ? (filteredSchedules[0]?.next_run_at ? formatExecutionTimestamp(filteredSchedules[0].next_run_at, "Not set") : "Not set")
+                    : workspaceTransactionStatusCounts.failed || 0
+            }
           ]}
           actions={
-            <>
-              <button
-                className="ghost-button"
-                onClick={() => {
-                  if (!scheduleNextRunAt) {
-                    const nextHour = new Date();
-                    nextHour.setMinutes(0, 0, 0);
-                    nextHour.setHours(nextHour.getHours() + 1);
-                    setScheduleNextRunAt(nextHour.toISOString().slice(0, 16));
-                  }
-                  setIsCreateScheduleModalOpen(true);
-                }}
-                type="button"
-              >
-                <CalendarIcon />
-                Schedule Execution
-              </button>
-              <button className="primary-button" onClick={() => setIsCreateExecutionModalOpen(true)} type="button">
-                <PlayIcon />
-                Create Execution
-              </button>
-            </>
+            testRunsView === "operations" ? undefined : (
+              <>
+                <button
+                  className="ghost-button"
+                  onClick={() => {
+                    if (!scheduleNextRunAt) {
+                      const nextHour = new Date();
+                      nextHour.setMinutes(0, 0, 0);
+                      nextHour.setHours(nextHour.getHours() + 1);
+                      setScheduleNextRunAt(nextHour.toISOString().slice(0, 16));
+                    }
+                    setIsCreateScheduleModalOpen(true);
+                  }}
+                  type="button"
+                >
+                  <CalendarIcon />
+                  Schedule Execution
+                </button>
+                <button className="primary-button" onClick={() => setIsCreateExecutionModalOpen(true)} type="button">
+                  <PlayIcon />
+                  Create Execution
+                </button>
+              </>
+            )
           }
         />
       ) : null}
@@ -2470,16 +2676,17 @@ export function ExecutionsPage() {
         ariaLabel="Test runs views"
         items={[
           { value: "executions", label: "Executions", meta: `${executions.length}`, icon: <ExecutionRunIcon /> },
-          { value: "scheduled", label: "Scheduled", meta: `${executionSchedules.length}`, icon: <ExecutionScheduleIcon /> }
+          { value: "scheduled", label: "Scheduled", meta: `${executionSchedules.length}`, icon: <ExecutionScheduleIcon /> },
+          { value: "operations", label: "Operations", meta: `${workspaceTransactions.length}`, icon: <ActivityIcon /> }
         ]}
         onChange={setTestRunsView}
         value={testRunsView}
       />
 
       <WorkspaceScopeBar
-        appTypeId={selectedExecution?.app_type_id || appTypeId}
+        appTypeId={testRunsView === "executions" ? selectedExecution?.app_type_id || appTypeId : appTypeId}
         appTypes={appTypes}
-        appTypeValueLabel={selectedExecution ? selectedExecutionAppTypeLabel : undefined}
+        appTypeValueLabel={testRunsView === "executions" && selectedExecution ? selectedExecutionAppTypeLabel : undefined}
         disabled={isExecutionScopeReadOnly}
         onAppTypeChange={(value) => {
           setAppTypeId(value);
@@ -2492,8 +2699,8 @@ export function ExecutionsPage() {
           setSelectedSuiteIds([]);
           resetExecutionContextSelection();
         }}
-        projectId={selectedExecution?.project_id || projectId}
-        projectValueLabel={selectedExecution ? selectedExecutionProjectLabel : undefined}
+        projectId={testRunsView === "executions" ? selectedExecution?.project_id || projectId : projectId}
+        projectValueLabel={testRunsView === "executions" && selectedExecution ? selectedExecutionProjectLabel : undefined}
         projects={projects}
       />
 
@@ -2501,22 +2708,36 @@ export function ExecutionsPage() {
         browseView={(
           <Panel
             className="execution-panel execution-panel--list"
-            title={testRunsView === "executions" ? "Execution tiles" : "Scheduled runs"}
+            title={
+              testRunsView === "executions"
+                ? "Execution tiles"
+                : testRunsView === "scheduled"
+                  ? "Scheduled runs"
+                  : "Operations stream"
+            }
             subtitle={
               testRunsView === "executions"
                 ? "Start from the run catalog, then drill into suites, cases, and step execution one focused screen at a time."
-                : "Keep recurring release checks separate from live runs, then launch one instantly when the team is ready."
+                : testRunsView === "scheduled"
+                  ? "Keep recurring release checks separate from live runs, then launch one instantly when the team is ready."
+                  : "Inspect imports, AI generation, and backup syncs as traceable operational records."
             }
           >
             <div className="design-list-toolbar">
               <CatalogViewToggle onChange={setCatalogViewMode} value={catalogViewMode} />
               <CatalogSearchFilter
-                activeFilterCount={activeExecutionFilterCount}
-                ariaLabel={testRunsView === "executions" ? "Search executions" : "Search schedules"}
+                activeFilterCount={testRunsView === "executions" ? activeExecutionFilterCount : 0}
+                ariaLabel={testRunsView === "executions" ? "Search executions" : testRunsView === "scheduled" ? "Search schedules" : "Search operations"}
                 onChange={setExecutionSearch}
-                placeholder={testRunsView === "executions" ? "Search executions" : "Search schedules"}
-                subtitle={testRunsView === "executions" ? "Filter execution tiles by the run status and facts shown on each card." : "Filter scheduled runs by cadence, timing, or scope context."}
-                title={testRunsView === "executions" ? "Filter executions" : "Filter schedules"}
+                placeholder={testRunsView === "executions" ? "Search executions" : testRunsView === "scheduled" ? "Search schedules" : "Search operations"}
+                subtitle={
+                  testRunsView === "executions"
+                    ? "Filter execution tiles by the run status and facts shown on each card."
+                    : testRunsView === "scheduled"
+                      ? "Filter scheduled runs by cadence, timing, or scope context."
+                      : "Search titles, providers, repositories, or backup artifacts."
+                }
+                title={testRunsView === "executions" ? "Filter executions" : testRunsView === "scheduled" ? "Filter schedules" : "Filter operations"}
                 type="search"
                 value={executionSearch}
               >
@@ -2584,11 +2805,11 @@ export function ExecutionsPage() {
               </CatalogSearchFilter>
             </div>
 
-            {(testRunsView === "executions" ? executionsQuery.isLoading : executionSchedulesQuery.isLoading) ? (
+            {(testRunsView === "executions" ? executionsQuery.isLoading : testRunsView === "scheduled" ? executionSchedulesQuery.isLoading : workspaceTransactionsQuery.isLoading) ? (
               <TileCardSkeletonGrid />
             ) : null}
 
-            {!(testRunsView === "executions" ? executionsQuery.isLoading : executionSchedulesQuery.isLoading) ? (
+            {!(testRunsView === "executions" ? executionsQuery.isLoading : testRunsView === "scheduled" ? executionSchedulesQuery.isLoading : workspaceTransactionsQuery.isLoading) ? (
               <div className={catalogViewMode === "tile" ? "tile-browser-grid" : ""}>
                 {testRunsView === "executions" && catalogViewMode === "tile"
                   ? filteredExecutions.map((execution) => (
@@ -2614,6 +2835,53 @@ export function ExecutionsPage() {
                       />
                     ))
                   : null}
+                {testRunsView === "operations" && catalogViewMode === "tile"
+                  ? filteredWorkspaceTransactions.map((transaction) => {
+                      const presentation = describeWorkspaceTransaction(transaction, {
+                        appTypeNameById,
+                        projectNameById
+                      });
+                      const summary = resolveWorkspaceTransactionSummary(transaction, presentation);
+                      const scopeLabel = transaction.app_type_id
+                        ? appTypeNameById[transaction.app_type_id] || "App type scope"
+                        : transaction.project_id
+                          ? projectNameById[transaction.project_id] || "Project scope"
+                          : "Workspace scope";
+
+                      return (
+                        <button
+                          className={[
+                            "stack-item",
+                            "execution-activity-row",
+                            "execution-activity-card",
+                            selectedWorkspaceTransaction?.id === transaction.id ? "is-active" : ""
+                          ].filter(Boolean).join(" ")}
+                          key={transaction.id}
+                          onClick={() => setSelectedOperationId(transaction.id)}
+                          type="button"
+                        >
+                          <div aria-hidden="true" className="execution-activity-icon">
+                            {presentation.icon}
+                          </div>
+                          <div className="execution-activity-body">
+                            <div className="execution-activity-head">
+                              <div className="execution-activity-copy">
+                                <strong>{transaction.title}</strong>
+                                <span>{presentation.eyebrow}</span>
+                              </div>
+                              <StatusBadge value={transaction.status} />
+                            </div>
+                            <span className="execution-card-time">{summary}</span>
+                            <div className="execution-activity-tags">
+                              <span className="count-pill">{scopeLabel}</span>
+                              <span className="count-pill">{formatExecutionTimestamp(transaction.latest_event_at || transaction.updated_at || transaction.created_at, "Timestamp unavailable")}</span>
+                              <span className="count-pill">{`${transaction.event_count || 0} event${transaction.event_count === 1 ? "" : "s"}`}</span>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })
+                  : null}
                 {testRunsView === "executions" && catalogViewMode === "list" ? (
                   <DataTable
                     columns={executionListColumns}
@@ -2636,117 +2904,143 @@ export function ExecutionsPage() {
                     storageKey="qaira:execution-schedules:list-columns"
                   />
                 ) : null}
+                {testRunsView === "operations" && catalogViewMode === "list" ? (
+                  <DataTable
+                    columns={operationListColumns}
+                    emptyMessage="No operations have been recorded yet."
+                    getRowClassName={(transaction) => (selectedWorkspaceTransaction?.id === transaction.id ? "is-active-row" : "")}
+                    getRowKey={(transaction) => transaction.id}
+                    onRowClick={(transaction) => setSelectedOperationId(transaction.id)}
+                    rows={filteredWorkspaceTransactions}
+                    storageKey="qaira:operations:list-columns"
+                  />
+                ) : null}
                 {testRunsView === "executions" && !filteredExecutions.length ? <div className="empty-state compact">No executions created yet.</div> : null}
                 {testRunsView === "scheduled" && !filteredSchedules.length ? <div className="empty-state compact">No schedules created yet.</div> : null}
+                {testRunsView === "operations" && !filteredWorkspaceTransactions.length ? <div className="empty-state compact">No operations have been recorded for this scope yet.</div> : null}
               </div>
             ) : null}
-
-            <section className="execution-operations-shell">
-              <div className="execution-context-summary-head">
-                <div className="execution-context-summary-copy">
-                  <strong>Operations activity</strong>
-                  <span>
-                    {projectId
-                      ? `Recent bulk imports and scheduled AI generation for ${selectedProject?.name || "the selected project"}${selectedAppType ? ` · ${selectedAppType.name}` : ""}.`
-                      : "Select a project to review import and AI generation activity."}
-                  </span>
-                </div>
-                <span className="count-pill">
-                  {workspaceTransactionsQuery.isLoading ? "Loading…" : `${workspaceTransactions.length} event${workspaceTransactions.length === 1 ? "" : "s"}`}
-                </span>
-              </div>
-
-              {projectId ? (
-                <>
-                  <div className="metric-strip compact">
-                    <div className="mini-card">
-                      <strong>{workspaceTransactionStatusCounts.queued || 0}</strong>
-                      <span>Queued</span>
-                    </div>
-                    <div className="mini-card">
-                      <strong>{workspaceTransactionStatusCounts.running || 0}</strong>
-                      <span>Running</span>
-                    </div>
-                    <div className="mini-card">
-                      <strong>{workspaceTransactionStatusCounts.completed || 0}</strong>
-                      <span>Completed</span>
-                    </div>
-                    <div className="mini-card">
-                      <strong>{workspaceTransactionStatusCounts.failed || 0}</strong>
-                      <span>Failed</span>
-                    </div>
-                  </div>
-
-                  {workspaceTransactionsQuery.error instanceof Error ? (
-                    <div className="empty-state compact">{workspaceTransactionsQuery.error.message}</div>
-                  ) : null}
-
-                  {!workspaceTransactionsQuery.error && workspaceTransactions.length ? (
-                    <div className="stack-list execution-activity-list">
-                      {workspaceTransactions.map((transaction) => {
-                        const presentation = describeWorkspaceTransaction(transaction, {
-                          appTypeNameById,
-                          projectNameById
-                        });
-                        const importedCount = readWorkspaceTransactionCount(transaction, "imported");
-                        const failedCount = readWorkspaceTransactionCount(transaction, "failed");
-                        const generatedCaseCount = readWorkspaceTransactionCount(transaction, "generated_cases_count");
-                        const requirementCount = readWorkspaceTransactionCount(transaction, "requirement_count");
-                        const createdByLabel = transaction.created_user
-                          ? resolveUserPrimaryLabel(transaction.created_user)
-                          : "System";
-                        const scopeLabel = transaction.app_type_id
-                          ? appTypeNameById[transaction.app_type_id] || "App type scope"
-                          : transaction.project_id
-                            ? projectNameById[transaction.project_id] || "Project scope"
-                            : "Workspace scope";
-
-                        return (
-                          <div className="stack-item execution-activity-row execution-activity-card" key={transaction.id}>
-                            <div aria-hidden="true" className="execution-activity-icon">
-                              {presentation.icon}
-                            </div>
-                            <div className="execution-activity-body">
-                              <div className="execution-activity-head">
-                                <div className="execution-activity-copy">
-                                  <strong>{transaction.title}</strong>
-                                  <span>{presentation.eyebrow}</span>
-                                </div>
-                                <StatusBadge value={transaction.status} />
-                              </div>
-                              <span className="execution-card-time">
-                                {transaction.description || presentation.detail}
-                              </span>
-                              <div className="execution-activity-tags">
-                                <span className="count-pill">{scopeLabel}</span>
-                                <span className="count-pill">{formatExecutionTimestamp(transaction.completed_at || transaction.started_at || transaction.created_at, "Timestamp unavailable")}</span>
-                                {transaction.metadata?.import_source ? <span className="count-pill">{String(transaction.metadata.import_source).replace("_", " ").toUpperCase()}</span> : null}
-                                {importedCount || failedCount ? <span className="count-pill">{`${importedCount} imported · ${failedCount} failed`}</span> : null}
-                                {generatedCaseCount ? <span className="count-pill">{`${generatedCaseCount} generated`}</span> : null}
-                                {requirementCount ? <span className="count-pill">{formatCountLabel(requirementCount, "requirement")}</span> : null}
-                              </div>
-                              <small className="execution-activity-footnote">
-                                {createdByLabel} · {scopeLabel}
-                              </small>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-
-                  {!workspaceTransactionsQuery.error && !workspaceTransactions.length && !workspaceTransactionsQuery.isLoading ? (
-                    <div className="empty-state compact">No bulk import or scheduled AI generation activity has been recorded for this project yet.</div>
-                  ) : null}
-                </>
-              ) : (
-                <div className="empty-state compact">Select a project to see bulk imports, JUnit XML imports, and scheduled AI generation history.</div>
-              )}
-            </section>
           </Panel>
         )}
         detailView={(
-          testRunsView === "scheduled" ? (
+          testRunsView === "operations" ? (
+            <Panel
+              className="execution-panel execution-panel--detail"
+              title="Operation detail"
+              subtitle={selectedWorkspaceTransaction ? "Inspect metadata, recent state, and the full event timeline for this operation." : "Select an operation from the left to inspect its trace log."}
+            >
+              {selectedWorkspaceTransaction ? (
+                (() => {
+                  const presentation = describeWorkspaceTransaction(selectedWorkspaceTransaction, {
+                    appTypeNameById,
+                    projectNameById
+                  });
+                  const summary = resolveWorkspaceTransactionSummary(selectedWorkspaceTransaction, presentation);
+
+                  return (
+                <div className="detail-stack">
+                  <div className="detail-summary">
+                    <strong>{selectedWorkspaceTransaction.title}</strong>
+                    <span>{summary || "No summary provided for this operation."}</span>
+                    <span>{selectedWorkspaceTransaction.created_user ? resolveUserPrimaryLabel(selectedWorkspaceTransaction.created_user) : "System"} · {formatExecutionTimestamp(selectedWorkspaceTransaction.created_at, "Timestamp unavailable")}</span>
+                  </div>
+
+                  <div className="metric-strip compact">
+                    <div className="mini-card">
+                      <strong>{selectedWorkspaceTransaction.status}</strong>
+                      <span>Status</span>
+                    </div>
+                    <div className="mini-card">
+                      <strong>{selectedWorkspaceTransaction.event_count || 0}</strong>
+                      <span>Events</span>
+                    </div>
+                    <div className="mini-card">
+                      <strong>{formatExecutionTimestamp(selectedWorkspaceTransaction.latest_event_at || selectedWorkspaceTransaction.updated_at, "Not recorded")}</strong>
+                      <span>Latest activity</span>
+                    </div>
+                  </div>
+
+                  <div className="stack-list">
+                    <div className="stack-item">
+                      <div>
+                        <strong>Scope</strong>
+                        <span>
+                          {selectedWorkspaceTransaction.app_type_id
+                            ? appTypeNameById[selectedWorkspaceTransaction.app_type_id] || "App type scope"
+                            : selectedWorkspaceTransaction.project_id
+                              ? projectNameById[selectedWorkspaceTransaction.project_id] || "Project scope"
+                              : "Workspace scope"}
+                        </span>
+                      </div>
+                      <StatusBadge value={selectedWorkspaceTransaction.status} />
+                    </div>
+                    <div className="stack-item">
+                      <div>
+                        <strong>Action</strong>
+                        <span>{selectedWorkspaceTransaction.action.replace(/_/g, " ")}</span>
+                      </div>
+                    </div>
+                    {Object.keys(selectedWorkspaceTransaction.metadata || {}).length ? (
+                      <div className="stack-item execution-operation-metadata">
+                        <div>
+                          <strong>Metadata</strong>
+                          <span>Operational context captured for this event.</span>
+                        </div>
+                        <code className="execution-operation-json">{JSON.stringify(selectedWorkspaceTransaction.metadata, null, 2)}</code>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="execution-context-summary-head">
+                    <div className="execution-context-summary-copy">
+                      <strong>Trace log</strong>
+                      <span>Every recorded stage for this operation appears below in the order it happened.</span>
+                    </div>
+                    <span className="count-pill">
+                      {selectedWorkspaceTransactionEventsQuery.isLoading
+                        ? "Loading…"
+                        : `${(selectedWorkspaceTransactionEventsQuery.data || []).length} event${(selectedWorkspaceTransactionEventsQuery.data || []).length === 1 ? "" : "s"}`}
+                    </span>
+                  </div>
+
+                  {selectedWorkspaceTransactionEventsQuery.error instanceof Error ? (
+                    <div className="empty-state compact">{selectedWorkspaceTransactionEventsQuery.error.message}</div>
+                  ) : null}
+
+                  {!selectedWorkspaceTransactionEventsQuery.error && selectedWorkspaceTransactionEventsQuery.isLoading ? (
+                    <div className="empty-state compact">Loading operation events…</div>
+                  ) : null}
+
+                  {!selectedWorkspaceTransactionEventsQuery.error && !(selectedWorkspaceTransactionEventsQuery.data || []).length && !selectedWorkspaceTransactionEventsQuery.isLoading ? (
+                    <div className="empty-state compact">No event log has been recorded for this operation yet.</div>
+                  ) : null}
+
+                  {!selectedWorkspaceTransactionEventsQuery.error && (selectedWorkspaceTransactionEventsQuery.data || []).length ? (
+                    <div className="stack-list execution-activity-list">
+                      {(selectedWorkspaceTransactionEventsQuery.data || []).map((event) => (
+                        <details className="stack-item execution-operation-event" key={event.id}>
+                          <summary className="execution-operation-event-summary">
+                            <div>
+                              <strong>{event.message}</strong>
+                              <span>{event.phase ? `${event.phase} · ` : ""}{formatExecutionTimestamp(event.created_at, "Timestamp unavailable")}</span>
+                            </div>
+                            <span className={`status-badge ${event.level}`}>{event.level}</span>
+                          </summary>
+                          {Object.keys(event.details || {}).length ? (
+                            <code className="execution-operation-json">{JSON.stringify(event.details, null, 2)}</code>
+                          ) : null}
+                        </details>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                  );
+                })()
+              ) : (
+                <div className="empty-state compact">Choose an operation to review trace logs, counts, and provider metadata.</div>
+              )}
+            </Panel>
+          ) : testRunsView === "scheduled" ? (
             <Panel
               className="execution-panel execution-panel--detail"
               title="Scheduled run"
@@ -3501,7 +3795,13 @@ export function ExecutionsPage() {
             </Panel>
           )
         )}
-        isDetailOpen={testRunsView === "scheduled" ? Boolean(selectedSchedule) : Boolean(selectedExecution)}
+        isDetailOpen={
+          testRunsView === "scheduled"
+            ? Boolean(selectedSchedule)
+            : testRunsView === "operations"
+              ? Boolean(selectedWorkspaceTransaction)
+              : Boolean(selectedExecution)
+        }
       />
 
       {executionEvidencePreview ? (

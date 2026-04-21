@@ -2809,9 +2809,10 @@ textarea {
 .data-table-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 0.75rem;
   flex-wrap: wrap;
+  min-height: 2.65rem;
 }
 
 .data-table-toolbar-meta {
@@ -2821,6 +2822,7 @@ textarea {
   gap: 0.7rem;
   flex-wrap: wrap;
   min-width: 0;
+  margin-left: auto;
 }
 
 .data-table-toolbar-copy {
@@ -2961,32 +2963,23 @@ textarea {
 
 .data-table-config-option-copy {
   min-width: 0;
-  display: grid;
-  gap: 0.18rem;
+  display: block;
 }
 
 .data-table-config-option-copy strong {
   font-size: 0.86rem;
 }
 
-.data-table-config-option-copy span {
-  color: var(--text-secondary);
-  font-size: 0.76rem;
-  line-height: 1.35;
-}
-
 .data-table-config-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
   margin-left: auto;
   flex-shrink: 0;
-  color: var(--text-secondary);
-  font-size: 0.76rem;
 }
 
 .data-table-config-toggle input {
   width: auto;
+  margin: 0;
 }
 
 .data-table-config-option-state {
@@ -3036,11 +3029,13 @@ textarea {
   padding-top: 0.5rem;
   padding-bottom: 0.8rem;
   border-bottom: 0;
+  text-align: center;
 }
 
 .data-table-header-label {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   min-height: 1.95rem;
   padding: 0.25rem 0.72rem;
   border: 1px solid rgba(33, 104, 243, 0.12);
@@ -3052,6 +3047,22 @@ textarea {
   letter-spacing: 0.01em;
   white-space: nowrap;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.data-table-header-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.95rem;
+  height: 1.95rem;
+  border-radius: 999px;
+  border: 1px solid rgba(33, 104, 243, 0.12);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(246, 249, 255, 0.9));
+}
+
+.data-table-header-checkbox input {
+  width: auto;
+  margin: 0;
 }
 
 .data-table-multiline {
@@ -3201,20 +3212,28 @@ textarea {
 
 .status-badge.running,
 .status-badge.passed,
-.status-badge.completed {
+.status-badge.completed,
+.status-badge.success {
   background: rgba(46, 125, 82, 0.14);
   color: var(--success);
 }
 
-.status-badge.aborted {
+.status-badge.aborted,
+.status-badge.warning {
   background: rgba(193, 120, 32, 0.16);
   color: #b96b00;
 }
 
 .status-badge.failed,
-.status-badge.blocked {
+.status-badge.blocked,
+.status-badge.error {
   background: rgba(154, 58, 47, 0.14);
   color: var(--danger);
+}
+
+.status-badge.info {
+  background: rgba(33, 104, 243, 0.1);
+  color: var(--primary-strong);
 }
 
 :root[data-sidebar="collapsed"] .app-shell {
@@ -8250,7 +8269,26 @@ textarea:disabled,
 }
 
 .linked-test-case-modal {
-  width: min(56rem, 100%);
+  width: min(78rem, 100%);
+}
+
+.linked-test-case-workspace-modal {
+  max-height: min(92vh, 64rem);
+}
+
+.linked-test-case-workspace-body {
+  padding-right: 0;
+}
+
+.linked-test-case-workspace-shell,
+.linked-test-case-workspace-panel {
+  min-height: 0;
+}
+
+.linked-test-case-step-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.35rem;
 }
 
 .suite-create-modal {
@@ -9553,6 +9591,17 @@ textarea:disabled,
   background: rgba(255, 255, 255, 0.82);
 }
 
+button.execution-activity-card {
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(33, 104, 243, 0.08);
+}
+
+.execution-activity-card.is-active {
+  border-color: rgba(33, 104, 243, 0.22);
+  box-shadow: 0 12px 28px rgba(33, 104, 243, 0.08);
+}
+
 .execution-activity-icon {
   display: inline-flex;
   align-items: center;
@@ -9594,6 +9643,45 @@ textarea:disabled,
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
+}
+
+.execution-operation-metadata {
+  align-items: flex-start;
+}
+
+.execution-operation-json {
+  display: block;
+  max-width: 100%;
+  padding: 0.85rem 0.95rem;
+  border-radius: 16px;
+  background: rgba(15, 32, 62, 0.96);
+  color: #f3f7ff;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.execution-operation-event {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.execution-operation-event-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.85rem;
+}
+
+.execution-operation-event-summary::-webkit-details-marker {
+  display: none;
+}
+
+.execution-operation-event-summary span {
+  color: var(--text-secondary);
 }
 
 .execution-activity-footnote {

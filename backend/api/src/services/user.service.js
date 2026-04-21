@@ -340,6 +340,15 @@ exports.bulkImportUsers = async ({ rows = [], default_role_id, created_by } = {}
     created_by,
     started_at: new Date().toISOString()
   });
+  await workspaceTransactionService.appendTransactionEvent(transaction.id, {
+    phase: "prepare",
+    message: `Started user import for ${rows.length} CSV row${rows.length === 1 ? "" : "s"}.`,
+    details: {
+      import_source: "csv",
+      total_rows: rows.length,
+      default_role_id: defaultRoleId
+    }
+  });
 
   const created = [];
   const errors = [];
@@ -388,6 +397,18 @@ exports.bulkImportUsers = async ({ rows = [], default_role_id, created_by } = {}
       default_role_id: defaultRoleId
     },
     completed_at: new Date().toISOString()
+  });
+  await workspaceTransactionService.appendTransactionEvent(transaction.id, {
+    level: created.length ? "success" : "error",
+    phase: "complete",
+    message: created.length
+      ? `Imported ${created.length} user${created.length === 1 ? "" : "s"} with ${errors.length} failure${errors.length === 1 ? "" : "s"}.`
+      : "User import completed with no created accounts.",
+    details: {
+      imported: created.length,
+      failed: errors.length,
+      sample_errors: errors.slice(0, 10)
+    }
   });
 
   return {

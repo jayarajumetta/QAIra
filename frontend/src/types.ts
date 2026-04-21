@@ -49,7 +49,10 @@ export type Requirement = {
   priority: number | null;
   status: string | null;
   test_case_ids?: string[];
+  created_by?: string | null;
+  updated_by?: string | null;
   created_at?: string;
+  updated_at?: string;
 };
 
 export type Feedback = {
@@ -65,7 +68,7 @@ export type Feedback = {
 
 export type Integration = {
   id: string;
-  type: "llm" | "jira" | "email" | "google_auth";
+  type: "llm" | "jira" | "email" | "google_auth" | "google_drive" | "github";
   name: string;
   base_url: string | null;
   api_key: string | null;
@@ -205,10 +208,22 @@ export type WorkspaceTransaction = {
   related_id: string | null;
   created_by: string | null;
   created_user: User | null;
+  event_count?: number;
+  latest_event_at?: string | null;
   started_at?: string | null;
   completed_at?: string | null;
   created_at?: string;
   updated_at?: string;
+};
+
+export type WorkspaceTransactionEvent = {
+  id: string;
+  transaction_id: string;
+  level: "info" | "success" | "warning" | "error" | string;
+  phase: string | null;
+  message: string;
+  details: Record<string, unknown>;
+  created_at?: string;
 };
 
 export type SmartExecutionImpactCase = {
@@ -252,7 +267,10 @@ export type TestSuite = {
   app_type_id: string;
   name: string;
   parent_id: string | null;
+  created_by?: string | null;
+  updated_by?: string | null;
   created_at?: string;
+  updated_at?: string;
 };
 
 export type TestCase = {
@@ -273,7 +291,10 @@ export type TestCase = {
   ai_generation_review_status?: "pending" | "accepted" | null;
   ai_generation_job_id?: string | null;
   ai_generated_at?: string | null;
+  created_by?: string | null;
+  updated_by?: string | null;
   created_at?: string;
+  updated_at?: string;
 };
 
 export type TestStep = {
@@ -339,6 +360,8 @@ export type SharedStepGroup = {
     status: string | null;
     referenced_step_count: number;
   }>;
+  created_by?: string | null;
+  updated_by?: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -458,6 +481,8 @@ export type Execution = {
     avatar_data_url?: string | null;
   } | null;
   created_by: string | null;
+  created_at?: string;
+  updated_at?: string;
   started_at: string | null;
   ended_at: string | null;
 };

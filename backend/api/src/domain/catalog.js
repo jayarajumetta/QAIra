@@ -43,6 +43,27 @@ const INTEGRATION_TYPE_OPTIONS = freezeOptions([
     description: "OAuth identity provider for Google authentication.",
     icon: "GO",
     defaults: {}
+  },
+  {
+    value: "google_drive",
+    label: "Google Drive Backup",
+    description: "Project artifact backup as a compressed archive in Google Drive.",
+    icon: "GD",
+    defaults: {
+      schedule_mode: "manual",
+      include_requirements_csv: true,
+      include_test_cases_csv: true
+    }
+  },
+  {
+    value: "github",
+    label: "GitHub Code Sync",
+    description: "Push test-case-linked automation code and manifests into a GitHub repository.",
+    icon: "GH",
+    defaults: {
+      branch: "main",
+      schedule_mode: "manual"
+    }
   }
 ]);
 

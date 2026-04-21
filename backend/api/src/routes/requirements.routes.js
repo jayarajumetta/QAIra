@@ -18,7 +18,10 @@ module.exports = async function (fastify) {
     // Verify user is member of project
     await projectService.getProject(req.body.project_id, req.user.id);
 
-    return service.createRequirement(req.body);
+    return service.createRequirement({
+      ...req.body,
+      created_by: req.user.id
+    });
   });
 
   fastify.post("/requirements/import", async (req) => {
@@ -80,7 +83,10 @@ module.exports = async function (fastify) {
     // Verify user is member of the requirement's project
     await projectService.getProject(requirement.project_id, req.user.id);
 
-    return service.updateRequirement(req.params.id, req.body);
+    return service.updateRequirement(req.params.id, {
+      ...req.body,
+      updated_by: req.user.id
+    });
   });
 
   fastify.post("/requirements/:id/generate-test-cases", async (req) => {

@@ -74,14 +74,17 @@ const insertTestCaseRecord = db.prepare(`
     ai_generation_source,
     ai_generation_review_status,
     ai_generation_job_id,
-    ai_generated_at
+    ai_generated_at,
+    created_by,
+    updated_by,
+    updated_at
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 `);
 
 const updateTestCaseRecord = db.prepare(`
   UPDATE test_cases
-  SET app_type_id = ?, suite_id = ?, title = ?, description = ?, parameter_values = ?, automated = ?, priority = ?, status = ?, requirement_id = ?
+  SET app_type_id = ?, suite_id = ?, title = ?, description = ?, parameter_values = ?, automated = ?, priority = ?, status = ?, requirement_id = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
   WHERE id = ?
 `);
 
@@ -581,7 +584,9 @@ const createPersistablePayload = async ({
   ai_generation_source,
   ai_generation_review_status,
   ai_generation_job_id,
-  ai_generated_at
+  ai_generated_at,
+  created_by,
+  updated_by
 }) => {
   const resolvedTitle = normalizeText(title);
 
@@ -620,7 +625,9 @@ const createPersistablePayload = async ({
     ai_generation_source: resolvedAiGenerationSource,
     ai_generation_review_status: resolvedAiGenerationReviewStatus,
     ai_generation_job_id: normalizeText(ai_generation_job_id),
-    ai_generated_at: normalizeIsoDateTime(ai_generated_at) || (resolvedAiGenerationSource ? new Date().toISOString() : null)
+    ai_generated_at: normalizeIsoDateTime(ai_generated_at) || (resolvedAiGenerationSource ? new Date().toISOString() : null),
+    created_by: normalizeText(created_by),
+    updated_by: normalizeText(updated_by) || normalizeText(created_by)
   };
 };
 
@@ -642,7 +649,9 @@ const createOne = db.transaction(async (payload) => {
     payload.ai_generation_source,
     payload.ai_generation_review_status,
     payload.ai_generation_job_id,
-    payload.ai_generated_at
+    payload.ai_generated_at,
+    payload.created_by,
+    payload.updated_by
   );
 
   await syncSuiteMappings(id, payload.suite_ids);
@@ -746,6 +755,18 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
     created_by,
     started_at: new Date().toISOString()
   });
+  await workspaceTransactionService.appendTransactionEvent(transaction.id, {
+    phase: "prepare",
+    message:
+      resolvedImportSource === "junit_xml"
+        ? `Started JUnit XML import for ${rows.length} test case row${rows.length === 1 ? "" : "s"}.`
+        : `Started CSV import for ${rows.length} test case row${rows.length === 1 ? "" : "s"}.`,
+    details: {
+      import_source: resolvedImportSource,
+      total_rows: rows.length,
+      requirement_id: defaultRequirementId
+    }
+  });
 
   const created = [];
   const errors = [];
@@ -806,7 +827,8 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
           normalizedRow?.requirementId,
           ...resolvedRequirementIdsFromNames
         ]),
-        steps: importedSteps
+        steps: importedSteps,
+        created_by
       });
 
       created.push({
@@ -844,12 +866,36 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
     },
     completed_at: new Date().toISOString()
   });
+  await workspaceTransactionService.appendTransactionEvent(transaction.id, {
+    level: created.length ? "success" : "error",
+    phase: "complete",
+    message: created.length
+      ? `Imported ${created.length} test case${created.length === 1 ? "" : "s"} with ${errors.length} failure${errors.length === 1 ? "" : "s"}.`
+      : `The ${resolvedImportSource === "junit_xml" ? "JUnit XML import" : "CSV import"} finished without creating test cases.`,
+    details: {
+      import_source: resolvedImportSource,
+      imported: created.length,
+      failed: errors.length,
+      sample_errors: errors.slice(0, 10)
+    }
+  });
 
   return response;
 };
 
 exports.getTestCases = async ({ suite_id, requirement_id, status, app_type_id }) => {
-  let query = `SELECT DISTINCT test_cases.* FROM test_cases`;
+  let query = `
+    WITH ranked_test_cases AS (
+      SELECT
+        test_cases.*,
+        ${suite_id ? "suite_test_cases.sort_order" : "NULL"} AS matched_suite_sort_order,
+        COALESCE(test_cases.updated_at, test_cases.created_at) AS case_activity_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY test_cases.id
+          ORDER BY ${suite_id ? "suite_test_cases.sort_order ASC, " : ""}COALESCE(test_cases.updated_at, test_cases.created_at) DESC, test_cases.created_at DESC
+        ) AS case_row_number
+      FROM test_cases
+  `;
   const joins = [];
   const where = [`1=1`];
   const params = [];
@@ -888,12 +934,20 @@ exports.getTestCases = async ({ suite_id, requirement_id, status, app_type_id })
   }
 
   query += ` WHERE ${where.join(" AND ")}`;
+  query += `
+    )
+    SELECT *
+    FROM ranked_test_cases
+    WHERE case_row_number = 1
+  `;
   query += suite_id
-    ? ` ORDER BY suite_test_cases.sort_order ASC, test_cases.created_at DESC`
-    : ` ORDER BY test_cases.created_at DESC`;
+    ? ` ORDER BY matched_suite_sort_order ASC, case_activity_at DESC, created_at DESC`
+    : ` ORDER BY case_activity_at DESC, created_at DESC`;
 
   const rows = await db.prepare(query).all(...params);
-  return Promise.all(rows.map(hydrateSuiteIds));
+  return Promise.all(
+    rows.map(({ matched_suite_sort_order, case_activity_at, case_row_number, ...testCase }) => hydrateSuiteIds(testCase))
+  );
 };
 
 exports.getTestCase = async (id) => {
@@ -940,7 +994,8 @@ exports.updateTestCase = async (id, data) => {
     parameter_values: data.parameter_values !== undefined ? normalizeParameterValues(data.parameter_values) : normalizeParameterValues(existing.parameter_values),
     automated: data.automated !== undefined ? normalizeAutomated(data.automated, existing.automated || DEFAULT_AUTOMATED) : existing.automated || DEFAULT_AUTOMATED,
     priority: data.priority !== undefined ? normalizePriority(data.priority) : existing.priority ?? DEFAULT_PRIORITY,
-    status: data.status !== undefined ? normalizeStatus(data.status) : existing.status || DEFAULT_STATUS
+    status: data.status !== undefined ? normalizeStatus(data.status) : existing.status || DEFAULT_STATUS,
+    updated_by: normalizeText(data.updated_by) || existing.updated_by || existing.created_by || null
   };
 
   const executeUpdate = db.transaction(async () => {
@@ -954,6 +1009,7 @@ exports.updateTestCase = async (id, data) => {
       payload.priority,
       payload.status,
       payload.requirement_ids[0] || null,
+      payload.updated_by,
       id
     );
 

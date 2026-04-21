@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AddIcon } from "../components/AppIcons";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AddIcon, GithubIcon, GoogleDriveIcon } from "../components/AppIcons";
 import { api } from "../lib/api";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
 import { DisplayIdBadge } from "../components/DisplayIdBadge";
@@ -25,7 +25,8 @@ import { useCurrentProject } from "../hooks/useCurrentProject";
 import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 import { useAuth } from "../auth/AuthContext";
-import type { AppType } from "../types";
+import { formatAuditTimestamp } from "../lib/auditDisplay";
+import type { AppType, WorkspaceTransaction } from "../types";
 
 type ProjectSection = "members" | "appTypes";
 
@@ -139,6 +140,20 @@ export function ProjectsPage() {
   const defaultAppTypeValue = domainMetadataQuery.data?.app_types.default_type || "web";
   const appTypeTypeOptions = domainMetadataQuery.data?.app_types.types || [];
   const [projectDraft, setProjectDraft] = useState<ProjectCreateDraft>(() => createInitialProjectDraft(defaultAppTypeValue));
+  const integrationsQuery = useQuery({
+    queryKey: ["integrations"],
+    queryFn: () => api.integrations.list(),
+    enabled: Boolean(session)
+  });
+  const projectSyncTransactionsQuery = useQuery({
+    queryKey: ["project-sync-transactions", focusedProjectId || selectedProjectId],
+    queryFn: () => api.workspaceTransactions.list({
+      project_id: focusedProjectId || selectedProjectId || undefined,
+      category: "backup",
+      limit: 20
+    }),
+    enabled: Boolean((focusedProjectId || selectedProjectId) && session)
+  });
 
   const projectItems = projects.data || [];
   const isProjectCatalogLoading =
@@ -454,12 +469,40 @@ export function ProjectsPage() {
   const selectedProjectRequirementCount = projectId ? requirementCountByProjectId[projectId] || 0 : 0;
   const selectedProjectTestCaseCount = projectId ? testCaseCountByProjectId[projectId] || 0 : 0;
   const selectedProjectAppTypeCount = projectId ? appTypeCountByProjectId[projectId] || 0 : 0;
+  const focusedProjectSyncIntegrations = useMemo(
+    () =>
+      (integrationsQuery.data || []).filter(
+        (integration) =>
+          (integration.type === "google_drive" || integration.type === "github") &&
+          integration.is_active &&
+          integration.config?.project_id === focusedProject?.id
+      ),
+    [focusedProject?.id, integrationsQuery.data]
+  );
+  const lastProjectBackupByProvider = useMemo(
+    () =>
+      (projectSyncTransactionsQuery.data || []).reduce<Record<string, WorkspaceTransaction>>((accumulator, transaction) => {
+        const provider = String(transaction.metadata?.provider || "");
+
+        if (!provider || accumulator[provider]) {
+          return accumulator;
+        }
+
+        accumulator[provider] = transaction;
+        return accumulator;
+      }, {}),
+    [projectSyncTransactionsQuery.data]
+  );
+  const focusedGoogleDriveIntegration = focusedProjectSyncIntegrations.find((integration) => integration.type === "google_drive") || null;
+  const focusedGithubIntegration = focusedProjectSyncIntegrations.find((integration) => integration.type === "github") || null;
 
   const invalidate = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["projects"] }),
       queryClient.invalidateQueries({ queryKey: ["project-members"] }),
-      queryClient.invalidateQueries({ queryKey: ["app-types"] })
+      queryClient.invalidateQueries({ queryKey: ["app-types"] }),
+      queryClient.invalidateQueries({ queryKey: ["integrations"] }),
+      queryClient.invalidateQueries({ queryKey: ["project-sync-transactions"] })
     ]);
   };
 
@@ -520,6 +563,19 @@ export function ProjectsPage() {
     onError: (error) => {
       setMessageTone("error");
       setMessage(error instanceof Error ? error.message : "Unable to add app type");
+    }
+  });
+  const queueProjectSync = useMutation({
+    mutationFn: ({ projectId: syncProjectId, provider }: { projectId: string; provider: "google_drive" | "github" }) =>
+      api.projects.sync(syncProjectId, provider),
+    onSuccess: async (_, variables) => {
+      setMessageTone("success");
+      setMessage(`${variables.provider === "google_drive" ? "Google Drive backup" : "GitHub sync"} queued.`);
+      await invalidate();
+    },
+    onError: (error) => {
+      setMessageTone("error");
+      setMessage(error instanceof Error ? error.message : "Unable to queue project sync");
     }
   });
 
@@ -813,6 +869,48 @@ export function ProjectsPage() {
                       <strong>{selectedProjectTestCaseCount}</strong>
                       <span>Test cases</span>
                     </div>
+                  </div>
+                  <div className="action-row">
+                    <button
+                      className="ghost-button"
+                      disabled={!focusedGoogleDriveIntegration || queueProjectSync.isPending}
+                      onClick={() => focusedProject && queueProjectSync.mutate({ projectId: focusedProject.id, provider: "google_drive" })}
+                      title={
+                        focusedGoogleDriveIntegration
+                          ? `Last backup: ${lastProjectBackupByProvider.google_drive ? formatAuditTimestamp(lastProjectBackupByProvider.google_drive.completed_at || lastProjectBackupByProvider.google_drive.created_at, "Not recorded") : "Not recorded"}`
+                          : "Configure a Google Drive backup integration for this project first"
+                      }
+                      type="button"
+                    >
+                      <GoogleDriveIcon />
+                      <span>{queueProjectSync.isPending && focusedGoogleDriveIntegration ? "Queueing…" : "Backup to Drive"}</span>
+                    </button>
+                    <button
+                      className="ghost-button"
+                      disabled={!focusedGithubIntegration || queueProjectSync.isPending}
+                      onClick={() => focusedProject && queueProjectSync.mutate({ projectId: focusedProject.id, provider: "github" })}
+                      title={
+                        focusedGithubIntegration
+                          ? `Last sync: ${lastProjectBackupByProvider.github ? formatAuditTimestamp(lastProjectBackupByProvider.github.completed_at || lastProjectBackupByProvider.github.created_at, "Not recorded") : "Not recorded"}`
+                          : "Configure a GitHub sync integration for this project first"
+                      }
+                      type="button"
+                    >
+                      <GithubIcon />
+                      <span>{queueProjectSync.isPending && focusedGithubIntegration ? "Queueing…" : "Sync to GitHub"}</span>
+                    </button>
+                  </div>
+                  <div className="record-grid">
+                    <article className="mini-card">
+                      <strong>{focusedGoogleDriveIntegration ? "Google Drive" : "No Drive backup"}</strong>
+                      <span>{focusedGoogleDriveIntegration ? `Mode: ${String(focusedGoogleDriveIntegration.config?.schedule_mode || "manual")}` : "Create a Google Drive integration mapped to this project."}</span>
+                      <span>{focusedGoogleDriveIntegration ? `Last backup: ${formatAuditTimestamp(typeof focusedGoogleDriveIntegration.config?.last_synced_at === "string" ? focusedGoogleDriveIntegration.config.last_synced_at : undefined, "Not recorded")}` : "Compressed artifact backup stays unavailable until configured."}</span>
+                    </article>
+                    <article className="mini-card">
+                      <strong>{focusedGithubIntegration ? "GitHub" : "No GitHub sync"}</strong>
+                      <span>{focusedGithubIntegration ? `Mode: ${String(focusedGithubIntegration.config?.schedule_mode || "manual")}` : "Create a GitHub integration mapped to this project."}</span>
+                      <span>{focusedGithubIntegration ? `Last sync: ${formatAuditTimestamp(typeof focusedGithubIntegration.config?.last_synced_at === "string" ? focusedGithubIntegration.config.last_synced_at : undefined, "Not recorded")}` : "Automation code sync stays unavailable until configured."}</span>
+                    </article>
                   </div>
                 </div>
               ) : (

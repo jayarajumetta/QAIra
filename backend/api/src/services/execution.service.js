@@ -746,13 +746,18 @@ exports.createExecution = async ({
   return { id };
 };
 
-exports.getExecutions = async ({ project_id, status }) => {
+exports.getExecutions = async ({ project_id, app_type_id, status }) => {
   let query = `SELECT * FROM executions WHERE 1=1`;
   const params = [];
 
   if (project_id) {
     query += ` AND project_id = ?`;
     params.push(project_id);
+  }
+
+  if (app_type_id) {
+    query += ` AND app_type_id = ?`;
+    params.push(app_type_id);
   }
 
   if (status) {

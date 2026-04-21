@@ -37,6 +37,11 @@ const normalizeInteger = (value) => {
   return null;
 };
 
+const normalizeScheduleMode = (value, fallback = "manual") => {
+  const normalized = normalizeText(value);
+  return ["manual", "hourly", "daily", "weekly"].includes(normalized) ? normalized : fallback;
+};
+
 const normalizeConfig = (type, input, username) => {
   const raw = normalizeObject(input);
   const integrationTypeConfig = INTEGRATION_TYPE_OPTIONS.find((option) => option.value === type)?.defaults || {};
@@ -84,6 +89,61 @@ const normalizeConfig = (type, input, username) => {
 
     return {
       client_id
+    };
+  }
+
+  if (type === "google_drive") {
+    const project_id = normalizeText(raw.project_id);
+    const folder_id = normalizeText(raw.folder_id);
+
+    if (!project_id) {
+      throw new Error("Google Drive backup integrations require a project");
+    }
+
+    if (!folder_id) {
+      throw new Error("Google Drive backup integrations require a Drive folder ID");
+    }
+
+    return {
+      project_id,
+      folder_id,
+      schedule_mode: normalizeScheduleMode(raw.schedule_mode),
+      include_requirements_csv: raw.include_requirements_csv !== false,
+      include_test_cases_csv: raw.include_test_cases_csv !== false,
+      next_sync_at: normalizeText(raw.next_sync_at),
+      last_synced_at: normalizeText(raw.last_synced_at),
+      last_sync_status: normalizeText(raw.last_sync_status),
+      last_sync_transaction_id: normalizeText(raw.last_sync_transaction_id),
+      last_sync_summary: normalizeText(raw.last_sync_summary)
+    };
+  }
+
+  if (type === "github") {
+    const project_id = normalizeText(raw.project_id);
+    const owner = normalizeText(raw.owner);
+    const repo = normalizeText(raw.repo);
+
+    if (!project_id) {
+      throw new Error("GitHub sync integrations require a project");
+    }
+
+    if (!owner || !repo) {
+      throw new Error("GitHub sync integrations require both repository owner and repository name");
+    }
+
+    return {
+      project_id,
+      owner,
+      repo,
+      branch: normalizeText(raw.branch) || "main",
+      directory: normalizeText(raw.directory) || "qaira-sync",
+      file_extension: normalizeText(raw.file_extension) || "ts",
+      schedule_mode: normalizeScheduleMode(raw.schedule_mode),
+      next_sync_at: normalizeText(raw.next_sync_at),
+      last_synced_at: normalizeText(raw.last_synced_at),
+      last_sync_status: normalizeText(raw.last_sync_status),
+      last_sync_transaction_id: normalizeText(raw.last_sync_transaction_id),
+      last_sync_summary: normalizeText(raw.last_sync_summary)
     };
   }
 
@@ -141,6 +201,12 @@ const validatePayload = (payload) => {
 
     if (!api_key) {
       throw new Error("Jira integrations require an API key");
+    }
+  }
+
+  if (type === "google_drive" || type === "github") {
+    if (!api_key) {
+      throw new Error(`${type === "google_drive" ? "Google Drive" : "GitHub"} integrations require an access token`);
     }
   }
 
@@ -278,4 +344,20 @@ exports.deleteIntegration = async (id) => {
   `).run(id);
 
   return { deleted: true };
+};
+
+exports.mergeIntegrationConfig = async (id, configUpdates = {}) => {
+  const existing = await exports.getIntegration(id);
+  const nextConfig = {
+    ...(existing.config || {}),
+    ...normalizeObject(configUpdates)
+  };
+
+  await db.prepare(`
+    UPDATE integrations
+    SET config = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(nextConfig, id);
+
+  return exports.getIntegration(id);
 };

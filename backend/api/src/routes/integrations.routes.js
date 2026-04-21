@@ -1,11 +1,50 @@
 const service = require("../services/integration.service");
 const { INTEGRATION_TYPE_VALUES } = require("../domain/catalog");
 
-const sanitizeIntegration = (integration) => ({
-  ...integration,
-  api_key: null,
-  config: {}
-});
+const sanitizeIntegration = (integration) => {
+  const config = integration.config || {};
+
+  if (integration.type === "google_drive") {
+    return {
+      ...integration,
+      api_key: null,
+      config: {
+        project_id: config.project_id || null,
+        folder_id: config.folder_id || null,
+        schedule_mode: config.schedule_mode || "manual",
+        last_synced_at: config.last_synced_at || null,
+        last_sync_status: config.last_sync_status || null,
+        last_sync_transaction_id: config.last_sync_transaction_id || null,
+        last_sync_summary: config.last_sync_summary || null
+      }
+    };
+  }
+
+  if (integration.type === "github") {
+    return {
+      ...integration,
+      api_key: null,
+      config: {
+        project_id: config.project_id || null,
+        owner: config.owner || null,
+        repo: config.repo || null,
+        branch: config.branch || "main",
+        directory: config.directory || "qaira-sync",
+        schedule_mode: config.schedule_mode || "manual",
+        last_synced_at: config.last_synced_at || null,
+        last_sync_status: config.last_sync_status || null,
+        last_sync_transaction_id: config.last_sync_transaction_id || null,
+        last_sync_summary: config.last_sync_summary || null
+      }
+    };
+  }
+
+  return {
+    ...integration,
+    api_key: null,
+    config: {}
+  };
+};
 
 module.exports = async function (fastify) {
   fastify.post("/integrations", async (req) => {
@@ -40,7 +79,7 @@ module.exports = async function (fastify) {
     }
 
     return integrations
-      .filter((integration) => integration.type === "llm" && integration.is_active)
+      .filter((integration) => ["llm", "google_drive", "github"].includes(integration.type) && integration.is_active)
       .map(sanitizeIntegration);
   });
 

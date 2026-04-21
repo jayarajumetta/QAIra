@@ -16,7 +16,10 @@ module.exports = async function (fastify) {
     const appType = await appTypeService.getAppType(req.body.app_type_id);
     await projectService.getProject(appType.project_id, req.user.id);
 
-    return service.createSharedStepGroup(req.body);
+    return service.createSharedStepGroup({
+      ...req.body,
+      created_by: req.user.id
+    });
   });
 
   fastify.get("/shared-step-groups", async (req) => {
@@ -54,7 +57,10 @@ module.exports = async function (fastify) {
     const appType = await appTypeService.getAppType(req.body.app_type_id || existing.app_type_id);
     await projectService.getProject(appType.project_id, req.user.id);
 
-    return service.updateSharedStepGroup(req.params.id, req.body);
+    return service.updateSharedStepGroup(req.params.id, {
+      ...req.body,
+      updated_by: req.user.id
+    });
   });
 
   fastify.delete("/shared-step-groups/:id", async (req) => {

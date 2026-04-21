@@ -22,13 +22,13 @@ const selectSharedStepGroup = db.prepare(`
 `);
 
 const insertSharedStepGroup = db.prepare(`
-  INSERT INTO shared_step_groups (id, display_id, app_type_id, name, description, steps)
-  VALUES (?, ?, ?, ?, ?, ?)
+  INSERT INTO shared_step_groups (id, display_id, app_type_id, name, description, steps, created_by, updated_by)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const updateSharedStepGroup = db.prepare(`
   UPDATE shared_step_groups
-  SET app_type_id = ?, name = ?, description = ?, steps = ?, updated_at = CURRENT_TIMESTAMP
+  SET app_type_id = ?, name = ?, description = ?, steps = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
   WHERE id = ?
 `);
 
@@ -162,7 +162,7 @@ exports.getSharedStepGroup = async (id) => {
   return hydrateSharedStepGroup(group, usageMap);
 };
 
-exports.createSharedStepGroup = async ({ app_type_id, name, description, steps = [] }) => {
+exports.createSharedStepGroup = async ({ app_type_id, name, description, steps = [], created_by }) => {
   const appType = await ensureAppTypeExists(app_type_id);
   const resolvedName = normalizeText(name);
 
@@ -180,7 +180,9 @@ exports.createSharedStepGroup = async ({ app_type_id, name, description, steps =
     appType.id,
     resolvedName,
     normalizeText(description),
-    normalizedSteps
+    normalizedSteps,
+    normalizeText(created_by),
+    normalizeText(created_by)
   );
 
   return { id };
@@ -200,6 +202,7 @@ exports.updateSharedStepGroup = async (id, data = {}) => {
     resolvedName,
     data.description !== undefined ? normalizeText(data.description) : existing.description,
     data.steps !== undefined ? normalizeSteps(data.steps) : existing.steps,
+    normalizeText(data.updated_by) || existing.updated_by || existing.created_by || null,
     id
   );
 

@@ -30,6 +30,14 @@ type IntegrationDraft = {
   sender_email: string;
   sender_name: string;
   google_client_id: string;
+  sync_project_id: string;
+  sync_schedule_mode: "manual" | "hourly" | "daily" | "weekly";
+  google_drive_folder_id: string;
+  github_owner: string;
+  github_repo: string;
+  github_branch: string;
+  github_directory: string;
+  github_file_extension: string;
 };
 
 type IntegrationTypeDefinition = {
@@ -71,7 +79,15 @@ const buildEmptyDraft = (
     smtp_password: "",
     sender_email: typeof emailDefaults.sender_email === "string" ? emailDefaults.sender_email : "",
     sender_name: typeof emailDefaults.sender_name === "string" ? emailDefaults.sender_name : "",
-    google_client_id: ""
+    google_client_id: "",
+    sync_project_id: "",
+    sync_schedule_mode: "manual",
+    google_drive_folder_id: "",
+    github_owner: "",
+    github_repo: "",
+    github_branch: "main",
+    github_directory: "qaira-sync",
+    github_file_extension: "ts"
   };
 };
 
@@ -102,6 +118,25 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
       smtp_port: current.smtp_port || String(emailDefaults.smtp_port ?? "587"),
       sender_email: current.sender_email || (typeof emailDefaults.sender_email === "string" ? emailDefaults.sender_email : ""),
       sender_name: current.sender_name || (typeof emailDefaults.sender_name === "string" ? emailDefaults.sender_name : "")
+    };
+  }
+
+  if (type === "google_drive") {
+    return {
+      ...current,
+      type,
+      sync_schedule_mode: current.sync_schedule_mode || "manual"
+    };
+  }
+
+  if (type === "github") {
+    return {
+      ...current,
+      type,
+      github_branch: current.github_branch || "main",
+      github_directory: current.github_directory || "qaira-sync",
+      github_file_extension: current.github_file_extension || "ts",
+      sync_schedule_mode: current.sync_schedule_mode || "manual"
     };
   }
 
@@ -140,7 +175,15 @@ function getDraftFromIntegration(
     smtp_password: typeof config.password === "string" ? config.password : "",
     sender_email: typeof config.sender_email === "string" ? config.sender_email : emptyDraft.sender_email,
     sender_name: typeof config.sender_name === "string" ? config.sender_name : emptyDraft.sender_name,
-    google_client_id: typeof config.client_id === "string" ? config.client_id : ""
+    google_client_id: typeof config.client_id === "string" ? config.client_id : "",
+    sync_project_id: typeof config.project_id === "string" ? config.project_id : "",
+    sync_schedule_mode: (typeof config.schedule_mode === "string" ? config.schedule_mode : emptyDraft.sync_schedule_mode) as IntegrationDraft["sync_schedule_mode"],
+    google_drive_folder_id: typeof config.folder_id === "string" ? config.folder_id : "",
+    github_owner: typeof config.owner === "string" ? config.owner : "",
+    github_repo: typeof config.repo === "string" ? config.repo : "",
+    github_branch: typeof config.branch === "string" ? config.branch : emptyDraft.github_branch,
+    github_directory: typeof config.directory === "string" ? config.directory : emptyDraft.github_directory,
+    github_file_extension: typeof config.file_extension === "string" ? config.file_extension : emptyDraft.github_file_extension
   }, definitions);
 }
 
@@ -161,6 +204,28 @@ function buildIntegrationConfig(draft: IntegrationDraft, definitions: Integratio
   if (draft.type === "google_auth") {
     return {
       client_id: draft.google_client_id.trim()
+    };
+  }
+
+  if (draft.type === "google_drive") {
+    return {
+      project_id: draft.sync_project_id,
+      folder_id: draft.google_drive_folder_id.trim(),
+      schedule_mode: draft.sync_schedule_mode,
+      include_requirements_csv: true,
+      include_test_cases_csv: true
+    };
+  }
+
+  if (draft.type === "github") {
+    return {
+      project_id: draft.sync_project_id,
+      owner: draft.github_owner.trim(),
+      repo: draft.github_repo.trim(),
+      branch: draft.github_branch.trim() || "main",
+      directory: draft.github_directory.trim() || "qaira-sync",
+      file_extension: draft.github_file_extension.trim() || "ts",
+      schedule_mode: draft.sync_schedule_mode
     };
   }
 
@@ -195,6 +260,25 @@ function getIntegrationSummary(integration: Integration, definitions: Integratio
     };
   }
 
+  if (integration.type === "google_drive") {
+    return {
+      primary: typeof config.folder_id === "string" ? config.folder_id : "Folder not set",
+      secondary: typeof config.last_sync_summary === "string" ? config.last_sync_summary : "Compressed project artifact backup"
+    };
+  }
+
+  if (integration.type === "github") {
+    const repository =
+      typeof config.owner === "string" && typeof config.repo === "string" && config.owner && config.repo
+        ? `${config.owner}/${config.repo}`
+        : "Repository not set";
+
+    return {
+      primary: repository,
+      secondary: typeof config.last_sync_summary === "string" ? config.last_sync_summary : "Project automation code sync"
+    };
+  }
+
   return {
     primary: typeof config.client_id === "string" ? config.client_id : "Client ID not set",
     secondary: "Used on the login page for Google sign-in"
@@ -225,6 +309,11 @@ export function IntegrationsPage() {
     queryFn: () => api.integrations.list(),
     enabled: session?.user.role === "admin"
   });
+  const projectsQuery = useQuery({
+    queryKey: ["projects"],
+    queryFn: api.projects.list,
+    enabled: Boolean(session)
+  });
 
   const createIntegration = useMutation({ mutationFn: api.integrations.create });
   const updateIntegration = useMutation({
@@ -234,6 +323,7 @@ export function IntegrationsPage() {
   const deleteIntegration = useMutation({ mutationFn: api.integrations.delete });
 
   const integrations = integrationsQuery.data || [];
+  const projects = projectsQuery.data || [];
   const isIntegrationCatalogLoading = integrationsQuery.isLoading;
   const selectedIntegration = useMemo(
     () => integrations.find((item) => item.id === selectedIntegrationId) || null,
@@ -245,6 +335,8 @@ export function IntegrationsPage() {
   const isJira = draft.type === "jira";
   const isEmail = draft.type === "email";
   const isGoogle = draft.type === "google_auth";
+  const isGoogleDrive = draft.type === "google_drive";
+  const isGithub = draft.type === "github";
   const emailDefaults = getIntegrationTypeDefinition("email", integrationTypeDefinitions)?.defaults || {};
   const llmDefaults = getIntegrationTypeDefinition("llm", integrationTypeDefinitions)?.defaults || {};
   const defaultEmailSender = typeof emailDefaults.sender_email === "string" ? emailDefaults.sender_email : "";
@@ -355,7 +447,7 @@ export function IntegrationsPage() {
       <PageHeader
         eyebrow="Administration"
         title="Integrations"
-        description="Manage the external systems QAira uses for AI generation, Jira sync, Google sign-in, and email verification delivery."
+        description="Manage the external systems QAira uses for AI generation, Jira sync, backup automation, Google sign-in, and email verification delivery."
         meta={[
           { label: "Configured", value: integrations.length },
           { label: "Active", value: activeIntegrationCount },
@@ -377,7 +469,7 @@ export function IntegrationsPage() {
 
       {!isAdmin ? (
         <Panel title="Access required" subtitle="Only admins can manage integrations.">
-          <div className="empty-state compact">Ask an admin to manage LLM, Jira, Email Sender, and Google Sign-In integrations.</div>
+          <div className="empty-state compact">Ask an admin to manage LLM, Jira, Google Drive, GitHub, Email Sender, and Google Sign-In integrations.</div>
         </Panel>
       ) : (
         <WorkspaceMasterDetail
@@ -582,6 +674,115 @@ export function IntegrationsPage() {
                         />
                       </FormField>
                     </div>
+                  </>
+                ) : null}
+
+                {(isGoogleDrive || isGithub) ? (
+                  <>
+                    <div className="empty-state compact integration-helper">
+                      {isGoogleDrive
+                        ? "Store a Google access token and Drive folder so QAira can upload a compressed project artifact with requirements and test case exports."
+                        : "Store a GitHub access token and target repository so QAira can sync test-case-linked automation code and manifests asynchronously."}
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Project">
+                        <select
+                          value={draft.sync_project_id}
+                          onChange={(event) => setDraft((current) => ({ ...current, sync_project_id: event.target.value }))}
+                        >
+                          <option value="">Select a project</option>
+                          {projects.map((project) => (
+                            <option key={project.id} value={project.id}>{project.name}</option>
+                          ))}
+                        </select>
+                      </FormField>
+
+                      <FormField label="Schedule">
+                        <select
+                          value={draft.sync_schedule_mode}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              sync_schedule_mode: event.target.value as IntegrationDraft["sync_schedule_mode"]
+                            }))
+                          }
+                        >
+                          <option value="manual">Manual only</option>
+                          <option value="hourly">Hourly</option>
+                          <option value="daily">Daily</option>
+                          <option value="weekly">Weekly</option>
+                        </select>
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label={isGoogleDrive ? "Google Access Token" : "GitHub Access Token"}>
+                        <input
+                          type="password"
+                          value={draft.api_key}
+                          onChange={(event) => setDraft((current) => ({ ...current, api_key: event.target.value }))}
+                        />
+                      </FormField>
+
+                      {isGoogleDrive ? (
+                        <FormField label="Drive Folder ID">
+                          <input
+                            placeholder="1AbCdEfGh..."
+                            value={draft.google_drive_folder_id}
+                            onChange={(event) => setDraft((current) => ({ ...current, google_drive_folder_id: event.target.value }))}
+                          />
+                        </FormField>
+                      ) : (
+                        <FormField label="GitHub API Base URL">
+                          <input
+                            placeholder="https://api.github.com"
+                            value={draft.base_url}
+                            onChange={(event) => setDraft((current) => ({ ...current, base_url: event.target.value }))}
+                          />
+                        </FormField>
+                      )}
+                    </div>
+
+                    {isGithub ? (
+                      <>
+                        <div className="record-grid">
+                          <FormField label="Repository Owner">
+                            <input
+                              placeholder="your-org"
+                              value={draft.github_owner}
+                              onChange={(event) => setDraft((current) => ({ ...current, github_owner: event.target.value }))}
+                            />
+                          </FormField>
+
+                          <FormField label="Repository Name">
+                            <input
+                              placeholder="qa-automation"
+                              value={draft.github_repo}
+                              onChange={(event) => setDraft((current) => ({ ...current, github_repo: event.target.value }))}
+                            />
+                          </FormField>
+                        </div>
+
+                        <div className="record-grid">
+                          <FormField label="Branch">
+                            <input
+                              placeholder="main"
+                              value={draft.github_branch}
+                              onChange={(event) => setDraft((current) => ({ ...current, github_branch: event.target.value }))}
+                            />
+                          </FormField>
+
+                          <FormField label="Directory">
+                            <input
+                              placeholder="qaira-sync"
+                              value={draft.github_directory}
+                              onChange={(event) => setDraft((current) => ({ ...current, github_directory: event.target.value }))}
+                            />
+                          </FormField>
+                        </div>
+                      </>
+                    ) : null}
                   </>
                 ) : null}
 

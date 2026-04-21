@@ -37,4 +37,18 @@ module.exports = async function (fastify) {
       limit: limit !== undefined ? Number(limit) : undefined
     });
   });
+
+  fastify.get("/workspace-transactions/:id/events", async (req) => {
+    await fastify.authenticate(req);
+
+    const transaction = await workspaceTransactionService.getTransaction(req.params.id);
+
+    if (transaction.project_id) {
+      await projectService.getProject(transaction.project_id, req.user.id);
+    } else if (req.user?.role !== "admin") {
+      throw createError("Project scope is required.", 403);
+    }
+
+    return workspaceTransactionService.listTransactionEvents(transaction.id);
+  });
 };

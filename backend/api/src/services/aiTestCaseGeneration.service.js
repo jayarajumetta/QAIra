@@ -266,6 +266,15 @@ async function runJob(jobId) {
           },
           completed_at: new Date().toISOString()
         });
+        await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
+          level: "error",
+          phase: "validate",
+          message: "AI generation stopped because the selected app type no longer exists.",
+          details: {
+            processed_requirements: 0,
+            generated_cases_count: 0
+          }
+        });
       }
       return exports.getJob(jobId);
     }
@@ -290,6 +299,14 @@ async function runJob(jobId) {
           requirement_count: requirements.length
         }
       });
+      await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
+        phase: "run",
+        message: `Processing ${requirements.length} requirement${requirements.length === 1 ? "" : "s"} with ${workerCount} worker${workerCount === 1 ? "" : "s"}.`,
+        details: {
+          requirement_count: requirements.length,
+          worker_count: workerCount
+        }
+      });
     }
 
     let processedRequirements = 0;
@@ -307,15 +324,50 @@ async function runJob(jobId) {
           }
 
           try {
+            if (linkedTransaction) {
+              await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
+                phase: "requirement",
+                message: `Generating cases for requirement "${requirement.title}".`,
+                details: {
+                  requirement_id: requirement.id,
+                  requirement_title: requirement.title
+                }
+              });
+            }
             generatedCasesCount += await generateCasesForRequirement({
               job: queuedJob,
               requirement,
               appType
             });
+            if (linkedTransaction) {
+              await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
+                level: "success",
+                phase: "requirement",
+                message: `Completed AI generation for requirement "${requirement.title}".`,
+                details: {
+                  requirement_id: requirement.id,
+                  requirement_title: requirement.title,
+                  processed_requirements: processedRequirements + 1,
+                  generated_cases_count: generatedCasesCount
+                }
+              });
+            }
           } catch (error) {
             errors.push(
               `${requirement.title}: ${error instanceof Error ? error.message : "Unable to generate test cases"}`
             );
+            if (linkedTransaction) {
+              await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
+                level: "error",
+                phase: "requirement",
+                message: `Failed AI generation for requirement "${requirement.title}".`,
+                details: {
+                  requirement_id: requirement.id,
+                  requirement_title: requirement.title,
+                  error: error instanceof Error ? error.message : "Unable to generate test cases"
+                }
+              });
+            }
           } finally {
             processedRequirements += 1;
             await updateJobProgress.run(processedRequirements, generatedCasesCount, jobId);
@@ -343,6 +395,19 @@ async function runJob(jobId) {
         },
         completed_at: new Date().toISOString()
       });
+      await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
+        level: finalStatus === "completed" ? "success" : "warning",
+        phase: "complete",
+        message:
+          finalStatus === "completed"
+            ? `Generated ${generatedCasesCount} AI test case${generatedCasesCount === 1 ? "" : "s"} across ${processedRequirements} requirement${processedRequirements === 1 ? "" : "s"}.`
+            : `AI generation finished with ${errors.length} issue${errors.length === 1 ? "" : "s"}.`,
+        details: {
+          processed_requirements: processedRequirements,
+          generated_cases_count: generatedCasesCount,
+          errors
+        }
+      });
     }
 
     return exports.getJob(jobId);
@@ -361,6 +426,14 @@ async function runJob(jobId) {
           error: error instanceof Error ? error.message : "Unable to process AI generation job"
         },
         completed_at: new Date().toISOString()
+      });
+      await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
+        level: "error",
+        phase: "complete",
+        message: error instanceof Error ? error.message : "Unable to process AI generation job",
+        details: {
+          error: error instanceof Error ? error.message : "Unable to process AI generation job"
+        }
       });
     }
 
@@ -423,7 +496,7 @@ exports.createJob = async ({
     created_by
   );
 
-  await workspaceTransactionService.createTransaction({
+  const transaction = await workspaceTransactionService.createTransaction({
     project_id: appType.project_id,
     app_type_id: appType.id,
     category: "ai_generation",
@@ -447,6 +520,14 @@ exports.createJob = async ({
     related_kind: "ai_test_case_generation_job",
     related_id: id,
     created_by
+  });
+  await workspaceTransactionService.appendTransactionEvent(transaction.id, {
+    phase: "queue",
+    message: `Queued AI test case generation for ${requirements.length} requirement${requirements.length === 1 ? "" : "s"}.`,
+    details: {
+      requirement_ids: requirements.map((requirement) => requirement.id),
+      requirement_titles: requirements.map((requirement) => requirement.title)
+    }
   });
 
   return { id };

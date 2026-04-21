@@ -191,8 +191,57 @@ export function ColumnsIcon({ size, strokeWidth }: IconProps) {
 export function PinIcon({ size, strokeWidth }: IconProps) {
   return (
     <IconFrame size={size} strokeWidth={strokeWidth}>
-      <path d="m15 4 5 5-3 1-3 5-2-2-5 3-1-1 3-5-2-2 5-3z" />
-      <path d="M6 18 4 20" />
+      <path d="M9 4h6" />
+      <path d="M10 4v4.5L7 12h10l-3-3.5V4" />
+      <path d="M12 12v8" />
+    </IconFrame>
+  );
+}
+
+export function SyncIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <path d="M20 7v5h-5" />
+      <path d="M4 17v-5h5" />
+      <path d="M7.5 8.5A7 7 0 0 1 20 12" />
+      <path d="M16.5 15.5A7 7 0 0 1 4 12" />
+    </IconFrame>
+  );
+}
+
+export function ArchiveIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <rect x="4" y="5" width="16" height="5" rx="1.5" />
+      <path d="M6 10v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-8" />
+      <path d="M10 14h4" />
+    </IconFrame>
+  );
+}
+
+export function ActivityIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <path d="M4 12h3l2.2-5 4.3 10 2.1-5H20" />
+    </IconFrame>
+  );
+}
+
+export function GoogleDriveIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <path d="M10 4h4l5 8-2 3h-4l-3-5Z" />
+      <path d="M10 4 5 12l2 3h6" />
+      <path d="M7 15H5l5 5h4l3-5" />
+    </IconFrame>
+  );
+}
+
+export function GithubIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <path d="M9.2 18.5c-3.5 1-3.5-2-5-2.5" />
+      <path d="M14.8 18.5v-3a2.6 2.6 0 0 0-.7-2c2.2-.2 4.5-1.1 4.5-4.9a3.8 3.8 0 0 0-1-2.7 3.5 3.5 0 0 0-.1-2.7s-.9-.3-2.9 1a10.1 10.1 0 0 0-5.2 0c-2-1.3-2.9-1-2.9-1a3.5 3.5 0 0 0-.1 2.7 3.8 3.8 0 0 0-1 2.7c0 3.8 2.3 4.7 4.5 4.9a2.6 2.6 0 0 0-.7 2v3" />
     </IconFrame>
   );
 }

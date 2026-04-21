@@ -48,6 +48,14 @@ exports.bulkImportRequirements = async ({ project_id, rows = [], created_by } = 
     created_by,
     started_at: new Date().toISOString()
   });
+  await workspaceTransactionService.appendTransactionEvent(transaction.id, {
+    phase: "prepare",
+    message: `Started requirement import for ${rows.length} CSV row${rows.length === 1 ? "" : "s"}.`,
+    details: {
+      import_source: "csv",
+      total_rows: rows.length
+    }
+  });
 
   for (const [index, row] of rows.entries()) {
     const title = typeof row?.title === "string" ? row.title.trim() : "";
@@ -62,7 +70,8 @@ exports.bulkImportRequirements = async ({ project_id, rows = [], created_by } = 
         title,
         description: typeof row?.description === "string" ? row.description : undefined,
         priority: typeof row?.priority === "number" && Number.isFinite(row.priority) ? row.priority : undefined,
-        status: typeof row?.status === "string" ? row.status : undefined
+        status: typeof row?.status === "string" ? row.status : undefined,
+        created_by
       });
 
       created.push({
@@ -99,11 +108,23 @@ exports.bulkImportRequirements = async ({ project_id, rows = [], created_by } = 
     },
     completed_at: new Date().toISOString()
   });
+  await workspaceTransactionService.appendTransactionEvent(transaction.id, {
+    level: created.length ? "success" : "error",
+    phase: "complete",
+    message: created.length
+      ? `Imported ${created.length} requirement${created.length === 1 ? "" : "s"} with ${errors.length} failure${errors.length === 1 ? "" : "s"}.`
+      : "Requirement import completed with no created records.",
+    details: {
+      imported: created.length,
+      failed: errors.length,
+      sample_errors: errors.slice(0, 10)
+    }
+  });
 
   return response;
 };
 
-exports.createRequirement = async ({ project_id, title, description, priority, status }) => {
+exports.createRequirement = async ({ project_id, title, description, priority, status, created_by }) => {
   if (!project_id || !title) {
     throw new Error("Missing required fields");
   }
@@ -118,8 +139,8 @@ exports.createRequirement = async ({ project_id, title, description, priority, s
   const display_id = await displayIdService.createDisplayId("requirement");
 
   await db.prepare(`
-    INSERT INTO requirements (id, display_id, project_id, title, description, priority, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO requirements (id, display_id, project_id, title, description, priority, status, created_by, updated_by, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `).run(
     id,
     display_id,
@@ -127,7 +148,9 @@ exports.createRequirement = async ({ project_id, title, description, priority, s
     title,
     description || null,
     priority ?? 3,
-    status || null
+    status || null,
+    created_by || null,
+    created_by || null
   );
 
   return { id };
@@ -152,7 +175,7 @@ exports.getRequirements = async ({ project_id, status, priority }) => {
     params.push(priority);
   }
 
-  query += ` ORDER BY created_at DESC`;
+  query += ` ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC`;
 
   const rows = await db.prepare(query).all(...params);
   return Promise.all(rows.map(hydrateTestCaseIds));
@@ -181,7 +204,7 @@ exports.updateRequirement = async (id, data) => {
 
   await db.prepare(`
     UPDATE requirements
-    SET project_id = ?, title = ?, description = ?, priority = ?, status = ?
+    SET project_id = ?, title = ?, description = ?, priority = ?, status = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(
     data.project_id ?? existing.project_id,
@@ -189,6 +212,7 @@ exports.updateRequirement = async (id, data) => {
     data.description ?? existing.description,
     data.priority ?? existing.priority,
     data.status ?? existing.status,
+    data.updated_by ?? existing.updated_by ?? existing.created_by ?? null,
     id
   );
 

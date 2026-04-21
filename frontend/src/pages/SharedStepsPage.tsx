@@ -32,6 +32,7 @@ import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/Worksp
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { api } from "../lib/api";
+import { formatAuditTimestamp, resolveAuditUserLabel } from "../lib/auditDisplay";
 import { removeSharedStepGroupFromCache, upsertSharedStepGroupInCache } from "../lib/sharedStepGroupCache";
 import {
   buildGroupAutomationCode,
@@ -42,7 +43,7 @@ import {
 } from "../lib/stepAutomation";
 import { collectStepParameters, filterStepParameterValues, type StepParameterDefinition } from "../lib/stepParameters";
 import { TEST_AUTHORING_SECTION_ITEMS } from "../lib/workspaceSections";
-import type { ExecutionResult, SharedStepGroup, TestCase } from "../types";
+import type { ExecutionResult, SharedStepGroup, TestCase, User } from "../types";
 
 type SharedGroupDraftStep = {
   id: string;
@@ -177,7 +178,10 @@ export function SharedStepsPage() {
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
-  const [isHeaderSectionExpanded, setIsHeaderSectionExpanded] = useState(true);
+  const [expandedWorkspaceSections, setExpandedWorkspaceSections] = useState({
+    details: true,
+    steps: true
+  });
   const [groupDraft, setGroupDraft] = useState<SharedGroupDraft>(EMPTY_GROUP_DRAFT);
   const [stepInsertIndex, setStepInsertIndex] = useState<number | null>(null);
   const [newStepDraft, setNewStepDraft] = useState<SharedGroupStepInput>(EMPTY_SHARED_GROUP_STEP_INPUT);
@@ -226,6 +230,10 @@ export function SharedStepsPage() {
     queryFn: () => api.testSuites.list({ app_type_id: appTypeId }),
     enabled: Boolean(appTypeId)
   });
+  const usersQuery = useQuery({
+    queryKey: ["users"],
+    queryFn: api.users.list
+  });
 
   const createSharedGroup = useMutation({ mutationFn: api.sharedStepGroups.create });
   const updateSharedGroup = useMutation({
@@ -241,6 +249,15 @@ export function SharedStepsPage() {
   const testCases = testCasesQuery.data || [];
   const executionResults = executionResultsQuery.data || [];
   const suites = suitesQuery.data || [];
+  const users = (usersQuery.data || []) as User[];
+  const userById = useMemo(
+    () =>
+      users.reduce<Record<string, User>>((accumulator, user) => {
+        accumulator[user.id] = user;
+        return accumulator;
+      }, {}),
+    [users]
+  );
 
   const resetStepComposer = () => {
     setStepInsertIndex(null);
@@ -315,7 +332,10 @@ export function SharedStepsPage() {
   }, [isCreating, selectedGroupId]);
 
   useEffect(() => {
-    setIsHeaderSectionExpanded(true);
+    setExpandedWorkspaceSections({
+      details: true,
+      steps: true
+    });
   }, [isCreating, selectedGroupId]);
 
   const selectedGroup = useMemo(
@@ -483,6 +503,22 @@ export function SharedStepsPage() {
       key: "select",
       label: "",
       canToggle: false,
+      headerRender: () => (
+        <label className="data-table-header-checkbox" onClick={(event) => event.stopPropagation()}>
+          <input
+            aria-label="Select all filtered shared step groups"
+            checked={Boolean(visibleGroupIds.length) && selectedVisibleGroupIds.length === visibleGroupIds.length}
+            onChange={(event) =>
+              setSelectedGroupIds((current) =>
+                event.target.checked
+                  ? [...new Set([...current, ...visibleGroupIds])]
+                  : current.filter((groupId) => !visibleGroupIds.includes(groupId))
+              )
+            }
+            type="checkbox"
+          />
+        </label>
+      ),
       render: (group) => (
         <div onClick={(event) => event.stopPropagation()}>
           <input
@@ -541,6 +577,30 @@ export function SharedStepsPage() {
       render: (group) => formatSharedStepDate(group.updated_at)
     },
     {
+      key: "createdBy",
+      label: "Created by",
+      defaultVisible: false,
+      render: (group) => resolveAuditUserLabel(group.created_by, userById)
+    },
+    {
+      key: "createdAt",
+      label: "Created at",
+      defaultVisible: false,
+      render: (group) => formatAuditTimestamp(group.created_at)
+    },
+    {
+      key: "updatedBy",
+      label: "Last updated by",
+      defaultVisible: false,
+      render: (group) => resolveAuditUserLabel(group.updated_by || group.created_by, userById)
+    },
+    {
+      key: "updatedAt",
+      label: "Last updated at",
+      defaultVisible: false,
+      render: (group) => formatAuditTimestamp(group.updated_at || group.created_at)
+    },
+    {
       key: "scope",
       label: "Scope",
       defaultVisible: false,
@@ -590,7 +650,8 @@ export function SharedStepsPage() {
     openSharedGroupUsage,
     openSharedGroupWorkspace,
     selectedAppType?.name,
-    selectedGroupIds
+    selectedGroupIds,
+    userById
   ]);
   const linkedPreviewCase = useMemo(
     () => testCases.find((testCase) => testCase.id === linkedPreviewCaseId) || null,
@@ -958,7 +1019,13 @@ export function SharedStepsPage() {
     totalSteps: sharedGroups.reduce((count, group) => count + (group.step_count || group.steps.length || 0), 0),
     usedInCases: sharedGroups.reduce((count, group) => count + (group.usage_count || 0), 0)
   };
-  const openTestCaseWorkspace = (testCaseId: string) => setLinkedPreviewCaseId(testCaseId);
+  const sharedStepSectionSummary = groupDraft.steps[0]?.action || groupDraft.steps[0]?.expected_result
+    ? `Starts with: ${groupDraft.steps[0]?.action || groupDraft.steps[0]?.expected_result}`
+    : "No shared steps yet. Add at least one step so this group is useful across cases.";
+  const openTestCaseWorkspace = (testCaseId: string) => {
+    setIsUsageDialogOpen(false);
+    setLinkedPreviewCaseId(testCaseId);
+  };
   const authoringSectionItems = useMemo(
     () =>
       TEST_AUTHORING_SECTION_ITEMS.map((item) => ({
@@ -1223,163 +1290,179 @@ export function SharedStepsPage() {
                 <div className="shared-step-workspace-nav">
                   <WorkspaceBackButton label="Back to shared step list" onClick={closeWorkspace} />
                 </div>
-                <SharedStepAccordionSection
-                  countLabel={groupDraft.name.trim() ? "Ready" : "Draft"}
-                  isExpanded={isHeaderSectionExpanded}
-                  onToggle={() => setIsHeaderSectionExpanded((current) => !current)}
-                  summary="Set the shared group name and description before curating the linked reusable steps."
-                  title="Shared step group details"
-                >
-                  <div className="form-grid">
-                    <div className="record-grid">
-                      <FormField label="Group name" required>
-                        <input
-                          data-autofocus="true"
-                          required
-                          value={groupDraft.name}
-                          onChange={(event) => setGroupDraft((current) => ({ ...current, name: event.target.value }))}
+                <div className="editor-accordion">
+                  <SharedStepAccordionSection
+                    countLabel={groupDraft.name.trim() ? "Ready" : "Draft"}
+                    isExpanded={expandedWorkspaceSections.details}
+                    onToggle={() =>
+                      setExpandedWorkspaceSections((current) => ({ ...current, details: !current.details }))
+                    }
+                    summary="Set the shared group name and description before curating the linked reusable steps."
+                    title="Shared step group details"
+                  >
+                    <div className="form-grid">
+                      <div className="record-grid">
+                        <FormField label="Group name" required>
+                          <input
+                            data-autofocus="true"
+                            required
+                            value={groupDraft.name}
+                            onChange={(event) => setGroupDraft((current) => ({ ...current, name: event.target.value }))}
+                          />
+                        </FormField>
+                      </div>
+
+                      <FormField label="Description">
+                        <textarea
+                          rows={3}
+                          value={groupDraft.description}
+                          onChange={(event) => setGroupDraft((current) => ({ ...current, description: event.target.value }))}
                         />
                       </FormField>
                     </div>
+                  </SharedStepAccordionSection>
 
-                    <FormField label="Description">
-                      <textarea
-                        rows={3}
-                        value={groupDraft.description}
-                        onChange={(event) => setGroupDraft((current) => ({ ...current, description: event.target.value }))}
-                      />
-                    </FormField>
-                  </div>
-                </SharedStepAccordionSection>
-
-                  <div className="step-editor step-editor--embedded step-editor--shared">
-                  {!isCreating && selectedGroup ? (
-                    <div className="detail-summary">
-                      <strong>
-                        {selectedGroup.usage_count
-                          ? `Used in ${selectedGroup.usage_count} test case${selectedGroup.usage_count === 1 ? "" : "s"}`
-                          : "Not used in any test cases yet"}
-                      </strong>
-                      <span>
-                        {selectedGroup.usage_count
-                          ? "Editing this shared group updates every linked test case while preserving execution history snapshots."
-                          : "Once this group is inserted into a test case, linked case usage will appear here."}
-                      </span>
-                      {selectedGroup.usage_count ? (
-                        <button className="ghost-button inline-button" onClick={() => setIsUsageDialogOpen(true)} type="button">
-                          <LinkedCasesIcon />
-                          <span>View linked cases</span>
-                        </button>
+                  <SharedStepAccordionSection
+                    actions={(
+                      <button className="ghost-button" disabled={!groupDraft.steps.length} onClick={openSharedGroupAutomationPreview} type="button">
+                        <AutomationCodeIcon />
+                        <span>Automation code</span>
+                      </button>
+                    )}
+                    countLabel={`${groupDraft.steps.length} step${groupDraft.steps.length === 1 ? "" : "s"}`}
+                    isExpanded={expandedWorkspaceSections.steps}
+                    onToggle={() =>
+                      setExpandedWorkspaceSections((current) => ({ ...current, steps: !current.steps }))
+                    }
+                    summary={sharedStepSectionSummary}
+                    title="Shared steps"
+                  >
+                    <div className="step-editor step-editor--embedded step-editor--shared">
+                      {!isCreating && selectedGroup ? (
+                        <div className="detail-summary">
+                          <strong>
+                            {selectedGroup.usage_count
+                              ? `Used in ${selectedGroup.usage_count} test case${selectedGroup.usage_count === 1 ? "" : "s"}`
+                              : "Not used in any test cases yet"}
+                          </strong>
+                          <span>
+                            {selectedGroup.usage_count
+                              ? "Editing this shared group updates every linked test case while preserving execution history snapshots."
+                              : "Once this group is inserted into a test case, linked case usage will appear here."}
+                          </span>
+                          {selectedGroup.usage_count ? (
+                            <button className="ghost-button inline-button" onClick={() => setIsUsageDialogOpen(true)} type="button">
+                              <LinkedCasesIcon />
+                              <span>View linked cases</span>
+                            </button>
+                          ) : null}
+                        </div>
                       ) : null}
-                    </div>
-                  ) : null}
 
-                  {!groupDraft.steps.length ? (
-                    <div className="empty-state compact">No shared steps yet. Add at least one step so this group is useful across cases.</div>
-                  ) : null}
+                      {!groupDraft.steps.length ? (
+                        <div className="empty-state compact">No shared steps yet. Add at least one step so this group is useful across cases.</div>
+                      ) : null}
 
-                          <div className="action-row step-editor-toolbar">
-                    <label className="checkbox-field step-select-all">
-                      <input
-                        checked={allStepsSelected}
-                        disabled={!groupDraft.steps.length}
-                        onChange={(event) =>
-                          setSelectedStepIds(event.target.checked ? groupDraft.steps.map((step) => step.id) : [])
-                        }
-                        type="checkbox"
-                      />
-                      Select all steps
-                    </label>
-                    <button className="ghost-button" onClick={() => setIsParameterDialogOpen(true)} type="button">
-                      <SharedGroupParameterIcon />
-                      <span>{detectedSharedParameters.length ? `Params · ${detectedSharedParameters.length}` : "Params"}</span>
-                    </button>
-                    <button className="ghost-button" disabled={!groupDraft.steps.length} onClick={openSharedGroupAutomationPreview} type="button">
-                      <AutomationCodeIcon />
-                      <span>Automation code</span>
-                    </button>
-                    <SharedGroupStepActionMenu
-                      actions={sharedEditorActions}
-                      className="step-card-menu--inline step-card-menu--inline-right"
-                      label="Shared step actions"
-                      previewActions={sharedEditorActions}
-                    />
-                    <SharedGroupStepIconButton
-                      ariaLabel="Add shared step"
-                      onClick={() => activateStepInsert(groupDraft.steps.length)}
-                      title="Add shared step"
-                      type="button"
-                    >
-                      <SharedGroupStepInsertIcon />
-                    </SharedGroupStepIconButton>
-                  </div>
-
-                  <div className="step-list">
-                    {!groupDraft.steps.length ? (
-                      <InlineSharedGroupStepInsertSlot
-                        draft={newStepDraft}
-                        index={0}
-                        isActive={stepInsertIndex === 0}
-                        parameterValues={sharedParameterValues}
-                        isVisibleByDefault={true}
-                        onActivate={() => activateStepInsert(0)}
-                        onCancel={resetStepComposer}
-                        onChange={setNewStepDraft}
-                        onSubmit={handleInsertStep}
-                      />
-                    ) : null}
-
-                    {groupDraft.steps.map((step, index) => (
-                      <Fragment key={step.id}>
-                        <InlineSharedGroupStepInsertSlot
-                          draft={newStepDraft}
-                          index={index}
-                          isActive={stepInsertIndex === index}
-                          parameterValues={sharedParameterValues}
-                          onActivate={() => activateStepInsert(index)}
-                          onCancel={resetStepComposer}
-                          onChange={setNewStepDraft}
-                          onSubmit={handleInsertStep}
+                      <div className="action-row step-editor-toolbar">
+                        <label className="checkbox-field step-select-all">
+                          <input
+                            checked={allStepsSelected}
+                            disabled={!groupDraft.steps.length}
+                            onChange={(event) =>
+                              setSelectedStepIds(event.target.checked ? groupDraft.steps.map((step) => step.id) : [])
+                            }
+                            type="checkbox"
+                          />
+                          Select all steps
+                        </label>
+                        <button className="ghost-button" onClick={() => setIsParameterDialogOpen(true)} type="button">
+                          <SharedGroupParameterIcon />
+                          <span>{detectedSharedParameters.length ? `Params · ${detectedSharedParameters.length}` : "Params"}</span>
+                        </button>
+                        <SharedGroupStepActionMenu
+                          actions={sharedEditorActions}
+                          className="step-card-menu--inline step-card-menu--inline-right"
+                          label="Shared step actions"
+                          previewActions={sharedEditorActions}
                         />
-                        <SharedGroupDraftStepCard
-                          canMoveDown={index < groupDraft.steps.length - 1}
-                          canMoveUp={index > 0}
-                          canPaste={Boolean(copiedSteps.length)}
-                          isExpanded={expandedStepIds.includes(step.id)}
-                          isSelected={selectedStepIds.includes(step.id)}
-                          parameterValues={sharedParameterValues}
-                          onChange={(input) => updateDraftStep(step.id, input)}
-                          onCopy={() => copyDraftSteps([step.id])}
-                          onCut={() => cutDraftSteps([step.id])}
-                          onDelete={() => deleteDraftSteps([step.id])}
-                          onChangeStepType={(nextType) => handleChangeDraftStepType(step.id, nextType)}
-                          onEditAutomation={() => setEditingAutomationStepId(step.id)}
-                          onInsertAbove={() => activateStepInsert(index)}
-                          onInsertBelow={() => activateStepInsert(index + 1)}
-                          onMoveDown={() => moveDraftStep(step.id, "down")}
-                          onMoveUp={() => moveDraftStep(step.id, "up")}
-                          onPasteAbove={() => pasteDraftStepsAt(index)}
-                          onPasteBelow={() => pasteDraftStepsAt(index + 1)}
-                          onToggle={() => toggleDraftStepExpanded(step.id)}
-                          onToggleSelect={(checked) => toggleDraftStepSelected(step.id, checked)}
-                          step={step}
-                          stepNumber={index + 1}
-                        />
-                        {index === groupDraft.steps.length - 1 ? (
+                        <SharedGroupStepIconButton
+                          ariaLabel="Add shared step"
+                          onClick={() => activateStepInsert(groupDraft.steps.length)}
+                          title="Add shared step"
+                          type="button"
+                        >
+                          <SharedGroupStepInsertIcon />
+                        </SharedGroupStepIconButton>
+                      </div>
+
+                      <div className="step-list">
+                        {!groupDraft.steps.length ? (
                           <InlineSharedGroupStepInsertSlot
                             draft={newStepDraft}
-                            index={index + 1}
-                            isActive={stepInsertIndex === index + 1}
+                            index={0}
+                            isActive={stepInsertIndex === 0}
                             parameterValues={sharedParameterValues}
-                            onActivate={() => activateStepInsert(index + 1)}
+                            isVisibleByDefault={true}
+                            onActivate={() => activateStepInsert(0)}
                             onCancel={resetStepComposer}
                             onChange={setNewStepDraft}
                             onSubmit={handleInsertStep}
                           />
                         ) : null}
-                      </Fragment>
-                    ))}
-                  </div>
+
+                        {groupDraft.steps.map((step, index) => (
+                          <Fragment key={step.id}>
+                            <InlineSharedGroupStepInsertSlot
+                              draft={newStepDraft}
+                              index={index}
+                              isActive={stepInsertIndex === index}
+                              parameterValues={sharedParameterValues}
+                              onActivate={() => activateStepInsert(index)}
+                              onCancel={resetStepComposer}
+                              onChange={setNewStepDraft}
+                              onSubmit={handleInsertStep}
+                            />
+                            <SharedGroupDraftStepCard
+                              canMoveDown={index < groupDraft.steps.length - 1}
+                              canMoveUp={index > 0}
+                              canPaste={Boolean(copiedSteps.length)}
+                              isExpanded={expandedStepIds.includes(step.id)}
+                              isSelected={selectedStepIds.includes(step.id)}
+                              parameterValues={sharedParameterValues}
+                              onChange={(input) => updateDraftStep(step.id, input)}
+                              onCopy={() => copyDraftSteps([step.id])}
+                              onCut={() => cutDraftSteps([step.id])}
+                              onDelete={() => deleteDraftSteps([step.id])}
+                              onChangeStepType={(nextType) => handleChangeDraftStepType(step.id, nextType)}
+                              onEditAutomation={() => setEditingAutomationStepId(step.id)}
+                              onInsertAbove={() => activateStepInsert(index)}
+                              onInsertBelow={() => activateStepInsert(index + 1)}
+                              onMoveDown={() => moveDraftStep(step.id, "down")}
+                              onMoveUp={() => moveDraftStep(step.id, "up")}
+                              onPasteAbove={() => pasteDraftStepsAt(index)}
+                              onPasteBelow={() => pasteDraftStepsAt(index + 1)}
+                              onToggle={() => toggleDraftStepExpanded(step.id)}
+                              onToggleSelect={(checked) => toggleDraftStepSelected(step.id, checked)}
+                              step={step}
+                              stepNumber={index + 1}
+                            />
+                            {index === groupDraft.steps.length - 1 ? (
+                              <InlineSharedGroupStepInsertSlot
+                                draft={newStepDraft}
+                                index={index + 1}
+                                isActive={stepInsertIndex === index + 1}
+                                parameterValues={sharedParameterValues}
+                                onActivate={() => activateStepInsert(index + 1)}
+                                onCancel={resetStepComposer}
+                                onChange={setNewStepDraft}
+                                onSubmit={handleInsertStep}
+                              />
+                            ) : null}
+                          </Fragment>
+                        ))}
+                      </div>
+                    </div>
+                  </SharedStepAccordionSection>
                 </div>
 
                 <div className="action-row">
@@ -2024,23 +2107,21 @@ function SharedGroupDraftStepCard({
           type="button"
         >
           <div className="step-card-summary">
-            <div className="step-card-summary-top">
-              <span aria-label={stepLabel} className="step-kind-badge is-standard" title={stepLabel}>
-                <StandardStepIcon />
-              </span>
-              <strong>Step {stepNumber}</strong>
-              <span className="step-group-chip is-shared">{stepLabel}</span>
+            <div className="step-card-summary-row">
+              <div className="step-card-summary-top">
+                <span aria-label={stepLabel} className="step-kind-badge is-standard" title={stepLabel}>
+                  <StandardStepIcon />
+                </span>
+                <strong>Step {stepNumber}</strong>
+              </div>
+              <StepParameterizedText
+                className="step-card-parameterized"
+                fallback="Shared step details"
+                text={step.action || step.expected_result}
+                values={parameterValues}
+              />
             </div>
-            <StepParameterizedText
-              className="step-card-parameterized"
-              fallback="Shared step details"
-              text={step.action || step.expected_result}
-              values={parameterValues}
-            />
           </div>
-          <span aria-hidden="true" className="step-card-toggle-state">
-            <SharedGroupStepKebabIcon />
-          </span>
         </button>
         <div className="step-inline-tools">
           <StepTypePickerButton value={step.step_type} onChange={onChangeStepType} />
@@ -2055,7 +2136,6 @@ function SharedGroupDraftStepCard({
         </div>
         <SharedGroupStepActionMenu
           actions={stepActions}
-          previewActions={stepActions}
           label={`Shared step ${stepNumber} actions`}
         />
       </div>
@@ -2103,6 +2183,7 @@ function SharedStepAccordionSection({
   countLabel,
   isExpanded,
   onToggle,
+  actions,
   children
 }: {
   title: string;
@@ -2110,31 +2191,37 @@ function SharedStepAccordionSection({
   countLabel: string;
   isExpanded: boolean;
   onToggle: () => void;
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <section className={isExpanded ? "requirement-accordion-section is-expanded" : "requirement-accordion-section"}>
-      <button
-        aria-expanded={isExpanded}
-        className="requirement-accordion-toggle"
-        onClick={onToggle}
-        type="button"
-      >
-        <div className="requirement-accordion-toggle-main">
-          <span aria-hidden="true" className={isExpanded ? "requirement-accordion-icon is-expanded" : "requirement-accordion-icon"}>
-            <SharedStepAccordionChevronIcon />
-          </span>
-          <div className="requirement-accordion-toggle-copy">
-            <strong>{title}</strong>
-            <span>{summary}</span>
+    <section className={isExpanded ? "editor-accordion-section is-expanded" : "editor-accordion-section"}>
+      <div className="editor-accordion-head">
+        <button
+          aria-expanded={isExpanded}
+          className="editor-accordion-toggle"
+          onClick={onToggle}
+          type="button"
+        >
+          <div className="editor-accordion-toggle-main">
+            <span aria-hidden="true" className={isExpanded ? "editor-accordion-icon is-expanded" : "editor-accordion-icon"}>
+              <SharedStepAccordionChevronIcon />
+            </span>
+            <div className="editor-accordion-toggle-copy">
+              <strong>{title}</strong>
+              <span>{summary}</span>
+            </div>
           </div>
+        </button>
+        <div className="editor-accordion-toggle-meta">
+          <span className="editor-accordion-toggle-count">{countLabel}</span>
+          {actions ? <div className="editor-accordion-actions">{actions}</div> : null}
+          <button className="editor-accordion-toggle-state" onClick={onToggle} type="button">
+            {isExpanded ? "Collapse" : "Expand"}
+          </button>
         </div>
-        <div className="requirement-accordion-toggle-meta">
-          <span className="requirement-accordion-toggle-count">{countLabel}</span>
-          <span className="requirement-accordion-toggle-state">{isExpanded ? "Collapse" : "Expand"}</span>
-        </div>
-      </button>
-      {isExpanded ? <div className="requirement-accordion-body">{children}</div> : null}
+      </div>
+      {isExpanded ? <div className="editor-accordion-body">{children}</div> : null}
     </section>
   );
 }

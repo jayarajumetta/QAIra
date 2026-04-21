@@ -3,7 +3,7 @@ const { v4: uuid } = require("uuid");
 const suiteTestCaseService = require("./suiteTestCase.service");
 const displayIdService = require("./displayId.service");
 
-exports.createTestSuite = async ({ app_type_id, name, parent_id }) => {
+exports.createTestSuite = async ({ app_type_id, name, parent_id, created_by }) => {
   if (!app_type_id || !name) {
     throw new Error("Missing required fields");
   }
@@ -29,9 +29,9 @@ exports.createTestSuite = async ({ app_type_id, name, parent_id }) => {
   const display_id = await displayIdService.createDisplayId("test_suite");
 
   await db.prepare(`
-    INSERT INTO test_suites (id, display_id, app_type_id, name, parent_id)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(id, display_id, app_type_id, name, parent_id || null);
+    INSERT INTO test_suites (id, display_id, app_type_id, name, parent_id, created_by, updated_by, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `).run(id, display_id, app_type_id, name, parent_id || null, created_by || null, created_by || null);
 
   return { id };
 };
@@ -54,7 +54,7 @@ exports.getTestSuites = async ({ app_type_id, parent_id }) => {
     }
   }
 
-  query += ` ORDER BY created_at DESC`;
+  query += ` ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC`;
 
   return db.prepare(query).all(...params);
 };
@@ -95,11 +95,12 @@ exports.updateTestSuite = async (id, data) => {
 
   await db.prepare(`
     UPDATE test_suites
-    SET name = ?, parent_id = ?
+    SET name = ?, parent_id = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(
     data.name ?? existing.name,
     parentId || null,
+    data.updated_by ?? existing.updated_by ?? existing.created_by ?? null,
     id
   );
 

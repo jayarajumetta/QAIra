@@ -69,14 +69,23 @@ module.exports = async function (fastify) {
   fastify.get("/executions", async (req) => {
     await fastify.authenticate(req);
 
-    const { project_id, status } = req.query;
+    const { project_id, app_type_id, status } = req.query;
+    let scopedProjectId = project_id;
 
-    // If filtering by project, verify access
-    if (project_id) {
+    if (app_type_id) {
+      const appType = await appTypeService.getAppType(app_type_id);
+      await projectService.getProject(appType.project_id, req.user.id);
+
+      if (project_id && project_id !== appType.project_id) {
+        throw new Error("Selected app type must belong to the current project");
+      }
+
+      scopedProjectId = appType.project_id;
+    } else if (project_id) {
       await projectService.getProject(project_id, req.user.id);
     }
 
-    return service.getExecutions({ project_id, status });
+    return service.getExecutions({ project_id: scopedProjectId, app_type_id, status });
   });
 
 
