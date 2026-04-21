@@ -164,6 +164,81 @@ const normalizeSharedSteps = (steps = []) => {
     }));
 };
 
+const ensureHttpUrl = (value) => {
+  const normalized = normalizeRichText(value);
+
+  if (!normalized) {
+    throw new Error("Request URL is required");
+  }
+
+  let parsedUrl;
+
+  try {
+    parsedUrl = new URL(normalized);
+  } catch {
+    throw new Error("Request URL must be a valid absolute URL");
+  }
+
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    throw new Error("Only http and https API requests are supported");
+  }
+
+  return parsedUrl.toString();
+};
+
+const serializeApiBody = (request, headers) => {
+  const bodyMode = request.body_mode || "none";
+  const body = normalizeRichText(request.body);
+
+  if (bodyMode === "none" || !body) {
+    return undefined;
+  }
+
+  if (bodyMode === "json" && !headers.has("content-type")) {
+    headers.set("content-type", "application/json");
+  } else if (bodyMode === "text" && !headers.has("content-type")) {
+    headers.set("content-type", "text/plain; charset=utf-8");
+  } else if (bodyMode === "xml" && !headers.has("content-type")) {
+    headers.set("content-type", "application/xml");
+  } else if (bodyMode === "form" && !headers.has("content-type")) {
+    headers.set("content-type", "application/x-www-form-urlencoded");
+  }
+
+  return body;
+};
+
+const mapResponseHeaders = (response) => {
+  const headers = {};
+
+  response.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+
+  return headers;
+};
+
+const parseResponseJson = (bodyText, contentType) => {
+  const normalizedBody = typeof bodyText === "string" ? bodyText.trim() : "";
+
+  if (!normalizedBody) {
+    return null;
+  }
+
+  const looksLikeJson = String(contentType || "").toLowerCase().includes("json")
+    || normalizedBody.startsWith("{")
+    || normalizedBody.startsWith("[");
+
+  if (!looksLikeJson) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(normalizedBody);
+  } catch {
+    return null;
+  }
+};
+
 const ensureTestCase = async (testCaseId) => {
   const testCase = await selectTestCase.get(testCaseId);
 
@@ -267,6 +342,63 @@ exports.getTestSteps = async ({ test_case_id }) => {
 
 exports.getTestStep = async (id) => {
   return ensureStep(id);
+};
+
+exports.runApiRequestPreview = async (input) => {
+  const request = normalizeApiRequest(input);
+
+  if (!request) {
+    throw new Error("A valid API request is required");
+  }
+
+  const url = ensureHttpUrl(request.url);
+  const headers = new Headers();
+  const method = request.method || "GET";
+
+  for (const header of request.headers || []) {
+    if (!header?.key) {
+      continue;
+    }
+
+    headers.set(header.key, header.value || "");
+  }
+
+  const startedAt = Date.now();
+  let response;
+
+  try {
+    response = await fetch(url, {
+      method,
+      headers,
+      body: method === "GET" || method === "HEAD" ? undefined : serializeApiBody(request, headers),
+      signal: AbortSignal.timeout(20000)
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("API request timed out after 20 seconds");
+    }
+
+    throw new Error(error instanceof Error ? error.message : "Unable to run API request preview");
+  }
+
+  const bodyText = await response.text();
+  const contentType = response.headers.get("content-type");
+
+  return {
+    request: {
+      method,
+      url
+    },
+    response: {
+      status: response.status,
+      ok: response.ok,
+      headers: mapResponseHeaders(response),
+      content_type: contentType,
+      body_text: bodyText,
+      body_json: parseResponseJson(bodyText, contentType),
+      duration_ms: Date.now() - startedAt
+    }
+  };
 };
 
 exports.updateTestStep = async (id, data = {}) => {

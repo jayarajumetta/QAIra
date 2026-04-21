@@ -27,6 +27,15 @@ module.exports = async function (fastify) {
     return service.getTestSteps({ test_case_id });
   });
 
+  fastify.post("/test-steps/run-api-request", async (req) => {
+    await fastify.authenticate(req);
+    fastify.validate({
+      api_request: { required: true, type: "object" }
+    }, req.body);
+
+    return service.runApiRequestPreview(req.body.api_request);
+  });
+
   fastify.get("/test-steps/:id", async (req) => {
     await fastify.authenticate(req);
     return service.getTestStep(req.params.id);

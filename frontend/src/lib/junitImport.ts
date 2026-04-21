@@ -29,6 +29,72 @@ const readSuiteName = (node: Element) => {
   return "";
 };
 
+const readSuitePath = (node: Element) => {
+  const names: string[] = [];
+  let current: Element | null = node.parentElement;
+
+  while (current) {
+    if (current.tagName.toLowerCase() === "testsuite") {
+      const suiteName = collapseWhitespace(current.getAttribute("name") || "");
+
+      if (suiteName && !names.includes(suiteName)) {
+        names.unshift(suiteName);
+      }
+    }
+
+    current = current.parentElement;
+  }
+
+  return names;
+};
+
+const readProperties = (node: Element | null) => {
+  if (!node) {
+    return {};
+  }
+
+  const propertiesNode = Array.from(node.children).find((child) => child.tagName.toLowerCase() === "properties");
+
+  if (!propertiesNode) {
+    return {};
+  }
+
+  return Array.from(propertiesNode.children)
+    .filter((child) => child.tagName.toLowerCase() === "property")
+    .reduce<Record<string, string>>((next, propertyNode) => {
+      const name = collapseWhitespace(propertyNode.getAttribute("name") || "");
+
+      if (!name) {
+        return next;
+      }
+
+      next[name.replace(/^@+/, "").toLowerCase()] = collapseWhitespace(
+        propertyNode.getAttribute("value") || propertyNode.textContent || ""
+      );
+      return next;
+    }, {});
+};
+
+const readInheritedSuiteProperties = (node: Element) => {
+  const merged: Record<string, string> = {};
+  const suiteNodes: Element[] = [];
+  let current: Element | null = node.parentElement;
+
+  while (current) {
+    if (current.tagName.toLowerCase() === "testsuite") {
+      suiteNodes.unshift(current);
+    }
+
+    current = current.parentElement;
+  }
+
+  suiteNodes.forEach((suiteNode) => {
+    Object.assign(merged, readProperties(suiteNode));
+  });
+
+  return merged;
+};
+
 export function parseJUnitXmlTestCases(text: string): ParsedJUnitXml {
   const parser = new DOMParser();
   const document = parser.parseFromString(text, "application/xml");
@@ -54,7 +120,10 @@ export function parseJUnitXmlTestCases(text: string): ParsedJUnitXml {
     const name = collapseWhitespace(node.getAttribute("name") || "") || `JUnit test ${index + 1}`;
     const className = collapseWhitespace(node.getAttribute("classname") || "");
     const suiteName = readSuiteName(node);
+    const suitePath = readSuitePath(node);
     const runtimeSeconds = collapseWhitespace(node.getAttribute("time") || "");
+    const inheritedProperties = readInheritedSuiteProperties(node);
+    const caseProperties = readProperties(node);
     const failureNode = Array.from(node.children).find((child) => {
       const tag = child.tagName.toLowerCase();
       return tag === "failure" || tag === "error";
@@ -86,6 +155,11 @@ export function parseJUnitXmlTestCases(text: string): ParsedJUnitXml {
       ),
       automated: "yes",
       status: "draft",
+      suites: suitePath.join("\n"),
+      parameter_values: {
+        ...inheritedProperties,
+        ...caseProperties
+      },
       action: `Run automated JUnit test ${title}.`,
       expected_result: "The automated JUnit test completes without failures or errors."
     } satisfies ImportedTestCaseRow;

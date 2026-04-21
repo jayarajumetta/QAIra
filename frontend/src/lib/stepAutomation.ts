@@ -113,7 +113,33 @@ function normalizeValidationKind(value?: string | null): StepApiValidation["kind
   return "status";
 }
 
-function buildValidationCode(validation: StepApiValidation, responseVar: string) {
+function toJsAssertionLiteral(value?: string | null) {
+  const normalized = normalizeRichText(value);
+
+  if (!normalized) {
+    return quoteJsString("");
+  }
+
+  if (normalized === "true" || normalized === "false" || normalized === "null") {
+    return normalized;
+  }
+
+  if (/^-?\d+(\.\d+)?$/.test(normalized)) {
+    return normalized;
+  }
+
+  if (/^[\[{"]/.test(normalized)) {
+    try {
+      return JSON.stringify(JSON.parse(normalized));
+    } catch {
+      return quoteJsString(normalized);
+    }
+  }
+
+  return quoteJsString(normalized);
+}
+
+export function buildApiValidationAssertionCode(validation: StepApiValidation, responseVar: string) {
   const target = normalizeRichText(validation.target);
   const expected = normalizeRichText(validation.expected);
 
@@ -123,7 +149,7 @@ function buildValidationCode(validation: StepApiValidation, responseVar: string)
     case "body_contains":
       return `expect(String(${responseVar}.body)).toContain(${quoteJsString(expected || "")});`;
     case "json_path":
-      return `expect(readJsonPath(${responseVar}.body, ${quoteJsString(target || "$")})).toBe(${quoteJsString(expected || "")});`;
+      return `expect(readJsonPath(${responseVar}.body, ${quoteJsString(target || "$")})).toEqual(${toJsAssertionLiteral(expected)});`;
     case "status":
     default:
       return `expect(${responseVar}.status).toBe(${Number(expected) || 200});`;
@@ -154,7 +180,7 @@ function buildApiRequestLiteral(request: StepApiRequest) {
 function buildGeneratedApiCode(step: StepAutomationLike, request: StepApiRequest) {
   const stepLabel = `Step ${step.step_order || 1}`;
   const responseVar = `response${step.step_order || 1}`;
-  const validationLines = (request.validations || []).map((validation) => buildValidationCode(validation, responseVar));
+  const validationLines = (request.validations || []).map((validation) => buildApiValidationAssertionCode(validation, responseVar));
   const comments = [
     normalizeText(step.action) ? `// Action: ${normalizeText(step.action)}` : "",
     normalizeText(step.expected_result) ? `// Expected: ${normalizeText(step.expected_result)}` : ""

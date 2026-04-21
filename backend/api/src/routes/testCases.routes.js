@@ -66,11 +66,30 @@ module.exports = async function (fastify) {
       app_type_id: { required: true, type: "string" },
       requirement_id: { required: false, type: "string" },
       import_source: { required: false, type: "string" },
-      rows: { required: true, type: "array" }
+      batches: { required: false, type: "array" },
+      rows: { required: false, type: "array" }
     }, req.body);
 
-    if (!req.body.rows.every((row) => row && typeof row === "object" && !Array.isArray(row))) {
-      throw new Error("rows must contain CSV objects");
+    if (!Array.isArray(req.body.rows) && !Array.isArray(req.body.batches)) {
+      throw new Error("Provide rows or batches to import");
+    }
+
+    if (Array.isArray(req.body.rows) && !req.body.rows.every((row) => row && typeof row === "object" && !Array.isArray(row))) {
+      throw new Error("rows must contain import row objects");
+    }
+
+    if (
+      Array.isArray(req.body.batches)
+      && !req.body.batches.every(
+        (batch) =>
+          batch
+          && typeof batch === "object"
+          && !Array.isArray(batch)
+          && Array.isArray(batch.rows)
+          && batch.rows.every((row) => row && typeof row === "object" && !Array.isArray(row))
+      )
+    ) {
+      throw new Error("batches must contain import batches with row objects");
     }
 
     const appType = await appTypeService.getAppType(req.body.app_type_id);

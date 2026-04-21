@@ -2,6 +2,7 @@ const db = require("../db");
 const { v4: uuid } = require("uuid");
 const requirementTestCaseService = require("./requirementTestCase.service");
 const suiteTestCaseService = require("./suiteTestCase.service");
+const testSuiteService = require("./testSuite.service");
 const sharedStepSyncService = require("./sharedStepSync.service");
 const workspaceTransactionService = require("./workspaceTransaction.service");
 const { DOMAIN_METADATA, TEST_CASE_AUTOMATED_VALUES, TEST_CASE_STATUS_VALUES } = require("../domain/catalog");
@@ -15,6 +16,12 @@ const {
 const DEFAULT_PRIORITY = 3;
 const DEFAULT_STATUS = DOMAIN_METADATA.test_cases.default_status;
 const DEFAULT_AUTOMATED = DOMAIN_METADATA.test_cases.default_automated || "no";
+const IMPORT_SOURCE_LABELS = {
+  csv: "CSV",
+  junit_xml: "JUnit XML",
+  testng_xml: "TestNG XML",
+  postman_collection: "Postman collection"
+};
 
 const selectAppType = db.prepare(`
   SELECT id, project_id
@@ -190,6 +197,22 @@ const normalizeParameterValues = (values = {}) => {
 const normalizeTextList = (values = []) => {
   return [...new Set(values.map((value) => normalizeText(value)).filter(Boolean))];
 };
+
+const normalizeImportSource = (value, fallback = "csv") => {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(IMPORT_SOURCE_LABELS, normalized)) {
+    throw new Error(`Unsupported import source: ${normalized}`);
+  }
+
+  return normalized;
+};
+
+const getImportSourceLabel = (value) => IMPORT_SOURCE_LABELS[normalizeImportSource(value)] || IMPORT_SOURCE_LABELS.csv;
 
 const normalizeComparableText = (value) =>
   String(value || "")
@@ -371,6 +394,59 @@ const resolveNamedRows = (lookup, values = [], entityLabel) => {
   return resolved;
 };
 
+const resolveOrCreateImportSuites = async ({ lookup, values = [], app_type_id, created_by }) => {
+  const resolved = [];
+
+  for (const value of normalizeTextList(values)) {
+    const key = normalizeComparableText(value);
+    const matches = lookup[key] || [];
+
+    if (matches.length > 1) {
+      throw new Error(`Multiple test suite records match "${value}". Rename duplicates before importing.`);
+    }
+
+    if (!matches.length) {
+      const response = await testSuiteService.createTestSuite({
+        app_type_id,
+        name: value,
+        created_by
+      });
+      const createdSuite = await selectSuite.get(response.id);
+
+      lookup[key] = createdSuite ? [createdSuite] : [];
+      if (!createdSuite) {
+        throw new Error(`Unable to create test suite: ${value}`);
+      }
+    }
+
+    resolved.push(lookup[key][0]);
+  }
+
+  return resolved;
+};
+
+const normalizeImportBatches = ({ batches = [], rows = [], import_source, file_name } = {}) => {
+  if (Array.isArray(batches) && batches.length) {
+    return batches
+      .map((batch, index) => ({
+        batch_index: index + 1,
+        file_name: normalizeText(batch?.file_name || batch?.fileName) || `Batch ${index + 1}`,
+        import_source: normalizeImportSource(batch?.import_source || batch?.importSource || import_source || "csv"),
+        rows: Array.isArray(batch?.rows) ? batch.rows.filter((row) => row && typeof row === "object" && !Array.isArray(row)) : []
+      }))
+      .filter((batch) => batch.rows.length);
+  }
+
+  return Array.isArray(rows) && rows.length
+    ? [{
+        batch_index: 1,
+        file_name: normalizeText(file_name) || getImportSourceLabel(import_source || "csv"),
+        import_source: normalizeImportSource(import_source || "csv"),
+        rows: rows.filter((row) => row && typeof row === "object" && !Array.isArray(row))
+      }].filter((batch) => batch.rows.length)
+    : [];
+};
+
 const pickImportSequenceValue = (items, index) => {
   if (!items.length) {
     return null;
@@ -435,10 +511,70 @@ const parseImportedActionLine = (value) => {
   };
 };
 
+const finalizeImportedSteps = (steps = []) => {
+  let previousGroupSignature = null;
+  let currentGroupId = null;
+
+  return steps
+    .map((step, index) => {
+      const groupName = normalizeText(step?.group_name || step?.groupName);
+      const reusableGroupId = normalizeText(
+        step?.reusable_group_id || step?.reusableGroupId || step?.shared_group_id || step?.sharedGroupId
+      );
+      const groupKind = normalizeGroupKind(
+        step?.group_kind
+        || step?.groupKind
+        || step?.step_group_kind
+        || step?.stepGroupKind
+        || (groupName || reusableGroupId ? (reusableGroupId ? "reusable" : "local") : null)
+      );
+      const explicitGroupId = normalizeText(step?.group_id || step?.groupId);
+      const hasGroupMetadata = Boolean(groupName || reusableGroupId || groupKind || explicitGroupId);
+      const groupSignature = hasGroupMetadata
+        ? `${groupKind || "local"}::${groupName || ""}::${reusableGroupId || ""}::${explicitGroupId || ""}`
+        : null;
+
+      if (explicitGroupId) {
+        currentGroupId = explicitGroupId;
+      } else if (groupSignature && groupSignature !== previousGroupSignature) {
+        currentGroupId = uuid();
+      } else if (!groupSignature) {
+        currentGroupId = null;
+      }
+
+      previousGroupSignature = groupSignature;
+
+      return {
+        ...step,
+        step_order: Number.isFinite(Number(step?.step_order)) ? Number(step.step_order) : index + 1,
+        action: normalizeText(step?.action),
+        expected_result: normalizeText(step?.expected_result || step?.expectedResult),
+        step_type: normalizeTestStepType(step?.step_type || step?.stepType, "web"),
+        automation_code: normalizeRichText(step?.automation_code || step?.automationCode),
+        api_request: normalizeApiRequest(step?.api_request || step?.apiRequest),
+        group_id: currentGroupId,
+        group_name: groupName,
+        group_kind: groupKind,
+        reusable_group_id: reusableGroupId
+      };
+    })
+    .filter((step) => step.action || step.expected_result || step.automation_code || step.api_request)
+    .sort((left, right) => left.step_order - right.step_order)
+    .map((step, index) => ({
+      ...step,
+      step_order: index + 1
+    }));
+};
+
 const buildStepsFromImportRow = (row, options = {}) => {
   const {
     sharedGroupLookup = {}
   } = options;
+
+  if (Array.isArray(row?.steps) && row.steps.length) {
+    return finalizeImportedSteps(row.steps);
+  }
+
   const actions = splitImportSequence(row.action);
   const expectedResults = splitImportSequence(row.expected_result || row.expectedResult);
   const groupNames = splitImportSequence(row.step_group_name || row.stepGroupName);
@@ -450,10 +586,8 @@ const buildStepsFromImportRow = (row, options = {}) => {
   }
 
   const size = Math.max(actions.length, expectedResults.length, groupNames.length, groupKinds.length, sharedGroupIds.length, 1);
-  let previousGroupSignature = null;
-  let currentGroupId = null;
 
-  return Array.from({ length: size }, (_, index) => {
+  return finalizeImportedSteps(Array.from({ length: size }, (_, index) => {
     const annotatedAction = parseImportedActionLine(pickImportSequenceValue(actions, index));
     const expectedResult = pickImportSequenceValue(expectedResults, index);
     let groupName = annotatedAction.group_name || pickImportSequenceValue(groupNames, index);
@@ -478,27 +612,15 @@ const buildStepsFromImportRow = (row, options = {}) => {
       groupName = matches[0].name;
     }
 
-    const hasGroupMetadata = Boolean(groupName || reusableGroupId || groupKind);
-    const groupSignature = hasGroupMetadata ? `${groupKind || "local"}::${groupName || ""}::${reusableGroupId || ""}` : null;
-
-    if (groupSignature && groupSignature !== previousGroupSignature) {
-      currentGroupId = uuid();
-    } else if (!groupSignature) {
-      currentGroupId = null;
-    }
-
-    previousGroupSignature = groupSignature;
-
     return {
       step_order: index + 1,
       action: annotatedAction.action || "",
       expected_result: expectedResult || "",
-      group_id: currentGroupId,
       group_name: groupName,
       group_kind: groupKind,
       reusable_group_id: reusableGroupId
     };
-  }).filter((step) => step.action || step.expected_result);
+  }));
 };
 
 const ensureAppTypeExists = async (appTypeId) => {
@@ -708,21 +830,30 @@ exports.createTestCase = async (input) => {
   return response;
 };
 
-exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], created_by, import_source } = {}) => {
+exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], created_by, import_source, batches = [] } = {}) => {
   const resolvedAppTypeId = normalizeText(app_type_id);
   const defaultRequirementId = normalizeText(requirement_id);
-  const resolvedImportSource = normalizeText(import_source) || "csv";
+  const normalizedBatches = normalizeImportBatches({ batches, rows, import_source });
   const sharedGroupCache = new Map();
 
   if (!resolvedAppTypeId) {
     throw new Error("app_type_id is required");
   }
 
-  if (!Array.isArray(rows) || !rows.length) {
-    throw new Error("At least one CSV row is required");
+  if (!normalizedBatches.length) {
+    throw new Error("At least one import row is required");
   }
 
   const appType = await ensureAppTypeExists(resolvedAppTypeId);
+  const totalRowCount = normalizedBatches.reduce((count, batch) => count + batch.rows.length, 0);
+  const uniqueSources = [...new Set(normalizedBatches.map((batch) => batch.import_source))];
+  const isSingleBatch = normalizedBatches.length === 1;
+  const isSingleSource = uniqueSources.length === 1;
+  const transactionSourceLabel = isSingleSource ? getImportSourceLabel(uniqueSources[0]) : "mixed-source";
+  const sourceSummary =
+    normalizedBatches.length === 1
+      ? `${transactionSourceLabel} file`
+      : `${normalizedBatches.length} source files`;
 
   if (defaultRequirementId) {
     await ensureRequirementsExist([defaultRequirementId]);
@@ -742,14 +873,13 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
     category: "bulk_import",
     action: "test_case_import",
     status: "running",
-    title: resolvedImportSource === "junit_xml" ? "JUnit XML test case import" : "CSV test case import",
-    description:
-      resolvedImportSource === "junit_xml"
-        ? `Importing ${rows.length} test case${rows.length === 1 ? "" : "s"} from a JUnit XML report.`
-        : `Importing ${rows.length} test case${rows.length === 1 ? "" : "s"} from CSV.`,
+    title: isSingleBatch ? `${transactionSourceLabel} test case import` : "Test case source import batch",
+    description: `Importing ${totalRowCount} test case${totalRowCount === 1 ? "" : "s"} from ${sourceSummary}.`,
     metadata: {
-      import_source: resolvedImportSource,
-      total_rows: rows.length,
+      import_source: isSingleSource ? uniqueSources[0] : "mixed",
+      import_sources: uniqueSources,
+      total_batches: normalizedBatches.length,
+      total_rows: totalRowCount,
       requirement_id: defaultRequirementId
     },
     created_by,
@@ -757,13 +887,12 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
   });
   await workspaceTransactionService.appendTransactionEvent(transaction.id, {
     phase: "prepare",
-    message:
-      resolvedImportSource === "junit_xml"
-        ? `Started JUnit XML import for ${rows.length} test case row${rows.length === 1 ? "" : "s"}.`
-        : `Started CSV import for ${rows.length} test case row${rows.length === 1 ? "" : "s"}.`,
+    message: `Started test case import for ${sourceSummary}.`,
     details: {
-      import_source: resolvedImportSource,
-      total_rows: rows.length,
+      import_source: isSingleSource ? uniqueSources[0] : "mixed",
+      import_sources: uniqueSources,
+      total_batches: normalizedBatches.length,
+      total_rows: totalRowCount,
       requirement_id: defaultRequirementId
     }
   });
@@ -771,77 +900,99 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
   const created = [];
   const errors = [];
 
-  for (const [index, row] of rows.entries()) {
-    try {
-      const normalizedRow = row || {};
-      const importedSteps = buildStepsFromImportRow(normalizedRow, { sharedGroupLookup }).map((step) => ({ ...step }));
-      const resolvedSuiteIds = resolveNamedRows(
-        suiteLookup,
-        splitImportSequence(normalizedRow.suites || normalizedRow.suite),
-        "Suite"
-      ).map((suite) => suite.id);
-      const resolvedRequirementIdsFromNames = resolveNamedRows(
-        requirementLookup,
-        splitImportSequence(normalizedRow.requirements || normalizedRow.requirement),
-        "Requirement"
-      ).map((requirement) => requirement.id);
-
-      for (const step of importedSteps) {
-        if (step.group_kind !== "reusable") {
-          continue;
-        }
-
-        if (!step.reusable_group_id) {
-          step.group_kind = step.group_id ? "local" : null;
-          continue;
-        }
-
-        if (!sharedGroupCache.has(step.reusable_group_id)) {
-          sharedGroupCache.set(step.reusable_group_id, await selectSharedStepGroup.get(step.reusable_group_id));
-        }
-
-        const sharedGroup = sharedGroupCache.get(step.reusable_group_id);
-
-        if (!sharedGroup || sharedGroup.app_type_id !== resolvedAppTypeId) {
-          step.group_kind = step.group_id ? "local" : null;
-          step.reusable_group_id = null;
-          continue;
-        }
-
-        if (!step.group_name) {
-          step.group_name = sharedGroup.name;
-        }
+  for (const batch of normalizedBatches) {
+    await workspaceTransactionService.appendTransactionEvent(transaction.id, {
+      phase: "batch",
+      message: `Processing ${getImportSourceLabel(batch.import_source)} batch "${batch.file_name}".`,
+      details: {
+        batch_index: batch.batch_index,
+        file_name: batch.file_name,
+        import_source: batch.import_source,
+        row_count: batch.rows.length
       }
+    });
 
-      const response = await exports.createTestCase({
-        app_type_id: resolvedAppTypeId,
-        title: normalizedRow?.title,
-        description: normalizedRow?.description,
-        automated: normalizedRow?.automated,
-        priority: normalizedRow?.priority,
-        status: normalizeStatus(normalizedRow?.status, "draft"),
-        suite_ids: resolvedSuiteIds,
-        requirement_ids: normalizeTextList([
-          defaultRequirementId,
-          normalizedRow?.requirement_id,
-          normalizedRow?.requirementId,
-          ...resolvedRequirementIdsFromNames
-        ]),
-        steps: importedSteps,
-        created_by
-      });
+    for (const [index, row] of batch.rows.entries()) {
+      try {
+        const normalizedRow = row || {};
+        const importedSteps = buildStepsFromImportRow(normalizedRow, { sharedGroupLookup }).map((step) => ({ ...step }));
+        const resolvedSuites = await resolveOrCreateImportSuites({
+          lookup: suiteLookup,
+          values: splitImportSequence(normalizedRow.suites || normalizedRow.suite),
+          app_type_id: resolvedAppTypeId,
+          created_by
+        });
+        const resolvedSuiteIds = resolvedSuites.map((suite) => suite.id);
+        const resolvedRequirementIdsFromNames = resolveNamedRows(
+          requirementLookup,
+          splitImportSequence(normalizedRow.requirements || normalizedRow.requirement),
+          "Requirement"
+        ).map((requirement) => requirement.id);
 
-      created.push({
-        row: index + 1,
-        id: response.id,
-        title: normalizeText(row?.title) || "Untitled test case"
-      });
-    } catch (error) {
-      errors.push({
-        row: index + 1,
-        title: normalizeText(row?.title),
-        message: error.message || "Unable to import test case"
-      });
+        for (const step of importedSteps) {
+          if (step.group_kind !== "reusable") {
+            continue;
+          }
+
+          if (!step.reusable_group_id) {
+            step.group_kind = step.group_id ? "local" : null;
+            continue;
+          }
+
+          if (!sharedGroupCache.has(step.reusable_group_id)) {
+            sharedGroupCache.set(step.reusable_group_id, await selectSharedStepGroup.get(step.reusable_group_id));
+          }
+
+          const sharedGroup = sharedGroupCache.get(step.reusable_group_id);
+
+          if (!sharedGroup || sharedGroup.app_type_id !== resolvedAppTypeId) {
+            step.group_kind = step.group_id ? "local" : null;
+            step.reusable_group_id = null;
+            continue;
+          }
+
+          if (!step.group_name) {
+            step.group_name = sharedGroup.name;
+          }
+        }
+
+        const response = await exports.createTestCase({
+          app_type_id: resolvedAppTypeId,
+          title: normalizedRow?.title,
+          description: normalizedRow?.description,
+          parameter_values: normalizedRow?.parameter_values || normalizedRow?.parameterValues,
+          automated: normalizedRow?.automated,
+          priority: normalizedRow?.priority,
+          status: normalizeStatus(normalizedRow?.status, "draft"),
+          suite_ids: resolvedSuiteIds,
+          requirement_ids: normalizeTextList([
+            defaultRequirementId,
+            normalizedRow?.requirement_id,
+            normalizedRow?.requirementId,
+            ...resolvedRequirementIdsFromNames
+          ]),
+          steps: importedSteps,
+          created_by
+        });
+
+        created.push({
+          row: index + 1,
+          batch_index: batch.batch_index,
+          file_name: batch.file_name,
+          import_source: batch.import_source,
+          id: response.id,
+          title: normalizeText(row?.title) || "Untitled test case"
+        });
+      } catch (error) {
+        errors.push({
+          row: index + 1,
+          batch_index: batch.batch_index,
+          file_name: batch.file_name,
+          import_source: batch.import_source,
+          title: normalizeText(row?.title),
+          message: error.message || "Unable to import test case"
+        });
+      }
     }
   }
 
@@ -855,11 +1006,13 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
   await workspaceTransactionService.updateTransaction(transaction.id, {
     status: created.length ? "completed" : "failed",
     description: created.length
-      ? `Imported ${created.length} of ${rows.length} test case${rows.length === 1 ? "" : "s"} from ${resolvedImportSource === "junit_xml" ? "JUnit XML" : "CSV"}.`
-      : `No test cases were imported from ${resolvedImportSource === "junit_xml" ? "the JUnit XML report" : "the CSV file"}.`,
+      ? `Imported ${created.length} of ${totalRowCount} test case${totalRowCount === 1 ? "" : "s"} from ${sourceSummary}.`
+      : `No test cases were imported from ${sourceSummary}.`,
     metadata: {
-      import_source: resolvedImportSource,
-      total_rows: rows.length,
+      import_source: isSingleSource ? uniqueSources[0] : "mixed",
+      import_sources: uniqueSources,
+      total_batches: normalizedBatches.length,
+      total_rows: totalRowCount,
       imported: created.length,
       failed: errors.length,
       requirement_id: defaultRequirementId
@@ -871,9 +1024,11 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
     phase: "complete",
     message: created.length
       ? `Imported ${created.length} test case${created.length === 1 ? "" : "s"} with ${errors.length} failure${errors.length === 1 ? "" : "s"}.`
-      : `The ${resolvedImportSource === "junit_xml" ? "JUnit XML import" : "CSV import"} finished without creating test cases.`,
+      : `The test case source import finished without creating test cases.`,
     details: {
-      import_source: resolvedImportSource,
+      import_source: isSingleSource ? uniqueSources[0] : "mixed",
+      import_sources: uniqueSources,
+      total_batches: normalizedBatches.length,
       imported: created.length,
       failed: errors.length,
       sample_errors: errors.slice(0, 10)

@@ -47,14 +47,20 @@ import { useCurrentProject } from "../hooks/useCurrentProject";
 import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { useDialogFocus } from "../hooks/useDialogFocus";
 import { formatAuditTimestamp, resolveAuditUserLabel } from "../lib/auditDisplay";
-import { parseJUnitXmlTestCases } from "../lib/junitImport";
 import {
   countImportedGroups,
+  countImportedSuites,
   countImportedSteps,
-  getImportedStepPreviewLabel,
-  parseTestCaseCsv,
-  type ImportedTestCaseRow
+  getImportedStepPreviewLabel
 } from "../lib/testCaseImport";
+import {
+  getTestCaseImportSourceLabel,
+  prepareTestCaseImportBatch,
+  TEST_CASE_IMPORT_SOURCE_OPTIONS,
+  type PreparedTestCaseImportBatch,
+  type TestCaseImportSource,
+  type TestCaseImportSourceSelection
+} from "../lib/testCaseSourceImport";
 import { api } from "../lib/api";
 import { appendUniqueImages, parseExternalLinks, readImageFiles, toggleRequirementOnPreviewCase } from "../lib/aiDesignStudio";
 import { upsertSharedStepGroupInCache } from "../lib/sharedStepGroupCache";
@@ -197,6 +203,149 @@ const createDraftStepId = () =>
 
 const createDraftGroupId = () =>
   globalThis.crypto?.randomUUID?.() || `draft-group-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+const TEST_CASE_PARAMETER_DRAFT_STORAGE_KEY = "qaira.testCaseParameterDrafts.v1";
+
+const normalizeTestCaseParameterName = (value?: string | null) =>
+  String(value || "")
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+
+const normalizeTestCaseParameterValues = (values?: Record<string, unknown> | null) => {
+  if (!values || typeof values !== "object" || Array.isArray(values)) {
+    return {};
+  }
+
+  return Object.entries(values).reduce<Record<string, string>>((next, [key, value]) => {
+    const normalizedKey = normalizeTestCaseParameterName(key);
+
+    if (!normalizedKey) {
+      return next;
+    }
+
+    next[normalizedKey] = value === undefined || value === null ? "" : String(value);
+    return next;
+  }, {});
+};
+
+const serializeTestCaseParameterValues = (values?: Record<string, unknown> | null) =>
+  JSON.stringify(
+    Object.entries(normalizeTestCaseParameterValues(values))
+      .sort(([left], [right]) => left.localeCompare(right))
+  );
+
+const areTestCaseParameterValuesEqual = (
+  left?: Record<string, unknown> | null,
+  right?: Record<string, unknown> | null
+) => serializeTestCaseParameterValues(left) === serializeTestCaseParameterValues(right);
+
+const readStoredTestCaseParameterDrafts = () => {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  try {
+    const stored = window.localStorage.getItem(TEST_CASE_PARAMETER_DRAFT_STORAGE_KEY);
+
+    if (!stored) {
+      return {};
+    }
+
+    const parsed = JSON.parse(stored);
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+
+    return Object.entries(parsed).reduce<Record<string, Record<string, string>>>((next, [scopeKey, values]) => {
+      next[scopeKey] = normalizeTestCaseParameterValues(values as Record<string, unknown>);
+      return next;
+    }, {});
+  } catch {
+    return {};
+  }
+};
+
+const writeStoredTestCaseParameterDrafts = (drafts: Record<string, Record<string, string>>) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(TEST_CASE_PARAMETER_DRAFT_STORAGE_KEY, JSON.stringify(drafts));
+  } catch {
+    // Ignore storage failures and keep the in-memory editor responsive.
+  }
+};
+
+const readStoredTestCaseParameterDraft = (scopeKey: string) => {
+  if (!scopeKey) {
+    return {};
+  }
+
+  const drafts = readStoredTestCaseParameterDrafts();
+  return normalizeTestCaseParameterValues(drafts[scopeKey]);
+};
+
+const hasStoredTestCaseParameterDraft = (scopeKey: string) => {
+  if (!scopeKey) {
+    return false;
+  }
+
+  const drafts = readStoredTestCaseParameterDrafts();
+  return Object.prototype.hasOwnProperty.call(drafts, scopeKey);
+};
+
+const writeStoredTestCaseParameterDraft = (scopeKey: string, values: Record<string, string>) => {
+  if (!scopeKey) {
+    return;
+  }
+
+  const drafts = readStoredTestCaseParameterDrafts();
+  drafts[scopeKey] = normalizeTestCaseParameterValues(values);
+  writeStoredTestCaseParameterDrafts(drafts);
+};
+
+const clearStoredTestCaseParameterDraft = (scopeKey: string) => {
+  if (!scopeKey || typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    const drafts = readStoredTestCaseParameterDrafts();
+
+    if (!(scopeKey in drafts)) {
+      return;
+    }
+
+    delete drafts[scopeKey];
+
+    if (Object.keys(drafts).length) {
+      writeStoredTestCaseParameterDrafts(drafts);
+    } else {
+      window.localStorage.removeItem(TEST_CASE_PARAMETER_DRAFT_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage failures and keep the in-memory editor responsive.
+  }
+};
+
+const buildTestCaseParameterDraftScopeKey = ({
+  isCreating,
+  testCaseId,
+  appTypeId
+}: {
+  isCreating: boolean;
+  testCaseId?: string | null;
+  appTypeId?: string | null;
+}) => {
+  if (isCreating) {
+    return `draft:${appTypeId || "global"}`;
+  }
+
+  return testCaseId ? `case:${testCaseId}` : "";
+};
 
 const normalizeSharedGroupComparableText = (value?: string | null) =>
   String(value || "")
@@ -518,11 +667,10 @@ export function TestCasesPage() {
   const suppressCaseSelectionFromUrlRef = useRef(false);
   const [createSuiteContextId, setCreateSuiteContextId] = useState("");
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [importFileName, setImportFileName] = useState("");
-  const [importRows, setImportRows] = useState<ImportedTestCaseRow[]>([]);
-  const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  const [importBatches, setImportBatches] = useState<PreparedTestCaseImportBatch[]>([]);
+  const [importFileWarnings, setImportFileWarnings] = useState<string[]>([]);
   const [importRequirementId, setImportRequirementId] = useState("");
-  const [importSource, setImportSource] = useState<"csv" | "junit_xml">("csv");
+  const [importSourceSelection, setImportSourceSelection] = useState<TestCaseImportSourceSelection>("auto");
   const [isAiStudioOpen, setIsAiStudioOpen] = useState(false);
   const [aiRequirementIds, setAiRequirementIds] = useState<string[]>([]);
   const [integrationId, setIntegrationId] = useState("");
@@ -619,6 +767,10 @@ export function TestCasesPage() {
   const updateTestCase = useMutation({
     mutationFn: ({ id, input }: { id: string; input: Parameters<typeof api.testCases.update>[1] }) =>
       api.testCases.update(id, input)
+  });
+  const persistCaseParameterValues = useMutation({
+    mutationFn: ({ id, parameter_values }: { id: string; parameter_values: Record<string, string> }) =>
+      api.testCases.update(id, { parameter_values })
   });
   const deleteTestCase = useMutation({ mutationFn: api.testCases.delete });
   const importTestCases = useMutation({ mutationFn: api.testCases.bulkImport });
@@ -829,7 +981,9 @@ export function TestCasesPage() {
     setSelectedTestCaseId("");
     setIsCreating(false);
     setIsImportModalOpen(false);
-    setImportSource("csv");
+    setImportBatches([]);
+    setImportFileWarnings([]);
+    setImportSourceSelection("auto");
     setIsCreateSuiteModalOpen(false);
     setIsCreateExecutionModalOpen(false);
     setExecutionName("");
@@ -853,9 +1007,6 @@ export function TestCasesPage() {
     setSelectedSharedGroupId("");
     setSharedGroupSearchTerm("");
     setSelectedActionTestCaseIds([]);
-    setImportRows([]);
-    setImportWarnings([]);
-    setImportFileName("");
     setImportRequirementId("");
     setIsAiStudioOpen(false);
     setAiRequirementIds([]);
@@ -1049,6 +1200,37 @@ export function TestCasesPage() {
     () => testCases.find((item) => item.id === selectedTestCaseId) || null,
     [selectedTestCaseId, testCases]
   );
+  const createCaseParameterDraftScopeKey = useMemo(
+    () => buildTestCaseParameterDraftScopeKey({ isCreating: true, appTypeId }),
+    [appTypeId]
+  );
+  const selectedCaseParameterDraftScopeKey = useMemo(
+    () => buildTestCaseParameterDraftScopeKey({ isCreating: false, testCaseId: selectedTestCaseId }),
+    [selectedTestCaseId]
+  );
+  const activeTestCaseParameterSeedKey = useMemo(() => {
+    if (isCreating) {
+      return `draft:${appTypeId || "global"}`;
+    }
+
+    return selectedTestCaseId ? `case:${selectedTestCaseId}` : "__none__";
+  }, [appTypeId, isCreating, selectedTestCaseId]);
+  const syncCachedTestCaseParameterValues = (testCaseId: string, parameterValues: Record<string, string>) => {
+    const normalizedValues = normalizeTestCaseParameterValues(parameterValues);
+
+    queryClient.setQueryData<TestCase[]>(["global-test-cases", appTypeId], (current) =>
+      current
+        ? current.map((item) =>
+            item.id === testCaseId
+              ? {
+                  ...item,
+                  parameter_values: normalizedValues
+                }
+              : item
+          )
+        : current
+    );
+  };
 
   useEffect(() => {
     if (isCreating) {
@@ -1092,10 +1274,12 @@ export function TestCasesPage() {
 
   useEffect(() => {
     if (isCreating) {
-      if (lastTestCaseParameterSeedRef.current !== "__create__") {
-        setTestCaseParameterValues({});
+      const nextSeedKey = `draft:${appTypeId || "global"}`;
+
+      if (lastTestCaseParameterSeedRef.current !== nextSeedKey) {
+        setTestCaseParameterValues(readStoredTestCaseParameterDraft(createCaseParameterDraftScopeKey));
         setIsCaseParameterDialogOpen(false);
-        lastTestCaseParameterSeedRef.current = "__create__";
+        lastTestCaseParameterSeedRef.current = nextSeedKey;
       }
       return;
     }
@@ -1119,10 +1303,24 @@ export function TestCasesPage() {
       return;
     }
 
-    setTestCaseParameterValues(selectedTestCase.parameter_values || {});
+    const storedDraft = readStoredTestCaseParameterDraft(selectedCaseParameterDraftScopeKey);
+    const nextValues = Object.keys(storedDraft).length || hasStoredTestCaseParameterDraft(selectedCaseParameterDraftScopeKey)
+      ? storedDraft
+      : normalizeTestCaseParameterValues(selectedTestCase.parameter_values);
+
+    setTestCaseParameterValues(nextValues);
     setIsCaseParameterDialogOpen(false);
     lastTestCaseParameterSeedRef.current = nextSeedKey;
-  }, [isCreating, selectedTestCase, selectedTestCaseId, testCasesQuery.isFetching, testCasesQuery.isLoading]);
+  }, [
+    appTypeId,
+    createCaseParameterDraftScopeKey,
+    isCreating,
+    selectedCaseParameterDraftScopeKey,
+    selectedTestCase,
+    selectedTestCaseId,
+    testCasesQuery.isFetching,
+    testCasesQuery.isLoading
+  ]);
 
   useEffect(() => {
     if (!searchParams.get("case")) {
@@ -1150,6 +1348,74 @@ export function TestCasesPage() {
       setSelectedTestCaseId(requestedCaseId);
     }
   }, [isCreating, searchParams, selectedTestCaseId, testCases, testCasesQuery.isFetching, testCasesQuery.isLoading]);
+
+  useEffect(() => {
+    const scopeKey = isCreating ? createCaseParameterDraftScopeKey : selectedCaseParameterDraftScopeKey;
+
+    if (!scopeKey || lastTestCaseParameterSeedRef.current !== activeTestCaseParameterSeedKey) {
+      return;
+    }
+
+    writeStoredTestCaseParameterDraft(scopeKey, testCaseParameterValues);
+  }, [
+    activeTestCaseParameterSeedKey,
+    createCaseParameterDraftScopeKey,
+    isCreating,
+    selectedCaseParameterDraftScopeKey,
+    testCaseParameterValues
+  ]);
+
+  useEffect(() => {
+    if (
+      isCreating
+      || !selectedTestCase
+      || lastTestCaseParameterSeedRef.current !== activeTestCaseParameterSeedKey
+      || testCasesQuery.isLoading
+      || testCasesQuery.isFetching
+      || persistCaseParameterValues.isPending
+      || updateTestCase.isPending
+    ) {
+      return;
+    }
+
+    const normalizedCurrentValues = normalizeTestCaseParameterValues(testCaseParameterValues);
+    const normalizedSavedValues = normalizeTestCaseParameterValues(selectedTestCase.parameter_values);
+
+    if (areTestCaseParameterValuesEqual(normalizedCurrentValues, normalizedSavedValues)) {
+      clearStoredTestCaseParameterDraft(selectedCaseParameterDraftScopeKey);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      persistCaseParameterValues.mutate(
+        { id: selectedTestCase.id, parameter_values: normalizedCurrentValues },
+        {
+          onSuccess: () => {
+            syncCachedTestCaseParameterValues(selectedTestCase.id, normalizedCurrentValues);
+
+            if (areTestCaseParameterValuesEqual(readStoredTestCaseParameterDraft(selectedCaseParameterDraftScopeKey), normalizedCurrentValues)) {
+              clearStoredTestCaseParameterDraft(selectedCaseParameterDraftScopeKey);
+            }
+          },
+          onError: (error) => {
+            showError(error, "Unable to store test data values");
+          }
+        }
+      );
+    }, 450);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    activeTestCaseParameterSeedKey,
+    isCreating,
+    persistCaseParameterValues.isPending,
+    selectedCaseParameterDraftScopeKey,
+    selectedTestCase,
+    testCaseParameterValues,
+    testCasesQuery.isFetching,
+    testCasesQuery.isLoading,
+    updateTestCase.isPending
+  ]);
 
   useEffect(() => {
     setNewStepDraft(EMPTY_STEP_DRAFT);
@@ -1558,6 +1824,7 @@ export function TestCasesPage() {
           steps: normalizeDraftSteps(draftSteps)
         });
 
+        clearStoredTestCaseParameterDraft(createCaseParameterDraftScopeKey);
         syncTestCaseSearchParams(response.id);
         setCreateSuiteContextId("");
         setSelectedTestCaseId(response.id);
@@ -1582,6 +1849,8 @@ export function TestCasesPage() {
           }
         });
 
+        syncCachedTestCaseParameterValues(selectedTestCase.id, testCaseParameterValues);
+        clearStoredTestCaseParameterDraft(selectedCaseParameterDraftScopeKey);
         clearStepSelectionIfClipboardActive();
         showSuccess("Test case updated.");
       }
@@ -1604,6 +1873,7 @@ export function TestCasesPage() {
 
     try {
       await deleteTestCase.mutateAsync(selectedTestCase.id);
+      clearStoredTestCaseParameterDraft(buildTestCaseParameterDraftScopeKey({ isCreating: false, testCaseId: selectedTestCase.id }));
       setSelectedActionTestCaseIds((current) => current.filter((id) => id !== selectedTestCase.id));
       syncTestCaseSearchParams(null);
       setSelectedTestCaseId("");
@@ -1643,6 +1913,9 @@ export function TestCasesPage() {
         .map((testCase) => testCase.id);
       const failedResults = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
 
+      deletedIds.forEach((testCaseId) => {
+        clearStoredTestCaseParameterDraft(buildTestCaseParameterDraftScopeKey({ isCreating: false, testCaseId }));
+      });
       setSelectedActionTestCaseIds((current) => current.filter((id) => !deletedIds.includes(id)));
 
       if (deletedIds.includes(selectedTestCaseId)) {
@@ -2560,34 +2833,46 @@ export function TestCasesPage() {
   };
 
   const handleImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files || []);
 
-    if (!file) {
+    if (!files.length) {
       return;
     }
 
-    try {
-      const text = await file.text();
-      const fileName = file.name.toLowerCase();
-      const isXmlImport =
-        file.type.includes("xml")
-        || fileName.endsWith(".xml");
-      const parsed = isXmlImport ? parseJUnitXmlTestCases(text) : parseTestCaseCsv(text);
-      const nextImportSource = isXmlImport ? "junit_xml" : "csv";
+    const preparedBatches: PreparedTestCaseImportBatch[] = [];
+    const failedFiles: string[] = [];
 
-      setImportRows(parsed.rows);
-      setImportWarnings(parsed.warnings);
-      setImportFileName(file.name);
-      setImportSource(nextImportSource);
-      setMessageTone(parsed.rows.length ? "success" : "error");
-      setMessage(
-        parsed.rows.length
-          ? `Prepared ${parsed.rows.length} test cases from ${file.name}.`
-          : parsed.warnings[0]
-            || `No test cases could be parsed from the ${nextImportSource === "junit_xml" ? "JUnit XML file" : "CSV file"}.`
-      );
-    } catch (error) {
-      showError(error, "Unable to read the import file");
+    try {
+      for (const file of files) {
+        try {
+          preparedBatches.push(await prepareTestCaseImportBatch(file, importSourceSelection));
+        } catch (error) {
+          failedFiles.push(`${file.name}: ${error instanceof Error ? error.message : "Unable to parse file"}`);
+        }
+      }
+
+      if (preparedBatches.length) {
+        setImportBatches((current) => [...current, ...preparedBatches]);
+      }
+
+      if (failedFiles.length) {
+        setImportFileWarnings((current) => [...current, ...failedFiles]);
+      }
+
+      const preparedCaseCount = preparedBatches.reduce((total, batch) => total + batch.rows.length, 0);
+
+      if (preparedCaseCount) {
+        setMessageTone("success");
+        setMessage(
+          `Prepared ${preparedCaseCount} test case${preparedCaseCount === 1 ? "" : "s"} from ${preparedBatches.length} file${preparedBatches.length === 1 ? "" : "s"}.`
+        );
+      } else if (failedFiles[0]) {
+        setMessageTone("error");
+        setMessage(failedFiles[0]);
+      } else {
+        setMessageTone("error");
+        setMessage("No importable test cases were found in the selected files.");
+      }
     } finally {
       event.target.value = "";
     }
@@ -2602,8 +2887,13 @@ export function TestCasesPage() {
       const response = await importTestCases.mutateAsync({
         app_type_id: appTypeId,
         requirement_id: importRequirementId || undefined,
-        import_source: importSource,
-        rows: importRows
+        batches: importBatches
+          .filter((batch) => batch.rows.length)
+          .map((batch) => ({
+            file_name: batch.fileName,
+            import_source: batch.source,
+            rows: batch.rows
+          }))
       });
 
       setMessageTone(response.failed ? "error" : "success");
@@ -2612,10 +2902,13 @@ export function TestCasesPage() {
           ? `${response.imported} test cases imported, ${response.failed} rows skipped.`
           : `${response.imported} test cases imported successfully.`
       );
-      setImportWarnings(response.errors.map((item) => `Row ${item.row}: ${item.message}`));
-      setImportRows([]);
-      setImportFileName("");
-      setImportSource("csv");
+      setImportBatches([]);
+      setImportFileWarnings(
+        response.errors.map((item) =>
+          `${item.file_name || `Batch ${item.batch_index || 1}`}: Row ${item.row}: ${item.message}`
+        )
+      );
+      setImportSourceSelection("auto");
       if (response.created[0]) {
         syncTestCaseSearchParams(response.created[0].id);
         setSelectedTestCaseId(response.created[0].id);
@@ -3024,10 +3317,49 @@ export function TestCasesPage() {
       withSuites
     };
   }, [historyByCaseId, testCases]);
+  const importRows = useMemo(
+    () => importBatches.flatMap((batch) => batch.rows),
+    [importBatches]
+  );
+  const importWarnings = useMemo(
+    () =>
+      [
+        ...importBatches.flatMap((batch) =>
+          batch.warnings.map((warning) => `${batch.fileName}: ${warning}`)
+        ),
+        ...importFileWarnings
+      ],
+    [importBatches, importFileWarnings]
+  );
   const importStepCount = useMemo(
     () => importRows.reduce((total, row) => total + countImportedSteps(row), 0),
     [importRows]
   );
+  const importFileCount = importBatches.length;
+  const importFileName = useMemo(() => {
+    if (!importBatches.length) {
+      return "";
+    }
+
+    if (importBatches.length === 1) {
+      return importBatches[0]?.fileName || "";
+    }
+
+    return `${importBatches[0]?.fileName || "Import batch"} + ${importBatches.length - 1} more`;
+  }, [importBatches]);
+  const importSourceSummary = useMemo(() => {
+    if (!importBatches.length) {
+      return "";
+    }
+
+    const uniqueSources = Array.from(new Set(importBatches.map((batch) => batch.source)));
+
+    if (uniqueSources.length === 1) {
+      return getTestCaseImportSourceLabel(uniqueSources[0] as TestCaseImportSource);
+    }
+
+    return "Mixed sources";
+  }, [importBatches]);
   const isLibraryLoading = testCasesQuery.isLoading || executionResultsQuery.isLoading || allTestStepsQuery.isLoading;
 
   const selectedRequirement = requirements.find((item) => item.id === caseDraft.requirement_id) || null;
@@ -3949,7 +4281,9 @@ export function TestCasesPage() {
           actions={
             <>
               <button className="ghost-button" disabled={!appTypeId} onClick={() => {
-                setImportSource("csv");
+                setImportBatches([]);
+                setImportFileWarnings([]);
+                setImportSourceSelection("auto");
                 setIsImportModalOpen(true);
               }} type="button">
                 <TestCaseImportIcon />
@@ -4731,7 +5065,9 @@ export function TestCasesPage() {
         <StepAutomationDialog
           onClose={() => setEditingAutomationStepId("")}
           onSave={(input) => void handleSaveStepAutomation(editingAutomationStep.id, input)}
+          parameterValues={testCaseParameterValues}
           step={{
+            step_order: editingAutomationStep.step_order,
             action: stepDrafts[editingAutomationStep.id]?.action ?? editingAutomationStep.action,
             expected_result: stepDrafts[editingAutomationStep.id]?.expected_result ?? editingAutomationStep.expected_result,
             step_type: stepDrafts[editingAutomationStep.id]?.step_type ?? editingAutomationStep.step_type,
@@ -4799,7 +5135,9 @@ export function TestCasesPage() {
               return;
             }
 
-            setImportSource("csv");
+            setImportBatches([]);
+            setImportFileWarnings([]);
+            setImportSourceSelection("auto");
             setIsImportModalOpen(false);
           }}
         >
@@ -4813,11 +5151,13 @@ export function TestCasesPage() {
             <div className="import-modal-header">
               <div className="import-modal-title">
                 <p className="eyebrow">Bulk Import</p>
-                <h3 id="bulk-import-title">Import test cases from CSV or JUnit XML</h3>
-                <p>Upload reusable cases from CSV, or convert a JUnit XML report into automated draft cases. CSV imports support one Action line and one Expected Result line per step, plus `[Group: Name]` or `[Shared: Name]` prefixes to rebuild grouped steps automatically.</p>
+                <h3 id="bulk-import-title">Import test cases from external sources</h3>
+                <p>Queue CSV, JUnit XML, TestNG XML, or Postman collection files together. CSV imports become manual cases, JUnit and TestNG imports keep automated suite and property data, and Postman requests land as API steps with <code>{"{{vars}}"}</code> converted into case test data.</p>
               </div>
               <button aria-label="Close bulk import dialog" className="ghost-button" disabled={importTestCases.isPending} onClick={() => {
-                setImportSource("csv");
+                setImportBatches([]);
+                setImportFileWarnings([]);
+                setImportSourceSelection("auto");
                 setIsImportModalOpen(false);
               }} type="button">
                 Close
@@ -4826,8 +5166,16 @@ export function TestCasesPage() {
 
             <div className="import-modal-body">
               <div className="record-grid">
+                <FormField label="Source type">
+                  <select value={importSourceSelection} onChange={(event) => setImportSourceSelection(event.target.value as TestCaseImportSourceSelection)}>
+                    {TEST_CASE_IMPORT_SOURCE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </FormField>
+
                 <FormField label="Import file">
-                  <input accept=".csv,.xml,text/csv,text/xml,application/xml" onChange={(event) => void handleImportFile(event)} type="file" />
+                  <input accept=".csv,.xml,.json,text/csv,text/xml,application/xml,application/json" multiple onChange={(event) => void handleImportFile(event)} type="file" />
                 </FormField>
 
                 <FormField label="Default requirement">
@@ -4843,22 +5191,51 @@ export function TestCasesPage() {
               <div className="metric-strip compact">
                 <div className="mini-card">
                   <strong>{importRows.length}</strong>
-                  <span>Rows ready</span>
+                  <span>Cases ready</span>
                 </div>
                 <div className="mini-card">
                   <strong>{importStepCount}</strong>
                   <span>Steps detected</span>
+                </div>
+                <div className="mini-card">
+                  <strong>{importFileCount}</strong>
+                  <span>Files queued</span>
                 </div>
               </div>
 
               <div className="detail-summary">
                 <strong>{importFileName || "No import file loaded yet"}</strong>
                 <span>
-                  {importSource === "junit_xml"
-                    ? "JUnit XML imports create automated draft cases with one generated execution step per report test case."
-                    : "Use new lines or the `|` character in Action and Expected Result to create multiple steps. `Requirements` and `Suites` can also contain multiple names separated by new lines. If the CSV omits `Automated`, the imported case is saved as `no`."}
+                  {importSourceSummary
+                    ? `${importSourceSummary} batch prepared. Missing suites are created automatically during import when a source references them.`
+                    : "Use auto-detect or choose a source type before adding files to the batch queue."}
                 </span>
               </div>
+
+              {importBatches.length ? (
+                <div className="table-wrap import-preview-table">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>File</th>
+                        <th>Source</th>
+                        <th>Cases</th>
+                        <th>Warnings</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importBatches.map((batch) => (
+                        <tr key={batch.id}>
+                          <td>{batch.fileName}</td>
+                          <td>{getTestCaseImportSourceLabel(batch.source)}</td>
+                          <td>{batch.rows.length}</td>
+                          <td>{batch.warnings.length}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
 
               {importWarnings.length ? (
                 <div className="empty-state compact">
@@ -4886,7 +5263,7 @@ export function TestCasesPage() {
                           <td>{row.title}</td>
                           <td>{countImportedSteps(row)}</td>
                           <td>{countImportedGroups(row)}</td>
-                          <td>{String(row.suites || row.suite || "").split(/\r?\n|\|/).filter(Boolean).length}</td>
+                          <td>{countImportedSuites(row)}</td>
                           <td>{getImportedStepPreviewLabel(row)}</td>
                         </tr>
                       ))}
@@ -4902,12 +5279,11 @@ export function TestCasesPage() {
               </button>
               <button
                 className="ghost-button"
-                disabled={!importRows.length || importTestCases.isPending}
+                disabled={(!importBatches.length && !importWarnings.length) || importTestCases.isPending}
                 onClick={() => {
-                  setImportRows([]);
-                  setImportWarnings([]);
-                  setImportFileName("");
-                  setImportSource("csv");
+                  setImportBatches([]);
+                  setImportFileWarnings([]);
+                  setImportSourceSelection("auto");
                 }}
                 type="button"
               >

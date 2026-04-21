@@ -1,4 +1,22 @@
+import type { StepApiRequest, TestStep } from "../types";
+import { normalizeApiRequest, normalizeStepType } from "./stepAutomation";
 import { parseCsvGrid } from "./csvGrid";
+
+export type ImportedTestCaseStep = {
+  step_order?: number;
+  action?: string;
+  expected_result?: string;
+  step_type?: TestStep["step_type"];
+  automation_code?: string;
+  api_request?: StepApiRequest | null;
+  step_group_name?: string;
+  step_group_kind?: string;
+  shared_group_id?: string;
+  group_id?: string;
+  group_name?: string;
+  group_kind?: string;
+  reusable_group_id?: string;
+};
 
 export type ImportedTestCaseRow = {
   title: string;
@@ -15,6 +33,8 @@ export type ImportedTestCaseRow = {
   step_group_name?: string;
   step_group_kind?: string;
   shared_group_id?: string;
+  parameter_values?: Record<string, string>;
+  steps?: ImportedTestCaseStep[];
 };
 
 type ParsedCsv = {
@@ -37,7 +57,9 @@ const HEADER_ALIASES: Record<keyof ImportedTestCaseRow, string[]> = {
   status: ["status", "state"],
   step_group_name: ["stepgroupname", "groupname", "sharedgroupname", "stepgroup", "group"],
   step_group_kind: ["stepgroupkind", "groupkind", "sharedgroupkind", "grouptype", "grouprole"],
-  shared_group_id: ["sharedgroupid", "reusablegroupid", "stepgroupsourceid", "sharedgroupref"]
+  shared_group_id: ["sharedgroupid", "reusablegroupid", "stepgroupsourceid", "sharedgroupref"],
+  parameter_values: ["testdata", "test_data", "testdatavalues", "parametervalues", "parameters", "data", "variables"],
+  steps: []
 };
 
 const normalizeHeader = (header: string) => header.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -49,6 +71,47 @@ const findCanonicalKey = (header: string) => {
     aliases.includes(normalized)
   )?.[0];
 };
+
+const normalizeParameterName = (value: string) =>
+  value
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+
+const parseParameterValuesText = (value: string) =>
+  value
+    .split(/\r?\n|\|/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .reduce<Record<string, string>>((next, entry) => {
+      const separatorIndex = entry.search(/[:=]/);
+      const key = normalizeParameterName(separatorIndex >= 0 ? entry.slice(0, separatorIndex) : entry);
+
+      if (!key) {
+        return next;
+      }
+
+      next[key] = separatorIndex >= 0 ? entry.slice(separatorIndex + 1).trim() : "";
+      return next;
+    }, {});
+
+const normalizeExplicitImportedSteps = (steps: ImportedTestCaseRow["steps"]) =>
+  Array.isArray(steps)
+    ? steps
+        .map((step, index) => ({
+          step_order: step?.step_order || index + 1,
+          action: String(step?.action || "").trim(),
+          expected_result: String(step?.expected_result || "").trim(),
+          step_type: normalizeStepType(step?.step_type),
+          automation_code: String(step?.automation_code || "").trim(),
+          api_request: normalizeApiRequest(step?.api_request),
+          step_group_name: String(step?.step_group_name || step?.group_name || "").trim(),
+          step_group_kind: String(step?.step_group_kind || step?.group_kind || "").trim(),
+          shared_group_id: String(step?.shared_group_id || step?.reusable_group_id || "").trim()
+        }))
+        .filter((step) => step.action || step.expected_result || step.automation_code || step.api_request)
+        .sort((left, right) => left.step_order - right.step_order)
+    : [];
 
 export function parseTestCaseCsv(text: string): ParsedCsv {
   const grid = parseCsvGrid(text);
@@ -81,6 +144,11 @@ export function parseTestCaseCsv(text: string): ParsedCsv {
 
         if (key === "priority") {
           accumulator.priority = Number(value);
+          return accumulator;
+        }
+
+        if (key === "parameter_values") {
+          accumulator.parameter_values = parseParameterValuesText(value);
           return accumulator;
         }
 
@@ -171,6 +239,21 @@ const parseAnnotatedActionLine = (value?: string) => {
 };
 
 export function buildImportedStepPreview(row: ImportedTestCaseRow) {
+  const explicitSteps = normalizeExplicitImportedSteps(row.steps);
+
+  if (explicitSteps.length) {
+    return explicitSteps.map((step) => ({
+      action:
+        step.step_type === "api" && step.api_request?.url
+          ? `${String(step.api_request.method || "GET").toUpperCase()} ${step.api_request.url}`
+          : step.action,
+      expected_result: step.expected_result,
+      step_group_name: step.step_group_name,
+      step_group_kind: normalizeImportedGroupKind(step.step_group_kind),
+      shared_group_id: step.shared_group_id
+    }));
+  }
+
   const actions = splitSequence(row.action);
   const expectedResults = splitSequence(row.expected_result);
   const groupNames = splitSequence(row.step_group_name);
@@ -200,6 +283,10 @@ export function buildImportedStepPreview(row: ImportedTestCaseRow) {
 
 export function countImportedSteps(row: ImportedTestCaseRow) {
   return buildImportedStepPreview(row).length;
+}
+
+export function countImportedSuites(row: ImportedTestCaseRow) {
+  return splitSequence(row.suites || row.suite).length;
 }
 
 export function countImportedGroups(row: ImportedTestCaseRow) {

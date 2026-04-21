@@ -1,4 +1,5 @@
 import type {
+  ApiRequestPreview,
   AiDesignImageInput,
   AiDesignPreviewResponse,
   AiTestCaseGenerationJob,
@@ -349,8 +350,23 @@ export const api = {
       request<{ deleted: boolean }>(`/test-cases/${id}/reject-generated`, {
         method: "DELETE"
       }),
-    bulkImport: (input: { app_type_id: string; requirement_id?: string; import_source?: "csv" | "junit_xml"; rows: Array<Record<string, string | number | null | undefined>> }) =>
-      request<{ imported: number; failed: number; created: Array<{ row: number; id: string; title: string }>; errors: Array<{ row: number; title?: string | null; message: string }> }>("/test-cases/import", {
+    bulkImport: (input: {
+      app_type_id: string;
+      requirement_id?: string;
+      import_source?: "csv" | "junit_xml" | "testng_xml" | "postman_collection";
+      rows?: Array<Record<string, unknown>>;
+      batches?: Array<{
+        file_name?: string;
+        import_source: "csv" | "junit_xml" | "testng_xml" | "postman_collection";
+        rows: Array<Record<string, unknown>>;
+      }>;
+    }) =>
+      request<{
+        imported: number;
+        failed: number;
+        created: Array<{ row: number; batch_index?: number; file_name?: string; import_source?: string; id: string; title: string }>;
+        errors: Array<{ row: number; batch_index?: number; file_name?: string; import_source?: string; title?: string | null; message: string }>;
+      }>("/test-cases/import", {
         method: "POST",
         body: JSON.stringify(input)
       }),
@@ -370,6 +386,11 @@ export const api = {
   testSteps: {
     list: (query?: { test_case_id?: string }) =>
       request<TestStep[]>(`/test-steps${toQueryString(query)}`),
+    runApiRequest: (input: { api_request: TestStep["api_request"] }) =>
+      request<ApiRequestPreview>("/test-steps/run-api-request", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
     create: (input: { test_case_id: string; step_order: number; action?: string; expected_result?: string; step_type?: TestStep["step_type"]; automation_code?: string; api_request?: TestStep["api_request"]; group_id?: string; group_name?: string; group_kind?: "local" | "reusable"; reusable_group_id?: string }) =>
       request<{ id: string }>("/test-steps", { method: "POST", body: JSON.stringify(input) }),
     update: (id: string, input: Partial<{ test_case_id: string; step_order: number; action: string; expected_result: string; step_type: TestStep["step_type"] | null; automation_code: string; api_request: TestStep["api_request"]; group_id: string | null; group_name: string | null; group_kind: "local" | "reusable" | null; reusable_group_id: string | null }>) =>

@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { PlayIcon } from "./AppIcons";
 import { FormField } from "./FormField";
 import { SharedStepsIcon as SharedStepsIconGraphic } from "./SharedStepsIcon";
+import { api } from "../lib/api";
+import { resolveStepParameterText } from "../lib/stepParameters";
 import {
+  buildApiValidationAssertionCode,
   ensureApiRequest,
   getStepTypeMeta,
   normalizeApiRequest,
@@ -10,14 +14,20 @@ import {
   resolveStepAutomationCode,
   STEP_TYPE_OPTIONS
 } from "../lib/stepAutomation";
-import type { StepApiRequest, StepApiValidation, TestStepType } from "../types";
+import type { ApiRequestPreview, StepApiRequest, StepApiValidation, TestStepType } from "../types";
 
 type StepAutomationInput = {
+  step_order?: number;
   action?: string | null;
   expected_result?: string | null;
   step_type?: TestStepType | null;
   automation_code?: string | null;
   api_request?: StepApiRequest | null;
+};
+
+type JsonPathSelection = {
+  path: string;
+  value: unknown;
 };
 
 function IconFrame({
@@ -95,6 +105,25 @@ export function ApiStepIcon({ size = 16 }: { size?: number }) {
       <path d="m16 8 4 4-4 4" />
       <path d="M8 4h8" />
       <path d="M8 20h8" />
+    </IconFrame>
+  );
+}
+
+function ValidationPassedIcon({ size = 16 }: { size?: number }) {
+  return (
+    <IconFrame size={size}>
+      <circle cx="12" cy="12" fill="currentColor" opacity="0.14" r="8" stroke="none" />
+      <path d="m8.5 12.4 2.2 2.2 4.8-5.2" />
+    </IconFrame>
+  );
+}
+
+function ValidationFailedIcon({ size = 16 }: { size?: number }) {
+  return (
+    <IconFrame size={size}>
+      <circle cx="12" cy="12" fill="currentColor" opacity="0.14" r="8" stroke="none" />
+      <path d="m9 9 6 6" />
+      <path d="m15 9-6 6" />
     </IconFrame>
   );
 }
@@ -308,65 +337,102 @@ function ApiHeaderRowsEditor({
 
 function ApiValidationRowsEditor({
   validations,
-  onChange
+  onChange,
+  results = [],
+  parameterValues = {}
 }: {
   validations: StepApiValidation[];
   onChange: (validations: StepApiValidation[]) => void;
+  results?: ApiValidationResultPreview[];
+  parameterValues?: Record<string, string>;
 }) {
   const nextValidations = validations.length ? validations : [{ kind: "status", target: "", expected: "200" }];
 
   return (
     <div className="automation-grid-stack">
-      {nextValidations.map((validation, index) => (
-        <div className="automation-validation-row" key={`validation-${index}`}>
-          <select
-            value={validation.kind}
-            onChange={(event) => {
-              const updated = nextValidations.map((item, itemIndex) =>
-                itemIndex === index
-                  ? {
-                      ...item,
-                      kind: event.target.value as StepApiValidation["kind"]
-                    }
-                  : item
-              ) as StepApiValidation[];
-              onChange(updated);
-            }}
-          >
-            <option value="status">Status code</option>
-            <option value="header">Header equals</option>
-            <option value="body_contains">Body contains</option>
-            <option value="json_path">JSON path equals</option>
-          </select>
-          <input
-            placeholder={validation.kind === "status" ? "Status code" : validation.kind === "json_path" ? "JSON path" : validation.kind === "header" ? "Header name" : "Search text"}
-            value={validation.target || ""}
-            onChange={(event) => {
-              const updated = nextValidations.map((item, itemIndex) =>
-                itemIndex === index ? { ...item, target: event.target.value } : item
-              ) as StepApiValidation[];
-              onChange(updated);
-            }}
-          />
-          <input
-            placeholder={validation.kind === "status" ? "Expected status" : "Expected value"}
-            value={validation.expected || ""}
-            onChange={(event) => {
-              const updated = nextValidations.map((item, itemIndex) =>
-                itemIndex === index ? { ...item, expected: event.target.value } : item
-              ) as StepApiValidation[];
-              onChange(updated);
-            }}
-          />
-          <button
-            className="ghost-button inline-button"
-            onClick={() => onChange(nextValidations.filter((_, itemIndex) => itemIndex !== index) as StepApiValidation[])}
-            type="button"
-          >
-            Remove
-          </button>
-        </div>
-      ))}
+      {nextValidations.map((validation, index) => {
+        const result = results[index] || null;
+        const resolvedTarget = resolveStepParameterText(validation.target, parameterValues);
+        const resolvedExpected = resolveStepParameterText(validation.expected, parameterValues);
+        const showResolvedPreview =
+          Boolean(validation.target || validation.expected)
+          && (
+            (validation.target || "") !== resolvedTarget
+            || (validation.expected || "") !== resolvedExpected
+          );
+
+        return (
+          <div className="automation-validation-row-shell" key={`validation-${index}`}>
+            <div className="automation-validation-row">
+              <select
+                value={validation.kind}
+                onChange={(event) => {
+                  const updated = nextValidations.map((item, itemIndex) =>
+                    itemIndex === index
+                      ? {
+                          ...item,
+                          kind: event.target.value as StepApiValidation["kind"]
+                        }
+                      : item
+                  ) as StepApiValidation[];
+                  onChange(updated);
+                }}
+              >
+                <option value="status">Status code</option>
+                <option value="header">Header equals</option>
+                <option value="body_contains">Body contains</option>
+                <option value="json_path">JSON path equals</option>
+              </select>
+              <input
+                placeholder={validation.kind === "status" ? "Status code" : validation.kind === "json_path" ? "JSON path" : validation.kind === "header" ? "Header name" : "Search text"}
+                title={showResolvedPreview && resolvedTarget ? `Resolved target: ${resolvedTarget}` : undefined}
+                value={validation.target || ""}
+                onChange={(event) => {
+                  const updated = nextValidations.map((item, itemIndex) =>
+                    itemIndex === index ? { ...item, target: event.target.value } : item
+                  ) as StepApiValidation[];
+                  onChange(updated);
+                }}
+              />
+              <input
+                placeholder={validation.kind === "status" ? "Expected status" : "Expected value"}
+                title={showResolvedPreview && resolvedExpected ? `Resolved expected: ${resolvedExpected}` : undefined}
+                value={validation.expected || ""}
+                onChange={(event) => {
+                  const updated = nextValidations.map((item, itemIndex) =>
+                    itemIndex === index ? { ...item, expected: event.target.value } : item
+                  ) as StepApiValidation[];
+                  onChange(updated);
+                }}
+              />
+              {result ? (
+                <span
+                  className={result.passed ? "automation-validation-status is-passed" : "automation-validation-status is-failed"}
+                  title={result.summary}
+                >
+                  {result.passed ? <ValidationPassedIcon size={14} /> : <ValidationFailedIcon size={14} />}
+                </span>
+              ) : (
+                <span aria-hidden="true" className="automation-validation-status is-idle" />
+              )}
+              <button
+                className="ghost-button inline-button"
+                onClick={() => onChange(nextValidations.filter((_, itemIndex) => itemIndex !== index) as StepApiValidation[])}
+                type="button"
+              >
+                Remove
+              </button>
+            </div>
+            {showResolvedPreview ? (
+              <div className="automation-validation-preview">
+                <span>Using test data</span>
+                <span>{resolvedTarget || "—"}</span>
+                <span>{resolvedExpected || "—"}</span>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
       <button
         className="ghost-button inline-button"
         onClick={() => onChange([...nextValidations, { kind: "status" as const, target: "", expected: "200" }] as StepApiValidation[])}
@@ -374,6 +440,489 @@ function ApiValidationRowsEditor({
       >
         Add validation
       </button>
+    </div>
+  );
+}
+
+function resolveApiRequestParameters(request: StepApiRequest | null, values: Record<string, string> = {}) {
+  if (!request) {
+    return null;
+  }
+
+  return {
+    ...request,
+    url: resolveStepParameterText(request.url, values),
+    body: resolveStepParameterText(request.body, values),
+    headers: (request.headers || []).map((header) => ({
+      key: resolveStepParameterText(header.key, values),
+      value: resolveStepParameterText(header.value, values)
+    })),
+    validations: (request.validations || []).map((validation) => ({
+      ...validation,
+      target: resolveStepParameterText(validation.target, values),
+      expected: resolveStepParameterText(validation.expected, values)
+    }))
+  } satisfies StepApiRequest;
+}
+
+function buildChildJsonPath(parentPath: string, key: string | number) {
+  if (typeof key === "number") {
+    return `${parentPath}[${key}]`;
+  }
+
+  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key)) {
+    return `${parentPath}.${key}`;
+  }
+
+  return `${parentPath}[${JSON.stringify(key)}]`;
+}
+
+function summarizeJsonValue(value: unknown) {
+  if (Array.isArray(value)) {
+    return {
+      typeLabel: "array",
+      preview: `${value.length} item${value.length === 1 ? "" : "s"}`
+    };
+  }
+
+  if (value && typeof value === "object") {
+    const keyCount = Object.keys(value as Record<string, unknown>).length;
+    return {
+      typeLabel: "object",
+      preview: `${keyCount} field${keyCount === 1 ? "" : "s"}`
+    };
+  }
+
+  if (typeof value === "string") {
+    return {
+      typeLabel: "string",
+      preview: value.length > 96 ? `${value.slice(0, 93)}...` : value || '""'
+    };
+  }
+
+  if (typeof value === "number") {
+    return {
+      typeLabel: "number",
+      preview: String(value)
+    };
+  }
+
+  if (typeof value === "boolean") {
+    return {
+      typeLabel: "boolean",
+      preview: String(value)
+    };
+  }
+
+  if (value === null) {
+    return {
+      typeLabel: "null",
+      preview: "null"
+    };
+  }
+
+  return {
+    typeLabel: "unknown",
+    preview: ""
+  };
+}
+
+function stringifyJsonSelectionValue(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value === null || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function formatJsonSelectionValue(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+type ApiValidationResultPreview = {
+  id: string;
+  label: string;
+  summary: string;
+  passed: boolean;
+};
+
+function parseJsonPath(path: string) {
+  const normalized = String(path || "").trim();
+
+  if (!normalized || normalized === "$") {
+    return [];
+  }
+
+  if (!normalized.startsWith("$")) {
+    throw new Error("JPath must start with $");
+  }
+
+  const tokens: Array<string | number> = [];
+  let index = 1;
+
+  while (index < normalized.length) {
+    const current = normalized[index];
+
+    if (current === ".") {
+      index += 1;
+      const nextIndex = index;
+
+      while (index < normalized.length && normalized[index] !== "." && normalized[index] !== "[") {
+        index += 1;
+      }
+
+      const token = normalized.slice(nextIndex, index).trim();
+
+      if (!token) {
+        throw new Error("JPath contains an empty property segment");
+      }
+
+      tokens.push(token);
+      continue;
+    }
+
+    if (current === "[") {
+      index += 1;
+
+      if (index >= normalized.length) {
+        throw new Error("JPath is missing a closing bracket");
+      }
+
+      const quote = normalized[index];
+
+      if (quote === "\"" || quote === "'") {
+        index += 1;
+        const nextIndex = index;
+
+        while (index < normalized.length && normalized[index] !== quote) {
+          index += 1;
+        }
+
+        if (index >= normalized.length) {
+          throw new Error("JPath has an unterminated quoted property");
+        }
+
+        const token = normalized.slice(nextIndex, index);
+        index += 1;
+
+        if (normalized[index] !== "]") {
+          throw new Error("JPath has an invalid quoted property segment");
+        }
+
+        index += 1;
+        tokens.push(token);
+        continue;
+      }
+
+      const nextIndex = index;
+
+      while (index < normalized.length && normalized[index] !== "]") {
+        index += 1;
+      }
+
+      if (index >= normalized.length) {
+        throw new Error("JPath is missing a closing bracket");
+      }
+
+      const rawToken = normalized.slice(nextIndex, index).trim();
+      index += 1;
+
+      if (!/^\d+$/.test(rawToken)) {
+        throw new Error("Only numeric array indexes are supported in bracket notation");
+      }
+
+      tokens.push(Number(rawToken));
+      continue;
+    }
+
+    throw new Error(`Unexpected token "${current}" in JPath`);
+  }
+
+  return tokens;
+}
+
+function readJsonPathValue(source: unknown, path: string) {
+  try {
+    const tokens = parseJsonPath(path);
+    let current: unknown = source;
+
+    for (const token of tokens) {
+      if (typeof token === "number") {
+        if (!Array.isArray(current)) {
+          return { found: false as const, error: `Path ${path} does not point to an array before [${token}]` };
+        }
+
+        if (token < 0 || token >= current.length) {
+          return { found: false as const, error: `Path ${path} is missing array index [${token}]` };
+        }
+
+        current = current[token];
+        continue;
+      }
+
+      if (!current || typeof current !== "object" || !(token in (current as Record<string, unknown>))) {
+        return { found: false as const, error: `Path ${path} is missing property "${token}"` };
+      }
+
+      current = (current as Record<string, unknown>)[token];
+    }
+
+    return { found: true as const, value: current };
+  } catch (error) {
+    return {
+      found: false as const,
+      error: error instanceof Error ? error.message : "Invalid JPath"
+    };
+  }
+}
+
+function parseAssertionExpectedValue(value?: string | null) {
+  const normalized = String(value || "").trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized === "true") {
+    return true;
+  }
+
+  if (normalized === "false") {
+    return false;
+  }
+
+  if (normalized === "null") {
+    return null;
+  }
+
+  if (/^-?\d+(\.\d+)?$/.test(normalized)) {
+    return Number(normalized);
+  }
+
+  if (/^[\[{"]/.test(normalized)) {
+    try {
+      return JSON.parse(normalized);
+    } catch {
+      return normalized;
+    }
+  }
+
+  return normalized;
+}
+
+function areAssertionValuesEqual(left: unknown, right: unknown) {
+  if (left === right) {
+    return true;
+  }
+
+  if (typeof left === "object" && left !== null && typeof right === "object" && right !== null) {
+    try {
+      return JSON.stringify(left) === JSON.stringify(right);
+    } catch {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function createValidationLabel(validation: StepApiValidation, index: number) {
+  const kind = validation.kind || "status";
+  const target = String(validation.target || "").trim();
+
+  if (kind === "status") {
+    return `Assertion ${index + 1}: status code`;
+  }
+
+  if (kind === "header") {
+    return `Assertion ${index + 1}: header ${target || "content-type"}`;
+  }
+
+  if (kind === "body_contains") {
+    return `Assertion ${index + 1}: body contains`;
+  }
+
+  return `Assertion ${index + 1}: JPath ${target || "$"}`;
+}
+
+function evaluateValidationResult(
+  preview: ApiRequestPreview,
+  validation: StepApiValidation,
+  index: number,
+  parameterValues: Record<string, string>
+): ApiValidationResultPreview {
+  const resolvedValidation: StepApiValidation = {
+    ...validation,
+    target: resolveStepParameterText(validation.target, parameterValues),
+    expected: resolveStepParameterText(validation.expected, parameterValues)
+  };
+  const label = createValidationLabel(resolvedValidation, index);
+  const kind = validation.kind || "status";
+  const target = String(resolvedValidation.target || "").trim();
+  const expected = String(resolvedValidation.expected || "").trim();
+
+  if (kind === "status") {
+    const expectedStatus = Number(expected) || 200;
+    const passed = preview.response.status === expectedStatus;
+    return {
+      id: `validation-${index}`,
+      label,
+      passed,
+      summary: passed
+        ? `Matched expected status ${expectedStatus}.`
+        : `Expected status ${expectedStatus}, received ${preview.response.status}.`
+    };
+  }
+
+  if (kind === "header") {
+    const headerName = (target || "content-type").toLowerCase();
+    const actual = preview.response.headers[headerName] || "";
+    const passed = actual === expected;
+    return {
+      id: `validation-${index}`,
+      label,
+      passed,
+      summary: passed
+        ? `Header matched ${headerName}.`
+        : `Expected "${expected}", received "${actual || "(empty)"}".`
+    };
+  }
+
+  if (kind === "body_contains") {
+    const passed = String(preview.response.body_text || "").includes(expected);
+    return {
+      id: `validation-${index}`,
+      label,
+      passed,
+      summary: passed
+        ? "Expected text was found in the response body."
+        : `Could not find "${expected}" in the response body.`
+    };
+  }
+
+  if (preview.response.body_json === null || preview.response.body_json === undefined) {
+    return {
+      id: `validation-${index}`,
+      label,
+      passed: false,
+      summary: "Response body is not JSON, so this JPath assertion could not be evaluated."
+    };
+  }
+
+  const resolved = readJsonPathValue(preview.response.body_json, target || "$");
+
+  if (!resolved.found) {
+    return {
+      id: `validation-${index}`,
+      label,
+      passed: false,
+      summary: resolved.error
+    };
+  }
+
+  const expectedValue = parseAssertionExpectedValue(expected);
+  const passed = areAssertionValuesEqual(resolved.value, expectedValue);
+  return {
+    id: `validation-${index}`,
+    label,
+    passed,
+    summary: passed
+      ? `Matched ${target || "$"} = ${stringifyJsonSelectionValue(resolved.value)}.`
+      : `Expected ${stringifyJsonSelectionValue(expectedValue)}, received ${stringifyJsonSelectionValue(resolved.value)}.`
+  };
+}
+
+function JsonResponseTreeNode({
+  label,
+  value,
+  path,
+  depth,
+  selectedPath,
+  onSelect
+}: {
+  label: string;
+  value: unknown;
+  path: string;
+  depth: number;
+  selectedPath: string;
+  onSelect: (selection: JsonPathSelection) => void;
+}) {
+  const isExpandable = Boolean(value) && typeof value === "object";
+  const [isExpanded, setIsExpanded] = useState(depth < 1);
+  const summary = summarizeJsonValue(value);
+  const entries = useMemo(() => {
+    if (Array.isArray(value)) {
+      return value.map((item, index) => [index, item] as const);
+    }
+
+    if (value && typeof value === "object") {
+      return Object.entries(value as Record<string, unknown>);
+    }
+
+    return [];
+  }, [value]);
+
+  return (
+    <div className="api-response-tree-node">
+      <div className="api-response-tree-row">
+        {isExpandable ? (
+          <button
+            aria-label={isExpanded ? `Collapse ${label}` : `Expand ${label}`}
+            className="api-response-tree-toggle"
+            onClick={() => setIsExpanded((current) => !current)}
+            type="button"
+          >
+            <span aria-hidden="true" className={isExpanded ? "api-response-tree-chevron is-expanded" : "api-response-tree-chevron"}>
+              <svg aria-hidden="true" fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width="14">
+                <path d="m9 6 6 6-6 6" />
+              </svg>
+            </span>
+          </button>
+        ) : (
+          <span aria-hidden="true" className="api-response-tree-toggle api-response-tree-toggle--spacer" />
+        )}
+        <button
+          aria-pressed={selectedPath === path}
+          className={selectedPath === path ? "api-response-tree-select is-selected" : "api-response-tree-select"}
+          onClick={() => onSelect({ path, value })}
+          type="button"
+        >
+          <span className="api-response-tree-key">{label}</span>
+          <span className="api-response-tree-type">{summary.typeLabel}</span>
+          <span className="api-response-tree-preview">{summary.preview}</span>
+        </button>
+      </div>
+      {isExpandable && isExpanded ? (
+        <div className="api-response-tree-children">
+          {entries.map(([childKey, childValue]) => (
+            <JsonResponseTreeNode
+              depth={depth + 1}
+              key={buildChildJsonPath(path, childKey)}
+              label={String(childKey)}
+              onSelect={onSelect}
+              path={buildChildJsonPath(path, childKey)}
+              selectedPath={selectedPath}
+              value={childValue}
+            />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -422,37 +971,153 @@ export function StepAutomationDialog({
   title,
   subtitle,
   step,
+  parameterValues = {},
   onClose,
   onSave
 }: {
   title: string;
   subtitle: string;
   step: StepAutomationInput;
+  parameterValues?: Record<string, string>;
   onClose: () => void;
   onSave: (input: { step_type: TestStepType; automation_code: string; api_request: StepApiRequest | null }) => void;
 }) {
   const [stepType, setStepType] = useState<TestStepType>(normalizeStepType(step.step_type));
   const [automationCode, setAutomationCode] = useState(normalizeAutomationCode(step.automation_code));
   const [apiRequest, setApiRequest] = useState<StepApiRequest>(ensureApiRequest(step.api_request));
+  const [apiPreview, setApiPreview] = useState<ApiRequestPreview | null>(null);
+  const [apiPreviewError, setApiPreviewError] = useState("");
+  const [apiPreviewMessage, setApiPreviewMessage] = useState("");
+  const [isRunningApiRequest, setIsRunningApiRequest] = useState(false);
+  const [selectedJsonPath, setSelectedJsonPath] = useState<JsonPathSelection | null>(null);
 
   useEffect(() => {
     setStepType(normalizeStepType(step.step_type));
     setAutomationCode(normalizeAutomationCode(step.automation_code));
     setApiRequest(ensureApiRequest(step.api_request));
+    setApiPreview(null);
+    setApiPreviewError("");
+    setApiPreviewMessage("");
+    setSelectedJsonPath(null);
   }, [step]);
+
+  useEffect(() => {
+    if (stepType !== "api") {
+      setApiPreview(null);
+      setApiPreviewError("");
+      setApiPreviewMessage("");
+      setSelectedJsonPath(null);
+    }
+  }, [stepType]);
+
+  const normalizedApiRequest = useMemo(
+    () => (stepType === "api" ? normalizeApiRequest(apiRequest) : null),
+    [apiRequest, stepType]
+  );
+  const resolvedApiRequest = useMemo(
+    () => normalizeApiRequest(resolveApiRequestParameters(normalizedApiRequest, parameterValues)),
+    [normalizedApiRequest, parameterValues]
+  );
 
   const previewCode = useMemo(
     () =>
       resolveStepAutomationCode({
-        step_order: 1,
+        step_order: step.step_order || 1,
         action: step.action || null,
         expected_result: step.expected_result || null,
         step_type: stepType,
         automation_code: automationCode,
-        api_request: stepType === "api" ? normalizeApiRequest(apiRequest) : null
+        api_request: normalizedApiRequest
       }),
-    [apiRequest, automationCode, step.action, step.expected_result, stepType]
+    [automationCode, normalizedApiRequest, step.action, step.expected_result, step.step_order, stepType]
   );
+  const responseHeaderEntries = useMemo(
+    () => Object.entries(apiPreview?.response.headers || {}).sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey)),
+    [apiPreview]
+  );
+  const validationResults = useMemo(
+    () => (apiPreview ? (apiRequest.validations || []).map((validation, index) => evaluateValidationResult(apiPreview, validation, index, parameterValues)) : []),
+    [apiPreview, apiRequest.validations, parameterValues]
+  );
+  const selectedJsonValue = selectedJsonPath ? formatJsonSelectionValue(selectedJsonPath.value) : "";
+
+  const handleRunApiRequest = async () => {
+    if (!resolvedApiRequest?.url) {
+      setApiPreview(null);
+      setApiPreviewError("Enter a valid absolute request URL before running this API step.");
+      setApiPreviewMessage("");
+      return;
+    }
+
+    setIsRunningApiRequest(true);
+    setApiPreviewError("");
+    setApiPreviewMessage("");
+
+    try {
+      const result = await api.testSteps.runApiRequest({
+        api_request: resolvedApiRequest
+      });
+
+      setApiPreview(result);
+      setSelectedJsonPath(null);
+      setApiPreviewMessage(`Captured response ${result.response.status} in ${result.response.duration_ms} ms.`);
+    } catch (error) {
+      setApiPreview(null);
+      setSelectedJsonPath(null);
+      setApiPreviewError(error instanceof Error ? error.message : "Unable to run the API request.");
+      setApiPreviewMessage("");
+    } finally {
+      setIsRunningApiRequest(false);
+    }
+  };
+
+  const handleInsertJsonPathAssertion = () => {
+    if (!selectedJsonPath) {
+      return;
+    }
+
+    const nextValidation: StepApiValidation = {
+      kind: "json_path",
+      target: selectedJsonPath.path,
+      expected: stringifyJsonSelectionValue(selectedJsonPath.value)
+    };
+    const existingValidations = apiRequest.validations || [];
+    const alreadyHasValidation = existingValidations.some((validation) =>
+      validation.kind === nextValidation.kind
+      && (validation.target || "") === nextValidation.target
+      && (validation.expected || "") === nextValidation.expected
+    );
+    const nextValidations = alreadyHasValidation ? existingValidations : [...existingValidations, nextValidation];
+    const nextApiRequest = {
+      ...apiRequest,
+      validations: nextValidations
+    };
+    const responseVar = `response${step.step_order || 1}`;
+    const assertionSnippet = buildApiValidationAssertionCode(nextValidation, responseVar);
+    const currentCustomCode = normalizeAutomationCode(automationCode);
+
+    setApiRequest(nextApiRequest);
+
+    if (currentCustomCode) {
+      setAutomationCode(
+        currentCustomCode.includes(assertionSnippet)
+          ? currentCustomCode
+          : `${currentCustomCode}\n${assertionSnippet}`
+      );
+    } else {
+      setAutomationCode(resolveStepAutomationCode({
+        step_order: step.step_order || 1,
+        action: step.action || null,
+        expected_result: step.expected_result || null,
+        step_type: "api",
+        automation_code: "",
+        api_request: normalizeApiRequest(nextApiRequest)
+      }));
+    }
+
+    setApiPreviewMessage(`Added ${selectedJsonPath.path} to the response validations and custom override.`);
+    setApiPreviewError("");
+  };
 
   return (
     <div className="modal-backdrop modal-backdrop--scroll" onClick={onClose} role="presentation">
@@ -568,11 +1233,109 @@ export function StepAutomationDialog({
                   </FormField>
                 ) : null}
 
+                <div className="automation-response-shell">
+                  <div className="automation-response-header">
+                    <div>
+                      <strong>API response capture</strong>
+                      <span>Run the current request with the active test data values, inspect the response hierarchy, and lift a JSON path into your assertions.</span>
+                    </div>
+                    <button
+                      className="primary-button automation-run-button"
+                      disabled={isRunningApiRequest || !resolvedApiRequest?.url}
+                      onClick={() => void handleRunApiRequest()}
+                      type="button"
+                    >
+                      <PlayIcon />
+                      <span>{isRunningApiRequest ? "Running..." : "Run"}</span>
+                    </button>
+                  </div>
+
+                  {apiPreviewError ? <div className="inline-message error-message">{apiPreviewError}</div> : null}
+                  {apiPreviewMessage ? <div className="inline-message success-message">{apiPreviewMessage}</div> : null}
+
+                  {apiPreview ? (
+                    <div className="automation-response-results">
+                      <div className="automation-response-summary">
+                        <span className={apiPreview.response.ok ? "automation-response-pill is-success" : "automation-response-pill is-danger"}>
+                          {apiPreview.response.status}
+                        </span>
+                        <span className="automation-response-pill">{apiPreview.request.method}</span>
+                        <span className="automation-response-pill">{apiPreview.response.duration_ms} ms</span>
+                        <span className="automation-response-pill">
+                          {apiPreview.response.content_type || "Unknown content type"}
+                        </span>
+                      </div>
+
+                      {responseHeaderEntries.length ? (
+                        <div className="automation-response-meta">
+                          <strong>Response headers</strong>
+                          <div className="automation-response-headers">
+                            {responseHeaderEntries.map(([key, value]) => (
+                              <span className="automation-response-header-chip" key={key}>
+                                <strong>{key}</strong>
+                                <span>{value}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {apiPreview.response.body_json !== null && apiPreview.response.body_json !== undefined ? (
+                        <div className="automation-response-tree-shell">
+                          <div className="automation-response-tree-panel">
+                            <strong>JSON path (JPath) explorer</strong>
+                            <span>Select any node to stage a JSON path assertion.</span>
+                            <div className="api-response-tree">
+                              <JsonResponseTreeNode
+                                depth={0}
+                                label="$"
+                                onSelect={setSelectedJsonPath}
+                                path="$"
+                                selectedPath={selectedJsonPath?.path || ""}
+                                value={apiPreview.response.body_json}
+                              />
+                            </div>
+                          </div>
+                          <div className="automation-response-selection">
+                            <strong>Selected node</strong>
+                            <span>{selectedJsonPath ? selectedJsonPath.path : "Choose a node from the JSON hierarchy to build a JPath assertion."}</span>
+                            {selectedJsonPath ? (
+                              <>
+                                <pre className="automation-code-block automation-code-block--compact automation-code-block--selection">
+                                  <code>{selectedJsonValue}</code>
+                                </pre>
+                                <button className="ghost-button" onClick={handleInsertJsonPathAssertion} type="button">
+                                  <AutomationCodeIcon />
+                                  <span>Add JPath assertion to override</span>
+                                </button>
+                              </>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="detail-summary">
+                          <strong>Structured explorer unavailable</strong>
+                          <span>This response is not JSON, so only the raw body preview is available for this run.</span>
+                        </div>
+                      )}
+
+                      <div className="automation-response-meta">
+                        <strong>Raw response body</strong>
+                        <pre className="automation-code-block automation-code-block--compact automation-code-block--selection">
+                          <code>{apiPreview.response.body_text || "No response body returned."}</code>
+                        </pre>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
                 <FormField
                   label="Response validations"
                   hint="Add the checks that should run after the response returns."
                 >
                   <ApiValidationRowsEditor
+                    parameterValues={parameterValues}
+                    results={validationResults}
                     validations={apiRequest.validations || []}
                     onChange={(validations) => setApiRequest((current) => ({ ...current, validations }))}
                   />
@@ -580,7 +1343,7 @@ export function StepAutomationDialog({
 
                 <FormField
                   label="Custom code override"
-                  hint="Leave blank to use the generated request snippet in group and case-level consolidated code views."
+                  hint="Leave blank to use the generated request snippet in group and case-level consolidated code views. JPath selections can seed this override automatically."
                 >
                   <textarea rows={8} value={automationCode} onChange={(event) => setAutomationCode(event.target.value)} />
                 </FormField>
@@ -609,7 +1372,7 @@ export function StepAutomationDialog({
                 onSave({
                   step_type: stepType,
                   automation_code: normalizeAutomationCode(automationCode),
-                  api_request: stepType === "api" ? normalizeApiRequest(apiRequest) : null
+                  api_request: normalizedApiRequest
                 })
               }
               type="button"

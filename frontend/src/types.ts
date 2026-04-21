@@ -336,6 +336,22 @@ export type StepApiRequest = {
   validations?: StepApiValidation[];
 };
 
+export type ApiRequestPreview = {
+  request: {
+    method: NonNullable<StepApiRequest["method"]>;
+    url: string;
+  };
+  response: {
+    status: number;
+    ok: boolean;
+    headers: Record<string, string>;
+    content_type?: string | null;
+    body_text: string;
+    body_json?: unknown;
+    duration_ms: number;
+  };
+};
+
 export type SharedStepGroupStep = {
   step_order: number;
   action: string | null;
