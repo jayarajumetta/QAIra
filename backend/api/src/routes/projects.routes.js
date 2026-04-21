@@ -29,10 +29,8 @@ module.exports = async function (fastify) {
     return service.updateProject(req.params.id, req.body);
   });
 
-  fastify.delete("/projects/:id", async (req) => {
-    await fastify.authenticate(req);
-    // Verify access
-    await service.getProject(req.params.id, req.user.id);
+  fastify.delete("/projects/:id", { preHandler: [fastify.requireAdmin] }, async (req) => {
+    await service.getProject(req.params.id);
     return service.deleteProject(req.params.id);
   });
 

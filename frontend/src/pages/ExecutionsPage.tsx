@@ -40,7 +40,7 @@ import {
   type ExecutionStepEvidence,
   type ExecutionStepStatus
 } from "../lib/executionLogs";
-import { buildDataSetParameterValues, resolveStepParameterText } from "../lib/stepParameters";
+import { buildDataSetParameterValues, combineStepParameterValues, normalizeStepParameterValues, resolveStepParameterText } from "../lib/stepParameters";
 import { type AssigneeOption, buildAssigneeOptions, resolveUserInitials, resolveUserPrimaryLabel, resolveUserSecondaryLabel } from "../lib/userDisplay";
 import type {
   AppType,
@@ -374,6 +374,18 @@ function formatExecutionTimestamp(value?: string | null, fallback = "Not recorde
   return timestamp ? executionDateTimeFormatter.format(timestamp) : fallback;
 }
 
+function toDateTimeLocalValue(value?: string | null) {
+  const timestamp = toTimestamp(value);
+
+  if (!timestamp) {
+    return "";
+  }
+
+  const date = new Date(timestamp);
+  const offsetMs = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
 function computeExecutionDurationMs(
   startedAt?: string | null,
   endedAt?: string | null,
@@ -568,6 +580,8 @@ export function ExecutionsPage() {
   const [selectedSuiteIds, setSelectedSuiteIds] = useState<string[]>([]);
   const [isCreateExecutionModalOpen, setIsCreateExecutionModalOpen] = useState(false);
   const [isCreateScheduleModalOpen, setIsCreateScheduleModalOpen] = useState(false);
+  const [scheduleModalMode, setScheduleModalMode] = useState<"create" | "edit">("create");
+  const [editingScheduleId, setEditingScheduleId] = useState("");
   const [selectedExecutionId, setSelectedExecutionId] = useState("");
   const [selectedScheduleId, setSelectedScheduleId] = useState("");
   const [selectedOperationId, setSelectedOperationId] = useState("");
@@ -706,6 +720,10 @@ export function ExecutionsPage() {
       api.executions.updateCaseAssignment(executionId, testCaseId, { assigned_to })
   });
   const createExecutionSchedule = useMutation({ mutationFn: api.executionSchedules.create });
+  const updateExecutionSchedule = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: Parameters<typeof api.executionSchedules.update>[1] }) =>
+      api.executionSchedules.update(id, input)
+  });
   const runExecutionSchedule = useMutation({ mutationFn: api.executionSchedules.run });
   const deleteExecutionSchedule = useMutation({ mutationFn: api.executionSchedules.delete });
   const rerunExecution = useMutation({
@@ -900,6 +918,8 @@ export function ExecutionsPage() {
     setSelectedExecutionAssigneeId("");
     setScheduleCadence("weekly");
     setScheduleNextRunAt("");
+    setEditingScheduleId("");
+    setScheduleModalMode("create");
     resetExecutionContextSelection();
   };
 
@@ -924,6 +944,35 @@ export function ExecutionsPage() {
   const closeScheduleBuilder = () => {
     setIsCreateScheduleModalOpen(false);
     resetScheduleBuilder();
+  };
+
+  const openCreateScheduleBuilder = () => {
+    resetScheduleBuilder();
+    const nextHour = new Date();
+    nextHour.setMinutes(0, 0, 0);
+    nextHour.setHours(nextHour.getHours() + 1);
+    setScheduleNextRunAt(toDateTimeLocalValue(nextHour.toISOString()));
+
+    setScheduleModalMode("create");
+    setIsCreateScheduleModalOpen(true);
+  };
+
+  const openEditScheduleBuilder = (schedule: ExecutionSchedule) => {
+    setScheduleModalMode("edit");
+    setEditingScheduleId(schedule.id);
+    setExecutionName(schedule.name || "");
+    setSelectedSuiteIds(schedule.suite_ids || []);
+    setSelectedExecutionEnvironmentId(schedule.test_environment_id || "");
+    setSelectedExecutionConfigurationId(schedule.test_configuration_id || "");
+    setSelectedExecutionDataSetId(schedule.test_data_set_id || "");
+    setSelectedExecutionAssigneeId(schedule.assigned_to || "");
+    setScheduleCadence(
+      schedule.cadence === "daily" || schedule.cadence === "weekly" || schedule.cadence === "monthly" || schedule.cadence === "once"
+        ? schedule.cadence
+        : "weekly"
+    );
+    setScheduleNextRunAt(toDateTimeLocalValue(schedule.next_run_at));
+    setIsCreateScheduleModalOpen(true);
   };
 
   const handleExecutionProjectChange = (value: string) => {
@@ -1139,15 +1188,27 @@ export function ExecutionsPage() {
     [selectedTestCaseId, snapshotCases]
   );
   const executionStepParameterValues = useMemo(
-    () =>
-      hasExecutionLevelTestData
-        ? buildDataSetParameterValues(selectedExecution?.test_data_set?.snapshot || null)
-        : selectedExecutionCaseSnapshot?.parameter_values || {},
-    [hasExecutionLevelTestData, selectedExecution?.test_data_set?.snapshot, selectedExecutionCaseSnapshot?.parameter_values]
+    () => combineStepParameterValues(
+      normalizeStepParameterValues(selectedExecutionCaseSnapshot?.parameter_values || {}, "t"),
+      normalizeStepParameterValues(selectedExecutionCaseSnapshot?.suite_parameter_values || {}, "s"),
+      hasExecutionLevelTestData ? buildDataSetParameterValues(selectedExecution?.test_data_set?.snapshot || null) : {}
+    ),
+    [
+      hasExecutionLevelTestData,
+      selectedExecution?.test_data_set?.snapshot,
+      selectedExecutionCaseSnapshot?.parameter_values,
+      selectedExecutionCaseSnapshot?.suite_parameter_values
+    ]
   );
   const selectedExecutionCaseParameterEntries = useMemo(
-    () => Object.entries(selectedExecutionCaseSnapshot?.parameter_values || {}).sort(([left], [right]) => left.localeCompare(right)),
-    [selectedExecutionCaseSnapshot?.parameter_values]
+    () =>
+      Object.entries(
+        combineStepParameterValues(
+          normalizeStepParameterValues(selectedExecutionCaseSnapshot?.parameter_values || {}, "t"),
+          normalizeStepParameterValues(selectedExecutionCaseSnapshot?.suite_parameter_values || {}, "s")
+        )
+      ).sort(([left], [right]) => left.localeCompare(right)),
+    [selectedExecutionCaseSnapshot?.parameter_values, selectedExecutionCaseSnapshot?.suite_parameter_values]
   );
 
   useEffect(() => {
@@ -1620,50 +1681,87 @@ export function ExecutionsPage() {
     }
   };
 
-  const handleCreateExecutionSchedule = async (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmitExecutionSchedule = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (!session?.user.id) {
-      showError(new Error("You need an active session before creating a schedule."), "Unable to create schedule");
+      showError(
+        new Error(`You need an active session before ${scheduleModalMode === "edit" ? "editing" : "creating"} a schedule.`),
+        scheduleModalMode === "edit" ? "Unable to update schedule" : "Unable to create schedule"
+      );
       return;
     }
 
     if (!projectId || !appTypeId) {
-      showError(new Error("Choose a project and app type before creating a schedule."), "Unable to create schedule");
+      showError(
+        new Error(`Choose a project and app type before ${scheduleModalMode === "edit" ? "editing" : "creating"} a schedule.`),
+        scheduleModalMode === "edit" ? "Unable to update schedule" : "Unable to create schedule"
+      );
       return;
     }
 
     if (!selectedSuiteIds.length) {
-      showError(new Error("Select at least one suite to schedule."), "Unable to create schedule");
+      showError(
+        new Error("Select at least one suite to schedule."),
+        scheduleModalMode === "edit" ? "Unable to update schedule" : "Unable to create schedule"
+      );
       return;
     }
 
     if (!scheduleNextRunAt) {
-      showError(new Error("Choose the first run time for this schedule."), "Unable to create schedule");
+      showError(
+        new Error("Choose the first run time for this schedule."),
+        scheduleModalMode === "edit" ? "Unable to update schedule" : "Unable to create schedule"
+      );
       return;
     }
 
     try {
-      await createExecutionSchedule.mutateAsync({
-        project_id: projectId,
-        app_type_id: appTypeId,
-        name: executionName || undefined,
-        cadence: scheduleCadence,
-        next_run_at: new Date(scheduleNextRunAt).toISOString(),
-        suite_ids: selectedSuiteIds,
-        test_environment_id: selectedExecutionEnvironmentId || undefined,
-        test_configuration_id: selectedExecutionConfigurationId || undefined,
-        test_data_set_id: selectedExecutionDataSetId || undefined,
-        assigned_to: selectedExecutionAssigneeId || undefined,
-        created_by: session.user.id
-      });
+      if (scheduleModalMode === "edit") {
+        if (!editingScheduleId) {
+          throw new Error("Select a schedule to edit.");
+        }
+
+        await updateExecutionSchedule.mutateAsync({
+          id: editingScheduleId,
+          input: {
+            project_id: projectId,
+            app_type_id: appTypeId,
+            name: executionName || undefined,
+            cadence: scheduleCadence,
+            next_run_at: new Date(scheduleNextRunAt).toISOString(),
+            suite_ids: selectedSuiteIds,
+            test_environment_id: selectedExecutionEnvironmentId || "",
+            test_configuration_id: selectedExecutionConfigurationId || "",
+            test_data_set_id: selectedExecutionDataSetId || "",
+            assigned_to: selectedExecutionAssigneeId || ""
+          }
+        });
+      } else {
+        await createExecutionSchedule.mutateAsync({
+          project_id: projectId,
+          app_type_id: appTypeId,
+          name: executionName || undefined,
+          cadence: scheduleCadence,
+          next_run_at: new Date(scheduleNextRunAt).toISOString(),
+          suite_ids: selectedSuiteIds,
+          test_environment_id: selectedExecutionEnvironmentId || undefined,
+          test_configuration_id: selectedExecutionConfigurationId || undefined,
+          test_data_set_id: selectedExecutionDataSetId || undefined,
+          assigned_to: selectedExecutionAssigneeId || undefined,
+          created_by: session.user.id
+        });
+      }
 
       closeScheduleBuilder();
       setTestRunsView("scheduled");
       await refreshExecutionSchedules();
-      showSuccess("Scheduled execution created.");
+      if (editingScheduleId) {
+        setSelectedScheduleId(editingScheduleId);
+      }
+      showSuccess(scheduleModalMode === "edit" ? "Scheduled execution updated." : "Scheduled execution created.");
     } catch (error) {
-      showError(error, "Unable to create schedule");
+      showError(error, scheduleModalMode === "edit" ? "Unable to update schedule" : "Unable to create schedule");
     }
   };
 
@@ -2375,6 +2473,12 @@ export function ExecutionsPage() {
                 }
               },
               {
+                label: "Edit schedule",
+                description: "Adjust cadence, scope, context, or ownership for this recurring run.",
+                icon: <ExecutionEditIcon />,
+                onClick: () => openEditScheduleBuilder(schedule)
+              },
+              {
                 label: "Run now",
                 description: "Launch this schedule immediately as a fresh execution.",
                 icon: <PlayIcon />,
@@ -2393,7 +2497,7 @@ export function ExecutionsPage() {
         </div>
       )
     }
-  ], [handleDeleteExecutionSchedule, handleRunExecutionSchedule]);
+  ], [handleDeleteExecutionSchedule, handleRunExecutionSchedule, openEditScheduleBuilder]);
   const operationListColumns = useMemo<Array<DataTableColumn<WorkspaceTransaction>>>(() => [
     {
       key: "operation",
@@ -2416,7 +2520,7 @@ export function ExecutionsPage() {
     {
       key: "status",
       label: "Status",
-      render: (transaction) => transaction.status
+      render: (transaction) => <StatusBadge value={transaction.status} />
     },
     {
       key: "provider",
@@ -2646,15 +2750,7 @@ export function ExecutionsPage() {
               <>
                 <button
                   className="ghost-button"
-                  onClick={() => {
-                    if (!scheduleNextRunAt) {
-                      const nextHour = new Date();
-                      nextHour.setMinutes(0, 0, 0);
-                      nextHour.setHours(nextHour.getHours() + 1);
-                      setScheduleNextRunAt(nextHour.toISOString().slice(0, 16));
-                    }
-                    setIsCreateScheduleModalOpen(true);
-                  }}
+                  onClick={openCreateScheduleBuilder}
                   type="button"
                 >
                   <CalendarIcon />
@@ -2829,6 +2925,7 @@ export function ExecutionsPage() {
                         key={schedule.id}
                         isActive={selectedSchedule?.id === schedule.id}
                         onDelete={() => void handleDeleteExecutionSchedule(schedule.id, schedule.name)}
+                        onEdit={() => openEditScheduleBuilder(schedule)}
                         onRun={() => void handleRunExecutionSchedule(schedule.id)}
                         onSelect={() => setSelectedScheduleId(schedule.id)}
                         schedule={schedule}
@@ -2847,38 +2944,51 @@ export function ExecutionsPage() {
                         : transaction.project_id
                           ? projectNameById[transaction.project_id] || "Project scope"
                           : "Workspace scope";
+                      const statusTone: BoardStatusTone =
+                        transaction.status === "queued" || transaction.status === "running" || transaction.status === "failed"
+                          ? transaction.status
+                          : "completed";
 
                       return (
-                        <button
-                          className={[
-                            "stack-item",
-                            "execution-activity-row",
-                            "execution-activity-card",
-                            selectedWorkspaceTransaction?.id === transaction.id ? "is-active" : ""
-                          ].filter(Boolean).join(" ")}
+                        <div
+                          className={selectedWorkspaceTransaction?.id === transaction.id ? "record-card tile-card execution-card virtual-card is-active" : "record-card tile-card execution-card virtual-card"}
                           key={transaction.id}
-                          onClick={() => setSelectedOperationId(transaction.id)}
-                          type="button"
                         >
-                          <div aria-hidden="true" className="execution-activity-icon">
-                            {presentation.icon}
-                          </div>
-                          <div className="execution-activity-body">
-                            <div className="execution-activity-head">
-                              <div className="execution-activity-copy">
-                                <strong>{transaction.title}</strong>
-                                <span>{presentation.eyebrow}</span>
+                          <button className="tile-card-main execution-schedule-card-button" onClick={() => setSelectedOperationId(transaction.id)} type="button">
+                            <div className="tile-card-header">
+                              <div aria-hidden="true" className={`record-card-icon execution status-${statusTone}`}>
+                                {presentation.icon}
                               </div>
-                              <StatusBadge value={transaction.status} />
+                              <div className="tile-card-title-group">
+                                <strong>{transaction.title}</strong>
+                                <span className="execution-card-assignee">{presentation.eyebrow}</span>
+                              </div>
+                              <ExecutionStatusIndicator status={statusTone} />
                             </div>
-                            <span className="execution-card-time">{summary}</span>
-                            <div className="execution-activity-tags">
-                              <span className="count-pill">{scopeLabel}</span>
-                              <span className="count-pill">{formatExecutionTimestamp(transaction.latest_event_at || transaction.updated_at || transaction.created_at, "Timestamp unavailable")}</span>
-                              <span className="count-pill">{`${transaction.event_count || 0} event${transaction.event_count === 1 ? "" : "s"}`}</span>
+
+                            <div className="execution-card-facts" aria-label="Operation facts">
+                              <ExecutionCardFact ariaLabel={`Scope ${scopeLabel}`} label={scopeLabel} title={`Scope ${scopeLabel}`}>
+                                <ActivityIcon />
+                              </ExecutionCardFact>
+                              <ExecutionCardFact ariaLabel={`Last activity ${formatExecutionTimestamp(transaction.latest_event_at || transaction.updated_at || transaction.created_at, "Timestamp unavailable")}`} label={formatExecutionTimestamp(transaction.latest_event_at || transaction.updated_at || transaction.created_at, "Timestamp unavailable")} title={`Last activity ${formatExecutionTimestamp(transaction.latest_event_at || transaction.updated_at || transaction.created_at, "Timestamp unavailable")}`}>
+                                <ExecutionTimeIcon />
+                              </ExecutionCardFact>
+                              <ExecutionCardFact ariaLabel={`${transaction.event_count || 0} logged events`} label={formatCountLabel(transaction.event_count || 0, "event")} title={`${transaction.event_count || 0} logged events`}>
+                                <ExecutionScopeIcon />
+                              </ExecutionCardFact>
+                              <ExecutionCardFact ariaLabel={summary} label={summary} title={summary}>
+                                <ExecutionRunIcon />
+                              </ExecutionCardFact>
                             </div>
+                          </button>
+
+                          <div className="action-row execution-schedule-actions">
+                            <button className="ghost-button" onClick={() => setSelectedOperationId(transaction.id)} type="button">
+                              <OpenIcon />
+                              <span>View details</span>
+                            </button>
                           </div>
-                        </button>
+                        </div>
                       );
                     })
                   : null}
@@ -3068,6 +3178,14 @@ export function ExecutionsPage() {
                     </div>
                   </div>
                   <div className="action-row">
+                    <button className="ghost-button" onClick={() => openEditScheduleBuilder(selectedSchedule)} type="button">
+                      <ExecutionEditIcon />
+                      <span>Edit schedule</span>
+                    </button>
+                    <button className="ghost-button" onClick={openCreateScheduleBuilder} type="button">
+                      <CalendarIcon />
+                      <span>New schedule</span>
+                    </button>
                     <button className="primary-button" onClick={() => void handleRunExecutionSchedule(selectedSchedule.id)} type="button">
                       Run now
                     </button>
@@ -3077,7 +3195,15 @@ export function ExecutionsPage() {
                   </div>
                 </div>
               ) : (
-                <div className="empty-state compact">Choose a scheduled run from the left to review or launch it.</div>
+                <div className="detail-stack">
+                  <div className="empty-state compact">Choose a scheduled run from the left to review or launch it.</div>
+                  <div className="action-row">
+                    <button className="ghost-button" onClick={openCreateScheduleBuilder} type="button">
+                      <CalendarIcon />
+                      <span>Create schedule</span>
+                    </button>
+                  </div>
+                </div>
               )}
             </Panel>
           ) : activeExecutionStage === "case" ? (
@@ -3198,15 +3324,15 @@ export function ExecutionsPage() {
                           <div className="resource-table-shell execution-context-table-shell">
                             <div className="resource-table-toolbar">
                               <div>
-                                <strong>Test case data fallback</strong>
-                                <span>Using saved test case values because this execution has no attached test data set.</span>
+                                <strong>Saved case and suite data</strong>
+                                <span>Using saved @t and @s values because this execution has no attached test data set for @r tokens.</span>
                               </div>
                               <span className="count-pill">
                                 {selectedExecutionCaseParameterEntries.length} item{selectedExecutionCaseParameterEntries.length === 1 ? "" : "s"}
                               </span>
                             </div>
                             {!selectedExecutionCaseParameterEntries.length ? (
-                              <div className="empty-state compact resource-table-empty">No saved test case-level data is available for this case.</div>
+                              <div className="empty-state compact resource-table-empty">No saved case or suite-scoped data is available for this case.</div>
                             ) : null}
                             {selectedExecutionCaseParameterEntries.length ? (
                               <div className="table-wrap execution-context-table-wrap">
@@ -3914,7 +4040,8 @@ export function ExecutionsPage() {
           assigneeOptions={assigneeOptions}
           cadence={scheduleCadence}
           executionName={executionName}
-          isSubmitting={createExecutionSchedule.isPending}
+          isSubmitting={createExecutionSchedule.isPending || updateExecutionSchedule.isPending}
+          mode={scheduleModalMode}
           nextRunAt={scheduleNextRunAt}
           onAssigneeChange={setSelectedExecutionAssigneeId}
           onCadenceChange={setScheduleCadence}
@@ -3924,7 +4051,7 @@ export function ExecutionsPage() {
           onEnvironmentChange={setSelectedExecutionEnvironmentId}
           onExecutionNameChange={setExecutionName}
           onNextRunAtChange={setScheduleNextRunAt}
-          onSubmit={(event) => void handleCreateExecutionSchedule(event)}
+          onSubmit={(event) => void handleSubmitExecutionSchedule(event)}
           onSuiteSelectionChange={setSelectedSuiteIds}
           projectId={projectId}
           projectName={selectedProject?.name || ""}
@@ -4161,12 +4288,14 @@ function ExecutionScheduleCard({
   schedule,
   isActive,
   onSelect,
+  onEdit,
   onRun,
   onDelete
 }: {
   schedule: ExecutionSchedule;
   isActive: boolean;
   onSelect: () => void;
+  onEdit: () => void;
   onRun: () => void;
   onDelete: () => void;
 }) {
@@ -4204,6 +4333,10 @@ function ExecutionScheduleCard({
       </button>
 
       <div className="action-row execution-schedule-actions">
+        <button className="ghost-button" onClick={onEdit} type="button">
+          <ExecutionEditIcon />
+          <span>Edit</span>
+        </button>
         <button className="ghost-button" onClick={onRun} type="button">
           <ExecutionStartIcon />
           <span>Run now</span>
@@ -4316,6 +4449,15 @@ function ExecutionRunIcon() {
     <svg aria-hidden="true" fill="none" height="20" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="20">
       <path d="m9 7 8 5-8 5z" />
     </svg>
+  );
+}
+
+function ExecutionEditIcon() {
+  return (
+    <ExecutionIconShell>
+      <path d="M4 20h4l10-10-4-4L4 16z" />
+      <path d="m12 6 4 4" />
+    </ExecutionIconShell>
   );
 }
 
@@ -5523,6 +5665,7 @@ function ExecutionCreateModal({
 }
 
 function CreateExecutionScheduleModal({
+  mode,
   projectId,
   projectName,
   appTypeId,
@@ -5549,6 +5692,7 @@ function CreateExecutionScheduleModal({
   onClose,
   onSubmit
 }: {
+  mode: "create" | "edit";
   projectId: string;
   projectName: string;
   appTypeId: string;
@@ -5575,6 +5719,8 @@ function CreateExecutionScheduleModal({
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const isEditing = mode === "edit";
+
   return (
     <div className="modal-backdrop modal-backdrop--scroll" onClick={() => !isSubmitting && onClose()} role="presentation">
       <div
@@ -5588,10 +5734,10 @@ function CreateExecutionScheduleModal({
           <div className="execution-create-header">
             <div className="execution-create-title">
               <p className="eyebrow">Scheduled Runs</p>
-              <h3 id="create-execution-schedule-title">Create schedule</h3>
-              <p>Save a recurring run separately from the live execution board, then launch it when needed.</p>
+              <h3 id="create-execution-schedule-title">{isEditing ? "Edit schedule" : "Create schedule"}</h3>
+              <p>{isEditing ? "Adjust the recurring run without losing its execution history or current scope." : "Save a recurring run separately from the live execution board, then launch it when needed."}</p>
             </div>
-            <button aria-label="Close create schedule dialog" className="ghost-button" disabled={isSubmitting} onClick={onClose} type="button">
+            <button aria-label={`Close ${isEditing ? "edit" : "create"} schedule dialog`} className="ghost-button" disabled={isSubmitting} onClick={onClose} type="button">
               Close
             </button>
           </div>
@@ -5665,7 +5811,7 @@ function CreateExecutionScheduleModal({
 
           <div className="action-row execution-create-actions">
             <button className="primary-button" disabled={!projectId || !appTypeId || !selectedSuiteIds.length || !nextRunAt || isSubmitting} type="submit">
-              {isSubmitting ? "Saving…" : "Create schedule"}
+              {isSubmitting ? "Saving…" : isEditing ? "Save schedule" : "Create schedule"}
             </button>
             <button className="ghost-button" disabled={isSubmitting} onClick={onClose} type="button">
               Cancel

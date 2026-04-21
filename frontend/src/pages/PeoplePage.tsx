@@ -493,7 +493,7 @@ export function PeoplePage() {
           isAdmin ? (
             view === "users" ? (
               <>
-                <button className="ghost-button" onClick={openImportUsersModal} type="button"><ImportIcon />Import CSV</button>
+                <button className="ghost-button" onClick={openImportUsersModal} type="button"><ImportIcon />Bulk Import users</button>
                 <button className="primary-button" onClick={openCreateUserModal} type="button"><UsersIcon />Create user</button>
               </>
             ) : (

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { buildCaseAutomationCode } from "../lib/stepAutomation";
-import { collectStepParameters, filterStepParameterValues } from "../lib/stepParameters";
+import { collectStepParameters, combineStepParameterValues, filterStepParameterValues, normalizeStepParameterValues } from "../lib/stepParameters";
 import type { Requirement, TestCase, TestSuite } from "../types";
 import { Panel } from "./Panel";
 import { StatusBadge } from "./StatusBadge";
@@ -18,22 +18,11 @@ const linkedCaseHistoryDateFormatter = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit"
 });
 
-const normalizeParameterPreviewValues = (values?: TestCase["parameter_values"]) => {
-  if (!values || typeof values !== "object" || Array.isArray(values)) {
-    return {};
-  }
+const normalizeCaseParameterPreviewValues = (values?: TestCase["parameter_values"]) =>
+  normalizeStepParameterValues((values || {}) as Record<string, string>, "t");
 
-  return Object.entries(values).reduce<Record<string, string>>((accumulator, [key, value]) => {
-    const normalizedKey = String(key || "").trim();
-
-    if (!normalizedKey) {
-      return accumulator;
-    }
-
-    accumulator[normalizedKey] = value == null ? "" : String(value);
-    return accumulator;
-  }, {});
-};
+const normalizeSuiteParameterPreviewValues = (values?: TestSuite["parameter_values"]) =>
+  normalizeStepParameterValues((values || {}) as Record<string, string>, "s");
 
 const formatLinkedHistoryDate = (value?: string | null) => {
   if (!value) {
@@ -48,6 +37,7 @@ export function LinkedTestCaseModal({
   appTypeName,
   projectName,
   requirements,
+  selectedSuite,
   suites,
   testCase,
   onClose
@@ -55,6 +45,7 @@ export function LinkedTestCaseModal({
   appTypeName: string;
   projectName: string;
   requirements: Requirement[];
+  selectedSuite?: TestSuite | null;
   suites: TestSuite[];
   testCase: TestCase;
   onClose: () => void;
@@ -65,7 +56,12 @@ export function LinkedTestCaseModal({
     history: false
   });
   const [isParameterDialogOpen, setIsParameterDialogOpen] = useState(false);
-  const [parameterValues, setParameterValues] = useState<Record<string, string>>(() => normalizeParameterPreviewValues(testCase.parameter_values));
+  const [parameterValues, setParameterValues] = useState<Record<string, string>>(() =>
+    combineStepParameterValues(
+      normalizeCaseParameterPreviewValues(testCase.parameter_values),
+      normalizeSuiteParameterPreviewValues(selectedSuite?.parameter_values)
+    )
+  );
   const [codePreviewState, setCodePreviewState] = useState<{ title: string; subtitle: string; code: string } | null>(null);
 
   const stepsQuery = useQuery({
@@ -114,6 +110,20 @@ export function LinkedTestCaseModal({
   const historySummary = history.length
     ? "Review the latest recorded outcomes and preserved execution evidence for this reusable test case."
     : "No execution history has been recorded for this reusable test case yet.";
+  const parameterDialogHeaderContent = (
+    <div className="step-parameter-dialog-context">
+      <div className="step-parameter-dialog-context-card">
+        <strong>Scope guide</strong>
+        <span>`@t` previews test-case data and `@s` previews the values saved on the active suite context for this workspace.</span>
+      </div>
+      {selectedSuite ? (
+        <div className="step-parameter-dialog-context-card">
+          <strong>Suite context</strong>
+          <span>{selectedSuite.name} · suite-shared values resolve from this suite while you review the linked case here.</span>
+        </div>
+      ) : null}
+    </div>
+  );
 
   useEffect(() => {
     setExpandedSections({
@@ -123,8 +133,13 @@ export function LinkedTestCaseModal({
     });
     setIsParameterDialogOpen(false);
     setCodePreviewState(null);
-    setParameterValues(normalizeParameterPreviewValues(testCase.parameter_values));
-  }, [testCase.id, testCase.parameter_values]);
+    setParameterValues(
+      combineStepParameterValues(
+        normalizeCaseParameterPreviewValues(testCase.parameter_values),
+        normalizeSuiteParameterPreviewValues(selectedSuite?.parameter_values)
+      )
+    );
+  }, [selectedSuite?.id, selectedSuite?.parameter_values, testCase.id, testCase.parameter_values]);
 
   useEffect(() => {
     setParameterValues((current) => {
@@ -298,6 +313,7 @@ export function LinkedTestCaseModal({
 
       {isParameterDialogOpen ? (
         <StepParameterDialog
+          headerContent={parameterDialogHeaderContent}
           onChange={(name, value) =>
             setParameterValues((current) => ({
               ...current,
@@ -306,7 +322,7 @@ export function LinkedTestCaseModal({
           }
           onClose={() => setIsParameterDialogOpen(false)}
           parameters={detectedParameters}
-          subtitle="Preview local parameter values referenced by this reusable test case."
+          subtitle="Preview local case and suite-scoped values referenced by this reusable test case."
           title="Test data"
           values={parameterValues}
         />

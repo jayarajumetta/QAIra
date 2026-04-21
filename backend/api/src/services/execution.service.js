@@ -13,7 +13,7 @@ const getSuiteIdsForExecution = db.prepare(`
 `);
 
 const getCaseSnapshotsForExecution = db.prepare(`
-  SELECT execution_id, test_case_id, test_case_title, test_case_description, suite_id, suite_name, priority, status, parameter_values, sort_order, assigned_to
+  SELECT execution_id, test_case_id, test_case_title, test_case_description, suite_id, suite_name, priority, status, parameter_values, suite_parameter_values, sort_order, assigned_to
   FROM execution_case_snapshots
   WHERE execution_id = ?
   ORDER BY sort_order ASC, test_case_title ASC
@@ -49,10 +49,11 @@ const insertExecutionCaseSnapshot = db.prepare(`
     priority,
     status,
     parameter_values,
+    suite_parameter_values,
     sort_order,
     assigned_to
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const insertExecutionStepSnapshot = db.prepare(`
@@ -86,11 +87,13 @@ const selectCasesForSuite = db.prepare(`
     test_cases.title AS test_case_title,
     test_cases.description AS test_case_description,
     test_cases.parameter_values,
+    test_suites.parameter_values AS suite_parameter_values,
     test_cases.priority,
     test_cases.status,
     suite_test_cases.sort_order
   FROM suite_test_cases
   JOIN test_cases ON test_cases.id = suite_test_cases.test_case_id
+  JOIN test_suites ON test_suites.id = suite_test_cases.suite_id
   WHERE suite_test_cases.suite_id = ?
   ORDER BY suite_test_cases.sort_order ASC, test_cases.created_at DESC
 `);
@@ -305,6 +308,8 @@ async function attachExecutionCaseAssignees(caseSnapshots) {
 
   return caseSnapshots.map((snapshot) => ({
     ...snapshot,
+    parameter_values: normalizeParameterValues(snapshot.parameter_values),
+    suite_parameter_values: normalizeParameterValues(snapshot.suite_parameter_values),
     assigned_user: snapshot.assigned_to ? assignedUsersById[snapshot.assigned_to] || null : null
   }));
 }
@@ -382,6 +387,7 @@ async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
         priority: suiteCase.priority,
         status: suiteCase.status,
         parameter_values: normalizeParameterValues(suiteCase.parameter_values),
+        suite_parameter_values: normalizeParameterValues(suiteCase.suite_parameter_values),
         sort_order: sortOrder
       });
 
@@ -431,6 +437,7 @@ async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
         priority: directCase.priority,
         status: directCase.status,
         parameter_values: normalizeParameterValues(directCase.parameter_values),
+        suite_parameter_values: {},
         sort_order: sortOrder
       });
 
@@ -476,8 +483,40 @@ async function attachScope(execution) {
   return {
     ...executionWithMetadata,
     suite_ids,
-    suite_snapshots: suiteRows.map((row) => ({ id: row.suite_id, name: row.suite_name || "Deleted Suite" }))
+    suite_snapshots: suiteRows.map((row) => ({ id: row.suite_id, name: row.suite_name || "Deleted Suite", parameter_values: {} }))
   };
+}
+
+function mergeSuiteSnapshotsWithParameters(suiteSnapshots = [], caseSnapshots = []) {
+  const suitesById = new Map(
+    suiteSnapshots.map((suite) => [
+      suite.id,
+      {
+        ...suite,
+        parameter_values: normalizeParameterValues(suite.parameter_values)
+      }
+    ])
+  );
+
+  caseSnapshots.forEach((snapshot) => {
+    if (!snapshot?.suite_id) {
+      return;
+    }
+
+    const current = suitesById.get(snapshot.suite_id) || {
+      id: snapshot.suite_id,
+      name: snapshot.suite_name || "Deleted Suite",
+      parameter_values: {}
+    };
+
+    if (!Object.keys(current.parameter_values || {}).length) {
+      current.parameter_values = normalizeParameterValues(snapshot.suite_parameter_values);
+    }
+
+    suitesById.set(snapshot.suite_id, current);
+  });
+
+  return [...suitesById.values()];
 }
 
 async function attachDetailedScope(execution) {
@@ -490,10 +529,12 @@ async function attachDetailedScope(execution) {
   const storedCaseSnapshots = await getCaseSnapshotsForExecution.all(execution.id);
   const storedStepSnapshots = await getStepSnapshotsForExecution.all(execution.id);
   const hydratedCaseSnapshots = await attachExecutionCaseAssignees(storedCaseSnapshots);
+  const hydratedSuiteSnapshots = mergeSuiteSnapshotsWithParameters(hydrated.suite_snapshots || [], hydratedCaseSnapshots);
 
   if (storedCaseSnapshots.length || storedStepSnapshots.length || !suiteRows.length) {
     return {
       ...hydrated,
+      suite_snapshots: hydratedSuiteSnapshots,
       case_snapshots: hydratedCaseSnapshots,
       step_snapshots: storedStepSnapshots
     };
@@ -509,6 +550,10 @@ async function attachDetailedScope(execution) {
 
   return {
     ...hydrated,
+    suite_snapshots: mergeSuiteSnapshotsWithParameters(
+      hydrated.suite_snapshots || [],
+      liveSnapshotPayload.caseSnapshots
+    ),
     case_snapshots: await attachExecutionCaseAssignees(liveSnapshotPayload.caseSnapshots),
     step_snapshots: liveSnapshotPayload.stepSnapshots
   };
@@ -717,6 +762,7 @@ exports.createExecution = async ({
         caseSnapshot.priority,
         caseSnapshot.status,
         caseSnapshot.parameter_values || {},
+        caseSnapshot.suite_parameter_values || {},
         caseSnapshot.sort_order,
         caseSnapshot.assigned_to || null
       );
@@ -884,6 +930,7 @@ exports.rerunExecution = async (id, { failed_only = false, created_by, name } = 
         snapshot.priority,
         snapshot.status,
         snapshot.parameter_values || {},
+        snapshot.suite_parameter_values || {},
         index + 1,
         snapshot.assigned_to || null
       );

@@ -48,6 +48,31 @@ module.exports = async function (fastify) {
     return schedule;
   });
 
+  fastify.put("/execution-schedules/:id", async (req) => {
+    await fastify.authenticate(req);
+    const schedule = await service.getExecutionSchedule(req.params.id);
+    await projectService.getProject(schedule.project_id, req.user.id);
+    if (req.body?.project_id && req.body.project_id !== schedule.project_id) {
+      await projectService.getProject(req.body.project_id, req.user.id);
+    }
+
+    fastify.validate({
+      project_id: { required: false, type: "string" },
+      app_type_id: { required: false, type: "string" },
+      name: { required: false, type: "string" },
+      cadence: { required: false, type: "string" },
+      next_run_at: { required: false, type: "string" },
+      suite_ids: { required: false, type: "array", items: "string" },
+      test_case_ids: { required: false, type: "array", items: "string" },
+      test_environment_id: { required: false, type: "string" },
+      test_configuration_id: { required: false, type: "string" },
+      test_data_set_id: { required: false, type: "string" },
+      assigned_to: { required: false, type: "string" }
+    }, req.body);
+
+    return service.updateExecutionSchedule(req.params.id, req.body, req.user.id);
+  });
+
   fastify.post("/execution-schedules/:id/run", async (req) => {
     await fastify.authenticate(req);
     const schedule = await service.getExecutionSchedule(req.params.id);

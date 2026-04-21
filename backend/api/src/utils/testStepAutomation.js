@@ -81,11 +81,19 @@ const normalizeApiRequest = (value) => {
           API_VALIDATION_KINDS.has(validation.kind) && (validation.kind === "status" || validation.target || validation.expected)
         )
     : [];
+  const captures = Array.isArray(parsed.captures)
+    ? parsed.captures
+        .map((capture) => ({
+          path: normalizeRichText(capture?.path),
+          parameter: normalizeRichText(capture?.parameter)
+        }))
+        .filter((capture) => capture.path && capture.parameter)
+    : [];
 
   const normalizedMethod = API_METHODS.has(method) ? method : "GET";
   const normalizedBodyMode = API_BODY_MODES.has(bodyMode) ? bodyMode : "none";
 
-  if (!url && !headers.length && !body && !validations.length) {
+  if (!url && !headers.length && !body && !validations.length && !captures.length) {
     return null;
   }
 
@@ -95,7 +103,8 @@ const normalizeApiRequest = (value) => {
     headers,
     body_mode: normalizedBodyMode,
     body,
-    validations
+    validations,
+    captures
   };
 };
 

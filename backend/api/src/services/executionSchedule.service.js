@@ -64,6 +64,23 @@ const insertExecutionSchedule = db.prepare(`
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
+const updateExecutionSchedule = db.prepare(`
+  UPDATE execution_schedules
+  SET project_id = ?,
+      app_type_id = ?,
+      name = ?,
+      cadence = ?,
+      next_run_at = ?,
+      suite_ids = ?,
+      test_case_ids = ?,
+      test_environment_id = ?,
+      test_configuration_id = ?,
+      test_data_set_id = ?,
+      assigned_to = ?,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE id = ?
+`);
+
 const updateExecutionScheduleRun = db.prepare(`
   UPDATE execution_schedules
   SET last_run_at = CURRENT_TIMESTAMP, next_run_at = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
@@ -265,6 +282,40 @@ exports.createExecutionSchedule = async (input = {}) => {
   );
 
   return { id };
+};
+
+exports.updateExecutionSchedule = async (id, input = {}, actorId = null) => {
+  const existing = await exports.getExecutionSchedule(id);
+  const payload = {
+    project_id: Object.prototype.hasOwnProperty.call(input, "project_id") ? normalizeText(input.project_id) : existing.project_id,
+    app_type_id: Object.prototype.hasOwnProperty.call(input, "app_type_id") ? normalizeText(input.app_type_id) : existing.app_type_id,
+    suite_ids: Object.prototype.hasOwnProperty.call(input, "suite_ids") ? input.suite_ids : existing.suite_ids,
+    test_case_ids: Object.prototype.hasOwnProperty.call(input, "test_case_ids") ? input.test_case_ids : existing.test_case_ids,
+    assigned_to: Object.prototype.hasOwnProperty.call(input, "assigned_to") ? normalizeText(input.assigned_to) : existing.assigned_to,
+    created_by: actorId || existing.created_by
+  };
+
+  await validateSchedulePayload(payload);
+
+  const suiteIds = normalizeTextList(payload.suite_ids);
+  const testCaseIds = normalizeTextList(payload.test_case_ids);
+
+  await updateExecutionSchedule.run(
+    payload.project_id,
+    payload.app_type_id,
+    Object.prototype.hasOwnProperty.call(input, "name") ? normalizeText(input.name) || "Scheduled Execution" : normalizeText(existing.name) || "Scheduled Execution",
+    Object.prototype.hasOwnProperty.call(input, "cadence") ? normalizeText(input.cadence) || "once" : normalizeText(existing.cadence) || "once",
+    Object.prototype.hasOwnProperty.call(input, "next_run_at") ? normalizeText(input.next_run_at) : existing.next_run_at,
+    suiteIds,
+    testCaseIds,
+    Object.prototype.hasOwnProperty.call(input, "test_environment_id") ? normalizeText(input.test_environment_id) : existing.test_environment_id,
+    Object.prototype.hasOwnProperty.call(input, "test_configuration_id") ? normalizeText(input.test_configuration_id) : existing.test_configuration_id,
+    Object.prototype.hasOwnProperty.call(input, "test_data_set_id") ? normalizeText(input.test_data_set_id) : existing.test_data_set_id,
+    payload.assigned_to,
+    id
+  );
+
+  return { updated: true };
 };
 
 exports.getExecutionSchedules = async ({ project_id, app_type_id, is_active } = {}) => {

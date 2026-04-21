@@ -5,12 +5,14 @@ import { useAuth } from "../auth/AuthContext";
 import { AddIcon, LayersIcon } from "../components/AppIcons";
 import { CatalogViewToggle } from "../components/CatalogViewToggle";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
+import { DataTable, type DataTableColumn } from "../components/DataTable";
 import { DisplayIdBadge } from "../components/DisplayIdBadge";
 import { FormField } from "../components/FormField";
 import { ExecutionContextSelector } from "../components/ExecutionContextSelector";
 import { LinkedTestCaseModal } from "../components/LinkedTestCaseModal";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { StepParameterDialog } from "../components/StepParameterDialog";
 import { StatusBadge } from "../components/StatusBadge";
 import {
   TileCardCaseIcon,
@@ -34,6 +36,14 @@ import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { api } from "../lib/api";
+import {
+  collectStepParameters,
+  filterStepParameterValues,
+  filterStepParameterValuesByScope,
+  normalizeStepParameterValues,
+  parseStepParameterName,
+  type StepParameterDefinition
+} from "../lib/stepParameters";
 import { type AssigneeOption, buildAssigneeOptions } from "../lib/userDisplay";
 import { TEST_AUTHORING_SECTION_ITEMS } from "../lib/workspaceSections";
 import type { AppType, ExecutionResult, Project, ProjectMember, Requirement, TestCase, TestStep, TestSuite, User } from "../types";
@@ -87,6 +97,20 @@ const EMPTY_STEP_DRAFT = {
   action: "",
   expected_result: ""
 };
+
+const normalizeSuiteParameterValues = (values?: Record<string, unknown> | null) =>
+  normalizeStepParameterValues((values || {}) as Record<string, string>, "s");
+
+const serializeSuiteParameterValues = (values?: Record<string, unknown> | null) =>
+  JSON.stringify(
+    Object.entries(normalizeSuiteParameterValues(values))
+      .sort(([left], [right]) => left.localeCompare(right))
+  );
+
+const areSuiteParameterValuesEqual = (
+  left?: Record<string, unknown> | null,
+  right?: Record<string, unknown> | null
+) => serializeSuiteParameterValues(left) === serializeSuiteParameterValues(right);
 
 const aggregateExecutionResultStatus = (
   current: ExecutionResult["status"] | undefined,
@@ -203,6 +227,8 @@ export function DesignPage() {
   const [selectedExecutionAssigneeId, setSelectedExecutionAssigneeId] = useState("");
   const [suiteModalMode, setSuiteModalMode] = useState<SuiteModalMode>("create");
   const [isSuiteModalOpen, setIsSuiteModalOpen] = useState(false);
+  const [isSuiteParameterDialogOpen, setIsSuiteParameterDialogOpen] = useState(false);
+  const [suiteParameterValues, setSuiteParameterValues] = useState<Record<string, string>>({});
   const [expandedSections, setExpandedSections] = useState<Record<SuiteCaseEditorSectionKey, boolean>>(createDefaultSuiteCaseSections);
   const [expandedStepIds, setExpandedStepIds] = useState<string[]>([]);
   const [isDeletingSelectedSuites, setIsDeletingSelectedSuites] = useState(false);
@@ -282,7 +308,7 @@ export function DesignPage() {
 
   const createSuiteMutation = useMutation({ mutationFn: api.testSuites.create });
   const updateSuiteMutation = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: Partial<{ name: string; parent_id: string }> }) =>
+    mutationFn: ({ id, input }: { id: string; input: Partial<{ name: string; parent_id: string; parameter_values: Record<string, string> }> }) =>
       api.testSuites.update(id, input)
   });
   const assignSuiteCasesMutation = useMutation({
@@ -515,6 +541,50 @@ export function DesignPage() {
   );
   const selectedSuite = suites.find((suite) => suite.id === selectedSuiteId) || null;
   const selectedTestCase = appTypeCases.find((testCase) => testCase.id === selectedTestCaseId) || null;
+  const selectedSuiteCaseIdSet = useMemo(
+    () => new Set(orderedSuiteCases.map((testCase) => testCase.id)),
+    [orderedSuiteCases]
+  );
+  const selectedSuiteParameterDefinitions = useMemo<StepParameterDefinition[]>(() => {
+    const parameterMap = new Map<string, StepParameterDefinition>();
+
+    collectStepParameters(
+      allTestSteps
+        .filter((step) => selectedSuiteCaseIdSet.has(step.test_case_id))
+        .map((step) => ({
+          id: step.id,
+          action: step.action,
+          expected_result: step.expected_result,
+          automation_code: step.automation_code,
+          api_request: step.api_request
+        }))
+    )
+      .filter((parameter) => parameter.scope === "s")
+      .forEach((parameter) => {
+        parameterMap.set(parameter.name, parameter);
+      });
+
+    Object.keys(normalizeSuiteParameterValues(selectedSuite?.parameter_values)).forEach((name) => {
+      const parsed = parseStepParameterName(name, "s");
+
+      if (!parsed || parameterMap.has(parsed.name)) {
+        return;
+      }
+
+      parameterMap.set(parsed.name, {
+        name: parsed.name,
+        rawName: parsed.rawName,
+        label: parsed.rawName,
+        token: parsed.token,
+        scope: parsed.scope,
+        scopeLabel: parsed.scopeLabel,
+        stepIds: [],
+        occurrenceCount: 0
+      });
+    });
+
+    return [...parameterMap.values()].sort((left, right) => left.label.localeCompare(right.label));
+  }, [allTestSteps, selectedSuite?.parameter_values, selectedSuiteCaseIdSet]);
   const sortedSteps = useMemo(
     () => [...steps].sort((left, right) => left.step_order - right.step_order),
     [steps]
@@ -702,6 +772,18 @@ export function DesignPage() {
     Number(casePriorityFilter !== "all") +
     Number(caseStepFilter !== "all") +
     Number(caseRunFilter !== "all");
+  const suiteParameterDialogHeaderContent = selectedSuite ? (
+    <div className="step-parameter-dialog-context">
+      <div className="step-parameter-dialog-context-card">
+        <strong>Suite scope</strong>
+        <span>{selectedSuite.name} · {orderedSuiteCases.length} linked case{orderedSuiteCases.length === 1 ? "" : "s"} in this suite context.</span>
+      </div>
+      <div className="step-parameter-dialog-context-card">
+        <strong>Scope guide</strong>
+        <span>`@s` values are saved on this suite and reused by any linked case in the suite that references them.</span>
+      </div>
+    </div>
+  ) : null;
 
   useEffect(() => {
     if (selectedSuiteId && !suites.some((suite) => suite.id === selectedSuiteId)) {
@@ -720,11 +802,33 @@ export function DesignPage() {
     setSelectedTestCaseId("");
     setIsCreatingCase(false);
     setIsTestCaseEditorModalOpen(false);
+    setIsSuiteParameterDialogOpen(false);
     setDraftSteps([]);
     setExpandedSections(createDefaultSuiteCaseSections());
     setExpandedStepIds([]);
     setNewStepDraft(EMPTY_STEP_DRAFT);
   }, [selectedSuiteId]);
+
+  useEffect(() => {
+    setSuiteParameterValues(normalizeSuiteParameterValues(selectedSuite?.parameter_values));
+  }, [selectedSuite?.id, selectedSuite?.parameter_values]);
+
+  useEffect(() => {
+    setSuiteParameterValues((current) => {
+      const next = filterStepParameterValuesByScope(
+        filterStepParameterValues(current, selectedSuiteParameterDefinitions),
+        "s"
+      );
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(next);
+
+      if (currentKeys.length === nextKeys.length && currentKeys.every((key) => current[key] === next[key])) {
+        return current;
+      }
+
+      return next;
+    });
+  }, [selectedSuiteParameterDefinitions]);
 
   useEffect(() => {
     setExpandedSections(createDefaultSuiteCaseSections());
@@ -797,10 +901,59 @@ export function DesignPage() {
     setStepDrafts(drafts);
   }, [sortedSteps]);
 
+  useEffect(() => {
+    if (!selectedSuite || updateSuiteMutation.isPending) {
+      return;
+    }
+
+    const normalizedCurrentValues = normalizeSuiteParameterValues(suiteParameterValues);
+    const normalizedSavedValues = normalizeSuiteParameterValues(selectedSuite.parameter_values);
+
+    if (areSuiteParameterValuesEqual(normalizedCurrentValues, normalizedSavedValues)) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      updateSuiteMutation.mutate(
+        {
+          id: selectedSuite.id,
+          input: {
+            parameter_values: normalizedCurrentValues
+          }
+        },
+        {
+          onSuccess: () => {
+            updateSuitesCache((current) =>
+              current.map((suite) =>
+                suite.id === selectedSuite.id
+                  ? {
+                      ...suite,
+                      parameter_values: normalizedCurrentValues
+                    }
+                  : suite
+              )
+            );
+          },
+          onError: (error) => {
+            showError(error, "Unable to update suite test data");
+          }
+        }
+      );
+    }, 450);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [selectedSuite, suiteParameterValues, updateSuiteMutation, updateSuiteMutation.isPending]);
+
   const updateCasesCache = (updater: (current: TestCase[]) => TestCase[]) => {
     queryClient.setQueryData<TestCase[]>(["design-test-cases", appTypeId], (current = []) => updater(current));
     queryClient.setQueryData<TestCase[]>(["global-test-cases", appTypeId], (current = []) => updater(current));
     queryClient.setQueryData<TestCase[]>(["test-cases"], (current = []) => updater(current));
+  };
+
+  const updateSuitesCache = (updater: (current: TestSuite[]) => TestSuite[]) => {
+    queryClient.setQueryData<TestSuite[]>(["design-suites", appTypeId], (current = []) => updater(current));
+    queryClient.setQueryData<TestSuite[]>(["test-case-suites", appTypeId], (current = []) => updater(current));
+    queryClient.setQueryData<TestSuite[]>(["test-suites"], (current = []) => updater(current));
   };
 
   const updateStepsCache = (testCaseId: string, updater: (current: TestStep[]) => TestStep[]) => {
@@ -1536,6 +1689,14 @@ export function DesignPage() {
                 <button
                   className="ghost-button"
                   disabled={!selectedSuite}
+                  onClick={() => setIsSuiteParameterDialogOpen(true)}
+                  type="button"
+                >
+                  <span>{selectedSuiteParameterDefinitions.length ? `Suite test data · ${selectedSuiteParameterDefinitions.length}` : "Suite test data"}</span>
+                </button>
+                <button
+                  className="ghost-button"
+                  disabled={!selectedSuite}
                   onClick={() => {
                     setSuiteModalMode("edit");
                     setIsSuiteModalOpen(true);
@@ -1588,8 +1749,29 @@ export function DesignPage() {
           onClose={closeTestCaseEditorModal}
           projectName={selectedProject?.name || ""}
           requirements={requirements}
+          selectedSuite={selectedSuite}
           suites={suites}
           testCase={selectedTestCase}
+        />
+      ) : null}
+
+      {isSuiteParameterDialogOpen && selectedSuite ? (
+        <StepParameterDialog
+          getInputState={() => ({
+            hint: `Saved on suite "${selectedSuite.name}" and reused by any linked case that references the same @s token.`
+          })}
+          headerContent={suiteParameterDialogHeaderContent}
+          onChange={(name, value) =>
+            setSuiteParameterValues((current) => ({
+              ...current,
+              [name]: value
+            }))
+          }
+          onClose={() => setIsSuiteParameterDialogOpen(false)}
+          parameters={selectedSuiteParameterDefinitions}
+          subtitle="Suite-shared values detected across the cases linked into this suite."
+          title={`${selectedSuite.name} test data`}
+          values={suiteParameterValues}
         />
       ) : null}
 
@@ -1994,6 +2176,88 @@ function TestCaseList({
   const [draggedCaseId, setDraggedCaseId] = useState("");
   const casesWithRequirements = cases.filter((testCase) => testCase.requirement_id || testCase.requirement_ids?.length).length;
   const casesWithHistory = cases.filter((testCase) => (historyByCaseId[testCase.id] || []).length > 0).length;
+  const getRequirementTitleForCase = (testCase: TestCase) =>
+    requirements
+      .find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id))
+      ?.title || "No requirement linked";
+  const suiteCaseListColumns = useMemo<Array<DataTableColumn<TestCase>>>(() => [
+    {
+      key: "id",
+      label: "ID",
+      render: (testCase) => <DisplayIdBadge value={testCase.display_id || testCase.id} />
+    },
+    {
+      key: "title",
+      label: "Test case",
+      canToggle: false,
+      render: (testCase) => (
+        <div className="data-table-multiline">
+          <strong>{testCase.title}</strong>
+          <span className="data-table-multiline-line">{getRequirementTitleForCase(testCase)}</span>
+        </div>
+      )
+    },
+    {
+      key: "description",
+      label: "Description",
+      defaultVisible: false,
+      render: (testCase) => testCase.description || "No description yet for this test case."
+    },
+    {
+      key: "status",
+      label: "Status",
+      render: (testCase) => {
+        const history = historyByCaseId[testCase.id] || [];
+        const latest = history[0];
+        return formatTileCardLabel(latest?.status || testCase.status || defaultCaseStatus, "Active");
+      }
+    },
+    {
+      key: "automated",
+      label: "Automated",
+      render: (testCase) => (testCase.automated === "yes" ? "Yes" : "No")
+    },
+    {
+      key: "priority",
+      label: "Priority",
+      render: (testCase) => `P${testCase.priority || 3}`
+    },
+    {
+      key: "steps",
+      label: "Steps",
+      render: (testCase) => stepCountByCaseId[testCase.id] || 0
+    },
+    {
+      key: "testData",
+      label: "Test data",
+      defaultVisible: false,
+      render: (testCase) => {
+        const parameterEntries = Object.entries(testCase.parameter_values || {}).sort(([left], [right]) => left.localeCompare(right));
+
+        if (!parameterEntries.length) {
+          return "No test data";
+        }
+
+        return (
+          <div className="data-table-multiline">
+            {parameterEntries.map(([name, value]) => (
+              <span className="data-table-multiline-line" key={name}>{`${name} = ${value}`}</span>
+            ))}
+          </div>
+        );
+      }
+    },
+    {
+      key: "suites",
+      label: "Suites",
+      render: (testCase) => (testCase.suite_ids || (testCase.suite_id ? [testCase.suite_id] : [])).length || 0
+    },
+    {
+      key: "runs",
+      label: "Runs",
+      render: (testCase) => (historyByCaseId[testCase.id] || []).length
+    }
+  ], [defaultCaseStatus, historyByCaseId, requirements, stepCountByCaseId]);
 
   return (
     <Panel
@@ -2101,6 +2365,11 @@ function TestCaseList({
           <div className="detail-summary suite-workspace-card">
             <strong>{selectedSuite.name}</strong>
             <span>Cases stay ordered inside the suite, while each case remains reusable elsewhere.</span>
+            <span>
+              {Object.keys(selectedSuite.parameter_values || {}).length
+                ? `${Object.keys(selectedSuite.parameter_values || {}).length} suite test data value${Object.keys(selectedSuite.parameter_values || {}).length === 1 ? "" : "s"} saved on this suite.`
+                : "No suite-level test data saved yet."}
+            </span>
           </div>
         ) : null}
 
@@ -2204,52 +2473,16 @@ function TestCaseList({
             </div>
           ) : null}
           {!isLoading && cases.length && viewMode === "list" ? (
-            <div className="table-wrap catalog-table-wrap">
-              <table className="data-table catalog-data-table">
-                <thead>
-                  <tr>
-                    <th><span className="data-table-header-label">ID</span></th>
-                    <th><span className="data-table-header-label">Case</span></th>
-                    <th><span className="data-table-header-label">Status</span></th>
-                    <th><span className="data-table-header-label">Automated</span></th>
-                    <th><span className="data-table-header-label">Priority</span></th>
-                    <th><span className="data-table-header-label">Steps</span></th>
-                    <th><span className="data-table-header-label">Suites</span></th>
-                    <th><span className="data-table-header-label">Runs</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cases.map((testCase) => {
-                    const history = (historyByCaseId[testCase.id] || []).slice(0, 10);
-                    const latest = history[0];
-                    const requirement = requirements.find((item) => (testCase.requirement_ids || [testCase.requirement_id]).includes(item.id));
-                    const stepCount = stepCountByCaseId[testCase.id] || 0;
-                    const caseStatusValue = latest?.status || testCase.status || defaultCaseStatus;
-                    const suiteCount = (testCase.suite_ids || []).length || 0;
-
-                    return (
-                      <tr
-                        className={activeCaseId === testCase.id ? "is-active-row" : ""}
-                        key={testCase.id}
-                        onClick={() => onSelectCase(testCase.id)}
-                      >
-                        <td><DisplayIdBadge value={testCase.display_id || testCase.id} /></td>
-                        <td>
-                          <strong>{testCase.title}</strong>
-                          <div className="catalog-row-subcopy">{requirement?.title || "No requirement linked"}</div>
-                        </td>
-                        <td>{formatTileCardLabel(caseStatusValue, "Active")}</td>
-                        <td>{testCase.automated === "yes" ? "Yes" : "No"}</td>
-                        <td>{`P${testCase.priority || 3}`}</td>
-                        <td>{stepCount}</td>
-                        <td>{suiteCount}</td>
-                        <td>{history.length}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              columns={suiteCaseListColumns}
+              emptyMessage="No test cases match this suite scope."
+              getRowClassName={(testCase) => (activeCaseId === testCase.id ? "is-active-row" : "")}
+              getRowKey={(testCase) => testCase.id}
+              hideToolbarCopy
+              onRowClick={(testCase) => onSelectCase(testCase.id)}
+              rows={cases}
+              storageKey="qaira:suite-cases:list-columns"
+            />
           ) : null}
         </TileBrowserPane>
       </div>

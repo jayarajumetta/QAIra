@@ -36,6 +36,194 @@ const selectUserById = db.prepare(`
   WHERE id = ?
 `);
 
+const deleteProjectTransactionEvents = db.prepare(`
+  DELETE FROM workspace_transaction_events
+  WHERE transaction_id IN (
+    SELECT id
+    FROM workspace_transactions
+    WHERE project_id = ?
+  )
+`);
+
+const deleteProjectExecutionResults = db.prepare(`
+  DELETE FROM execution_results
+  WHERE execution_id IN (
+      SELECT id
+      FROM executions
+      WHERE project_id = ?
+    )
+    OR app_type_id IN (
+      SELECT id
+      FROM app_types
+      WHERE project_id = ?
+    )
+`);
+
+const deleteProjectExecutionStepSnapshots = db.prepare(`
+  DELETE FROM execution_step_snapshots
+  WHERE execution_id IN (
+    SELECT id
+    FROM executions
+    WHERE project_id = ?
+  )
+`);
+
+const deleteProjectExecutionCaseSnapshots = db.prepare(`
+  DELETE FROM execution_case_snapshots
+  WHERE execution_id IN (
+    SELECT id
+    FROM executions
+    WHERE project_id = ?
+  )
+`);
+
+const deleteProjectExecutionSuites = db.prepare(`
+  DELETE FROM execution_suites
+  WHERE execution_id IN (
+    SELECT id
+    FROM executions
+    WHERE project_id = ?
+  )
+`);
+
+const deleteProjectExecutions = db.prepare(`
+  DELETE FROM executions
+  WHERE project_id = ?
+`);
+
+const deleteProjectExecutionSchedules = db.prepare(`
+  DELETE FROM execution_schedules
+  WHERE project_id = ?
+`);
+
+const deleteProjectTestSteps = db.prepare(`
+  DELETE FROM test_steps
+  WHERE test_case_id IN (
+    SELECT test_cases.id
+    FROM test_cases
+    JOIN app_types ON app_types.id = test_cases.app_type_id
+    WHERE app_types.project_id = ?
+  )
+`);
+
+const deleteProjectSuiteMappings = db.prepare(`
+  DELETE FROM suite_test_cases
+  WHERE suite_id IN (
+      SELECT test_suites.id
+      FROM test_suites
+      JOIN app_types ON app_types.id = test_suites.app_type_id
+      WHERE app_types.project_id = ?
+    )
+    OR test_case_id IN (
+      SELECT test_cases.id
+      FROM test_cases
+      JOIN app_types ON app_types.id = test_cases.app_type_id
+      WHERE app_types.project_id = ?
+    )
+`);
+
+const deleteProjectRequirementMappings = db.prepare(`
+  DELETE FROM requirement_test_cases
+  WHERE requirement_id IN (
+      SELECT id
+      FROM requirements
+      WHERE project_id = ?
+    )
+    OR test_case_id IN (
+      SELECT test_cases.id
+      FROM test_cases
+      JOIN app_types ON app_types.id = test_cases.app_type_id
+      WHERE app_types.project_id = ?
+    )
+`);
+
+const clearLegacyProjectCaseSuiteIds = db.prepare(`
+  UPDATE test_cases
+  SET suite_id = NULL
+  WHERE app_type_id IN (
+    SELECT id
+    FROM app_types
+    WHERE project_id = ?
+  )
+`);
+
+const deleteProjectTestCases = db.prepare(`
+  DELETE FROM test_cases
+  WHERE app_type_id IN (
+    SELECT id
+    FROM app_types
+    WHERE project_id = ?
+  )
+`);
+
+const deleteProjectTestSuites = db.prepare(`
+  DELETE FROM test_suites
+  WHERE app_type_id IN (
+    SELECT id
+    FROM app_types
+    WHERE project_id = ?
+  )
+`);
+
+const deleteProjectRequirements = db.prepare(`
+  DELETE FROM requirements
+  WHERE project_id = ?
+`);
+
+const deleteProjectSharedStepGroups = db.prepare(`
+  DELETE FROM shared_step_groups
+  WHERE app_type_id IN (
+    SELECT id
+    FROM app_types
+    WHERE project_id = ?
+  )
+`);
+
+const deleteProjectTestEnvironments = db.prepare(`
+  DELETE FROM test_environments
+  WHERE project_id = ?
+`);
+
+const deleteProjectTestConfigurations = db.prepare(`
+  DELETE FROM test_configurations
+  WHERE project_id = ?
+`);
+
+const deleteProjectTestDataSets = db.prepare(`
+  DELETE FROM test_data_sets
+  WHERE project_id = ?
+`);
+
+const deleteProjectAiGenerationJobs = db.prepare(`
+  DELETE FROM ai_test_case_generation_jobs
+  WHERE project_id = ?
+`);
+
+const deleteProjectWorkspaceTransactions = db.prepare(`
+  DELETE FROM workspace_transactions
+  WHERE project_id = ?
+`);
+
+const deleteProjectIntegrations = db.prepare(`
+  DELETE FROM integrations
+  WHERE config->>'project_id' = ?
+`);
+
+const deleteProjectAppTypes = db.prepare(`
+  DELETE FROM app_types
+  WHERE project_id = ?
+`);
+
+const deleteProjectMembers = db.prepare(`
+  DELETE FROM project_members
+  WHERE project_id = ?
+`);
+
+const deleteProjectRecord = db.prepare(`
+  DELETE FROM projects
+  WHERE id = ?
+`);
+
 exports.createProject = async ({ name, description, created_by, member_ids, app_types }) => {
   if (!name || !created_by) throw new Error("Missing fields");
 
@@ -180,23 +368,33 @@ exports.updateProject = async (id, data) => {
 exports.deleteProject = async (id) => {
   await exports.getProject(id);
 
-  const dependencies = [
-    { table: "project_members", field: "project_id", message: "Cannot delete project with members" },
-    { table: "app_types", field: "project_id", message: "Cannot delete project with app types" },
-    { table: "requirements", field: "project_id", message: "Cannot delete project with requirements" },
-    { table: "executions", field: "project_id", message: "Cannot delete project with executions" }
-  ];
+  const executeDelete = db.transaction(async () => {
+    await deleteProjectTransactionEvents.run(id);
+    await deleteProjectExecutionResults.run(id, id);
+    await deleteProjectExecutionStepSnapshots.run(id);
+    await deleteProjectExecutionCaseSnapshots.run(id);
+    await deleteProjectExecutionSuites.run(id);
+    await deleteProjectExecutions.run(id);
+    await deleteProjectExecutionSchedules.run(id);
+    await deleteProjectTestSteps.run(id);
+    await deleteProjectSuiteMappings.run(id, id);
+    await deleteProjectRequirementMappings.run(id, id);
+    await clearLegacyProjectCaseSuiteIds.run(id);
+    await deleteProjectTestCases.run(id);
+    await deleteProjectTestSuites.run(id);
+    await deleteProjectRequirements.run(id);
+    await deleteProjectSharedStepGroups.run(id);
+    await deleteProjectTestEnvironments.run(id);
+    await deleteProjectTestConfigurations.run(id);
+    await deleteProjectTestDataSets.run(id);
+    await deleteProjectAiGenerationJobs.run(id);
+    await deleteProjectWorkspaceTransactions.run(id);
+    await deleteProjectIntegrations.run(id);
+    await deleteProjectAppTypes.run(id);
+    await deleteProjectMembers.run(id);
+    await deleteProjectRecord.run(id);
+  });
 
-  for (const dependency of dependencies) {
-    const used = await db.prepare(`
-      SELECT id FROM ${dependency.table} WHERE ${dependency.field} = ?
-    `).get(id);
-
-    if (used) {
-      throw new Error(dependency.message);
-    }
-  }
-
-  await db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+  await executeDelete();
   return { deleted: true };
 };

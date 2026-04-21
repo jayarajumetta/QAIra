@@ -191,6 +191,10 @@ const statements = [
   `UPDATE requirements SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)`,
   `ALTER TABLE test_suites ADD COLUMN IF NOT EXISTS created_by TEXT`,
   `ALTER TABLE test_suites ADD COLUMN IF NOT EXISTS updated_by TEXT`,
+  `ALTER TABLE test_suites ADD COLUMN IF NOT EXISTS parameter_values JSONB`,
+  `UPDATE test_suites SET parameter_values = '{}'::jsonb WHERE parameter_values IS NULL`,
+  `ALTER TABLE test_suites ALTER COLUMN parameter_values SET DEFAULT '{}'::jsonb`,
+  `ALTER TABLE test_suites ALTER COLUMN parameter_values SET NOT NULL`,
   `ALTER TABLE test_suites ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
   `UPDATE test_suites SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)`,
   `
@@ -249,6 +253,7 @@ const statements = [
       priority INTEGER,
       status TEXT,
       parameter_values JSONB NOT NULL DEFAULT '{}'::jsonb,
+      suite_parameter_values JSONB NOT NULL DEFAULT '{}'::jsonb,
       sort_order INTEGER NOT NULL DEFAULT 1,
       assigned_to TEXT,
       PRIMARY KEY (execution_id, test_case_id)
@@ -258,6 +263,10 @@ const statements = [
   `UPDATE execution_case_snapshots SET parameter_values = '{}'::jsonb WHERE parameter_values IS NULL`,
   `ALTER TABLE execution_case_snapshots ALTER COLUMN parameter_values SET DEFAULT '{}'::jsonb`,
   `ALTER TABLE execution_case_snapshots ALTER COLUMN parameter_values SET NOT NULL`,
+  `ALTER TABLE execution_case_snapshots ADD COLUMN IF NOT EXISTS suite_parameter_values JSONB`,
+  `UPDATE execution_case_snapshots SET suite_parameter_values = '{}'::jsonb WHERE suite_parameter_values IS NULL`,
+  `ALTER TABLE execution_case_snapshots ALTER COLUMN suite_parameter_values SET DEFAULT '{}'::jsonb`,
+  `ALTER TABLE execution_case_snapshots ALTER COLUMN suite_parameter_values SET NOT NULL`,
   `ALTER TABLE execution_case_snapshots ADD COLUMN IF NOT EXISTS assigned_to TEXT`,
   `
     CREATE TABLE IF NOT EXISTS execution_step_snapshots (

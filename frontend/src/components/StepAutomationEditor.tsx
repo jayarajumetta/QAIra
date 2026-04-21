@@ -3,7 +3,7 @@ import { PlayIcon } from "./AppIcons";
 import { FormField } from "./FormField";
 import { SharedStepsIcon as SharedStepsIconGraphic } from "./SharedStepsIcon";
 import { api } from "../lib/api";
-import { resolveStepParameterText } from "../lib/stepParameters";
+import { parseStepParameterName, resolveStepParameterText, type StepParameterDefinition, type StepParameterScope } from "../lib/stepParameters";
 import {
   buildApiValidationAssertionCode,
   ensureApiRequest,
@@ -28,6 +28,11 @@ type StepAutomationInput = {
 type JsonPathSelection = {
   path: string;
   value: unknown;
+};
+
+type StepAutomationParameterScopeState = {
+  disabled?: boolean;
+  hint?: string;
 };
 
 function IconFrame({
@@ -972,6 +977,9 @@ export function StepAutomationDialog({
   subtitle,
   step,
   parameterValues = {},
+  availableParameters = [],
+  getParameterScopeState,
+  onSaveResponseValue,
   onClose,
   onSave
 }: {
@@ -979,6 +987,9 @@ export function StepAutomationDialog({
   subtitle: string;
   step: StepAutomationInput;
   parameterValues?: Record<string, string>;
+  availableParameters?: StepParameterDefinition[];
+  getParameterScopeState?: (scope: StepParameterScope) => StepAutomationParameterScopeState;
+  onSaveResponseValue?: (name: string, value: string) => void;
   onClose: () => void;
   onSave: (input: { step_type: TestStepType; automation_code: string; api_request: StepApiRequest | null }) => void;
 }) {
@@ -990,6 +1001,7 @@ export function StepAutomationDialog({
   const [apiPreviewMessage, setApiPreviewMessage] = useState("");
   const [isRunningApiRequest, setIsRunningApiRequest] = useState(false);
   const [selectedJsonPath, setSelectedJsonPath] = useState<JsonPathSelection | null>(null);
+  const [responseParameterDraft, setResponseParameterDraft] = useState("");
 
   useEffect(() => {
     setStepType(normalizeStepType(step.step_type));
@@ -999,6 +1011,7 @@ export function StepAutomationDialog({
     setApiPreviewError("");
     setApiPreviewMessage("");
     setSelectedJsonPath(null);
+    setResponseParameterDraft("");
   }, [step]);
 
   useEffect(() => {
@@ -1007,6 +1020,7 @@ export function StepAutomationDialog({
       setApiPreviewError("");
       setApiPreviewMessage("");
       setSelectedJsonPath(null);
+      setResponseParameterDraft("");
     }
   }, [stepType]);
 
@@ -1040,6 +1054,41 @@ export function StepAutomationDialog({
     [apiPreview, apiRequest.validations, parameterValues]
   );
   const selectedJsonValue = selectedJsonPath ? formatJsonSelectionValue(selectedJsonPath.value) : "";
+  const groupedAvailableParameters = useMemo(
+    () => [
+      {
+        label: "Test case data",
+        items: availableParameters.filter((parameter) => parameter.scope === "t")
+      },
+      {
+        label: "Suite-shared data",
+        items: availableParameters.filter((parameter) => parameter.scope === "s")
+      },
+      {
+        label: "Run data",
+        items: availableParameters.filter((parameter) => parameter.scope === "r")
+      }
+    ].filter((group) => group.items.length),
+    [availableParameters]
+  );
+  const responseParameterOptionListId = `step-response-parameter-options-${step.step_order || 1}`;
+  const parsedResponseParameter = parseStepParameterName(responseParameterDraft);
+  const matchedResponseParameter = parsedResponseParameter
+    ? availableParameters.find((parameter) => parameter.name === parsedResponseParameter.name) || null
+    : null;
+  const responseParameterScopeState = parsedResponseParameter
+    ? (getParameterScopeState?.(parsedResponseParameter.scope) || {})
+    : {};
+
+  useEffect(() => {
+    const enabledParameters = availableParameters.filter((parameter) => !(getParameterScopeState?.(parameter.scope) || {}).disabled);
+
+    if (!enabledParameters.length || responseParameterDraft.trim()) {
+      return;
+    }
+
+    setResponseParameterDraft(enabledParameters[0]?.token || "");
+  }, [availableParameters, getParameterScopeState, responseParameterDraft]);
 
   const handleRunApiRequest = async () => {
     if (!resolvedApiRequest?.url) {
@@ -1119,6 +1168,52 @@ export function StepAutomationDialog({
     setApiPreviewError("");
   };
 
+  const handleAddResponseCapture = () => {
+    if (!selectedJsonPath || !parsedResponseParameter) {
+      setApiPreviewError("Choose a JSON node and enter a scoped token like @t.orderId before adding a response parser.");
+      setApiPreviewMessage("");
+      return;
+    }
+
+    if (responseParameterScopeState.disabled) {
+      setApiPreviewError(
+        responseParameterScopeState.hint || `Unable to save ${parsedResponseParameter.token} in the current context.`
+      );
+      setApiPreviewMessage("");
+      return;
+    }
+
+    const nextCapture = {
+      path: selectedJsonPath.path,
+      parameter: parsedResponseParameter.token
+    };
+
+    setApiRequest((current) => {
+      const existingCaptures = current.captures || [];
+      const alreadyExists = existingCaptures.some((capture) =>
+        (capture.path || "") === nextCapture.path
+        && (capture.parameter || "") === nextCapture.parameter
+      );
+
+      return {
+        ...current,
+        captures: alreadyExists ? existingCaptures : [...existingCaptures, nextCapture]
+      };
+    });
+
+    if (matchedResponseParameter && onSaveResponseValue) {
+      onSaveResponseValue(
+        matchedResponseParameter.name,
+        stringifyJsonSelectionValue(selectedJsonPath.value)
+      );
+      setApiPreviewMessage(`Added response parser for ${parsedResponseParameter.token} and refreshed its preview value from ${selectedJsonPath.path}.`);
+    } else {
+      setApiPreviewMessage(`Added response parser from ${selectedJsonPath.path} to ${parsedResponseParameter.token}. Save automation to persist this parameter definition.`);
+    }
+
+    setApiPreviewError("");
+  };
+
   return (
     <div className="modal-backdrop modal-backdrop--scroll" onClick={onClose} role="presentation">
       <div
@@ -1190,7 +1285,7 @@ export function StepAutomationDialog({
 
                 <FormField
                   label="Headers"
-                  hint="Use @param tokens inside header names or values when you want the same case-level data in request setup."
+                  hint="Use scoped @t, @s, or @r tokens inside header names or values when request setup depends on saved test data."
                 >
                   <ApiHeaderRowsEditor
                     headers={apiRequest.headers || []}
@@ -1304,6 +1399,42 @@ export function StepAutomationDialog({
                                 <pre className="automation-code-block automation-code-block--compact automation-code-block--selection">
                                   <code>{selectedJsonValue}</code>
                                 </pre>
+                                <div className="automation-response-save">
+                                  <strong>Add response parser</strong>
+                                  <span>Map this JSON path into a scoped token like `@t.orderId`, `@s.sharedOrderId`, or `@r.runOrderId`.</span>
+                                  <div className="automation-response-save-controls">
+                                    <input
+                                      list={groupedAvailableParameters.length ? responseParameterOptionListId : undefined}
+                                      placeholder="@t.orderId"
+                                      value={responseParameterDraft}
+                                      onChange={(event) => setResponseParameterDraft(event.target.value)}
+                                    />
+                                    <button
+                                      className="ghost-button inline-button"
+                                      disabled={!selectedJsonPath || !parsedResponseParameter || responseParameterScopeState.disabled}
+                                      onClick={handleAddResponseCapture}
+                                      type="button"
+                                    >
+                                      <span>Add parser</span>
+                                    </button>
+                                  </div>
+                                  {groupedAvailableParameters.length ? (
+                                    <datalist id={responseParameterOptionListId}>
+                                      {groupedAvailableParameters.flatMap((group) =>
+                                        group.items.map((parameter) => (
+                                          <option key={parameter.name} value={parameter.token}>
+                                            {parameter.scopeLabel}
+                                          </option>
+                                        ))
+                                      )}
+                                    </datalist>
+                                  ) : null}
+                                  <span>
+                                    {parsedResponseParameter
+                                      ? responseParameterScopeState.hint || `Parser will populate ${parsedResponseParameter.token} from ${selectedJsonPath.path}.`
+                                      : "Enter a scoped token with @t, @s, or @r to persist this response parser."}
+                                  </span>
+                                </div>
                                 <button className="ghost-button" onClick={handleInsertJsonPathAssertion} type="button">
                                   <AutomationCodeIcon />
                                   <span>Add JPath assertion to override</span>
@@ -1342,6 +1473,59 @@ export function StepAutomationDialog({
                 </FormField>
 
                 <FormField
+                  label="Response parsers"
+                  hint="Persist JSON paths that define scoped params from this API response. These captured tokens are treated as part of the case parameter set."
+                >
+                  <div className="automation-grid-stack">
+                    {(apiRequest.captures || []).length ? (
+                      (apiRequest.captures || []).map((capture, index) => (
+                        <div className="automation-inline-grid" key={`capture-${index}`}>
+                          <input
+                            list={groupedAvailableParameters.length ? responseParameterOptionListId : undefined}
+                            placeholder="@t.orderId"
+                            value={capture.parameter || ""}
+                            onChange={(event) =>
+                              setApiRequest((current) => ({
+                                ...current,
+                                captures: (current.captures || []).map((item, itemIndex) =>
+                                  itemIndex === index ? { ...item, parameter: event.target.value } : item
+                                )
+                              }))
+                            }
+                          />
+                          <input
+                            placeholder="$.data.id"
+                            value={capture.path || ""}
+                            onChange={(event) =>
+                              setApiRequest((current) => ({
+                                ...current,
+                                captures: (current.captures || []).map((item, itemIndex) =>
+                                  itemIndex === index ? { ...item, path: event.target.value } : item
+                                )
+                              }))
+                            }
+                          />
+                          <button
+                            className="ghost-button inline-button"
+                            onClick={() =>
+                              setApiRequest((current) => ({
+                                ...current,
+                                captures: (current.captures || []).filter((_, itemIndex) => itemIndex !== index)
+                              }))
+                            }
+                            type="button"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="empty-state compact">No response parsers added yet.</div>
+                    )}
+                  </div>
+                </FormField>
+
+                <FormField
                   label="Custom code override"
                   hint="Leave blank to use the generated request snippet in group and case-level consolidated code views. JPath selections can seed this override automatically."
                 >
@@ -1351,7 +1535,7 @@ export function StepAutomationDialog({
             ) : (
               <FormField
                 label="Step automation code"
-                hint="Use the same @param tokens from the manual step text when you need case-level data inside automation."
+                hint="Use the same scoped tokens from the manual step text whenever automation needs case, suite, or run data."
               >
                 <textarea rows={14} value={automationCode} onChange={(event) => setAutomationCode(event.target.value)} />
               </FormField>

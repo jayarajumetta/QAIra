@@ -1,4 +1,4 @@
-import type { SharedStepGroupStep, StepApiRequest, StepApiValidation, TestStep, TestStepType } from "../types";
+import type { SharedStepGroupStep, StepApiRequest, StepApiResponseCapture, StepApiValidation, TestStep, TestStepType } from "../types";
 
 export const STEP_TYPE_OPTIONS: Array<{ value: TestStepType; label: string; shortLabel: string }> = [
   { value: "web", label: "Web", shortLabel: "WEB" },
@@ -36,7 +36,8 @@ export function createEmptyApiRequest(): StepApiRequest {
     headers: [],
     body_mode: "none",
     body: "",
-    validations: [{ kind: "status", target: "", expected: "200" }]
+    validations: [{ kind: "status", target: "", expected: "200" }],
+    captures: []
   };
 }
 
@@ -66,8 +67,16 @@ export function normalizeApiRequest(value?: StepApiRequest | null): StepApiReque
         }))
         .filter((validation) => validation.kind === "status" || validation.target || validation.expected)
     : [];
+  const captures = Array.isArray(value.captures)
+    ? value.captures
+        .map((capture) => ({
+          path: normalizeRichText(capture?.path),
+          parameter: normalizeRichText(capture?.parameter)
+        }))
+        .filter((capture) => capture.path && capture.parameter)
+    : [];
 
-  if (!url && !headers.length && !body && !validations.length) {
+  if (!url && !headers.length && !body && !validations.length && !captures.length) {
     return null;
   }
 
@@ -77,7 +86,8 @@ export function normalizeApiRequest(value?: StepApiRequest | null): StepApiReque
     headers,
     body_mode: API_BODY_MODE_SET.has(bodyMode) ? bodyMode : "none",
     body,
-    validations
+    validations,
+    captures
   };
 }
 
@@ -177,10 +187,22 @@ function buildApiRequestLiteral(request: StepApiRequest) {
   return `{\n${indentBlock(lines.join("\n"), 2)}\n}`;
 }
 
+function buildApiResponseCaptureCode(capture: StepApiResponseCapture, responseVar: string, index: number) {
+  const path = normalizeRichText(capture.path) || "$";
+  const parameter = normalizeRichText(capture.parameter) || `@t.capture_${index + 1}`;
+  const captureVar = `capture${index + 1}_${parameter.replace(/[^A-Za-z0-9_]+/g, "_").replace(/^_+/, "") || "value"}`;
+
+  return [
+    `const ${captureVar} = readJsonPath(${responseVar}.body, ${quoteJsString(path)});`,
+    `// Store ${captureVar} as ${parameter} for downstream steps.`
+  ].join("\n");
+}
+
 function buildGeneratedApiCode(step: StepAutomationLike, request: StepApiRequest) {
   const stepLabel = `Step ${step.step_order || 1}`;
   const responseVar = `response${step.step_order || 1}`;
   const validationLines = (request.validations || []).map((validation) => buildApiValidationAssertionCode(validation, responseVar));
+  const captureLines = (request.captures || []).flatMap((capture, index) => buildApiResponseCaptureCode(capture, responseVar, index).split("\n"));
   const comments = [
     normalizeText(step.action) ? `// Action: ${normalizeText(step.action)}` : "",
     normalizeText(step.expected_result) ? `// Expected: ${normalizeText(step.expected_result)}` : ""
@@ -189,6 +211,7 @@ function buildGeneratedApiCode(step: StepAutomationLike, request: StepApiRequest
   return [
     ...comments,
     `const ${responseVar} = await api.request(${buildApiRequestLiteral(request)});`,
+    ...captureLines,
     ...(validationLines.length ? validationLines : [`expect(${responseVar}.status).toBe(200);`]),
     `// ${stepLabel}`
   ].join("\n");

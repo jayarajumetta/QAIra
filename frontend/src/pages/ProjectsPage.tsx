@@ -126,6 +126,7 @@ function ProjectProgressBar({
 export function ProjectsPage() {
   const queryClient = useQueryClient();
   const { session } = useAuth();
+  const isAdmin = session?.user.role === "admin";
   const domainMetadataQuery = useDomainMetadata();
   const { projects, users, roles, projectMembers, appTypes, requirements, testCases } = useWorkspaceData();
   const [selectedProjectId, setSelectedProjectId] = useCurrentProject();
@@ -506,6 +507,22 @@ export function ProjectsPage() {
     ]);
   };
 
+  const invalidateWorkspace = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["projects"] }),
+      queryClient.invalidateQueries({ queryKey: ["project-members"] }),
+      queryClient.invalidateQueries({ queryKey: ["app-types"] }),
+      queryClient.invalidateQueries({ queryKey: ["requirements"] }),
+      queryClient.invalidateQueries({ queryKey: ["test-cases"] }),
+      queryClient.invalidateQueries({ queryKey: ["test-suites"] }),
+      queryClient.invalidateQueries({ queryKey: ["test-steps"] }),
+      queryClient.invalidateQueries({ queryKey: ["executions"] }),
+      queryClient.invalidateQueries({ queryKey: ["execution-results"] }),
+      queryClient.invalidateQueries({ queryKey: ["integrations"] }),
+      queryClient.invalidateQueries({ queryKey: ["project-sync-transactions"] })
+    ]);
+  };
+
   const createProject = useMutation({
     mutationFn: api.projects.create,
     onSuccess: async (response) => {
@@ -578,6 +595,22 @@ export function ProjectsPage() {
       setMessage(error instanceof Error ? error.message : "Unable to queue project sync");
     }
   });
+  const deleteProject = useMutation({
+    mutationFn: api.projects.delete,
+    onSuccess: async (_, deletedProjectId) => {
+      setMessageTone("success");
+      setMessage("Project deleted.");
+      setFocusedProjectId("");
+      if (selectedProjectId === deletedProjectId) {
+        setSelectedProjectId("");
+      }
+      await invalidateWorkspace();
+    },
+    onError: (error) => {
+      setMessageTone("error");
+      setMessage(error instanceof Error ? error.message : "Unable to delete project");
+    }
+  });
 
   const openCreateProjectModal = () => {
     setProjectDraft(createInitialProjectDraft(defaultAppTypeValue));
@@ -590,6 +623,20 @@ export function ProjectsPage() {
     }
 
     setIsCreateModalOpen(false);
+  };
+
+  const handleDeleteProject = async () => {
+    if (!focusedProject || deleteProject.isPending) {
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete project "${focusedProject.name}" and all related data? This cannot be undone.`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    await deleteProject.mutateAsync(focusedProject.id);
   };
 
   const updateProjectDraft = (input: Partial<ProjectCreateDraft>) => {
@@ -899,6 +946,16 @@ export function ProjectsPage() {
                       <GithubIcon />
                       <span>{queueProjectSync.isPending && focusedGithubIntegration ? "Queueing…" : "Sync to GitHub"}</span>
                     </button>
+                    {isAdmin ? (
+                      <button
+                        className="ghost-button danger"
+                        disabled={deleteProject.isPending}
+                        onClick={() => void handleDeleteProject()}
+                        type="button"
+                      >
+                        <span>{deleteProject.isPending ? "Deleting…" : "Delete project"}</span>
+                      </button>
+                    ) : null}
                   </div>
                   <div className="record-grid">
                     <article className="mini-card">

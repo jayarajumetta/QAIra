@@ -3,7 +3,29 @@ const { v4: uuid } = require("uuid");
 const suiteTestCaseService = require("./suiteTestCase.service");
 const displayIdService = require("./displayId.service");
 
-exports.createTestSuite = async ({ app_type_id, name, parent_id, created_by }) => {
+const normalizeParameterName = (value) => {
+  const normalized = String(value || "").trim().replace(/^@+/, "").toLowerCase();
+  return normalized || null;
+};
+
+const normalizeParameterValues = (values = {}) => {
+  if (!values || typeof values !== "object" || Array.isArray(values)) {
+    return {};
+  }
+
+  return Object.entries(values).reduce((next, [key, value]) => {
+    const normalizedKey = normalizeParameterName(key);
+
+    if (!normalizedKey) {
+      return next;
+    }
+
+    next[normalizedKey] = value === undefined || value === null ? "" : String(value);
+    return next;
+  }, {});
+};
+
+exports.createTestSuite = async ({ app_type_id, name, parent_id, parameter_values, created_by }) => {
   if (!app_type_id || !name) {
     throw new Error("Missing required fields");
   }
@@ -29,9 +51,9 @@ exports.createTestSuite = async ({ app_type_id, name, parent_id, created_by }) =
   const display_id = await displayIdService.createDisplayId("test_suite");
 
   await db.prepare(`
-    INSERT INTO test_suites (id, display_id, app_type_id, name, parent_id, created_by, updated_by, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-  `).run(id, display_id, app_type_id, name, parent_id || null, created_by || null, created_by || null);
+    INSERT INTO test_suites (id, display_id, app_type_id, name, parent_id, parameter_values, created_by, updated_by, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `).run(id, display_id, app_type_id, name, parent_id || null, normalizeParameterValues(parameter_values), created_by || null, created_by || null);
 
   return { id };
 };
@@ -56,7 +78,11 @@ exports.getTestSuites = async ({ app_type_id, parent_id }) => {
 
   query += ` ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC`;
 
-  return db.prepare(query).all(...params);
+  const suites = await db.prepare(query).all(...params);
+  return suites.map((suite) => ({
+    ...suite,
+    parameter_values: normalizeParameterValues(suite.parameter_values)
+  }));
 };
 
 exports.getTestSuite = async (id) => {
@@ -66,7 +92,10 @@ exports.getTestSuite = async (id) => {
 
   if (!suite) throw new Error("Test suite not found");
 
-  return suite;
+  return {
+    ...suite,
+    parameter_values: normalizeParameterValues(suite.parameter_values)
+  };
 };
 
 exports.updateTestSuite = async (id, data) => {
@@ -95,11 +124,12 @@ exports.updateTestSuite = async (id, data) => {
 
   await db.prepare(`
     UPDATE test_suites
-    SET name = ?, parent_id = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+    SET name = ?, parent_id = ?, parameter_values = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(
     data.name ?? existing.name,
     parentId || null,
+    data.parameter_values !== undefined ? normalizeParameterValues(data.parameter_values) : normalizeParameterValues(existing.parameter_values),
     data.updated_by ?? existing.updated_by ?? existing.created_by ?? null,
     id
   );

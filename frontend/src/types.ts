@@ -267,6 +267,7 @@ export type TestSuite = {
   app_type_id: string;
   name: string;
   parent_id: string | null;
+  parameter_values?: Record<string, string>;
   created_by?: string | null;
   updated_by?: string | null;
   created_at?: string;
@@ -327,6 +328,11 @@ export type StepApiValidation = {
   expected?: string | null;
 };
 
+export type StepApiResponseCapture = {
+  path?: string | null;
+  parameter?: string | null;
+};
+
 export type StepApiRequest = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
   url?: string | null;
@@ -334,6 +340,7 @@ export type StepApiRequest = {
   body_mode?: "none" | "json" | "text" | "xml" | "form";
   body?: string | null;
   validations?: StepApiValidation[];
+  captures?: StepApiResponseCapture[];
 };
 
 export type ApiRequestPreview = {
@@ -468,7 +475,7 @@ export type Execution = {
   project_id: string;
   app_type_id: string | null;
   suite_ids: string[];
-  suite_snapshots?: Array<{ id: string; name: string }>;
+  suite_snapshots?: Array<{ id: string; name: string; parameter_values?: Record<string, string> }>;
   case_snapshots?: ExecutionCaseSnapshot[];
   step_snapshots?: ExecutionStepSnapshot[];
   name: string | null;
@@ -539,6 +546,7 @@ export type ExecutionCaseSnapshot = {
   priority: number | null;
   status: string | null;
   parameter_values?: Record<string, string>;
+  suite_parameter_values?: Record<string, string>;
   sort_order: number;
   assigned_to?: string | null;
   assigned_user?: {

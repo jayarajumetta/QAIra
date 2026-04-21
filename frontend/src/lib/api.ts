@@ -300,9 +300,9 @@ export const api = {
   testSuites: {
     list: (query?: { app_type_id?: string; parent_id?: string }) =>
       request<TestSuite[]>(`/test-suites${toQueryString(query)}`),
-    create: (input: { app_type_id: string; name: string; parent_id?: string }) =>
+    create: (input: { app_type_id: string; name: string; parent_id?: string; parameter_values?: Record<string, string> }) =>
       request<{ id: string }>("/test-suites", { method: "POST", body: JSON.stringify(input) }),
-    update: (id: string, input: Partial<{ name: string; parent_id: string }>) =>
+    update: (id: string, input: Partial<{ name: string; parent_id: string; parameter_values: Record<string, string> }>) =>
       request<{ updated: boolean }>(`/test-suites/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     assignTestCases: (id: string, test_case_ids: string[]) =>
       request<{ updated: boolean; assigned: number }>(`/test-suites/${id}/assign-test-cases`, {
@@ -487,6 +487,8 @@ export const api = {
       request<ExecutionSchedule>(`/execution-schedules/${id}`),
     create: (input: { project_id: string; app_type_id?: string; name?: string; cadence?: string; next_run_at?: string; suite_ids?: string[]; test_case_ids?: string[]; test_environment_id?: string; test_configuration_id?: string; test_data_set_id?: string; assigned_to?: string; created_by: string }) =>
       request<{ id: string }>("/execution-schedules", { method: "POST", body: JSON.stringify(input) }),
+    update: (id: string, input: { project_id?: string; app_type_id?: string; name?: string; cadence?: string; next_run_at?: string; suite_ids?: string[]; test_case_ids?: string[]; test_environment_id?: string; test_configuration_id?: string; test_data_set_id?: string; assigned_to?: string }) =>
+      request<{ updated: boolean }>(`/execution-schedules/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     run: (id: string) =>
       request<{ id: string }>(`/execution-schedules/${id}/run`, { method: "POST" }),
     delete: (id: string) => request<{ deleted: boolean }>(`/execution-schedules/${id}`, { method: "DELETE" })

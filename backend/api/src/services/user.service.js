@@ -35,6 +35,101 @@ const selectRoleByName = db.prepare(`
   SELECT id, name FROM roles WHERE LOWER(name) = LOWER(?)
 `);
 
+const selectUserById = db.prepare(`
+  SELECT id, email, name
+  FROM users
+  WHERE id = ?
+`);
+
+const selectProjectsCreatedByUser = db.prepare(`
+  SELECT id, name
+  FROM projects
+  WHERE created_by = ?
+  ORDER BY created_at ASC NULLS LAST, id ASC
+`);
+
+const selectAdminProjectsForUser = db.prepare(`
+  SELECT DISTINCT projects.id, projects.name
+  FROM project_members
+  JOIN roles ON roles.id = project_members.role_id
+  JOIN projects ON projects.id = project_members.project_id
+  WHERE project_members.user_id = ?
+    AND LOWER(roles.name) = 'admin'
+  ORDER BY projects.name ASC, projects.id ASC
+`);
+
+const selectOtherProjectAdmin = db.prepare(`
+  SELECT project_members.id, project_members.user_id
+  FROM project_members
+  JOIN roles ON roles.id = project_members.role_id
+  WHERE project_members.project_id = ?
+    AND project_members.user_id != ?
+    AND LOWER(roles.name) = 'admin'
+  ORDER BY project_members.id ASC
+  LIMIT 1
+`);
+
+const selectWorkspaceAdminUsers = db.prepare(`
+  SELECT DISTINCT users.id
+  FROM users
+  JOIN project_members ON project_members.user_id = users.id
+  JOIN roles ON roles.id = project_members.role_id
+  WHERE users.id != ?
+    AND LOWER(roles.name) = 'admin'
+  ORDER BY users.id ASC
+`);
+
+const selectProjectMembership = db.prepare(`
+  SELECT id, role_id
+  FROM project_members
+  WHERE project_id = ? AND user_id = ?
+`);
+
+const insertProjectMembership = db.prepare(`
+  INSERT INTO project_members (id, project_id, user_id, role_id)
+  VALUES (?, ?, ?, ?)
+`);
+
+const updateProjectMembershipRole = db.prepare(`
+  UPDATE project_members
+  SET role_id = ?
+  WHERE id = ?
+`);
+
+const updateProjectCreator = db.prepare(`
+  UPDATE projects
+  SET created_by = ?
+  WHERE id = ? AND created_by = ?
+`);
+
+const clearExecutionAssignments = db.prepare(`
+  UPDATE executions
+  SET assigned_to = NULL
+  WHERE assigned_to = ?
+`);
+
+const clearExecutionCaseAssignments = db.prepare(`
+  UPDATE execution_case_snapshots
+  SET assigned_to = NULL
+  WHERE assigned_to = ?
+`);
+
+const clearExecutionScheduleAssignments = db.prepare(`
+  UPDATE execution_schedules
+  SET assigned_to = NULL
+  WHERE assigned_to = ?
+`);
+
+const deleteProjectMembershipsForUser = db.prepare(`
+  DELETE FROM project_members
+  WHERE user_id = ?
+`);
+
+const deleteUserById = db.prepare(`
+  DELETE FROM users
+  WHERE id = ?
+`);
+
 const normalizeAvatarDataUrl = (value) => {
   if (value === undefined) {
     return undefined;
@@ -214,37 +309,73 @@ exports.updateUser = async (id, data) => {
 };
 
 exports.deleteUser = async (id) => {
-  const user = await db.prepare(`
-    SELECT id FROM users WHERE id = ?
-  `).get(id);
+  const user = await selectUserById.get(id);
 
   if (!user) throw new Error("User not found");
 
-  const dependencies = [
-    { table: "projects", field: "created_by", message: "Cannot delete user with created projects" },
-    { table: "executions", field: "created_by", message: "Cannot delete user with executions" },
-    { table: "executions", field: "assigned_to", message: "Cannot delete user assigned to executions" },
-    { table: "execution_results", field: "executed_by", message: "Cannot delete user with execution results" }
-  ];
+  const adminRole = await selectRoleByName.get("admin");
 
-  for (const dependency of dependencies) {
-    const used = await db.prepare(`
-      SELECT id FROM ${dependency.table} WHERE ${dependency.field} = ?
-    `).get(id);
-
-    if (used) {
-      throw new Error(dependency.message);
-    }
+  if (!adminRole) {
+    throw new Error("Admin role not found");
   }
 
-  await db.prepare(`
-    DELETE FROM project_members
-    WHERE user_id = ?
-  `).run(id);
+  const affectedProjects = new Map();
+  const createdProjects = await selectProjectsCreatedByUser.all(id);
+  const adminProjects = await selectAdminProjectsForUser.all(id);
 
-  await db.prepare(`
-    DELETE FROM users WHERE id = ?
-  `).run(id);
+  createdProjects.forEach((project) => {
+    affectedProjects.set(project.id, project);
+  });
+  adminProjects.forEach((project) => {
+    affectedProjects.set(project.id, project);
+  });
+
+  const fallbackAdminByProjectId = new Map();
+
+  for (const project of affectedProjects.values()) {
+    const existingProjectAdmin = await selectOtherProjectAdmin.get(project.id, id);
+
+    if (existingProjectAdmin?.user_id) {
+      fallbackAdminByProjectId.set(project.id, existingProjectAdmin.user_id);
+      continue;
+    }
+
+    const workspaceAdmin = await selectWorkspaceAdminUsers.get(id);
+
+    if (!workspaceAdmin?.id) {
+      throw new Error(`Cannot delete ${user.name || user.email} because project "${project.name}" would be left without an admin.`);
+    }
+
+    fallbackAdminByProjectId.set(project.id, workspaceAdmin.id);
+  }
+
+  const transaction = db.transaction(async () => {
+    for (const [projectId, fallbackAdminId] of fallbackAdminByProjectId.entries()) {
+      const existingProjectAdmin = await selectOtherProjectAdmin.get(projectId, id);
+
+      if (!existingProjectAdmin) {
+        const membership = await selectProjectMembership.get(projectId, fallbackAdminId);
+
+        if (membership?.id) {
+          if (membership.role_id !== adminRole.id) {
+            await updateProjectMembershipRole.run(adminRole.id, membership.id);
+          }
+        } else {
+          await insertProjectMembership.run(uuid(), projectId, fallbackAdminId, adminRole.id);
+        }
+      }
+
+      await updateProjectCreator.run(fallbackAdminId, projectId, id);
+    }
+
+    await clearExecutionAssignments.run(id);
+    await clearExecutionCaseAssignments.run(id);
+    await clearExecutionScheduleAssignments.run(id);
+    await deleteProjectMembershipsForUser.run(id);
+    await deleteUserById.run(id);
+  });
+
+  await transaction();
 
   return { deleted: true };
 };

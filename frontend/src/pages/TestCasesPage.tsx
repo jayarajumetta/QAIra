@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
-import { CopyIcon, ExportIcon, MoveIcon, OpenIcon, TrashIcon } from "../components/AppIcons";
+import { AddIcon, CopyIcon, ExportIcon, MoveIcon, OpenIcon, TrashIcon } from "../components/AppIcons";
 import { CatalogActionMenu } from "../components/CatalogActionMenu";
 import { CatalogViewToggle } from "../components/CatalogViewToggle";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
@@ -74,9 +74,14 @@ import {
 } from "../lib/stepAutomation";
 import { type AssigneeOption, buildAssigneeOptions } from "../lib/userDisplay";
 import {
+  combineStepParameterValues,
   collectStepParameters,
   filterStepParameterValues,
-  type StepParameterDefinition
+  filterStepParameterValuesByScope,
+  normalizeStepParameterValues,
+  parseStepParameterName,
+  type StepParameterDefinition,
+  type StepParameterScope
 } from "../lib/stepParameters";
 import { TEST_AUTHORING_SECTION_ITEMS } from "../lib/workspaceSections";
 import type {
@@ -205,48 +210,62 @@ const createDraftGroupId = () =>
   globalThis.crypto?.randomUUID?.() || `draft-group-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 const TEST_CASE_PARAMETER_DRAFT_STORAGE_KEY = "qaira.testCaseParameterDrafts.v1";
+const SUITE_PARAMETER_DRAFT_STORAGE_KEY = "qaira.suiteParameterDrafts.v1";
+const RUN_PARAMETER_PREVIEW_STORAGE_KEY = "qaira.runParameterPreviewDrafts.v1";
 
-const normalizeTestCaseParameterName = (value?: string | null) =>
-  String(value || "")
-    .trim()
-    .replace(/^@+/, "")
-    .toLowerCase();
+const normalizeScopedParameterValues = (
+  values?: Record<string, unknown> | null,
+  scope: StepParameterScope = "t"
+) => normalizeStepParameterValues((values || {}) as Record<string, string>, scope);
 
-const normalizeTestCaseParameterValues = (values?: Record<string, unknown> | null) => {
-  if (!values || typeof values !== "object" || Array.isArray(values)) {
-    return {};
-  }
+const normalizeTestCaseParameterValues = (values?: Record<string, unknown> | null) =>
+  normalizeScopedParameterValues(values, "t");
 
-  return Object.entries(values).reduce<Record<string, string>>((next, [key, value]) => {
-    const normalizedKey = normalizeTestCaseParameterName(key);
+const normalizeSuiteParameterValues = (values?: Record<string, unknown> | null) =>
+  normalizeScopedParameterValues(values, "s");
 
-    if (!normalizedKey) {
-      return next;
-    }
+const normalizeRunParameterValues = (values?: Record<string, unknown> | null) =>
+  normalizeScopedParameterValues(values, "r");
 
-    next[normalizedKey] = value === undefined || value === null ? "" : String(value);
-    return next;
-  }, {});
-};
-
-const serializeTestCaseParameterValues = (values?: Record<string, unknown> | null) =>
+const serializeScopedParameterValues = (
+  values?: Record<string, unknown> | null,
+  scope: StepParameterScope = "t"
+) =>
   JSON.stringify(
-    Object.entries(normalizeTestCaseParameterValues(values))
+    Object.entries(normalizeScopedParameterValues(values, scope))
       .sort(([left], [right]) => left.localeCompare(right))
   );
+
+const serializeTestCaseParameterValues = (values?: Record<string, unknown> | null) =>
+  serializeScopedParameterValues(values, "t");
 
 const areTestCaseParameterValuesEqual = (
   left?: Record<string, unknown> | null,
   right?: Record<string, unknown> | null
 ) => serializeTestCaseParameterValues(left) === serializeTestCaseParameterValues(right);
 
-const readStoredTestCaseParameterDrafts = () => {
+const areSuiteParameterValuesEqual = (
+  left?: Record<string, unknown> | null,
+  right?: Record<string, unknown> | null
+) => serializeScopedParameterValues(left, "s") === serializeScopedParameterValues(right, "s");
+
+const pruneStepParameterValuesForScope = (
+  values: Record<string, string>,
+  parameters: StepParameterDefinition[],
+  scope: StepParameterScope
+) =>
+  filterStepParameterValuesByScope(
+    filterStepParameterValues(normalizeScopedParameterValues(values, scope), parameters),
+    scope
+  );
+
+const readStoredParameterDrafts = (storageKey: string, scope: StepParameterScope = "t") => {
   if (typeof window === "undefined") {
     return {};
   }
 
   try {
-    const stored = window.localStorage.getItem(TEST_CASE_PARAMETER_DRAFT_STORAGE_KEY);
+    const stored = window.localStorage.getItem(storageKey);
 
     if (!stored) {
       return {};
@@ -259,7 +278,7 @@ const readStoredTestCaseParameterDrafts = () => {
     }
 
     return Object.entries(parsed).reduce<Record<string, Record<string, string>>>((next, [scopeKey, values]) => {
-      next[scopeKey] = normalizeTestCaseParameterValues(values as Record<string, unknown>);
+      next[scopeKey] = normalizeScopedParameterValues(values as Record<string, unknown>, scope);
       return next;
     }, {});
   } catch {
@@ -267,53 +286,74 @@ const readStoredTestCaseParameterDrafts = () => {
   }
 };
 
-const writeStoredTestCaseParameterDrafts = (drafts: Record<string, Record<string, string>>) => {
+const writeStoredParameterDrafts = (storageKey: string, drafts: Record<string, Record<string, string>>) => {
   if (typeof window === "undefined") {
     return;
   }
 
   try {
-    window.localStorage.setItem(TEST_CASE_PARAMETER_DRAFT_STORAGE_KEY, JSON.stringify(drafts));
+    window.localStorage.setItem(storageKey, JSON.stringify(drafts));
   } catch {
     // Ignore storage failures and keep the in-memory editor responsive.
   }
 };
 
-const readStoredTestCaseParameterDraft = (scopeKey: string) => {
+const readStoredTestCaseParameterDrafts = () => readStoredParameterDrafts(TEST_CASE_PARAMETER_DRAFT_STORAGE_KEY, "t");
+const readStoredSuiteParameterDrafts = () => readStoredParameterDrafts(SUITE_PARAMETER_DRAFT_STORAGE_KEY, "s");
+const readStoredRunParameterDrafts = () => readStoredParameterDrafts(RUN_PARAMETER_PREVIEW_STORAGE_KEY, "r");
+
+const readStoredParameterDraft = (
+  storageKey: string,
+  scopeKey: string,
+  scope: StepParameterScope = "t"
+) => {
   if (!scopeKey) {
     return {};
   }
 
-  const drafts = readStoredTestCaseParameterDrafts();
-  return normalizeTestCaseParameterValues(drafts[scopeKey]);
+  const drafts = readStoredParameterDrafts(storageKey, scope);
+  return normalizeScopedParameterValues(drafts[scopeKey], scope);
 };
 
-const hasStoredTestCaseParameterDraft = (scopeKey: string) => {
+const hasStoredParameterDraft = (
+  storageKey: string,
+  scopeKey: string,
+  scope: StepParameterScope = "t"
+) => {
   if (!scopeKey) {
     return false;
   }
 
-  const drafts = readStoredTestCaseParameterDrafts();
+  const drafts = readStoredParameterDrafts(storageKey, scope);
   return Object.prototype.hasOwnProperty.call(drafts, scopeKey);
 };
 
-const writeStoredTestCaseParameterDraft = (scopeKey: string, values: Record<string, string>) => {
+const writeStoredParameterDraft = (
+  storageKey: string,
+  scopeKey: string,
+  values: Record<string, string>,
+  scope: StepParameterScope = "t"
+) => {
   if (!scopeKey) {
     return;
   }
 
-  const drafts = readStoredTestCaseParameterDrafts();
-  drafts[scopeKey] = normalizeTestCaseParameterValues(values);
-  writeStoredTestCaseParameterDrafts(drafts);
+  const drafts = readStoredParameterDrafts(storageKey, scope);
+  drafts[scopeKey] = normalizeScopedParameterValues(values, scope);
+  writeStoredParameterDrafts(storageKey, drafts);
 };
 
-const clearStoredTestCaseParameterDraft = (scopeKey: string) => {
+const clearStoredParameterDraft = (
+  storageKey: string,
+  scopeKey: string,
+  scope: StepParameterScope = "t"
+) => {
   if (!scopeKey || typeof window === "undefined") {
     return;
   }
 
   try {
-    const drafts = readStoredTestCaseParameterDrafts();
+    const drafts = readStoredParameterDrafts(storageKey, scope);
 
     if (!(scopeKey in drafts)) {
       return;
@@ -322,14 +362,29 @@ const clearStoredTestCaseParameterDraft = (scopeKey: string) => {
     delete drafts[scopeKey];
 
     if (Object.keys(drafts).length) {
-      writeStoredTestCaseParameterDrafts(drafts);
+      writeStoredParameterDrafts(storageKey, drafts);
     } else {
-      window.localStorage.removeItem(TEST_CASE_PARAMETER_DRAFT_STORAGE_KEY);
+      window.localStorage.removeItem(storageKey);
     }
   } catch {
     // Ignore storage failures and keep the in-memory editor responsive.
   }
 };
+
+const readStoredTestCaseParameterDraft = (scopeKey: string) => readStoredParameterDraft(TEST_CASE_PARAMETER_DRAFT_STORAGE_KEY, scopeKey, "t");
+const hasStoredTestCaseParameterDraft = (scopeKey: string) => hasStoredParameterDraft(TEST_CASE_PARAMETER_DRAFT_STORAGE_KEY, scopeKey, "t");
+const writeStoredTestCaseParameterDraft = (scopeKey: string, values: Record<string, string>) =>
+  writeStoredParameterDraft(TEST_CASE_PARAMETER_DRAFT_STORAGE_KEY, scopeKey, values, "t");
+const clearStoredTestCaseParameterDraft = (scopeKey: string) => clearStoredParameterDraft(TEST_CASE_PARAMETER_DRAFT_STORAGE_KEY, scopeKey, "t");
+const readStoredSuiteParameterDraft = (scopeKey: string) => readStoredParameterDraft(SUITE_PARAMETER_DRAFT_STORAGE_KEY, scopeKey, "s");
+const hasStoredSuiteParameterDraft = (scopeKey: string) => hasStoredParameterDraft(SUITE_PARAMETER_DRAFT_STORAGE_KEY, scopeKey, "s");
+const writeStoredSuiteParameterDraft = (scopeKey: string, values: Record<string, string>) =>
+  writeStoredParameterDraft(SUITE_PARAMETER_DRAFT_STORAGE_KEY, scopeKey, values, "s");
+const clearStoredSuiteParameterDraft = (scopeKey: string) => clearStoredParameterDraft(SUITE_PARAMETER_DRAFT_STORAGE_KEY, scopeKey, "s");
+const readStoredRunParameterDraft = (scopeKey: string) => readStoredParameterDraft(RUN_PARAMETER_PREVIEW_STORAGE_KEY, scopeKey, "r");
+const writeStoredRunParameterDraft = (scopeKey: string, values: Record<string, string>) =>
+  writeStoredParameterDraft(RUN_PARAMETER_PREVIEW_STORAGE_KEY, scopeKey, values, "r");
+const clearStoredRunParameterDraft = (scopeKey: string) => clearStoredParameterDraft(RUN_PARAMETER_PREVIEW_STORAGE_KEY, scopeKey, "r");
 
 const buildTestCaseParameterDraftScopeKey = ({
   isCreating,
@@ -346,6 +401,9 @@ const buildTestCaseParameterDraftScopeKey = ({
 
   return testCaseId ? `case:${testCaseId}` : "";
 };
+
+const buildSuiteParameterDraftScopeKey = (suiteId?: string | null) => (suiteId ? `suite:${suiteId}` : "");
+const buildRunParameterDraftScopeKey = (appTypeId?: string | null) => `run:${appTypeId || "global"}`;
 
 const normalizeSharedGroupComparableText = (value?: string | null) =>
   String(value || "")
@@ -649,6 +707,9 @@ export function TestCasesPage() {
   const [selectedStepIds, setSelectedStepIds] = useState<string[]>([]);
   const [isCaseParameterDialogOpen, setIsCaseParameterDialogOpen] = useState(false);
   const [testCaseParameterValues, setTestCaseParameterValues] = useState<Record<string, string>>({});
+  const [suiteParameterValues, setSuiteParameterValues] = useState<Record<string, string>>({});
+  const [runPreviewParameterValues, setRunPreviewParameterValues] = useState<Record<string, string>>({});
+  const [selectedParameterSuiteId, setSelectedParameterSuiteId] = useState("");
   const [copiedSteps, setCopiedSteps] = useState<CopiedTestStep[]>([]);
   const [copiedStepMode, setCopiedStepMode] = useState<"copy" | "cut">("copy");
   const [cutStepSource, setCutStepSource] = useState<CutStepSource | null>(null);
@@ -661,6 +722,8 @@ export function TestCasesPage() {
   const [isSharedGroupPickerOpen, setIsSharedGroupPickerOpen] = useState(false);
   const [selectedSharedGroupId, setSelectedSharedGroupId] = useState("");
   const [sharedGroupSearchTerm, setSharedGroupSearchTerm] = useState("");
+  const [isSuiteLinkModalOpen, setIsSuiteLinkModalOpen] = useState(false);
+  const [suiteLinkDraftIds, setSuiteLinkDraftIds] = useState<string[]>([]);
   const [editingAutomationStepId, setEditingAutomationStepId] = useState("");
   const [codePreviewState, setCodePreviewState] = useState<{ title: string; subtitle: string; code: string } | null>(null);
   const caseSectionRef = useRef<HTMLDivElement | null>(null);
@@ -758,6 +821,10 @@ export function TestCasesPage() {
   const createTestCase = useMutation({ mutationFn: api.testCases.create });
   const createGenerationJob = useMutation({ mutationFn: api.testCases.createGenerationJob });
   const createSuite = useMutation({ mutationFn: api.testSuites.create });
+  const updateSuite = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: Parameters<typeof api.testSuites.update>[1] }) =>
+      api.testSuites.update(id, input)
+  });
   const assignSuiteCases = useMutation({
     mutationFn: ({ id, testCaseIds }: { id: string; testCaseIds: string[] }) => api.testSuites.assignTestCases(id, testCaseIds)
   });
@@ -1200,6 +1267,22 @@ export function TestCasesPage() {
     () => testCases.find((item) => item.id === selectedTestCaseId) || null,
     [selectedTestCaseId, testCases]
   );
+  const selectedCaseSuiteIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (
+            isCreating
+              ? createSuiteContextId
+                ? [createSuiteContextId]
+                : []
+              : selectedTestCase?.suite_ids || (selectedTestCase?.suite_id ? [selectedTestCase.suite_id] : [])
+          ).filter(Boolean)
+        )
+      ) as string[],
+    [createSuiteContextId, isCreating, selectedTestCase?.suite_id, selectedTestCase?.suite_ids]
+  );
+  const selectedParameterSuite = suites.find((suite) => suite.id === selectedParameterSuiteId) || null;
   const createCaseParameterDraftScopeKey = useMemo(
     () => buildTestCaseParameterDraftScopeKey({ isCreating: true, appTypeId }),
     [appTypeId]
@@ -1208,6 +1291,14 @@ export function TestCasesPage() {
     () => buildTestCaseParameterDraftScopeKey({ isCreating: false, testCaseId: selectedTestCaseId }),
     [selectedTestCaseId]
   );
+  const selectedSuiteParameterDraftScopeKey = useMemo(
+    () => buildSuiteParameterDraftScopeKey(selectedParameterSuiteId),
+    [selectedParameterSuiteId]
+  );
+  const runPreviewParameterDraftScopeKey = useMemo(
+    () => buildRunParameterDraftScopeKey(appTypeId),
+    [appTypeId]
+  );
   const activeTestCaseParameterSeedKey = useMemo(() => {
     if (isCreating) {
       return `draft:${appTypeId || "global"}`;
@@ -1215,6 +1306,76 @@ export function TestCasesPage() {
 
     return selectedTestCaseId ? `case:${selectedTestCaseId}` : "__none__";
   }, [appTypeId, isCreating, selectedTestCaseId]);
+  const mergedScopedParameterValues = useMemo(
+    () => combineStepParameterValues(testCaseParameterValues, suiteParameterValues, runPreviewParameterValues),
+    [runPreviewParameterValues, suiteParameterValues, testCaseParameterValues]
+  );
+  const resolveScopedParameterInputState = (scope: StepParameterScope) => {
+    if (scope === "s") {
+      if (!selectedCaseSuiteIds.length) {
+        return {
+          disabled: true,
+          hint: "Link this case to a suite before saving suite-shared values."
+        };
+      }
+
+      if (!selectedParameterSuite) {
+        return {
+          disabled: true,
+          hint: "Choose a suite target before editing suite-shared values."
+        };
+      }
+
+      return {
+        disabled: false,
+        hint: selectedCaseSuiteIds.length > 1
+          ? `Saved on suite "${selectedParameterSuite.name}".`
+          : `Saved on linked suite "${selectedParameterSuite.name}".`
+      };
+    }
+
+    if (scope === "r") {
+      return {
+        disabled: false,
+        hint: "Preview only here. Real executions resolve @r values from the attached execution data set."
+      };
+    }
+
+    return {
+      disabled: false,
+      hint: isCreating
+        ? "Saved with this draft test case."
+        : "Saved on this test case and reused across its steps."
+    };
+  };
+  const handleScopedParameterValueChange = (name: string, value: string) => {
+    const parsed = parseStepParameterName(name);
+
+    if (!parsed || resolveScopedParameterInputState(parsed.scope).disabled) {
+      return;
+    }
+
+    if (parsed.scope === "s") {
+      setSuiteParameterValues((current) => ({
+        ...current,
+        [parsed.name]: value
+      }));
+      return;
+    }
+
+    if (parsed.scope === "r") {
+      setRunPreviewParameterValues((current) => ({
+        ...current,
+        [parsed.name]: value
+      }));
+      return;
+    }
+
+    setTestCaseParameterValues((current) => ({
+      ...current,
+      [parsed.name]: value
+    }));
+  };
   const syncCachedTestCaseParameterValues = (testCaseId: string, parameterValues: Record<string, string>) => {
     const normalizedValues = normalizeTestCaseParameterValues(parameterValues);
 
@@ -1227,6 +1388,39 @@ export function TestCasesPage() {
                   parameter_values: normalizedValues
                 }
               : item
+          )
+        : current
+    );
+  };
+  const syncCachedTestCaseSuiteIds = (testCaseId: string, suiteIds: string[]) => {
+    const normalizedSuiteIds = Array.from(new Set(suiteIds.filter(Boolean)));
+
+    queryClient.setQueryData<TestCase[]>(["global-test-cases", appTypeId], (current) =>
+      current
+        ? current.map((item) =>
+            item.id === testCaseId
+              ? {
+                  ...item,
+                  suite_id: normalizedSuiteIds[0] || null,
+                  suite_ids: normalizedSuiteIds
+                }
+              : item
+          )
+        : current
+    );
+  };
+  const syncCachedSuiteParameterValues = (suiteId: string, parameterValues: Record<string, string>) => {
+    const normalizedValues = normalizeSuiteParameterValues(parameterValues);
+
+    queryClient.setQueryData<TestSuite[]>(["test-case-suites", appTypeId], (current) =>
+      current
+        ? current.map((suite) =>
+            suite.id === suiteId
+              ? {
+                  ...suite,
+                  parameter_values: normalizedValues
+                }
+              : suite
           )
         : current
     );
@@ -1350,6 +1544,18 @@ export function TestCasesPage() {
   }, [isCreating, searchParams, selectedTestCaseId, testCases, testCasesQuery.isFetching, testCasesQuery.isLoading]);
 
   useEffect(() => {
+    if (!selectedCaseSuiteIds.length) {
+      setSelectedParameterSuiteId("");
+      setSuiteParameterValues({});
+      return;
+    }
+
+    if (!selectedCaseSuiteIds.includes(selectedParameterSuiteId)) {
+      setSelectedParameterSuiteId(selectedCaseSuiteIds[0] || "");
+    }
+  }, [selectedCaseSuiteIds, selectedParameterSuiteId]);
+
+  useEffect(() => {
     const scopeKey = isCreating ? createCaseParameterDraftScopeKey : selectedCaseParameterDraftScopeKey;
 
     if (!scopeKey || lastTestCaseParameterSeedRef.current !== activeTestCaseParameterSeedKey) {
@@ -1415,6 +1621,80 @@ export function TestCasesPage() {
     testCasesQuery.isFetching,
     testCasesQuery.isLoading,
     updateTestCase.isPending
+  ]);
+
+  useEffect(() => {
+    if (!selectedParameterSuiteId) {
+      return;
+    }
+
+    const storedDraft = readStoredSuiteParameterDraft(selectedSuiteParameterDraftScopeKey);
+    const nextValues = Object.keys(storedDraft).length || hasStoredSuiteParameterDraft(selectedSuiteParameterDraftScopeKey)
+      ? storedDraft
+      : normalizeSuiteParameterValues(selectedParameterSuite?.parameter_values);
+
+    setSuiteParameterValues(nextValues);
+  }, [selectedParameterSuite?.parameter_values, selectedParameterSuiteId, selectedSuiteParameterDraftScopeKey]);
+
+  useEffect(() => {
+    setRunPreviewParameterValues(readStoredRunParameterDraft(runPreviewParameterDraftScopeKey));
+  }, [runPreviewParameterDraftScopeKey]);
+
+  useEffect(() => {
+    if (!selectedSuiteParameterDraftScopeKey || !selectedParameterSuiteId) {
+      return;
+    }
+
+    writeStoredSuiteParameterDraft(selectedSuiteParameterDraftScopeKey, suiteParameterValues);
+  }, [selectedParameterSuiteId, selectedSuiteParameterDraftScopeKey, suiteParameterValues]);
+
+  useEffect(() => {
+    writeStoredRunParameterDraft(runPreviewParameterDraftScopeKey, runPreviewParameterValues);
+  }, [runPreviewParameterDraftScopeKey, runPreviewParameterValues]);
+
+  useEffect(() => {
+    if (!selectedParameterSuite || updateSuite.isPending) {
+      return;
+    }
+
+    const normalizedCurrentValues = normalizeSuiteParameterValues(suiteParameterValues);
+    const normalizedSavedValues = normalizeSuiteParameterValues(selectedParameterSuite.parameter_values);
+
+    if (areSuiteParameterValuesEqual(normalizedCurrentValues, normalizedSavedValues)) {
+      clearStoredSuiteParameterDraft(selectedSuiteParameterDraftScopeKey);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      updateSuite.mutate(
+        {
+          id: selectedParameterSuite.id,
+          input: {
+            parameter_values: normalizedCurrentValues
+          }
+        },
+        {
+          onSuccess: () => {
+            syncCachedSuiteParameterValues(selectedParameterSuite.id, normalizedCurrentValues);
+
+            if (areSuiteParameterValuesEqual(readStoredSuiteParameterDraft(selectedSuiteParameterDraftScopeKey), normalizedCurrentValues)) {
+              clearStoredSuiteParameterDraft(selectedSuiteParameterDraftScopeKey);
+            }
+          },
+          onError: (error) => {
+            showError(error, "Unable to store suite test data values");
+          }
+        }
+      );
+    }, 450);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    selectedParameterSuite,
+    selectedSuiteParameterDraftScopeKey,
+    suiteParameterValues,
+    updateSuite,
+    updateSuite.isPending
   ]);
 
   useEffect(() => {
@@ -1948,6 +2228,54 @@ export function TestCasesPage() {
       );
     } finally {
       setIsDeletingSelectedTestCases(false);
+    }
+  };
+
+  const handleOpenSuiteLinkModal = () => {
+    if (!selectedTestCase) {
+      return;
+    }
+
+    setSuiteLinkDraftIds(selectedCaseSuiteIdsForModal);
+    setIsSuiteLinkModalOpen(true);
+  };
+
+  const handleSaveSuiteLinks = async () => {
+    if (!selectedTestCase) {
+      return;
+    }
+
+    const nextSuiteIds = Array.from(new Set(suiteLinkDraftIds.filter(Boolean)));
+    const currentSuiteIds = Array.from(new Set(selectedCaseSuiteIdsForModal.filter(Boolean)));
+
+    if (
+      nextSuiteIds.length === currentSuiteIds.length &&
+      nextSuiteIds.every((suiteId) => currentSuiteIds.includes(suiteId))
+    ) {
+      setIsSuiteLinkModalOpen(false);
+      setSuiteLinkDraftIds([]);
+      return;
+    }
+
+    try {
+      await updateTestCase.mutateAsync({
+        id: selectedTestCase.id,
+        input: {
+          suite_ids: nextSuiteIds
+        }
+      });
+
+      syncCachedTestCaseSuiteIds(selectedTestCase.id, nextSuiteIds);
+      setIsSuiteLinkModalOpen(false);
+      setSuiteLinkDraftIds([]);
+      showSuccess(
+        nextSuiteIds.length
+          ? `Updated suite references for "${selectedTestCase.title}".`
+          : `Removed all suite references from "${selectedTestCase.title}".`
+      );
+      await refreshCases();
+    } catch (error) {
+      showError(error, "Unable to update suite references");
     }
   };
 
@@ -3385,6 +3713,27 @@ export function TestCasesPage() {
     const suiteIdSet = new Set(suiteIds);
     return suites.filter((suite) => suiteIdSet.has(suite.id));
   }, [isCreating, selectedSuiteContext, selectedTestCase, suites]);
+  const selectedCaseSuiteIdsForModal = useMemo(
+    () => selectedCaseSuites.map((suite) => suite.id),
+    [selectedCaseSuites]
+  );
+  const hasSuiteLinkDraftChanges = useMemo(() => {
+    const currentSuiteIds = Array.from(new Set(selectedCaseSuiteIdsForModal.filter(Boolean))).sort();
+    const draftSuiteIds = Array.from(new Set(suiteLinkDraftIds.filter(Boolean))).sort();
+
+    if (currentSuiteIds.length !== draftSuiteIds.length) {
+      return true;
+    }
+
+    return currentSuiteIds.some((suiteId, index) => suiteId !== draftSuiteIds[index]);
+  }, [selectedCaseSuiteIdsForModal, suiteLinkDraftIds]);
+  useEffect(() => {
+    if (!isSuiteLinkModalOpen) {
+      return;
+    }
+
+    setSuiteLinkDraftIds(selectedCaseSuiteIdsForModal);
+  }, [isSuiteLinkModalOpen, selectedCaseSuiteIdsForModal]);
   const selectedHistory = selectedTestCase ? historyByCaseId[selectedTestCase.id] || [] : [];
   const selectedEditorSteps = useMemo(
     () => displaySteps.filter((step) => selectedStepIds.includes(step.id)),
@@ -3452,7 +3801,39 @@ export function TestCasesPage() {
   );
   useEffect(() => {
     setTestCaseParameterValues((current) => {
-      const next = filterStepParameterValues(current, detectedStepParameters);
+      const next = pruneStepParameterValuesForScope(current, detectedStepParameters, "t");
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(next);
+
+      if (
+        currentKeys.length === nextKeys.length
+        && currentKeys.every((key) => current[key] === next[key])
+      ) {
+        return current;
+      }
+
+      return next;
+    });
+  }, [detectedStepParameters]);
+  useEffect(() => {
+    setSuiteParameterValues((current) => {
+      const next = pruneStepParameterValuesForScope(current, detectedStepParameters, "s");
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(next);
+
+      if (
+        currentKeys.length === nextKeys.length
+        && currentKeys.every((key) => current[key] === next[key])
+      ) {
+        return current;
+      }
+
+      return next;
+    });
+  }, [detectedStepParameters]);
+  useEffect(() => {
+    setRunPreviewParameterValues((current) => {
+      const next = pruneStepParameterValuesForScope(current, detectedStepParameters, "r");
       const currentKeys = Object.keys(current);
       const nextKeys = Object.keys(next);
 
@@ -3624,6 +4005,41 @@ export function TestCasesPage() {
   const historySectionSummary = selectedHistory.length
     ? "Review the latest recorded outcomes and preserved execution evidence for this reusable test case."
     : "No execution history has been recorded for this reusable test case yet.";
+  const parameterDialogHeaderContent = (
+    <div className="step-parameter-dialog-context">
+      <div className="step-parameter-dialog-context-card">
+        <strong>Scope guide</strong>
+        <span>`@t` saves on the case, `@s` saves on a linked suite, and `@r` stays local here for preview until a real execution data set supplies it.</span>
+      </div>
+      {selectedCaseSuites.length ? (
+        <div className="step-parameter-dialog-context-card">
+          <strong>Suite targets</strong>
+          <span>
+            {selectedCaseSuites.length === 1
+              ? `Previewing and editing suite-shared values for "${selectedCaseSuites[0]?.name || "Linked suite"}".`
+              : `This case is linked to ${selectedCaseSuites.length} suites. Choose the active suite target to preview or edit its saved @s values.`}
+          </span>
+          <div className="selection-chip-row">
+            {selectedCaseSuites.map((suite) => (
+              <button
+                className={suite.id === selectedParameterSuiteId ? "selection-chip is-selected" : "selection-chip is-unselected"}
+                key={suite.id}
+                onClick={() => setSelectedParameterSuiteId(suite.id)}
+                type="button"
+              >
+                {suite.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : detectedStepParameters.some((parameter) => parameter.scope === "s") ? (
+        <div className="step-parameter-dialog-context-card">
+          <strong>Suite targets</strong>
+          <span>Link this case to a suite before editing any `@s` values.</span>
+        </div>
+      ) : null}
+    </div>
+  );
   const aiSelectedRequirements = useMemo(
     () => requirements.filter((requirement) => aiRequirementIds.includes(requirement.id)),
     [aiRequirementIds, requirements]
@@ -3701,6 +4117,8 @@ export function TestCasesPage() {
     setIsSharedGroupPickerOpen(false);
     setSelectedSharedGroupId("");
     setSharedGroupSearchTerm("");
+    setIsSuiteLinkModalOpen(false);
+    setSuiteLinkDraftIds([]);
     setTestCaseParameterValues({});
     setIsCaseParameterDialogOpen(false);
   };
@@ -4026,7 +4444,7 @@ export function TestCasesPage() {
     if (isCreating) {
       return (
         <DraftStepCard
-          parameterValues={testCaseParameterValues}
+          parameterValues={mergedScopedParameterValues}
           canPaste={Boolean(copiedSteps.length)}
           canMoveDown={canMoveDown}
           canMoveUp={canMoveUp}
@@ -4073,7 +4491,7 @@ export function TestCasesPage() {
 
       return (
         <EditableStepCard
-          parameterValues={testCaseParameterValues}
+          parameterValues={mergedScopedParameterValues}
           canPaste={Boolean(copiedSteps.length)}
         canMoveDown={canMoveDown}
         canMoveUp={canMoveUp}
@@ -4728,11 +5146,25 @@ export function TestCasesPage() {
                                 </span>
                               ))}
                             </div>
+                            {!isCreating && selectedTestCase ? (
+                              <div className="action-row">
+                                <button className="ghost-button" onClick={handleOpenSuiteLinkModal} type="button">
+                                  <AddIcon />
+                                  <span>Manage suite links</span>
+                                </button>
+                              </div>
+                            ) : null}
                           </div>
                         ) : !isCreating && selectedTestCase ? (
                           <div className="detail-summary">
                             <strong>Suite references</strong>
                             <span>This test case is not linked to any suite yet.</span>
+                            <div className="action-row">
+                              <button className="ghost-button" onClick={handleOpenSuiteLinkModal} type="button">
+                                <AddIcon />
+                                <span>Link to suite</span>
+                              </button>
+                            </div>
                           </div>
                         ) : null}
 
@@ -5045,27 +5477,43 @@ export function TestCasesPage() {
         />
       ) : null}
 
+      {isSuiteLinkModalOpen && selectedTestCase ? (
+        <TestCaseSuiteLinkModal
+          isSaving={updateTestCase.isPending}
+          linkedSuiteIds={suiteLinkDraftIds}
+          onChange={setSuiteLinkDraftIds}
+          onClose={() => {
+            setIsSuiteLinkModalOpen(false);
+            setSuiteLinkDraftIds([]);
+          }}
+          onSave={() => void handleSaveSuiteLinks()}
+          saveDisabled={!hasSuiteLinkDraftChanges}
+          suites={suites}
+          testCaseTitle={selectedTestCase.title}
+        />
+      ) : null}
+
       {isCaseParameterDialogOpen ? (
         <StepParameterDialog
-          onChange={(name, value) =>
-            setTestCaseParameterValues((current) => ({
-              ...current,
-              [name]: value
-            }))
-          }
+          getInputState={(parameter) => resolveScopedParameterInputState(parameter.scope)}
+          headerContent={parameterDialogHeaderContent}
+          onChange={handleScopedParameterValueChange}
           onClose={() => setIsCaseParameterDialogOpen(false)}
           parameters={detectedStepParameters}
-          subtitle="Detected @params from the current case steps. Any value you set here is previewed directly inside the step editor."
+          subtitle="Detected scoped params from the current case steps. Values update the editor preview immediately and save to the matching case or suite scope."
           title="Test case parameter values"
-          values={testCaseParameterValues}
+          values={mergedScopedParameterValues}
         />
       ) : null}
 
       {editingAutomationStep ? (
         <StepAutomationDialog
+          availableParameters={detectedStepParameters}
+          getParameterScopeState={resolveScopedParameterInputState}
           onClose={() => setEditingAutomationStepId("")}
+          onSaveResponseValue={handleScopedParameterValueChange}
           onSave={(input) => void handleSaveStepAutomation(editingAutomationStep.id, input)}
-          parameterValues={testCaseParameterValues}
+          parameterValues={mergedScopedParameterValues}
           step={{
             step_order: editingAutomationStep.step_order,
             action: stepDrafts[editingAutomationStep.id]?.action ?? editingAutomationStep.action,
@@ -5074,7 +5522,7 @@ export function TestCasesPage() {
             automation_code: stepDrafts[editingAutomationStep.id]?.automation_code ?? editingAutomationStep.automation_code,
             api_request: stepDrafts[editingAutomationStep.id]?.api_request ?? editingAutomationStep.api_request
           }}
-          subtitle="Use the same @param names from the manual step when the automation needs case-level data."
+          subtitle="Use @t for case data, @s for suite-shared data, and @r for execution-level data previews."
           title={`Step ${editingAutomationStep.step_order} automation`}
         />
       ) : null}
@@ -5457,6 +5905,173 @@ function TestCaseSuiteModal({
           <div className="action-row suite-modal-actions">
             <button className="primary-button" disabled={isSaving} type="submit">
               {isSaving ? "Saving…" : "Create Suite"}
+            </button>
+            <button className="ghost-button" disabled={isSaving} onClick={onClose} type="button">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function TestCaseSuiteLinkModal({
+  testCaseTitle,
+  suites,
+  linkedSuiteIds,
+  isSaving,
+  saveDisabled,
+  onChange,
+  onSave,
+  onClose
+}: {
+  testCaseTitle: string;
+  suites: TestSuite[];
+  linkedSuiteIds: string[];
+  isSaving: boolean;
+  saveDisabled: boolean;
+  onChange: (suiteIds: string[]) => void;
+  onSave: () => void;
+  onClose: () => void;
+}) {
+  const dialogRef = useDialogFocus<HTMLDivElement>();
+  const linkedSuiteIdSet = useMemo(() => new Set(linkedSuiteIds), [linkedSuiteIds]);
+  const linkedSuites = useMemo(
+    () =>
+      suites
+        .filter((suite) => linkedSuiteIdSet.has(suite.id))
+        .slice()
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [linkedSuiteIdSet, suites]
+  );
+  const orderedSuites = useMemo(
+    () =>
+      suites.slice().sort((left, right) => {
+        const leftRank = linkedSuiteIdSet.has(left.id) ? 0 : 1;
+        const rightRank = linkedSuiteIdSet.has(right.id) ? 0 : 1;
+
+        if (leftRank !== rightRank) {
+          return leftRank - rightRank;
+        }
+
+        return left.name.localeCompare(right.name);
+      }),
+    [linkedSuiteIdSet, suites]
+  );
+
+  const handleToggleSuite = (suiteId: string) => {
+    if (linkedSuiteIdSet.has(suiteId)) {
+      onChange(linkedSuiteIds.filter((currentId) => currentId !== suiteId));
+      return;
+    }
+
+    onChange([...linkedSuiteIds, suiteId]);
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={() => !isSaving && onClose()} role="presentation">
+      <div
+        aria-label="Manage suite references"
+        aria-modal="true"
+        className="modal-card suite-create-modal suite-link-modal"
+        onClick={(event) => event.stopPropagation()}
+        ref={dialogRef}
+        role="dialog"
+      >
+        <div className="suite-create-header">
+          <div className="suite-create-title">
+            <h3>Suite references</h3>
+            <p>Link or unlink "{testCaseTitle}" from suites. Linked suites stay pinned at the top for quick review.</p>
+          </div>
+          <button className="ghost-button" disabled={isSaving} onClick={onClose} type="button">
+            Close
+          </button>
+        </div>
+
+        <form
+          className="suite-modal-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSave();
+          }}
+        >
+          <div className="suite-link-modal-body">
+            <div className="suite-link-summary">
+              <div className="detail-summary">
+                <strong>{linkedSuites.length} linked suite{linkedSuites.length === 1 ? "" : "s"}</strong>
+                <span>
+                  {linkedSuites.length
+                    ? "Use the unlink icon in the linked list or suite list below to remove a reference."
+                    : "No suite links yet. Use the add icon below to attach this case to one or more suites."}
+                </span>
+              </div>
+
+              {linkedSuites.length ? (
+                <div className="suite-link-chip-row">
+                  {linkedSuites.map((suite) => (
+                    <div className="suite-link-chip" key={suite.id}>
+                      <span className="suite-link-chip-label">{suite.name}</span>
+                      <button
+                        aria-label={`Unlink ${suite.name}`}
+                        className="suite-link-chip-remove"
+                        disabled={isSaving}
+                        onClick={() => handleToggleSuite(suite.id)}
+                        title={`Unlink ${suite.name}`}
+                        type="button"
+                      >
+                        <SuiteUnlinkIcon size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state compact">This test case is not linked to any suites yet.</div>
+              )}
+            </div>
+
+            <div className="suite-link-list-shell">
+              <div className="suite-link-list-header">
+                <strong>All suites</strong>
+                <span>{orderedSuites.length} available</span>
+              </div>
+
+              {orderedSuites.length ? (
+                <div className="suite-link-list">
+                  {orderedSuites.map((suite, index) => {
+                    const isLinked = linkedSuiteIdSet.has(suite.id);
+
+                    return (
+                      <div className={isLinked ? "suite-link-row is-linked" : "suite-link-row"} key={suite.id}>
+                        <div className="suite-link-row-copy">
+                          <strong>{suite.name}</strong>
+                          {suite.display_id ? <span>{suite.display_id}</span> : null}
+                        </div>
+                        <div className="suite-link-row-actions">
+                          {isLinked ? <span className="suite-link-row-status">Linked</span> : null}
+                          <button
+                            aria-label={`${isLinked ? "Unlink" : "Link"} ${suite.name}`}
+                            className={isLinked ? "ghost-button suite-link-toggle is-linked" : "ghost-button suite-link-toggle"}
+                            data-autofocus={index === 0 ? "true" : undefined}
+                            disabled={isSaving}
+                            onClick={() => handleToggleSuite(suite.id)}
+                            title={`${isLinked ? "Unlink" : "Link"} ${suite.name}`}
+                            type="button"
+                          >
+                            {isLinked ? <SuiteUnlinkIcon /> : <AddIcon />}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="empty-state compact">Create a suite first to link this test case.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="action-row suite-modal-actions">
+            <button className="primary-button" disabled={isSaving || saveDisabled} type="submit">
+              {isSaving ? "Saving…" : "Save links"}
             </button>
             <button className="ghost-button" disabled={isSaving} onClick={onClose} type="button">Cancel</button>
           </div>
@@ -5974,6 +6589,30 @@ function StepUngroupIcon() {
       <path d="m18 5-3 3" />
       <path d="m15 5 3 3" />
     </StepIconShell>
+  );
+}
+
+function SuiteUnlinkIcon({
+  size = 16,
+  strokeWidth = 1.9
+}: {
+  size?: number;
+  strokeWidth?: number;
+}) {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height={size}
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={strokeWidth}
+      viewBox="0 0 24 24"
+      width={size}
+    >
+      <path d="M5 12h14" />
+    </svg>
   );
 }
 
