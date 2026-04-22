@@ -42,6 +42,21 @@ const normalizeScheduleMode = (value, fallback = "manual") => {
   return ["manual", "hourly", "daily", "weekly"].includes(normalized) ? normalized : fallback;
 };
 
+const normalizeTestEngineBrowser = (value, fallback = "chromium") => {
+  const normalized = normalizeText(value);
+  return ["chromium", "firefox", "webkit"].includes(normalized) ? normalized : fallback;
+};
+
+const normalizeTestEngineTraceMode = (value, fallback = "on-first-retry") => {
+  const normalized = normalizeText(value);
+  return ["off", "on", "on-first-retry", "retain-on-failure"].includes(normalized) ? normalized : fallback;
+};
+
+const normalizeTestEngineVideoMode = (value, fallback = "retain-on-failure") => {
+  const normalized = normalizeText(value);
+  return ["off", "on", "retain-on-failure"].includes(normalized) ? normalized : fallback;
+};
+
 const normalizeConfig = (type, input, username) => {
   const raw = normalizeObject(input);
   const integrationTypeConfig = INTEGRATION_TYPE_OPTIONS.find((option) => option.value === type)?.defaults || {};
@@ -147,6 +162,57 @@ const normalizeConfig = (type, input, username) => {
     };
   }
 
+  if (type === "testengine") {
+    const project_id = normalizeText(raw.project_id);
+    const callback_url = normalizeText(raw.callback_url);
+    const callback_secret = normalizeText(raw.callback_secret);
+    const max_repair_attempts = normalizeInteger(raw.max_repair_attempts) ?? Number(integrationTypeConfig.max_repair_attempts ?? 2);
+    const artifact_retention_days = normalizeInteger(raw.artifact_retention_days) ?? Number(integrationTypeConfig.artifact_retention_days ?? 14);
+    const run_timeout_seconds = normalizeInteger(raw.run_timeout_seconds) ?? Number(integrationTypeConfig.run_timeout_seconds ?? 1800);
+
+    if (!project_id) {
+      throw new Error("Test Engine integrations require a project");
+    }
+
+    if (!callback_url) {
+      throw new Error("Test Engine integrations require a QAira callback URL");
+    }
+
+    if (!callback_secret) {
+      throw new Error("Test Engine integrations require a callback signing secret");
+    }
+
+    if (!max_repair_attempts || max_repair_attempts < 0) {
+      throw new Error("Test Engine integrations require a valid max repair attempt count");
+    }
+
+    if (!artifact_retention_days || artifact_retention_days <= 0) {
+      throw new Error("Test Engine integrations require a valid artifact retention window");
+    }
+
+    if (!run_timeout_seconds || run_timeout_seconds <= 0) {
+      throw new Error("Test Engine integrations require a valid run timeout");
+    }
+
+    return {
+      project_id,
+      callback_url,
+      callback_secret,
+      runner: "playwright",
+      browser: normalizeTestEngineBrowser(raw.browser, String(integrationTypeConfig.browser || "chromium")),
+      headless: raw.headless !== false,
+      healing_enabled: raw.healing_enabled !== false,
+      max_repair_attempts,
+      trace_mode: normalizeTestEngineTraceMode(raw.trace_mode, String(integrationTypeConfig.trace_mode || "on-first-retry")),
+      video_mode: normalizeTestEngineVideoMode(raw.video_mode, String(integrationTypeConfig.video_mode || "retain-on-failure")),
+      capture_console: raw.capture_console !== false,
+      capture_network: raw.capture_network !== false,
+      artifact_retention_days,
+      run_timeout_seconds,
+      promote_healed_patches: normalizeText(raw.promote_healed_patches) || String(integrationTypeConfig.promote_healed_patches || "review")
+    };
+  }
+
   return {};
 };
 
@@ -207,6 +273,16 @@ const validatePayload = (payload) => {
   if (type === "google_drive" || type === "github") {
     if (!api_key) {
       throw new Error(`${type === "google_drive" ? "Google Drive" : "GitHub"} integrations require an access token`);
+    }
+  }
+
+  if (type === "testengine") {
+    if (!base_url) {
+      throw new Error("Test Engine integrations require a host URL");
+    }
+
+    if (!api_key) {
+      throw new Error("Test Engine integrations require an engine access token");
     }
   }
 
@@ -297,6 +373,28 @@ exports.getActiveIntegrationByType = async (type) => {
     ORDER BY updated_at DESC, created_at DESC
     LIMIT 1
   `).get(type);
+
+  return normalizeIntegration(integration || null);
+};
+
+exports.getActiveIntegrationByTypeForProject = async (type, projectId) => {
+  validateType(type);
+
+  const normalizedProjectId = normalizeText(projectId);
+
+  if (!normalizedProjectId) {
+    return null;
+  }
+
+  const integration = await db.prepare(`
+    SELECT *
+    FROM integrations
+    WHERE type = ?
+      AND is_active = TRUE
+      AND config->>'project_id' = ?
+    ORDER BY updated_at DESC, created_at DESC
+    LIMIT 1
+  `).get(type, normalizedProjectId);
 
   return normalizeIntegration(integration || null);
 };

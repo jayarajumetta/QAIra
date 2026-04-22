@@ -1,5 +1,7 @@
 const fastify = require("fastify")({ 
-  logger: true,
+  logger: {
+    level: process.env.LOG_LEVEL || "info"
+  },
   requestIdLogLabel: "reqId",
   disableRequestLogging: false,
   requestTimeout: 120000,
@@ -155,12 +157,14 @@ fastify.register(cors, {
     }
   },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Request-ID", "X-Trace-ID", "traceparent", "tracestate"],
+  exposedHeaders: ["X-Request-ID", "X-Trace-ID", "traceparent"],
   credentials: true,
   maxAge: 86400
 });
 
 fastify.register(require("./plugins/errorHandler"));
+fastify.register(require("./plugins/observability"));
 fastify.register(require("./routes"));
 fastify.addHook("onReady", async () => {
   await ensureRuntimeSchema();

@@ -39,6 +39,29 @@ const sanitizeIntegration = (integration) => {
     };
   }
 
+  if (integration.type === "testengine") {
+    return {
+      ...integration,
+      api_key: null,
+      config: {
+        project_id: config.project_id || null,
+        callback_url: config.callback_url || null,
+        runner: config.runner || "playwright",
+        browser: config.browser || "chromium",
+        headless: config.headless !== false,
+        healing_enabled: config.healing_enabled !== false,
+        max_repair_attempts: config.max_repair_attempts ?? 2,
+        trace_mode: config.trace_mode || "on-first-retry",
+        video_mode: config.video_mode || "retain-on-failure",
+        capture_console: config.capture_console !== false,
+        capture_network: config.capture_network !== false,
+        artifact_retention_days: config.artifact_retention_days ?? 14,
+        run_timeout_seconds: config.run_timeout_seconds ?? 1800,
+        promote_healed_patches: config.promote_healed_patches || "review"
+      }
+    };
+  }
+
   return {
     ...integration,
     api_key: null,
@@ -79,7 +102,7 @@ module.exports = async function (fastify) {
     }
 
     return integrations
-      .filter((integration) => ["llm", "google_drive", "github"].includes(integration.type) && integration.is_active)
+      .filter((integration) => ["llm", "google_drive", "github", "testengine"].includes(integration.type) && integration.is_active)
       .map(sanitizeIntegration);
   });
 

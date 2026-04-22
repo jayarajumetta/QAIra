@@ -448,6 +448,17 @@ function describeWorkspaceTransaction(
   const importedCount = readWorkspaceTransactionCount(transaction, "imported");
   const failedCount = readWorkspaceTransactionCount(transaction, "failed");
   const totalRows = readWorkspaceTransactionCount(transaction, "total_rows");
+  const processedItems = readWorkspaceTransactionCount(transaction, "processed_items");
+  const totalItems = readWorkspaceTransactionCount(transaction, "total_items");
+  const builtCaseCount = readWorkspaceTransactionCount(transaction, "built_cases");
+  const reusedScriptCount = readWorkspaceTransactionCount(transaction, "reused_scripts");
+  const healedCaseCount = readWorkspaceTransactionCount(transaction, "healed_cases");
+  const selectedCaseCount = readWorkspaceTransactionCount(transaction, "selected_case_count");
+  const matchedCaseCount = readWorkspaceTransactionCount(transaction, "matched_case_count");
+  const exportedCount = readWorkspaceTransactionCount(transaction, "exported");
+  const workerCount = readWorkspaceTransactionCount(transaction, "worker_count");
+  const queueLane = String(transaction.metadata?.queue_lane || "").trim();
+  const currentPhase = String(transaction.metadata?.current_phase || "").trim();
   const scopeLabel = transaction.app_type_id
     ? appTypeNameById[transaction.app_type_id] || "App type scope"
     : transaction.project_id
@@ -473,6 +484,53 @@ function describeWorkspaceTransaction(
           : generatedCaseCount || requirementCount
             ? `${formatCountLabel(requirementCount, "requirement")} queued or processed · ${formatCountLabel(generatedCaseCount, "case")} generated`
             : "AI-assisted test case generation workflow"
+    };
+  }
+
+  if (transaction.action === "smart_execution_creation" || transaction.action === "smart_execution_plan" || transaction.category === "smart_execution") {
+    const planningDetail =
+      matchedCaseCount || selectedCaseCount
+        ? `${formatCountLabel(matchedCaseCount || selectedCaseCount, "case")} matched · ${formatCountLabel(workerCount, "worker")}`
+        : currentPhase
+          ? `Phase: ${currentPhase}`
+          : "Smart run planning and materialization";
+
+    return {
+      icon: <SparkIcon />,
+      eyebrow:
+        transaction.status === "completed"
+          ? "Smart execution ready"
+          : transaction.status === "failed"
+            ? "Smart execution finished with issues"
+            : "Smart execution planning",
+      detail: planningDetail
+    };
+  }
+
+  if (
+    transaction.action === "automation_build"
+    || transaction.action === "test_case_automation_build"
+    || transaction.action === "suite_automation_build"
+    || transaction.category === "automation_build"
+  ) {
+    const automationDetail =
+      builtCaseCount || reusedScriptCount || healedCaseCount
+        ? `${formatCountLabel(builtCaseCount, "script")} built · ${formatCountLabel(reusedScriptCount, "script")} reused · ${formatCountLabel(healedCaseCount, "case")} healed`
+        : processedItems || totalItems
+          ? `${formatCountLabel(processedItems, "item")} processed of ${formatCountLabel(totalItems, "item")}`
+          : currentPhase
+            ? `Phase: ${currentPhase}`
+            : "AI automation build operation";
+
+    return {
+      icon: <AutomationCodeIcon />,
+      eyebrow:
+        transaction.status === "completed"
+          ? "Automation build completed"
+          : transaction.status === "failed"
+            ? "Automation build finished with issues"
+            : "Automation build running",
+      detail: automationDetail
     };
   }
 
@@ -534,6 +592,48 @@ function describeWorkspaceTransaction(
       icon: <ArchiveIcon />,
       eyebrow: "Project backup",
       detail: transaction.description || "Project backup activity"
+    };
+  }
+
+  if (transaction.action === "execution_report_export" || transaction.action === "run_report_export" || transaction.category === "reporting") {
+    const reportDetail =
+      exportedCount
+        ? `${formatCountLabel(exportedCount, "report")} generated`
+        : currentPhase
+          ? `Phase: ${currentPhase}`
+          : "Execution report export";
+
+    return {
+      icon: <ArchiveIcon />,
+      eyebrow:
+        transaction.status === "completed"
+          ? "Run report ready"
+          : transaction.status === "failed"
+            ? "Run report failed"
+            : "Generating run report",
+      detail: reportDetail
+    };
+  }
+
+  if (transaction.action === "testengine_run") {
+    const engineDetail =
+      healedCaseCount
+        ? `${formatCountLabel(healedCaseCount, "healed case")} during engine execution`
+        : queueLane
+          ? `Lane: ${queueLane}`
+          : currentPhase
+            ? `Phase: ${currentPhase}`
+            : "Playwright engine dispatch and execution";
+
+    return {
+      icon: <PlayIcon />,
+      eyebrow:
+        transaction.status === "completed"
+          ? "Engine execution completed"
+          : transaction.status === "failed"
+            ? "Engine execution failed"
+            : "Engine execution running",
+      detail: engineDetail
     };
   }
 

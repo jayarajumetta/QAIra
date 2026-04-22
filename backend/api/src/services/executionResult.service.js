@@ -17,6 +17,14 @@ const getExecutionCaseSnapshot = db.prepare(`
   WHERE execution_id = ? AND test_case_id = ?
 `);
 
+const getLatestExecutionResultByCase = db.prepare(`
+  SELECT *
+  FROM execution_results
+  WHERE execution_id = ? AND test_case_id = ?
+  ORDER BY created_at DESC, id DESC
+  LIMIT 1
+`);
+
 // Create Result
 exports.createExecutionResult = async (data) => {
 
@@ -151,6 +159,14 @@ exports.getExecutionResult = async (id) => {
   return result;
 };
 
+exports.findLatestExecutionResult = async ({ execution_id, test_case_id }) => {
+  if (!execution_id || !test_case_id) {
+    return null;
+  }
+
+  return getLatestExecutionResultByCase.get(execution_id, test_case_id) || null;
+};
+
 
 // Update Result (only limited fields)
 exports.updateExecutionResult = async (id, data) => {
@@ -176,6 +192,27 @@ exports.updateExecutionResult = async (id, data) => {
   );
 
   return { updated: true };
+};
+
+exports.upsertExecutionResult = async (data) => {
+  const existing = await exports.findLatestExecutionResult({
+    execution_id: data.execution_id,
+    test_case_id: data.test_case_id
+  });
+
+  if (existing) {
+    await exports.updateExecutionResult(existing.id, {
+      status: data.status,
+      duration_ms: data.duration_ms,
+      error: data.error,
+      logs: data.logs
+    });
+
+    return exports.getExecutionResult(existing.id);
+  }
+
+  const created = await exports.createExecutionResult(data);
+  return exports.getExecutionResult(created.id);
 };
 
 

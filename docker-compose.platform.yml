@@ -1,0 +1,139 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: qaira-postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - qaira-postgres-data:/var/lib/postgresql/data
+      - ./backend/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./backend/db/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-qaira}
+      POSTGRES_USER: ${POSTGRES_USER:-qaira}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-qaira}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-qaira} -d ${POSTGRES_DB:-qaira}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    image: ${QAIRA_BACKEND_IMAGE:-jayarajumetta/qaira-backend:latest}
+    container_name: qaira-api
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://qaira:qaira@postgres:5432/qaira}
+      SESSION_SECRET: ${SESSION_SECRET:-qaira-dev-secret}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080,http://localhost}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      OTEL_SERVICE_NAME: qaira-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/health >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+  frontend:
+    image: ${QAIRA_FRONTEND_IMAGE:-jayarajumetta/qaira-frontend:latest}
+    container_name: qaira-frontend
+    environment:
+      QAIRA_API_BASE_URL: ${QAIRA_API_BASE_URL:-/api}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1 >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+  haproxy:
+    image: haproxy:3.0-alpine
+    container_name: qaira-haproxy
+    depends_on:
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "8404:8404"
+    volumes:
+      - ./ops/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    restart: always
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: qaira-prometheus
+    depends_on:
+      api:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    restart: always
+
+  loki:
+    image: grafana/loki:3.1.1
+    container_name: qaira-loki
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./ops/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+    restart: always
+
+  promtail:
+    image: grafana/promtail:3.1.1
+    container_name: qaira-promtail
+    depends_on:
+      - loki
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ./ops/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    restart: always
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: qaira-grafana
+    depends_on:
+      - prometheus
+      - loki
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./ops/grafana/provisioning/datasources/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+    restart: always
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    container_name: qaira-otel-collector
+    command: ["--config=/etc/otel-collector/config.yaml"]
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "9464:9464"
+    volumes:
+      - ./ops/otel-collector/config.yaml:/etc/otel-collector/config.yaml:ro
+    restart: always
+
+volumes:
+  qaira-postgres-data:
+  grafana-data:

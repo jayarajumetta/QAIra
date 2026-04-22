@@ -68,7 +68,7 @@ export type Feedback = {
 
 export type Integration = {
   id: string;
-  type: "llm" | "jira" | "email" | "google_auth" | "google_drive" | "github";
+  type: "llm" | "jira" | "email" | "google_auth" | "google_drive" | "github" | "testengine";
   name: string;
   base_url: string | null;
   api_key: string | null;

@@ -64,6 +64,26 @@ const INTEGRATION_TYPE_OPTIONS = freezeOptions([
       branch: "main",
       schedule_mode: "manual"
     }
+  },
+  {
+    value: "testengine",
+    label: "Test Engine",
+    description: "Playwright-based remote execution backend for QAira with artifact capture and controlled self-healing.",
+    icon: "TE",
+    defaults: {
+      runner: "playwright",
+      browser: "chromium",
+      headless: true,
+      healing_enabled: true,
+      max_repair_attempts: 2,
+      trace_mode: "on-first-retry",
+      video_mode: "retain-on-failure",
+      capture_console: true,
+      capture_network: true,
+      artifact_retention_days: 14,
+      run_timeout_seconds: 1800,
+      promote_healed_patches: "review"
+    }
   }
 ]);
 

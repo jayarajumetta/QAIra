@@ -1,0 +1,24 @@
+services:
+  testengine:
+    image: ${QAIRA_TESTENGINE_IMAGE:-jayarajumetta/qaira-testengine:latest}
+    container_name: qaira-testengine
+    environment:
+      PORT: 4301
+      NODE_ENV: production
+      ENGINE_NAME: ${ENGINE_NAME:-QAira Test Engine}
+      ARTIFACT_ROOT: /artifacts
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+    ports:
+      - "${TESTENGINE_PORT:-4301}:4301"
+    volumes:
+      - testengine-artifacts:/artifacts
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4301/health').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: always
+
+volumes:
+  testengine-artifacts:

@@ -38,6 +38,19 @@ type IntegrationDraft = {
   github_branch: string;
   github_directory: string;
   github_file_extension: string;
+  engine_project_id: string;
+  engine_callback_url: string;
+  engine_callback_secret: string;
+  engine_browser: "chromium" | "firefox" | "webkit";
+  engine_headless: boolean;
+  engine_healing_enabled: boolean;
+  engine_max_repair_attempts: string;
+  engine_trace_mode: "off" | "on" | "on-first-retry" | "retain-on-failure";
+  engine_video_mode: "off" | "on" | "retain-on-failure";
+  engine_capture_console: boolean;
+  engine_capture_network: boolean;
+  engine_artifact_retention_days: string;
+  engine_run_timeout_seconds: string;
 };
 
 type IntegrationTypeDefinition = {
@@ -63,6 +76,7 @@ const buildEmptyDraft = (
   ) as Integration["type"];
   const llmDefaults = getIntegrationTypeDefinition("llm", definitions)?.defaults || {};
   const emailDefaults = getIntegrationTypeDefinition("email", definitions)?.defaults || {};
+  const testEngineDefaults = getIntegrationTypeDefinition("testengine", definitions)?.defaults || {};
 
   return {
     type: defaultType,
@@ -87,7 +101,20 @@ const buildEmptyDraft = (
     github_repo: "",
     github_branch: "main",
     github_directory: "qaira-sync",
-    github_file_extension: "ts"
+    github_file_extension: "ts",
+    engine_project_id: "",
+    engine_callback_url: "",
+    engine_callback_secret: "",
+    engine_browser: (typeof testEngineDefaults.browser === "string" ? testEngineDefaults.browser : "chromium") as IntegrationDraft["engine_browser"],
+    engine_headless: testEngineDefaults.headless !== false,
+    engine_healing_enabled: testEngineDefaults.healing_enabled !== false,
+    engine_max_repair_attempts: String(testEngineDefaults.max_repair_attempts ?? "2"),
+    engine_trace_mode: (typeof testEngineDefaults.trace_mode === "string" ? testEngineDefaults.trace_mode : "on-first-retry") as IntegrationDraft["engine_trace_mode"],
+    engine_video_mode: (typeof testEngineDefaults.video_mode === "string" ? testEngineDefaults.video_mode : "retain-on-failure") as IntegrationDraft["engine_video_mode"],
+    engine_capture_console: testEngineDefaults.capture_console !== false,
+    engine_capture_network: testEngineDefaults.capture_network !== false,
+    engine_artifact_retention_days: String(testEngineDefaults.artifact_retention_days ?? "14"),
+    engine_run_timeout_seconds: String(testEngineDefaults.run_timeout_seconds ?? "1800")
   };
 };
 
@@ -102,6 +129,7 @@ function getIntegrationTypeIcon(type: Integration["type"], definitions: Integrat
 function applyDraftDefaultsForType(type: Integration["type"], current: IntegrationDraft, definitions: IntegrationTypeDefinition[]): IntegrationDraft {
   const llmDefaults = getIntegrationTypeDefinition("llm", definitions)?.defaults || {};
   const emailDefaults = getIntegrationTypeDefinition("email", definitions)?.defaults || {};
+  const testEngineDefaults = getIntegrationTypeDefinition("testengine", definitions)?.defaults || {};
 
   if (type === "llm") {
     return {
@@ -137,6 +165,23 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
       github_directory: current.github_directory || "qaira-sync",
       github_file_extension: current.github_file_extension || "ts",
       sync_schedule_mode: current.sync_schedule_mode || "manual"
+    };
+  }
+
+  if (type === "testengine") {
+    return {
+      ...current,
+      type,
+      engine_browser: (current.engine_browser || String(testEngineDefaults.browser || "chromium")) as IntegrationDraft["engine_browser"],
+      engine_headless: current.engine_headless,
+      engine_healing_enabled: current.engine_healing_enabled,
+      engine_max_repair_attempts: current.engine_max_repair_attempts || String(testEngineDefaults.max_repair_attempts ?? "2"),
+      engine_trace_mode: (current.engine_trace_mode || String(testEngineDefaults.trace_mode || "on-first-retry")) as IntegrationDraft["engine_trace_mode"],
+      engine_video_mode: (current.engine_video_mode || String(testEngineDefaults.video_mode || "retain-on-failure")) as IntegrationDraft["engine_video_mode"],
+      engine_capture_console: current.engine_capture_console,
+      engine_capture_network: current.engine_capture_network,
+      engine_artifact_retention_days: current.engine_artifact_retention_days || String(testEngineDefaults.artifact_retention_days ?? "14"),
+      engine_run_timeout_seconds: current.engine_run_timeout_seconds || String(testEngineDefaults.run_timeout_seconds ?? "1800")
     };
   }
 
@@ -183,7 +228,35 @@ function getDraftFromIntegration(
     github_repo: typeof config.repo === "string" ? config.repo : "",
     github_branch: typeof config.branch === "string" ? config.branch : emptyDraft.github_branch,
     github_directory: typeof config.directory === "string" ? config.directory : emptyDraft.github_directory,
-    github_file_extension: typeof config.file_extension === "string" ? config.file_extension : emptyDraft.github_file_extension
+    github_file_extension: typeof config.file_extension === "string" ? config.file_extension : emptyDraft.github_file_extension,
+    engine_project_id: typeof config.project_id === "string" ? config.project_id : "",
+    engine_callback_url: typeof config.callback_url === "string" ? config.callback_url : "",
+    engine_callback_secret: typeof config.callback_secret === "string" ? config.callback_secret : "",
+    engine_browser: (typeof config.browser === "string" ? config.browser : emptyDraft.engine_browser) as IntegrationDraft["engine_browser"],
+    engine_headless: typeof config.headless === "boolean" ? config.headless : emptyDraft.engine_headless,
+    engine_healing_enabled: typeof config.healing_enabled === "boolean" ? config.healing_enabled : emptyDraft.engine_healing_enabled,
+    engine_max_repair_attempts:
+      typeof config.max_repair_attempts === "number"
+        ? String(config.max_repair_attempts)
+        : typeof config.max_repair_attempts === "string"
+          ? config.max_repair_attempts
+          : emptyDraft.engine_max_repair_attempts,
+    engine_trace_mode: (typeof config.trace_mode === "string" ? config.trace_mode : emptyDraft.engine_trace_mode) as IntegrationDraft["engine_trace_mode"],
+    engine_video_mode: (typeof config.video_mode === "string" ? config.video_mode : emptyDraft.engine_video_mode) as IntegrationDraft["engine_video_mode"],
+    engine_capture_console: typeof config.capture_console === "boolean" ? config.capture_console : emptyDraft.engine_capture_console,
+    engine_capture_network: typeof config.capture_network === "boolean" ? config.capture_network : emptyDraft.engine_capture_network,
+    engine_artifact_retention_days:
+      typeof config.artifact_retention_days === "number"
+        ? String(config.artifact_retention_days)
+        : typeof config.artifact_retention_days === "string"
+          ? config.artifact_retention_days
+          : emptyDraft.engine_artifact_retention_days,
+    engine_run_timeout_seconds:
+      typeof config.run_timeout_seconds === "number"
+        ? String(config.run_timeout_seconds)
+        : typeof config.run_timeout_seconds === "string"
+          ? config.run_timeout_seconds
+          : emptyDraft.engine_run_timeout_seconds
   }, definitions);
 }
 
@@ -226,6 +299,26 @@ function buildIntegrationConfig(draft: IntegrationDraft, definitions: Integratio
       directory: draft.github_directory.trim() || "qaira-sync",
       file_extension: draft.github_file_extension.trim() || "ts",
       schedule_mode: draft.sync_schedule_mode
+    };
+  }
+
+  if (draft.type === "testengine") {
+    return {
+      project_id: draft.engine_project_id,
+      callback_url: draft.engine_callback_url.trim(),
+      callback_secret: draft.engine_callback_secret.trim(),
+      runner: "playwright",
+      browser: draft.engine_browser,
+      headless: draft.engine_headless,
+      healing_enabled: draft.engine_healing_enabled,
+      max_repair_attempts: Number.parseInt(draft.engine_max_repair_attempts, 10),
+      trace_mode: draft.engine_trace_mode,
+      video_mode: draft.engine_video_mode,
+      capture_console: draft.engine_capture_console,
+      capture_network: draft.engine_capture_network,
+      artifact_retention_days: Number.parseInt(draft.engine_artifact_retention_days, 10),
+      run_timeout_seconds: Number.parseInt(draft.engine_run_timeout_seconds, 10),
+      promote_healed_patches: "review"
     };
   }
 
@@ -276,6 +369,21 @@ function getIntegrationSummary(integration: Integration, definitions: Integratio
     return {
       primary: repository,
       secondary: typeof config.last_sync_summary === "string" ? config.last_sync_summary : "Project automation code sync"
+    };
+  }
+
+  if (integration.type === "testengine") {
+    const browser = typeof config.browser === "string" ? config.browser : "chromium";
+    const repairAttempts =
+      typeof config.max_repair_attempts === "number"
+        ? config.max_repair_attempts
+        : typeof config.max_repair_attempts === "string"
+          ? config.max_repair_attempts
+          : "2";
+
+    return {
+      primary: integration.base_url || "Engine host not set",
+      secondary: `${browser} · repair ${repairAttempts} · ${config.healing_enabled === false ? "deterministic only" : "self-healing on"}`
     };
   }
 
@@ -337,6 +445,7 @@ export function IntegrationsPage() {
   const isGoogle = draft.type === "google_auth";
   const isGoogleDrive = draft.type === "google_drive";
   const isGithub = draft.type === "github";
+  const isTestEngine = draft.type === "testengine";
   const emailDefaults = getIntegrationTypeDefinition("email", integrationTypeDefinitions)?.defaults || {};
   const llmDefaults = getIntegrationTypeDefinition("llm", integrationTypeDefinitions)?.defaults || {};
   const defaultEmailSender = typeof emailDefaults.sender_email === "string" ? emailDefaults.sender_email : "";
@@ -447,7 +556,7 @@ export function IntegrationsPage() {
       <PageHeader
         eyebrow="Administration"
         title="Integrations"
-        description="Manage the external systems QAira uses for AI generation, Jira sync, backup automation, Google sign-in, and email verification delivery."
+        description="Manage the external systems QAira uses for AI generation, Jira sync, Playwright run handoff, backup automation, Google sign-in, and email verification delivery."
         meta={[
           { label: "Configured", value: integrations.length },
           { label: "Active", value: activeIntegrationCount },
@@ -469,7 +578,7 @@ export function IntegrationsPage() {
 
       {!isAdmin ? (
         <Panel title="Access required" subtitle="Only admins can manage integrations.">
-          <div className="empty-state compact">Ask an admin to manage LLM, Jira, Google Drive, GitHub, Email Sender, and Google Sign-In integrations.</div>
+          <div className="empty-state compact">Ask an admin to manage LLM, Jira, Test Engine, Google Drive, GitHub, Email Sender, and Google Sign-In integrations.</div>
         </Panel>
       ) : (
         <WorkspaceMasterDetail
@@ -783,6 +892,175 @@ export function IntegrationsPage() {
                         </div>
                       </>
                     ) : null}
+                  </>
+                ) : null}
+
+                {isTestEngine ? (
+                  <>
+                    <div className="empty-state compact integration-helper">
+                      QAira remains the only run UI. This provider is the remote Playwright execution backend that receives automated case handoff, reuses attached scripts on repeat runs, and only applies controlled locator or wait healing before raising an incident bundle.
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Project">
+                        <select
+                          value={draft.engine_project_id}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_project_id: event.target.value }))}
+                        >
+                          <option value="">Select a project</option>
+                          {projects.map((project) => (
+                            <option key={project.id} value={project.id}>{project.name}</option>
+                          ))}
+                        </select>
+                      </FormField>
+
+                      <FormField label="Engine Host URL">
+                        <input
+                          placeholder="https://testengine.company.internal"
+                          value={draft.base_url}
+                          onChange={(event) => setDraft((current) => ({ ...current, base_url: event.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Engine Access Token">
+                        <input
+                          type="password"
+                          value={draft.api_key}
+                          onChange={(event) => setDraft((current) => ({ ...current, api_key: event.target.value }))}
+                        />
+                      </FormField>
+
+                      <FormField label="QAira Callback URL">
+                        <input
+                          placeholder="https://qaira.company.internal/api/testengine/callbacks/runs"
+                          value={draft.engine_callback_url}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_callback_url: event.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Callback Signing Secret">
+                        <input
+                          type="password"
+                          value={draft.engine_callback_secret}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_callback_secret: event.target.value }))}
+                        />
+                      </FormField>
+
+                      <FormField label="Default Browser">
+                        <select
+                          value={draft.engine_browser}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_browser: event.target.value as IntegrationDraft["engine_browser"] }))}
+                        >
+                          <option value="chromium">Chromium</option>
+                          <option value="firefox">Firefox</option>
+                          <option value="webkit">WebKit</option>
+                        </select>
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Trace Capture">
+                        <select
+                          value={draft.engine_trace_mode}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_trace_mode: event.target.value as IntegrationDraft["engine_trace_mode"] }))}
+                        >
+                          <option value="off">Off</option>
+                          <option value="on">Always on</option>
+                          <option value="on-first-retry">On first retry</option>
+                          <option value="retain-on-failure">Retain on failure</option>
+                        </select>
+                      </FormField>
+
+                      <FormField label="Video Capture">
+                        <select
+                          value={draft.engine_video_mode}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_video_mode: event.target.value as IntegrationDraft["engine_video_mode"] }))}
+                        >
+                          <option value="off">Off</option>
+                          <option value="on">Always on</option>
+                          <option value="retain-on-failure">Retain on failure</option>
+                        </select>
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Max Repair Attempts">
+                        <input
+                          inputMode="numeric"
+                          placeholder="2"
+                          value={draft.engine_max_repair_attempts}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_max_repair_attempts: event.target.value }))}
+                        />
+                      </FormField>
+
+                      <FormField label="Run Timeout Seconds">
+                        <input
+                          inputMode="numeric"
+                          placeholder="1800"
+                          value={draft.engine_run_timeout_seconds}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_run_timeout_seconds: event.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Artifact Retention Days">
+                        <input
+                          inputMode="numeric"
+                          placeholder="14"
+                          value={draft.engine_artifact_retention_days}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_artifact_retention_days: event.target.value }))}
+                        />
+                      </FormField>
+
+                      <FormField label="Runner">
+                        <input disabled value="Playwright" />
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <label className="checkbox-field">
+                        <input
+                          checked={draft.engine_headless}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_headless: event.target.checked }))}
+                          type="checkbox"
+                        />
+                        <span>Run headless in Docker</span>
+                      </label>
+
+                      <label className="checkbox-field">
+                        <input
+                          checked={draft.engine_healing_enabled}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_healing_enabled: event.target.checked }))}
+                          type="checkbox"
+                        />
+                        <span>Enable locator and wait self-healing</span>
+                      </label>
+                    </div>
+
+                    <div className="record-grid">
+                      <label className="checkbox-field">
+                        <input
+                          checked={draft.engine_capture_console}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_capture_console: event.target.checked }))}
+                          type="checkbox"
+                        />
+                        <span>Capture browser console logs</span>
+                      </label>
+
+                      <label className="checkbox-field">
+                        <input
+                          checked={draft.engine_capture_network}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_capture_network: event.target.checked }))}
+                          type="checkbox"
+                        />
+                        <span>Capture network logs and HAR</span>
+                      </label>
+                    </div>
                   </>
                 ) : null}
 

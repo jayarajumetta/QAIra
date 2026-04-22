@@ -18,7 +18,9 @@ This repo is now PostgreSQL-first. SQLite is no longer part of the runtime, whic
 - `backend/db/seed.sql`: sample data loaded on first database boot
 - `backend/docker-compose.yml`: backend + PostgreSQL only
 - `docker-compose.full.yml`: full stack with PostgreSQL, API, and frontend
+- `docker-compose.platform.yml`: full stack plus HAProxy, Prometheus, Grafana, Loki, Promtail, and OpenTelemetry Collector
 - `frontend`: React app
+- `testengine`: standalone Playwright worker plane
 - `openapi.yaml`: API contract
 
 ## Quick start: full stack
@@ -49,7 +51,7 @@ On the first boot, the Postgres container creates the `qaira` database and autom
 
 ## Release script
 
-Use the root release script to build amd64 backend/frontend images, push both to Docker Hub, and refresh the running stack:
+Use the root release script to build amd64 backend/frontend/Test Engine images, push them to Docker Hub, and refresh the running stack:
 
 ```bash
 ./release.sh
@@ -61,6 +63,19 @@ Useful variants:
 IMAGE_TAG=v1.0.0 ./release.sh
 DOCKER_NAMESPACE=your-dockerhub-user ./release.sh
 ./release.sh --no-deploy
+./release.sh --deploy-testengine-local
+```
+
+`release.sh` now builds and pushes three images:
+
+- QAira backend
+- QAira frontend
+- QAira Test Engine
+
+For a separate Test Engine EC2 host, use:
+
+```bash
+./release-testengine.sh
 ```
 
 ## Quick start: backend only
@@ -81,6 +96,37 @@ cd backend
 ```
 
 The API will be available at `http://localhost:3000`.
+
+## Start individual services
+
+From the repo root:
+
+```bash
+./run-postgres.sh
+./run-backend.sh
+./run-frontend.sh
+./run-testengine.sh
+```
+
+By default these scripts reuse the local image reference already configured in Compose. Set `PULL_IMAGES=1` when you want them to pull published images first.
+
+## Platform stack
+
+For the stronger Docker edge and observability layer:
+
+```bash
+docker compose -f docker-compose.platform.yml up -d
+```
+
+That stack adds:
+
+- HAProxy on `http://localhost`
+- Prometheus on `http://localhost:9090`
+- Grafana on `http://localhost:3001`
+- Loki on `http://localhost:3100`
+- HAProxy stats on `http://localhost:8404/stats`
+
+More detail is in [PLATFORM_STACK.md](./PLATFORM_STACK.md).
 
 ## Manual PostgreSQL setup
 
@@ -146,6 +192,7 @@ The seed file creates these users:
   Example: `postgresql://qaira:qaira@postgres:5432/qaira`
 - `SESSION_SECRET`
 - `CORS_ORIGIN`
+- `LOG_LEVEL`
 
 ### PostgreSQL container
 
