@@ -32,6 +32,7 @@ import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/Worksp
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { api } from "../lib/api";
+import { summarizeExecutionStart } from "../lib/executionStartSummary";
 import { buildCaseAutomationCode, buildGroupAutomationCode, resolveStepAutomationCode } from "../lib/stepAutomation";
 import {
   deriveCaseStatusFromSteps,
@@ -1627,7 +1628,8 @@ export function ExecutionsPage() {
       queryClient.invalidateQueries({ queryKey: ["executions", projectId] }),
       queryClient.invalidateQueries({ queryKey: ["execution-results", executionId] }),
       queryClient.invalidateQueries({ queryKey: ["execution", executionId] }),
-      queryClient.invalidateQueries({ queryKey: ["execution-results"] })
+      queryClient.invalidateQueries({ queryKey: ["execution-results"] }),
+      queryClient.invalidateQueries({ queryKey: ["workspace-transactions"] })
     ]);
   };
 
@@ -1890,6 +1892,20 @@ export function ExecutionsPage() {
       showSuccess(failedOnly ? "Failed cases were queued into a fresh rerun run." : "A fresh rerun was created with the same run context.");
     } catch (error) {
       showError(error, failedOnly ? "Unable to rerun failed cases" : "Unable to create rerun");
+    }
+  };
+
+  const handleStartSelectedExecution = async () => {
+    if (!selectedExecution) {
+      return;
+    }
+
+    try {
+      const response = await startExecution.mutateAsync(selectedExecution.id);
+      await refreshExecutionScope();
+      showSuccess(summarizeExecutionStart(response));
+    } catch (error) {
+      showError(error, "Unable to start run");
     }
   };
 
@@ -3846,7 +3862,7 @@ export function ExecutionsPage() {
                         <button
                           className="ghost-button"
                           disabled={currentExecutionStatus !== "queued" || startExecution.isPending || completeExecution.isPending}
-                          onClick={() => void startExecution.mutateAsync(selectedExecution.id).then(() => refreshExecutionScope()).catch((error: Error) => showError(error, "Unable to start run"))}
+                          onClick={() => void handleStartSelectedExecution()}
                           type="button"
                         >
                           <ExecutionStartIcon />

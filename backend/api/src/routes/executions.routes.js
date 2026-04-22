@@ -146,7 +146,9 @@ module.exports = async function (fastify) {
     const execution = await service.getExecution(req.params.id);
     // Verify user is member of the execution's project
     await projectService.getProject(execution.project_id, req.user.id);
-    return service.startExecution(req.params.id);
+    return service.startExecution(req.params.id, {
+      initiated_by: req.user.id
+    });
   });
 
 

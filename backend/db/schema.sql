@@ -56,6 +56,9 @@ CREATE TABLE project_members (
   UNIQUE(project_id, user_id)
 );
 
+CREATE INDEX idx_project_members_project_user
+  ON project_members (project_id, user_id);
+
 -- =========================
 -- APP TYPES (DESIGN BOUNDARY)
 -- =========================
@@ -299,6 +302,9 @@ CREATE TABLE execution_suites (
   FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
 );
 
+CREATE INDEX idx_execution_suites_execution_suite
+  ON execution_suites (execution_id, suite_id);
+
 CREATE TABLE execution_case_snapshots (
   execution_id TEXT NOT NULL,
   test_case_id TEXT NOT NULL,
@@ -387,3 +393,166 @@ CREATE TABLE app_settings (
   value JSONB NOT NULL DEFAULT '{}'::jsonb,
   updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+-- =========================
+-- LATEST RUNTIME CONTRACT
+-- =========================
+
+ALTER TABLE integrations DROP CONSTRAINT IF EXISTS integrations_type_check;
+ALTER TABLE integrations
+  ADD CONSTRAINT integrations_type_check
+  CHECK (type IN ('llm', 'jira', 'email', 'google_auth', 'google_drive', 'github', 'testengine'));
+
+CREATE INDEX IF NOT EXISTS idx_integrations_type_active
+  ON integrations (type, is_active);
+
+ALTER TABLE requirements ADD COLUMN IF NOT EXISTS created_by TEXT;
+ALTER TABLE requirements ADD COLUMN IF NOT EXISTS updated_by TEXT;
+ALTER TABLE requirements ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+
+ALTER TABLE test_suites ADD COLUMN IF NOT EXISTS parameter_values JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE test_suites ADD COLUMN IF NOT EXISTS created_by TEXT;
+ALTER TABLE test_suites ADD COLUMN IF NOT EXISTS updated_by TEXT;
+ALTER TABLE test_suites ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+
+ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS ai_generation_source TEXT;
+ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS ai_generation_review_status TEXT;
+ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS ai_generation_job_id TEXT;
+ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS ai_generated_at TIMESTAMPTZ;
+ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS created_by TEXT;
+ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS updated_by TEXT;
+ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+
+ALTER TABLE test_cases DROP CONSTRAINT IF EXISTS test_cases_automated_check;
+ALTER TABLE test_cases
+  ADD CONSTRAINT test_cases_automated_check
+  CHECK (automated IN ('yes', 'no'));
+
+ALTER TABLE test_cases DROP CONSTRAINT IF EXISTS test_cases_ai_generation_source_check;
+ALTER TABLE test_cases
+  ADD CONSTRAINT test_cases_ai_generation_source_check
+  CHECK (ai_generation_source IS NULL OR ai_generation_source IN ('scheduler'));
+
+ALTER TABLE test_cases DROP CONSTRAINT IF EXISTS test_cases_ai_generation_review_status_check;
+ALTER TABLE test_cases
+  ADD CONSTRAINT test_cases_ai_generation_review_status_check
+  CHECK (ai_generation_review_status IS NULL OR ai_generation_review_status IN ('pending', 'accepted'));
+
+CREATE INDEX IF NOT EXISTS idx_test_cases_app_status_created
+  ON test_cases (app_type_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_test_cases_ai_generation_review
+  ON test_cases (app_type_id, ai_generation_source, ai_generation_review_status, created_at DESC);
+
+ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS created_by TEXT;
+ALTER TABLE shared_step_groups ADD COLUMN IF NOT EXISTS updated_by TEXT;
+
+ALTER TABLE executions
+  ADD COLUMN IF NOT EXISTS assigned_to TEXT;
+
+ALTER TABLE executions DROP CONSTRAINT IF EXISTS executions_status_check;
+ALTER TABLE executions
+  ADD CONSTRAINT executions_status_check
+  CHECK (status IN ('queued', 'running', 'completed', 'failed', 'aborted'));
+
+CREATE TABLE IF NOT EXISTS execution_schedules (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  app_type_id TEXT,
+  name TEXT NOT NULL,
+  cadence TEXT NOT NULL DEFAULT 'once',
+  next_run_at TIMESTAMPTZ,
+  last_run_at TIMESTAMPTZ,
+  suite_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  test_case_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  test_environment_id TEXT,
+  test_configuration_id TEXT,
+  test_data_set_id TEXT,
+  assigned_to TEXT,
+  created_by TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE execution_schedules DROP CONSTRAINT IF EXISTS execution_schedules_cadence_check;
+ALTER TABLE execution_schedules
+  ADD CONSTRAINT execution_schedules_cadence_check
+  CHECK (cadence IN ('once', 'daily', 'weekly', 'monthly'));
+
+CREATE INDEX IF NOT EXISTS idx_execution_schedules_project_next_run
+  ON execution_schedules (project_id, next_run_at ASC);
+
+ALTER TABLE execution_case_snapshots ADD COLUMN IF NOT EXISTS suite_parameter_values JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE execution_case_snapshots ADD COLUMN IF NOT EXISTS assigned_to TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_suite_test_cases_test_case_sort
+  ON suite_test_cases (test_case_id, sort_order);
+
+CREATE INDEX IF NOT EXISTS idx_requirement_test_cases_test_case
+  ON requirement_test_cases (test_case_id);
+
+CREATE INDEX IF NOT EXISTS idx_execution_results_execution_created_at
+  ON execution_results (execution_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_execution_results_case_created_at
+  ON execution_results (test_case_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_execution_results_app_type_created_at
+  ON execution_results (app_type_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS ai_test_case_generation_jobs (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  app_type_id TEXT NOT NULL,
+  integration_id TEXT,
+  requirement_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  max_cases_per_requirement INTEGER NOT NULL DEFAULT 8,
+  parallel_requirement_limit INTEGER NOT NULL DEFAULT 1,
+  additional_context TEXT,
+  external_links JSONB NOT NULL DEFAULT '[]'::jsonb,
+  images JSONB NOT NULL DEFAULT '[]'::jsonb,
+  status TEXT NOT NULL DEFAULT 'queued',
+  total_requirements INTEGER NOT NULL DEFAULT 0,
+  processed_requirements INTEGER NOT NULL DEFAULT 0,
+  generated_cases_count INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE ai_test_case_generation_jobs DROP CONSTRAINT IF EXISTS ai_test_case_generation_jobs_status_check;
+ALTER TABLE ai_test_case_generation_jobs
+  ADD CONSTRAINT ai_test_case_generation_jobs_status_check
+  CHECK (status IN ('queued', 'running', 'completed', 'failed'));
+
+CREATE INDEX IF NOT EXISTS idx_ai_test_case_generation_jobs_scope_status
+  ON ai_test_case_generation_jobs (app_type_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ai_test_case_generation_jobs_project_created
+  ON ai_test_case_generation_jobs (project_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_transactions_related
+  ON workspace_transactions (related_kind, related_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS workspace_transaction_events (
+  id TEXT PRIMARY KEY,
+  transaction_id TEXT NOT NULL,
+  level TEXT NOT NULL DEFAULT 'info',
+  phase TEXT,
+  message TEXT NOT NULL,
+  details JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (transaction_id) REFERENCES workspace_transactions(id) ON DELETE CASCADE
+);
+
+ALTER TABLE workspace_transaction_events DROP CONSTRAINT IF EXISTS workspace_transaction_events_level_check;
+ALTER TABLE workspace_transaction_events
+  ADD CONSTRAINT workspace_transaction_events_level_check
+  CHECK (level IN ('info', 'success', 'warning', 'error'));
+
+CREATE INDEX IF NOT EXISTS idx_workspace_transaction_events_lookup
+  ON workspace_transaction_events (transaction_id, created_at ASC);

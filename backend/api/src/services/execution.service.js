@@ -1,6 +1,8 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 const { sanitizeVariablesForRead } = require("../utils/contextVariables");
+const integrationService = require("./integration.service");
+const testEngineDispatchService = require("./testEngineDispatch.service");
 
 const DIRECT_CASE_SUITE_ID = "default";
 const DIRECT_CASE_SUITE_NAME = "Default";
@@ -960,20 +962,76 @@ exports.rerunExecution = async (id, { failed_only = false, created_by, name } = 
   return { id: nextExecutionId };
 };
 
-exports.startExecution = async (id) => {
+exports.startExecution = async (id, options = {}) => {
   const execution = await exports.getExecution(id);
+  const skipTestEngineDispatch = Boolean(options.skip_testengine_dispatch);
 
   if (execution.status !== "queued") {
     throw new Error("Only queued executions can be started");
   }
 
+  let dispatchPlan = null;
+  let testEngineIntegration = null;
+  let shouldMarkAsCi = false;
+
+  if (!skipTestEngineDispatch) {
+    dispatchPlan = await testEngineDispatchService.planExecutionDispatch(execution);
+
+    if (dispatchPlan.eligible_automated_case_count > 0) {
+      testEngineIntegration = await integrationService.getActiveIntegrationByTypeForProject("testengine", execution.project_id);
+
+      if (!testEngineIntegration) {
+        throw new Error("Configure an active Test Engine integration for this project before starting automated runs.");
+      }
+
+      shouldMarkAsCi =
+        dispatchPlan.eligible_automated_case_count > 0
+        && dispatchPlan.manual_case_count === 0
+        && dispatchPlan.unsupported_automated_case_count === 0;
+    }
+  }
+
   await db.prepare(`
     UPDATE executions
-    SET status = 'running', started_at = CURRENT_TIMESTAMP
+    SET status = 'running', started_at = CURRENT_TIMESTAMP, trigger = ?
     WHERE id = ?
-  `).run(id);
+  `).run(shouldMarkAsCi ? "ci" : execution.trigger || "manual", id);
 
-  return { started: true };
+  let dispatchSummary = {
+    automated_case_count: 0,
+    queued_for_engine_count: 0,
+    manual_case_count: Array.isArray(execution.case_snapshots) ? execution.case_snapshots.length : 0,
+    unsupported_automated_case_count: 0,
+    warnings: []
+  };
+
+  if (!skipTestEngineDispatch && dispatchPlan) {
+    try {
+      dispatchSummary = await testEngineDispatchService.queueExecutionDispatch({
+        plan: dispatchPlan,
+        integration: testEngineIntegration,
+        initiatedBy: options.initiated_by || null
+      });
+    } catch (error) {
+      dispatchSummary = {
+        automated_case_count: dispatchPlan.automated_case_count,
+        queued_for_engine_count: 0,
+        manual_case_count: dispatchPlan.manual_case_count,
+        unsupported_automated_case_count: dispatchPlan.unsupported_automated_case_count,
+        warnings: [
+          ...(dispatchPlan.warnings || []),
+          error instanceof Error
+            ? `QAira started the run, but could not queue automated handoff: ${error.message}`
+            : "QAira started the run, but could not queue automated handoff."
+        ]
+      };
+    }
+  }
+
+  return {
+    started: true,
+    ...dispatchSummary
+  };
 };
 
 exports.completeExecution = async (id, status) => {

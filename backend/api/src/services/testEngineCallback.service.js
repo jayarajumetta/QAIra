@@ -290,7 +290,7 @@ exports.handleRunCallback = async ({ headers, payload }) => {
 
   if (execution.status === "queued") {
     try {
-      await executionService.startExecution(execution.id);
+      await executionService.startExecution(execution.id, { skip_testengine_dispatch: true });
     } catch {
       // Another callback may have already moved the execution into running.
     }

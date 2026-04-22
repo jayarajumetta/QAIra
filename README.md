@@ -78,6 +78,20 @@ For a separate Test Engine EC2 host, use:
 ./release-testengine.sh
 ```
 
+If you want a push-only entrypoint with no local deploy refresh:
+
+```bash
+./push-images.sh
+```
+
+If you want the EC2 host to pull the latest git changes and refresh its stack:
+
+```bash
+./deploy-ec2.sh
+./deploy-ec2.sh --stack platform
+./deploy-ec2.sh --stack testengine
+```
+
 ## Quick start: backend only
 
 Run the backend and PostgreSQL without the frontend:

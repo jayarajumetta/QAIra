@@ -31,6 +31,7 @@ import type {
   WorkspaceTransaction,
   WorkspaceTransactionEvent
 } from "../types";
+import type { ExecutionStartResponse } from "./executionStartSummary";
 
 declare global {
   interface Window {
@@ -637,7 +638,7 @@ export const api = {
       request<{ updated: boolean }>(`/executions/${executionId}/cases/${testCaseId}/assignment`, { method: "PUT", body: JSON.stringify(input) }),
     rerun: (id: string, input: { failed_only?: boolean; created_by: string; name?: string }) =>
       request<{ id: string }>(`/executions/${id}/rerun`, { method: "POST", body: JSON.stringify(input) }),
-    start: (id: string) => request<{ started: boolean }>(`/executions/${id}/start`, { method: "POST" }),
+    start: (id: string) => request<ExecutionStartResponse>(`/executions/${id}/start`, { method: "POST" }),
     complete: (id: string, input: { status: "completed" | "failed" | "aborted" }) =>
       request<{ completed: boolean }>(`/executions/${id}/complete`, { method: "POST", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/executions/${id}`, { method: "DELETE" })

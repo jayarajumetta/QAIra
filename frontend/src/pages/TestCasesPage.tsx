@@ -63,6 +63,7 @@ import {
 } from "../lib/testCaseSourceImport";
 import { api } from "../lib/api";
 import { appendUniqueImages, parseExternalLinks, readImageFiles, toggleRequirementOnPreviewCase } from "../lib/aiDesignStudio";
+import { summarizeExecutionStart } from "../lib/executionStartSummary";
 import { upsertSharedStepGroupInCache } from "../lib/sharedStepGroupCache";
 import {
   buildCaseAutomationCode,
@@ -829,6 +830,7 @@ export function TestCasesPage() {
     mutationFn: ({ id, testCaseIds }: { id: string; testCaseIds: string[] }) => api.testSuites.assignTestCases(id, testCaseIds)
   });
   const createExecution = useMutation({ mutationFn: api.executions.create });
+  const startExecution = useMutation({ mutationFn: api.executions.start });
   const acceptGeneratedCase = useMutation({ mutationFn: api.testCases.acceptGeneratedCase });
   const rejectGeneratedCase = useMutation({ mutationFn: api.testCases.rejectGeneratedCase });
   const updateTestCase = useMutation({
@@ -3578,6 +3580,19 @@ export function TestCasesPage() {
         name: `${testCase.title} Run`,
         created_by: session.user.id
       });
+
+      try {
+        const startResponse = await startExecution.mutateAsync(response.id);
+        showSuccess(summarizeExecutionStart(startResponse, `${testCase.title} run started.`));
+      } catch (error) {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["executions"] }),
+          queryClient.invalidateQueries({ queryKey: ["executions", projectId] })
+        ]);
+        navigate(`/executions?execution=${response.id}&testCase=${testCaseId}`);
+        showError(error, "Run created, but QAira could not start it");
+        return;
+      }
 
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["executions"] }),

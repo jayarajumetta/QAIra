@@ -561,3 +561,340 @@ INSERT INTO feedback (id, user_id, title, message, status) VALUES
 ('fb1', 'u1', 'Bulk import flow', 'Would love a CSV import for requirements and test cases.', 'open'),
 ('fb2', 'u2', 'Execution notes', 'A dedicated notes area during execution would help triage faster.', 'reviewed'),
 ('fb3', 'u1', 'Mobile sync optimization', 'Sync performance needs improvement for large datasets.', 'open');
+
+-- =========================
+-- RUNTIME SEED ENHANCEMENTS
+-- =========================
+
+UPDATE users
+SET
+  is_workspace_admin = CASE WHEN id = 'u1' THEN TRUE ELSE FALSE END,
+  auth_provider = 'local',
+  email_verified = TRUE;
+
+WITH ordered_projects AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY created_at ASC NULLS LAST, id ASC) AS seq
+  FROM projects
+)
+UPDATE projects
+SET display_id = 'PROJ-' || ordered_projects.seq
+FROM ordered_projects
+WHERE projects.id = ordered_projects.id;
+
+WITH ordered_requirements AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY created_at ASC NULLS LAST, id ASC) AS seq
+  FROM requirements
+)
+UPDATE requirements
+SET
+  display_id = 'Req_' || ordered_requirements.seq,
+  created_by = COALESCE(created_by, 'u1'),
+  updated_by = COALESCE(updated_by, 'u1'),
+  updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)
+FROM ordered_requirements
+WHERE requirements.id = ordered_requirements.id;
+
+WITH ordered_suites AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY created_at ASC NULLS LAST, id ASC) AS seq
+  FROM test_suites
+)
+UPDATE test_suites
+SET
+  display_id = 'TS-' || ordered_suites.seq,
+  parameter_values = COALESCE(parameter_values, '{}'::jsonb),
+  created_by = COALESCE(created_by, 'u1'),
+  updated_by = COALESCE(updated_by, 'u1'),
+  updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)
+FROM ordered_suites
+WHERE test_suites.id = ordered_suites.id;
+
+WITH ordered_cases AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY created_at ASC NULLS LAST, id ASC) AS seq
+  FROM test_cases
+)
+UPDATE test_cases
+SET
+  display_id = 'TC_' || ordered_cases.seq,
+  parameter_values = COALESCE(parameter_values, '{}'::jsonb),
+  created_by = COALESCE(created_by, 'u1'),
+  updated_by = COALESCE(updated_by, 'u1'),
+  updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)
+FROM ordered_cases
+WHERE test_cases.id = ordered_cases.id;
+
+UPDATE test_cases
+SET automated = 'yes'
+WHERE app_type_id = 'a2'
+   OR id IN ('tc_web_1_1', 'tc_web_2_1', 'tc_android_1_1', 'tc_ios_1_1', 'tc_unified_1_1');
+
+UPDATE test_steps
+SET step_type = CASE
+  WHEN LOWER(COALESCE(BTRIM(app_types.type), '')) = 'api' THEN 'api'
+  WHEN LOWER(COALESCE(BTRIM(app_types.type), '')) = 'android' THEN 'android'
+  WHEN LOWER(COALESCE(BTRIM(app_types.type), '')) = 'ios' THEN 'ios'
+  ELSE 'web'
+END
+FROM test_cases
+JOIN app_types ON app_types.id = test_cases.app_type_id
+WHERE test_steps.test_case_id = test_cases.id
+  AND (test_steps.step_type IS NULL OR BTRIM(test_steps.step_type) = '');
+
+INSERT INTO shared_step_groups (id, display_id, app_type_id, name, description, steps, created_by, updated_by)
+VALUES (
+  'sg1',
+  'SG-1',
+  'a1',
+  'Reusable portal login',
+  'Starter shared group for the main web portal authentication path.',
+  '[
+    {"step_order":1,"action":"Open web portal","expected_result":"Login page displayed","step_type":"web","automation_code":null,"api_request":null},
+    {"step_order":2,"action":"Enter credentials","expected_result":"Credentials accepted","step_type":"web","automation_code":null,"api_request":null},
+    {"step_order":3,"action":"Submit login","expected_result":"Dashboard loads successfully","step_type":"web","automation_code":null,"api_request":null}
+  ]'::jsonb,
+  'u1',
+  'u1'
+);
+
+INSERT INTO test_environments (id, project_id, app_type_id, name, description, base_url, browser, notes, variables)
+VALUES (
+  'env_web_1',
+  'p1',
+  'a1',
+  'QA Web Environment',
+  'Primary QA environment for the SAP PM web portal.',
+  'https://qa.sap-pm.example.com',
+  'Chrome',
+  'Seeded environment for scheduled runs and execution context.',
+  '[
+    {"key":"base_url","value":"https://qa.sap-pm.example.com"},
+    {"key":"tenant","value":"QA"},
+    {"key":"username","value":"technician.qa","is_secret":false}
+  ]'::jsonb
+);
+
+INSERT INTO test_configurations (id, project_id, app_type_id, name, description, browser, mobile_os, platform_version, variables)
+VALUES (
+  'cfg_web_1',
+  'p1',
+  'a1',
+  'Chrome Latest',
+  'Standard desktop browser configuration for the QA portal.',
+  'Chrome',
+  NULL,
+  NULL,
+  '[
+    {"key":"viewport","value":"1440x900"},
+    {"key":"locale","value":"en-US"}
+  ]'::jsonb
+);
+
+INSERT INTO test_data_sets (id, project_id, app_type_id, name, description, mode, columns, rows)
+VALUES (
+  'tds_web_1',
+  'p1',
+  'a1',
+  'Portal Smoke Credentials',
+  'Key smoke users and order identifiers for the QA portal.',
+  'table',
+  '["username","password","orderId"]'::jsonb,
+  '[
+    {"username":"technician.qa","password":"demo-pass","orderId":"PM-1001"},
+    {"username":"planner.qa","password":"demo-pass","orderId":"PM-1002"}
+  ]'::jsonb
+);
+
+UPDATE executions
+SET
+  test_environment_id = 'env_web_1',
+  test_environment_name = 'QA Web Environment',
+  test_environment_snapshot = '{
+    "id":"env_web_1",
+    "name":"QA Web Environment",
+    "description":"Primary QA environment for the SAP PM web portal.",
+    "base_url":"https://qa.sap-pm.example.com",
+    "browser":"Chrome",
+    "notes":"Seeded environment for scheduled runs and execution context.",
+    "variables":[
+      {"key":"base_url","value":"https://qa.sap-pm.example.com"},
+      {"key":"tenant","value":"QA"},
+      {"key":"username","value":"technician.qa","is_secret":false}
+    ]
+  }'::jsonb,
+  test_configuration_id = 'cfg_web_1',
+  test_configuration_name = 'Chrome Latest',
+  test_configuration_snapshot = '{
+    "id":"cfg_web_1",
+    "name":"Chrome Latest",
+    "description":"Standard desktop browser configuration for the QA portal.",
+    "browser":"Chrome",
+    "mobile_os":null,
+    "platform_version":null,
+    "variables":[
+      {"key":"viewport","value":"1440x900"},
+      {"key":"locale","value":"en-US"}
+    ]
+  }'::jsonb,
+  test_data_set_id = 'tds_web_1',
+  test_data_set_name = 'Portal Smoke Credentials',
+  test_data_set_snapshot = '{
+    "id":"tds_web_1",
+    "name":"Portal Smoke Credentials",
+    "description":"Key smoke users and order identifiers for the QA portal.",
+    "mode":"table",
+    "columns":["username","password","orderId"],
+    "rows":[
+      {"username":"technician.qa","password":"demo-pass","orderId":"PM-1001"},
+      {"username":"planner.qa","password":"demo-pass","orderId":"PM-1002"}
+    ]
+  }'::jsonb,
+  assigned_to = 'u2'
+WHERE id = 'exec_web_3';
+
+INSERT INTO execution_schedules (
+  id,
+  project_id,
+  app_type_id,
+  name,
+  cadence,
+  next_run_at,
+  suite_ids,
+  test_case_ids,
+  test_environment_id,
+  test_configuration_id,
+  test_data_set_id,
+  assigned_to,
+  created_by,
+  is_active
+)
+VALUES (
+  'sched1',
+  'p1',
+  'a1',
+  'Weekly web smoke run',
+  'weekly',
+  CURRENT_TIMESTAMP + INTERVAL '2 days',
+  '["ts_web_1","ts_web_2"]'::jsonb,
+  '[]'::jsonb,
+  'env_web_1',
+  'cfg_web_1',
+  'tds_web_1',
+  'u2',
+  'u1',
+  TRUE
+);
+
+INSERT INTO ai_test_case_generation_jobs (
+  id,
+  project_id,
+  app_type_id,
+  integration_id,
+  requirement_ids,
+  max_cases_per_requirement,
+  parallel_requirement_limit,
+  additional_context,
+  external_links,
+  images,
+  status,
+  total_requirements,
+  processed_requirements,
+  generated_cases_count,
+  error,
+  created_by,
+  created_at,
+  started_at,
+  completed_at,
+  updated_at
+)
+VALUES (
+  'aijob1',
+  'p1',
+  'a1',
+  NULL,
+  '["req1","req2"]'::jsonb,
+  4,
+  1,
+  'Seeded example of scheduler-generated coverage for the main web smoke area.',
+  '[]'::jsonb,
+  '[]'::jsonb,
+  'completed',
+  2,
+  2,
+  2,
+  NULL,
+  'u1',
+  CURRENT_TIMESTAMP - INTERVAL '7 days',
+  CURRENT_TIMESTAMP - INTERVAL '7 days',
+  CURRENT_TIMESTAMP - INTERVAL '7 days' + INTERVAL '12 minutes',
+  CURRENT_TIMESTAMP - INTERVAL '7 days' + INTERVAL '12 minutes'
+);
+
+UPDATE test_cases
+SET
+  ai_generation_source = 'scheduler',
+  ai_generation_review_status = 'accepted',
+  ai_generation_job_id = 'aijob1',
+  ai_generated_at = CURRENT_TIMESTAMP - INTERVAL '7 days',
+  automated = 'yes'
+WHERE id IN ('tc_web_1_2', 'tc_web_2_4');
+
+INSERT INTO workspace_transactions (
+  id,
+  project_id,
+  app_type_id,
+  category,
+  action,
+  status,
+  title,
+  description,
+  metadata,
+  related_kind,
+  related_id,
+  created_by,
+  started_at,
+  completed_at,
+  created_at,
+  updated_at
+)
+VALUES (
+  'wt1',
+  'p1',
+  'a1',
+  'ai_generation',
+  'scheduled_test_case_generation',
+  'completed',
+  'Scheduled AI test case generation',
+  'Seeded operation showing accepted AI-generated coverage for web smoke scenarios.',
+  '{
+    "requirement_count":2,
+    "processed_requirements":2,
+    "generated_cases_count":2
+  }'::jsonb,
+  'ai_test_case_generation_job',
+  'aijob1',
+  'u1',
+  CURRENT_TIMESTAMP - INTERVAL '7 days',
+  CURRENT_TIMESTAMP - INTERVAL '7 days' + INTERVAL '12 minutes',
+  CURRENT_TIMESTAMP - INTERVAL '7 days',
+  CURRENT_TIMESTAMP - INTERVAL '7 days' + INTERVAL '12 minutes'
+);
+
+INSERT INTO workspace_transaction_events (id, transaction_id, level, phase, message, details, created_at)
+VALUES
+(
+  'wte1',
+  'wt1',
+  'info',
+  'run',
+  'Processing 2 requirements with 1 worker.',
+  '{"requirement_count":2,"worker_count":1}'::jsonb,
+  CURRENT_TIMESTAMP - INTERVAL '7 days'
+),
+(
+  'wte2',
+  'wt1',
+  'success',
+  'complete',
+  'Generated 2 AI test cases across 2 requirements.',
+  '{"processed_requirements":2,"generated_cases_count":2}'::jsonb,
+  CURRENT_TIMESTAMP - INTERVAL '7 days' + INTERVAL '12 minutes'
+);
