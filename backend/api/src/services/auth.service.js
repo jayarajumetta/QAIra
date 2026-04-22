@@ -45,20 +45,25 @@ const generatePlaceholderPassword = () => {
 
 const getSessionRole = async (id) => {
   const row = await db.prepare(`
-    SELECT roles.name
-    FROM project_members
-    JOIN roles ON roles.id = project_members.role_id
-    WHERE project_members.user_id = ?
-    ORDER BY CASE roles.name WHEN 'admin' THEN 0 ELSE 1 END
-    LIMIT 1
+    SELECT
+      COALESCE(users.is_workspace_admin, FALSE) AS is_workspace_admin,
+      EXISTS (
+        SELECT 1
+        FROM project_members
+        JOIN roles ON roles.id = project_members.role_id
+        WHERE project_members.user_id = users.id
+          AND LOWER(roles.name) = 'admin'
+      ) AS has_admin_membership
+    FROM users
+    WHERE users.id = ?
   `).get(id);
 
-  return row?.name || "member";
+  return row?.is_workspace_admin || row?.has_admin_membership ? "admin" : "member";
 };
 
 const selectUserForSession = async (id) => {
   const user = await db.prepare(`
-    SELECT id, email, name, avatar_data_url, auth_provider, email_verified, created_at
+    SELECT id, email, name, avatar_data_url, auth_provider, email_verified, created_at, is_workspace_admin
     FROM users
     WHERE id = ?
   `).get(id);
@@ -67,8 +72,10 @@ const selectUserForSession = async (id) => {
     return null;
   }
 
+  const { is_workspace_admin, ...rest } = user;
+
   return {
-    ...user,
+    ...rest,
     role: await getSessionRole(id)
   };
 };

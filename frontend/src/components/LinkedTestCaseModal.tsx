@@ -108,8 +108,8 @@ export function LinkedTestCaseModal({
     ? `Starts with: ${steps[0]?.action || steps[0]?.expected_result || "No step preview yet."}`
     : "No steps added yet for this reusable test case.";
   const historySummary = history.length
-    ? "Review the latest recorded outcomes and preserved execution evidence for this reusable test case."
-    : "No execution history has been recorded for this reusable test case yet.";
+    ? "Review the latest recorded outcomes and preserved run evidence for this reusable test case."
+    : "No run history has been recorded for this reusable test case yet.";
   const parameterDialogHeaderContent = (
     <div className="step-parameter-dialog-context">
       <div className="step-parameter-dialog-context-card">
@@ -276,18 +276,18 @@ export function LinkedTestCaseModal({
                         isExpanded={expandedSections.history}
                         onToggle={() => setExpandedSections((current) => ({ ...current, history: !current.history }))}
                         summary={historySummary}
-                        title="Execution history"
+                        title="Run history"
                       >
                         <div className="stack-list">
-                          {historyQuery.isLoading ? <div className="empty-state compact">Loading execution history…</div> : null}
+                          {historyQuery.isLoading ? <div className="empty-state compact">Loading run history…</div> : null}
                           {!historyQuery.isLoading && history.map((result) => {
                             const historyDetail =
                               result.error ||
                               (result.status === "passed"
-                                ? "Passed in this execution snapshot."
+                                ? "Passed in this run snapshot."
                                 : result.status === "failed"
-                                  ? "Failed in this execution snapshot."
-                                  : "Blocked in this execution snapshot.");
+                                  ? "Failed in this run snapshot."
+                                  : "Blocked in this run snapshot.");
 
                             return (
                               <div className="stack-item execution-history-item" key={result.id}>
@@ -299,7 +299,7 @@ export function LinkedTestCaseModal({
                               </div>
                             );
                           })}
-                          {!historyQuery.isLoading && !history.length ? <div className="empty-state compact">No execution history yet for this test case.</div> : null}
+                          {!historyQuery.isLoading && !history.length ? <div className="empty-state compact">No run history yet for this test case.</div> : null}
                         </div>
                       </LinkedTestCaseSection>
                     </div>

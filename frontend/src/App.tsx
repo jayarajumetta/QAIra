@@ -41,7 +41,7 @@ const PAGE_TITLES: Record<string, { key?: string; fallback: string }> = {
   "/settings": { key: "page.settings", fallback: "Settings" },
   "/test-cases": { key: "page.testCases", fallback: "Test Cases" },
   "/shared-steps": { key: "page.sharedSteps", fallback: "Shared Step Groups" },
-  "/executions": { key: "page.executions", fallback: "Executions" },
+  "/executions": { key: "page.executions", fallback: "Test Runs" },
   "/test-environments": { key: "page.testEnvironments", fallback: "Test Environments" },
   "/test-data": { key: "page.testData", fallback: "Test Data" },
   "/test-configurations": { key: "page.testConfigurations", fallback: "Test Configurations" },

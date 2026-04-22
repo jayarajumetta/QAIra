@@ -42,8 +42,23 @@ const statements = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_data_url TEXT`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_workspace_admin BOOLEAN NOT NULL DEFAULT FALSE`,
   `UPDATE users SET auth_provider = 'local' WHERE auth_provider IS NULL OR TRIM(auth_provider) = ''`,
+  `
+    UPDATE users
+    SET is_workspace_admin = TRUE
+    WHERE COALESCE(is_workspace_admin, FALSE) = FALSE
+      AND EXISTS (
+        SELECT 1
+        FROM project_members
+        JOIN roles ON roles.id = project_members.role_id
+        WHERE project_members.user_id = users.id
+          AND LOWER(roles.name) = 'admin'
+      )
+  `,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub_unique ON users (google_sub) WHERE google_sub IS NOT NULL`,
+  `ALTER TABLE feedback DROP CONSTRAINT IF EXISTS feedback_user_id_fkey`,
+  `ALTER TABLE feedback ADD CONSTRAINT feedback_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
   `
     CREATE TABLE IF NOT EXISTS auth_verification_codes (
       id TEXT PRIMARY KEY,

@@ -301,10 +301,10 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
     view === "environments" ? "Create test environment" : view === "configurations" ? "Create configuration" : "Create test data";
   const currentViewDescription =
     view === "environments"
-      ? "Keep execution targets, URLs, and reusable environment variables organized by project and app type."
+      ? "Keep run targets, URLs, and reusable environment variables organized by project and app type."
       : view === "configurations"
         ? "Maintain reusable browser, device, and platform combinations so runs stay consistent."
-        : "Store spreadsheet-style data and key/value sets that can be attached to executions on demand.";
+        : "Store spreadsheet-style data and key/value sets that can be attached to runs on demand.";
   const currentViewCount = view === "environments" ? environments.length : view === "configurations" ? configurations.length : dataSets.length;
 
   const showSuccess = (text: string) => {
@@ -604,7 +604,7 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
     <div className="page-content">
       <PageHeader
         eyebrow="Test Environment"
-        title="Execution context workspace"
+        title="Run context workspace"
         description={currentViewDescription}
         meta={[
           { label: "Records", value: currentViewCount },
@@ -641,7 +641,7 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
       {view === "environments" ? (
         <WorkspaceMasterDetail
           browseView={(
-            <Panel title="Environment tiles" subtitle="Browse execution targets as tiles first, then open one environment into a focused editor.">
+            <Panel title="Environment tiles" subtitle="Browse run targets as tiles first, then open one environment into a focused editor.">
               <TileBrowserPane className="test-environment-list">
                 {environmentsQuery.isLoading ? <TileCardSkeletonGrid /> : null}
                 {!environmentsQuery.isLoading && environments.length ? (
@@ -679,7 +679,7 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
             <Panel
               actions={<WorkspaceBackButton label="Back to environment tiles" onClick={closeResourceWorkspace} />}
               title="Selected environment"
-              subtitle={selectedEnvironment ? "Refine the target without leaving the list." : "Create an environment to start reusing execution targets."}
+              subtitle={selectedEnvironment ? "Refine the target without leaving the list." : "Create an environment to start reusing run targets."}
             >
               {selectedEnvironment ? (
                 <EnvironmentForm
@@ -740,7 +740,7 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
             <Panel
               actions={<WorkspaceBackButton label="Back to configuration tiles" onClick={closeResourceWorkspace} />}
               title="Selected configuration"
-              subtitle={selectedConfiguration ? "Update the reusable execution settings in place." : "Create a configuration to start reusing it in runs."}
+              subtitle={selectedConfiguration ? "Update the reusable run settings in place." : "Create a configuration to start reusing it in runs."}
             >
               {selectedConfiguration ? (
                 <ConfigurationForm
@@ -803,7 +803,7 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
             <Panel
               actions={<WorkspaceBackButton label="Back to test data tiles" onClick={closeResourceWorkspace} />}
               title="Selected test data"
-              subtitle={selectedDataSet ? "Maintain reusable execution data without leaving the workspace." : "Create a test data set to start attaching data to executions."}
+              subtitle={selectedDataSet ? "Maintain reusable run data without leaving the workspace." : "Create a test data set to start attaching data to runs."}
             >
               {selectedDataSet ? (
                 <DataSetForm

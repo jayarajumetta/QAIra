@@ -1275,7 +1275,14 @@ export function SharedStepsPage() {
                 />
               ) : null}
               {!sharedGroupsQuery.isLoading && !filteredGroups.length ? (
-                <div className="empty-state compact">{sharedGroups.length ? "No shared groups match the current search." : "No shared step groups exist for this app type yet."}</div>
+                sharedGroups.length ? (
+                  <div className="empty-state compact">No shared groups match the current search.</div>
+                ) : (
+                  <div className="empty-state compact">
+                    <div>No shared step groups exist for this app type yet.</div>
+                    <button className="primary-button" disabled={!appTypeId} onClick={beginCreateGroup} type="button">Create first group</button>
+                  </div>
+                )
               ) : null}
             </TileBrowserPane>
           </Panel>
@@ -1360,7 +1367,12 @@ export function SharedStepsPage() {
                       ) : null}
 
                       {!groupDraft.steps.length ? (
-                        <div className="empty-state compact">No shared steps yet. Add at least one step so this group is useful across cases.</div>
+                        <div className="empty-state compact">
+                          <div>No shared steps yet. Add at least one step so this group is useful across cases.</div>
+                          {stepInsertIndex === null ? (
+                            <button className="ghost-button" onClick={() => activateStepInsert(0)} type="button">Add first step</button>
+                          ) : null}
+                        </div>
                       ) : null}
 
                       <div className="action-row step-editor-toolbar">
@@ -1949,7 +1961,7 @@ function InlineSharedGroupStepInsertSlot({
       ) : (
         <form className="step-create step-create--inline" onSubmit={onSubmit}>
           <div className="step-card-summary-top">
-            <span aria-label="Shared step" className="step-kind-badge is-standard" title="Shared step">
+            <span aria-label="Shared step" className="step-kind-badge is-shared" title="Shared step">
               <StandardStepIcon />
             </span>
             <strong>{index === 0 ? "+ Add Shared Step" : "+ Insert Shared Step"}</strong>
@@ -2109,7 +2121,7 @@ function SharedGroupDraftStepCard({
           <div className="step-card-summary">
             <div className="step-card-summary-row">
               <div className="step-card-summary-top">
-                <span aria-label={stepLabel} className="step-kind-badge is-standard" title={stepLabel}>
+                <span aria-label={stepLabel} className="step-kind-badge is-shared" title={stepLabel}>
                   <StandardStepIcon />
                 </span>
                 <strong>Step {stepNumber}</strong>

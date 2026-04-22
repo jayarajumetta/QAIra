@@ -308,7 +308,7 @@ const readExecutionEvidenceImage = (file: File) =>
     }
 
     if (file.size > MAX_EXECUTION_EVIDENCE_IMAGE_BYTES) {
-      reject(new Error("Evidence images must be 3 MB or smaller because they are stored directly in the execution record."));
+      reject(new Error("Evidence images must be 3 MB or smaller because they are stored directly in the run record."));
       return;
     }
 
@@ -318,7 +318,7 @@ const readExecutionEvidenceImage = (file: File) =>
       const dataUrl = String(reader.result || "");
 
       if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(dataUrl)) {
-        reject(new Error("Unable to encode the selected image for execution evidence."));
+        reject(new Error("Unable to encode the selected image for run evidence."));
         return;
       }
 
@@ -852,12 +852,18 @@ export function ExecutionsPage() {
       return;
     }
 
-    if (selectedOperationId && workspaceTransactions.some((transaction) => transaction.id === selectedOperationId)) {
+    if (selectedOperationId && filteredWorkspaceTransactions.some((transaction) => transaction.id === selectedOperationId)) {
       return;
     }
 
-    setSelectedOperationId(workspaceTransactions[0]?.id || "");
-  }, [selectedOperationId, testRunsView, workspaceTransactions]);
+    setSelectedOperationId(filteredWorkspaceTransactions[0]?.id || workspaceTransactions[0]?.id || "");
+  }, [filteredWorkspaceTransactions, selectedOperationId, testRunsView, workspaceTransactions]);
+
+  useEffect(() => {
+    if (testRunsView === "operations" && catalogViewMode !== "list") {
+      setCatalogViewMode("list");
+    }
+  }, [catalogViewMode, testRunsView]);
 
   useEffect(() => {
     if (testRunsView !== "scheduled") {
@@ -1542,11 +1548,11 @@ export function ExecutionsPage() {
       await refreshExecutionScope(selectedExecution.id);
       showSuccess(
         executionAssignmentDraft
-          ? "Execution assignee updated. Unoverridden test cases now follow this owner."
-          : "Execution assignee cleared."
+          ? "Run assignee updated. Unoverridden test cases now follow this owner."
+          : "Run assignee cleared."
       );
     } catch (error) {
-      showError(error, "Unable to update execution assignee");
+      showError(error, "Unable to update run assignee");
     }
   };
 
@@ -1564,9 +1570,9 @@ export function ExecutionsPage() {
       await refreshExecutionScope(selectedExecution.id);
       showSuccess(
         caseAssignmentDraft
-          ? "Test case assignee updated for this execution."
+          ? "Test case assignee updated for this run."
           : selectedExecution.assigned_user
-            ? "Test case assignee reset to the execution owner."
+            ? "Test case assignee reset to the run owner."
             : "Test case assignee cleared."
       );
     } catch (error) {
@@ -1580,7 +1586,7 @@ export function ExecutionsPage() {
     }
 
     const status = mode === "abort" ? "aborted" : executionProgress.failedCount ? "failed" : "completed";
-    const failureMessage = mode === "abort" ? "Unable to abort execution" : "Unable to complete execution";
+    const failureMessage = mode === "abort" ? "Unable to abort run" : "Unable to complete run";
 
     setExecutionFinalizeAction(mode);
 
@@ -1597,7 +1603,7 @@ export function ExecutionsPage() {
   const handlePreviewSmartExecution = async () => {
     if (!projectId || !appTypeId) {
       setSmartExecutionPreviewTone("error");
-      setSmartExecutionPreviewMessage("Choose a project and app type before generating an AI smart execution.");
+      setSmartExecutionPreviewMessage("Choose a project and app type before generating an AI smart run.");
       return;
     }
 
@@ -1632,7 +1638,7 @@ export function ExecutionsPage() {
     } catch (error) {
       resetSmartExecutionPreview();
       setSmartExecutionPreviewTone("error");
-      setSmartExecutionPreviewMessage(error instanceof Error ? error.message : "Unable to generate a smart execution preview");
+      setSmartExecutionPreviewMessage(error instanceof Error ? error.message : "Unable to generate a smart run preview");
     }
   };
 
@@ -1641,7 +1647,7 @@ export function ExecutionsPage() {
 
     if (!session?.user.id) {
       setMessageTone("error");
-      setMessage("You need an active session before creating an execution.");
+      setMessage("You need an active session before creating a run.");
       return;
     }
 
@@ -1649,7 +1655,7 @@ export function ExecutionsPage() {
 
     if (executionCreateMode === "smart" && !selectedSmartCaseIds.length) {
       setMessageTone("error");
-      setMessage("Select at least one impacted test case before creating an AI smart execution.");
+      setMessage("Select at least one impacted test case before creating an AI smart run.");
       return;
     }
 
@@ -1672,12 +1678,12 @@ export function ExecutionsPage() {
       setFocusedSuiteId("");
       showSuccess(
         executionCreateMode === "smart"
-          ? `AI smart execution created with ${selectedSmartCaseIds.length} impacted case${selectedSmartCaseIds.length === 1 ? "" : "s"} under Default.`
-          : "Execution created from a snapshot of the selected suites."
+          ? `AI smart run created with ${selectedSmartCaseIds.length} impacted case${selectedSmartCaseIds.length === 1 ? "" : "s"} under Default.`
+          : "Run created from a snapshot of the selected suites."
       );
       await refreshExecutionScope(response.id);
     } catch (error) {
-      showError(error, "Unable to create execution");
+      showError(error, "Unable to create run");
     }
   };
 
@@ -1759,7 +1765,7 @@ export function ExecutionsPage() {
       if (editingScheduleId) {
         setSelectedScheduleId(editingScheduleId);
       }
-      showSuccess(scheduleModalMode === "edit" ? "Scheduled execution updated." : "Scheduled execution created.");
+      showSuccess(scheduleModalMode === "edit" ? "Scheduled run updated." : "Scheduled run created.");
     } catch (error) {
       showError(error, scheduleModalMode === "edit" ? "Unable to update schedule" : "Unable to create schedule");
     }
@@ -1781,9 +1787,9 @@ export function ExecutionsPage() {
 
       focusExecution(response.id);
       await refreshExecutionScope(response.id);
-      showSuccess(failedOnly ? "Failed cases were queued into a fresh rerun execution." : "A fresh rerun execution was created with the same execution context.");
+      showSuccess(failedOnly ? "Failed cases were queued into a fresh rerun run." : "A fresh rerun was created with the same run context.");
     } catch (error) {
-      showError(error, failedOnly ? "Unable to rerun failed cases" : "Unable to rerun execution");
+      showError(error, failedOnly ? "Unable to rerun failed cases" : "Unable to create rerun");
     }
   };
 
@@ -1801,7 +1807,7 @@ export function ExecutionsPage() {
       setTestRunsView("executions");
       focusExecution(response.id);
       await Promise.all([refreshExecutionScope(response.id), refreshExecutionSchedules()]);
-      showSuccess("Scheduled execution was launched as a fresh run.");
+      showSuccess("Scheduled run was launched as a fresh run.");
     } catch (error) {
       showError(error, "Unable to run the schedule");
     }
@@ -1818,7 +1824,7 @@ export function ExecutionsPage() {
         setSelectedScheduleId("");
       }
       await refreshExecutionSchedules();
-      showSuccess("Scheduled execution removed.");
+      showSuccess("Scheduled run removed.");
     } catch (error) {
       showError(error, "Unable to delete schedule");
     }
@@ -1862,7 +1868,7 @@ export function ExecutionsPage() {
           status: aggregateStatus,
           duration_ms: durationMs ?? undefined,
           logs,
-          error: aggregateStatus === "failed" ? "Step failed during execution" : ""
+          error: aggregateStatus === "failed" ? "Step failed during run" : ""
         }
       });
       queryClient.setQueryData<ExecutionResult[]>(["execution-results", selectedExecution.id], (current = []) =>
@@ -1873,7 +1879,7 @@ export function ExecutionsPage() {
                 status: aggregateStatus,
                 duration_ms: durationMs,
                 logs,
-                error: aggregateStatus === "failed" ? "Step failed during execution" : null
+                error: aggregateStatus === "failed" ? "Step failed during run" : null
               }
             : item
         )
@@ -1896,7 +1902,7 @@ export function ExecutionsPage() {
       status: aggregateStatus,
       duration_ms: durationMs ?? undefined,
       logs,
-      error: aggregateStatus === "failed" ? "Step failed during execution" : undefined,
+      error: aggregateStatus === "failed" ? "Step failed during run" : undefined,
       executed_by: session!.user.id
     });
 
@@ -1911,7 +1917,7 @@ export function ExecutionsPage() {
         app_type_id: scopedAppTypeId,
         status: aggregateStatus,
         duration_ms: durationMs,
-        error: aggregateStatus === "failed" ? "Step failed during execution" : null,
+        error: aggregateStatus === "failed" ? "Step failed during run" : null,
         logs,
         executed_by: session!.user.id
       },
@@ -2040,7 +2046,7 @@ export function ExecutionsPage() {
 
     setCodePreviewState({
       title: `${selectedExecutionCase?.title || "Selected case"} automation`,
-      subtitle: "Execution snapshots are read-only here. Update the source test case or shared group to change this code.",
+      subtitle: "Run snapshots are read-only here. Update the source test case or shared group to change this code.",
       code: buildCaseAutomationCode(selectedExecutionCase?.title || "Selected case", selectedSteps)
     });
   };
@@ -2048,7 +2054,7 @@ export function ExecutionsPage() {
   const openExecutionGroupAutomationPreview = (groupName: string, steps: TestStep[]) => {
     setCodePreviewState({
       title: `${groupName} automation`,
-      subtitle: "This is the snapped automation for the selected execution.",
+      subtitle: "This is the snapped automation for the selected run.",
       code: buildGroupAutomationCode(groupName, steps)
     });
   };
@@ -2056,7 +2062,7 @@ export function ExecutionsPage() {
   const openExecutionStepAutomationPreview = (step: TestStep) => {
     setCodePreviewState({
       title: `Step ${step.step_order} automation`,
-      subtitle: "Execution snapshots are read-only. This preview reflects the preserved step automation for this run.",
+      subtitle: "Run snapshots are read-only. This preview reflects the preserved step automation for this run.",
       code: resolveStepAutomationCode(step)
     });
   };
@@ -2197,10 +2203,10 @@ export function ExecutionsPage() {
   const hasExecutionAssignmentChange = executionAssignmentDraft !== (selectedExecution?.assigned_to || "");
   const hasCaseAssignmentChange = caseAssignmentDraft !== selectedExecutionCaseExplicitAssigneeId;
   const selectedExecutionCaseAssignmentHint = selectedExecutionCase?.assigned_to
-    ? "This case has its own execution-level assignee override."
+    ? "This case has its own run-level assignee override."
     : selectedExecution?.assigned_user
-      ? `This case is currently following ${resolveUserPrimaryLabel(selectedExecution.assigned_user)} from the execution.`
-      : "No assignee is set yet for this execution or this case.";
+      ? `This case is currently following ${resolveUserPrimaryLabel(selectedExecution.assigned_user)} from the run.`
+      : "No assignee is set yet for this run or this case.";
   const remainingCaseCount = Math.max(executionProgress.totalCases - executionProgress.completedCases, 0);
   const selectedCaseStatusLabel = selectedExecutionCase ? caseDerivedStatus(selectedExecutionCase) : executionProgress.derivedStatus;
   const activeExecutionStage = selectedExecutionCase ? "case" : selectedExecution ? "suites" : "executions";
@@ -2212,20 +2218,20 @@ export function ExecutionsPage() {
         : !selectedExecution;
   const executionControlTitle =
     currentExecutionStatus === "running"
-      ? "Execution is live"
+      ? "Run is live"
       : currentExecutionStatus === "queued"
-        ? "Execution ready to start"
+        ? "Run ready to start"
         : currentExecutionStatus === "aborted"
-          ? "Execution was aborted"
-          : "Execution locked";
+          ? "Run was aborted"
+          : "Run locked";
   const executionControlDescription =
     currentExecutionStatus === "running"
       ? `${formatDuration(selectedExecutionDurationMs, DEFAULT_DURATION_LABEL)} elapsed across the run.`
       : currentExecutionStatus === "queued"
         ? "Start the run before step-level result capture."
         : currentExecutionStatus === "aborted"
-          ? "This execution was stopped early. Captured evidence remains available for review."
-          : "This execution has been completed. Evidence remains available for review.";
+          ? "This run was stopped early. Captured evidence remains available for review."
+          : "This run has been completed. Evidence remains available for review.";
 
   const closeExecutionDrilldown = () => {
     setSelectedExecutionId("");
@@ -2307,9 +2313,9 @@ export function ExecutionsPage() {
   const executionListColumns = useMemo<Array<DataTableColumn<Execution>>>(() => [
     {
       key: "execution",
-      label: "Execution",
+      label: "Run",
       canToggle: false,
-      render: (execution) => <strong>{execution.name || "Unnamed execution"}</strong>
+      render: (execution) => <strong>{execution.name || "Unnamed run"}</strong>
     },
     {
       key: "trigger",
@@ -2381,7 +2387,7 @@ export function ExecutionsPage() {
               actions={[
                 {
                   label: "Open run",
-                  description: "Open this execution and review its evidence.",
+                  description: "Open this run and review its evidence.",
                   icon: <OpenIcon />,
                   onClick: () => {
                     setTestRunsView("executions");
@@ -2389,8 +2395,8 @@ export function ExecutionsPage() {
                   }
                 },
                 {
-                  label: "Rerun execution",
-                  description: "Create a fresh execution with the same scope.",
+                  label: "Rerun all",
+                  description: "Create a fresh run with the same scope.",
                   icon: <PlayIcon />,
                   onClick: () => void handleRerunExecutionItem(execution, false),
                   disabled: !session?.user.id || rerunExecution.isPending
@@ -2405,7 +2411,7 @@ export function ExecutionsPage() {
                   disabled: !session?.user.id || !summary.failed || rerunExecution.isPending
                 }
               ]}
-              label={`${execution.name || "Execution"} actions`}
+              label={`${execution.name || "Run"} actions`}
             />
           </div>
         );
@@ -2480,13 +2486,13 @@ export function ExecutionsPage() {
               },
               {
                 label: "Run now",
-                description: "Launch this schedule immediately as a fresh execution.",
+                description: "Launch this schedule immediately as a fresh run.",
                 icon: <PlayIcon />,
                 onClick: () => void handleRunExecutionSchedule(schedule.id)
               },
               {
                 label: "Delete schedule",
-                description: "Remove this schedule from future execution planning.",
+                description: "Remove this schedule from future run planning.",
                 icon: <TrashIcon />,
                 onClick: () => void handleDeleteExecutionSchedule(schedule.id, schedule.name),
                 tone: "danger" as const
@@ -2709,16 +2715,16 @@ export function ExecutionsPage() {
           eyebrow="Test Runs"
           title={
             testRunsView === "executions"
-              ? "Test Executions"
+              ? "Test Runs"
               : testRunsView === "scheduled"
-                ? "Scheduled Executions"
+                ? "Scheduled Runs"
                 : "Operations Activity"
           }
           description={
             testRunsView === "executions"
               ? "Launch scoped runs, monitor live progress, and capture failure evidence without losing the surrounding suite and case context."
               : testRunsView === "scheduled"
-                ? "Plan recurring release checks separately from live runs so teams can see what is scheduled next without cluttering the active execution board."
+                ? "Plan recurring release checks separately from live runs so teams can see what is scheduled next without cluttering the active runs board."
                 : "Review imports, scheduled AI generation, and project backup syncs with full traceable logs."
           }
           meta={[
@@ -2754,11 +2760,11 @@ export function ExecutionsPage() {
                   type="button"
                 >
                   <CalendarIcon />
-                  Schedule Execution
+                  Schedule Run
                 </button>
                 <button className="primary-button" onClick={() => setIsCreateExecutionModalOpen(true)} type="button">
                   <PlayIcon />
-                  Create Execution
+                  Create Run
                 </button>
               </>
             )
@@ -2771,7 +2777,7 @@ export function ExecutionsPage() {
       <SubnavTabs
         ariaLabel="Test runs views"
         items={[
-          { value: "executions", label: "Executions", meta: `${executions.length}`, icon: <ExecutionRunIcon /> },
+          { value: "executions", label: "Runs", meta: `${executions.length}`, icon: <ExecutionRunIcon /> },
           { value: "scheduled", label: "Scheduled", meta: `${executionSchedules.length}`, icon: <ExecutionScheduleIcon /> },
           { value: "operations", label: "Operations", meta: `${workspaceTransactions.length}`, icon: <ActivityIcon /> }
         ]}
@@ -2806,34 +2812,34 @@ export function ExecutionsPage() {
             className="execution-panel execution-panel--list"
             title={
               testRunsView === "executions"
-                ? "Execution tiles"
+                ? "Run library"
                 : testRunsView === "scheduled"
                   ? "Scheduled runs"
-                  : "Operations stream"
+                  : "Operations list"
             }
             subtitle={
               testRunsView === "executions"
-                ? "Start from the run catalog, then drill into suites, cases, and step execution one focused screen at a time."
+                ? "Start from the run catalog, then drill into suites, cases, and step progress one focused screen at a time."
                 : testRunsView === "scheduled"
                   ? "Keep recurring release checks separate from live runs, then launch one instantly when the team is ready."
                   : "Inspect imports, AI generation, and backup syncs as traceable operational records."
             }
           >
             <div className="design-list-toolbar">
-              <CatalogViewToggle onChange={setCatalogViewMode} value={catalogViewMode} />
+              {testRunsView === "operations" ? null : <CatalogViewToggle onChange={setCatalogViewMode} value={catalogViewMode} />}
               <CatalogSearchFilter
                 activeFilterCount={testRunsView === "executions" ? activeExecutionFilterCount : 0}
-                ariaLabel={testRunsView === "executions" ? "Search executions" : testRunsView === "scheduled" ? "Search schedules" : "Search operations"}
+                ariaLabel={testRunsView === "executions" ? "Search runs" : testRunsView === "scheduled" ? "Search schedules" : "Search operations"}
                 onChange={setExecutionSearch}
-                placeholder={testRunsView === "executions" ? "Search executions" : testRunsView === "scheduled" ? "Search schedules" : "Search operations"}
+                placeholder={testRunsView === "executions" ? "Search runs" : testRunsView === "scheduled" ? "Search schedules" : "Search operations"}
                 subtitle={
                   testRunsView === "executions"
-                    ? "Filter execution tiles by the run status and facts shown on each card."
+                    ? "Filter run tiles by the status and facts shown on each card."
                     : testRunsView === "scheduled"
                       ? "Filter scheduled runs by cadence, timing, or scope context."
                       : "Search titles, providers, repositories, or backup artifacts."
                 }
-                title={testRunsView === "executions" ? "Filter executions" : testRunsView === "scheduled" ? "Filter schedules" : "Filter operations"}
+                title={testRunsView === "executions" ? "Filter runs" : testRunsView === "scheduled" ? "Filter schedules" : "Filter operations"}
                 type="search"
                 value={executionSearch}
               >
@@ -2985,7 +2991,7 @@ export function ExecutionsPage() {
                           <div className="action-row execution-schedule-actions">
                             <button className="ghost-button" onClick={() => setSelectedOperationId(transaction.id)} type="button">
                               <OpenIcon />
-                              <span>View details</span>
+                              <span>Open details</span>
                             </button>
                           </div>
                         </div>
@@ -2995,7 +3001,7 @@ export function ExecutionsPage() {
                 {testRunsView === "executions" && catalogViewMode === "list" ? (
                   <DataTable
                     columns={executionListColumns}
-                    emptyMessage="No executions created yet."
+                    emptyMessage="No runs created yet."
                     getRowClassName={(execution) => (selectedExecution?.id === execution.id ? "is-active-row" : "")}
                     getRowKey={(execution) => execution.id}
                     onRowClick={(execution) => focusExecution(execution.id)}
@@ -3025,7 +3031,7 @@ export function ExecutionsPage() {
                     storageKey="qaira:operations:list-columns"
                   />
                 ) : null}
-                {testRunsView === "executions" && !filteredExecutions.length ? <div className="empty-state compact">No executions created yet.</div> : null}
+                {testRunsView === "executions" && !filteredExecutions.length ? <div className="empty-state compact">No runs created yet.</div> : null}
                 {testRunsView === "scheduled" && !filteredSchedules.length ? <div className="empty-state compact">No schedules created yet.</div> : null}
                 {testRunsView === "operations" && !filteredWorkspaceTransactions.length ? <div className="empty-state compact">No operations have been recorded for this scope yet.</div> : null}
               </div>
@@ -3154,7 +3160,7 @@ export function ExecutionsPage() {
             <Panel
               className="execution-panel execution-panel--detail"
               title="Scheduled run"
-              subtitle={selectedSchedule ? "Review cadence, scope, and execution context for this recurring run." : "Select a scheduled run to inspect its scope."}
+              subtitle={selectedSchedule ? "Review cadence, scope, and run context for this recurring run." : "Select a scheduled run to inspect its scope."}
             >
               {selectedSchedule ? (
                 <div className="detail-stack">
@@ -3209,8 +3215,8 @@ export function ExecutionsPage() {
           ) : activeExecutionStage === "case" ? (
             <Panel
               className="execution-panel execution-panel--detail"
-              actions={<WorkspaceBackButton label={`Back to ${focusedExecutionSuite?.name || "execution suites"}`} onClick={closeCaseDrilldown} />}
-              title="Execution console"
+              actions={<WorkspaceBackButton label={`Back to ${focusedExecutionSuite?.name || "run suites"}`} onClick={closeCaseDrilldown} />}
+              title="Run console"
               subtitle="Run the selected case, capture evidence, and inspect logs and history without the rest of the workspace crowding the screen."
             >
               {selectedExecution && selectedExecutionCase ? (
@@ -3222,7 +3228,7 @@ export function ExecutionsPage() {
                           <StatusBadge value={selectedCaseStatusLabel} />
                           {selectedExecutionCase.suite_name ? <span className="count-pill">{selectedExecutionCase.suite_name}</span> : null}
                           <ExecutionAssigneeChip className="execution-card-assignee--compact" user={selectedExecutionCaseEffectiveUser} />
-                          <span className="execution-health-trigger">{selectedExecution?.name || "Selected execution"}</span>
+                          <span className="execution-health-trigger">{selectedExecution?.name || "Selected run"}</span>
                         </div>
                         <strong>{selectedExecutionCase.title}</strong>
                         <span>{selectedExecutionCase.description || "Execute this case step by step and capture evidence as you go."}</span>
@@ -3591,15 +3597,15 @@ export function ExecutionsPage() {
                               type="button"
                             >
                               <div>
-                                <strong>{linkedExecution?.name || result.test_case_title || "Execution record"}</strong>
+                                <strong>{linkedExecution?.name || result.test_case_title || "Run record"}</strong>
                                 <span>{result.suite_name || "Recorded case evidence"} · {formatExecutionTimestamp(result.created_at, "Timestamp unavailable")}</span>
-                                <small>{formatDuration(result.duration_ms, DEFAULT_DURATION_LABEL)} · {isCurrentExecution ? "Current run" : "Switch to this execution"}</small>
+                                <small>{formatDuration(result.duration_ms, DEFAULT_DURATION_LABEL)} · {isCurrentExecution ? "Current run" : "Switch to this run"}</small>
                               </div>
                               <StatusBadge value={result.status} />
                             </button>
                           );
                         })}
-                        {!selectedCaseHistory.length ? <div className="empty-state compact">No execution history exists yet for this selected case.</div> : null}
+                        {!selectedCaseHistory.length ? <div className="empty-state compact">No run history exists yet for this selected case.</div> : null}
                       </div>
                     ) : null}
                   </div>
@@ -3613,9 +3619,9 @@ export function ExecutionsPage() {
           ) : (
             <Panel
               className="execution-panel execution-panel--tree"
-              actions={<WorkspaceBackButton label="Back to execution tiles" onClick={closeExecutionDrilldown} />}
-              title={selectedExecution?.name || "Execution suites"}
-              subtitle="Expand suite groups to review snapped test cases inline and jump straight into the execution console."
+              actions={<WorkspaceBackButton label="Back to run library" onClick={closeExecutionDrilldown} />}
+              title={selectedExecution?.name || "Run suites"}
+              subtitle="Expand suite groups to review snapped test cases inline and jump straight into the run workspace."
             >
               {selectedExecution ? (
                 <div className="detail-stack">
@@ -3638,8 +3644,8 @@ export function ExecutionsPage() {
                         </div>
 
                         <div className="execution-health-heading">
-                          <strong>{selectedExecution.name || "Unnamed execution"}</strong>
-                          <span>{selectedExecutionSuiteIds.length} suites snapped into this run with {executionProgress.totalCases} cases preserved for execution evidence.</span>
+                          <strong>{selectedExecution.name || "Unnamed run"}</strong>
+                          <span>{selectedExecutionSuiteIds.length} suites snapped into this run with {executionProgress.totalCases} cases preserved for run evidence.</span>
                         </div>
 
                         <ProgressMeter
@@ -3683,7 +3689,7 @@ export function ExecutionsPage() {
 
                     <div className="execution-assignment-panel">
                       <div className="execution-assignment-copy">
-                        <strong>Execution assignee</strong>
+                        <strong>Run assignee</strong>
                         <span>Set the default owner for this run. Test cases without their own override will follow this assignee.</span>
                       </div>
                       <div className="execution-assignment-actions">
@@ -3726,7 +3732,7 @@ export function ExecutionsPage() {
                           type="button"
                         >
                           <ExecutionRerunIcon />
-                          <span>{rerunExecution.isPending ? "Preparing…" : "Rerun execution"}</span>
+                          <span>{rerunExecution.isPending ? "Preparing…" : "Rerun all"}</span>
                         </button>
                         <button
                           className="ghost-button"
@@ -3740,11 +3746,11 @@ export function ExecutionsPage() {
                         <button
                           className="ghost-button"
                           disabled={currentExecutionStatus !== "queued" || startExecution.isPending || completeExecution.isPending}
-                          onClick={() => void startExecution.mutateAsync(selectedExecution.id).then(() => refreshExecutionScope()).catch((error: Error) => showError(error, "Unable to start execution"))}
+                          onClick={() => void startExecution.mutateAsync(selectedExecution.id).then(() => refreshExecutionScope()).catch((error: Error) => showError(error, "Unable to start run"))}
                           type="button"
                         >
                           <ExecutionStartIcon />
-                          <span>{startExecution.isPending ? "Starting…" : "Start execution"}</span>
+                          <span>{startExecution.isPending ? "Starting…" : "Start run"}</span>
                         </button>
                         <button
                           className="ghost-button warning"
@@ -3753,7 +3759,7 @@ export function ExecutionsPage() {
                           type="button"
                         >
                           <ExecutionAbortIcon />
-                          <span>{completeExecution.isPending && executionFinalizeAction === "abort" ? "Aborting…" : "Abort execution"}</span>
+                          <span>{completeExecution.isPending && executionFinalizeAction === "abort" ? "Aborting…" : "Abort run"}</span>
                         </button>
                         <button
                           className="ghost-button"
@@ -3762,7 +3768,7 @@ export function ExecutionsPage() {
                           type="button"
                         >
                           <ExecutionCompleteIcon />
-                          <span>{completeExecution.isPending && executionFinalizeAction === "complete" ? "Completing…" : "Complete execution"}</span>
+                          <span>{completeExecution.isPending && executionFinalizeAction === "complete" ? "Completing…" : "Complete run"}</span>
                         </button>
                       </div>
                     </div>
@@ -4228,13 +4234,13 @@ function ExecutionListCard({
             <ExecutionRunIcon />
           </div>
           <div className="tile-card-title-group">
-            <strong>{execution.name || "Unnamed execution"}</strong>
+            <strong>{execution.name || "Unnamed run"}</strong>
             <ExecutionAssigneeChip user={execution.assigned_user} />
           </div>
           <ExecutionStatusIndicator status={executionStatus} />
         </div>
 
-        <div className="execution-card-facts" aria-label="Execution facts">
+        <div className="execution-card-facts" aria-label="Run facts">
           <ExecutionCardFact
             ariaLabel={`${execution.suite_ids.length} suites in scope`}
             label={String(execution.suite_ids.length)}
@@ -4610,18 +4616,20 @@ function ExecutionStepsIcon() {
 
 function StepKindIconBadge({
   label,
-  tone: _tone
+  tone
 }: {
   label: string;
   tone: "default" | "shared" | "local";
 }) {
+  const className = tone === "shared" ? "step-kind-badge is-shared" : tone === "local" ? "step-kind-badge is-local" : "step-kind-badge is-standard";
+
   return (
     <span
       aria-label={label}
-      className="step-kind-badge is-standard"
+      className={className}
       title={label}
     >
-      <StandardStepIcon />
+      {tone === "shared" ? <SharedGroupLevelIcon kind="reusable" /> : tone === "local" ? <SharedGroupLevelIcon kind="local" /> : <StandardStepIcon />}
     </span>
   );
 }
@@ -5286,12 +5294,12 @@ function ExecutionCreateModal({
         <form className="execution-create-form" onSubmit={onSubmit}>
           <div className="execution-create-header">
             <div className="execution-create-title">
-              <p className="eyebrow">Executions</p>
-              <h3 id="create-execution-title">Create execution</h3>
+              <p className="eyebrow">Test Runs</p>
+              <h3 id="create-execution-title">Create run</h3>
               <p>Choose a manual suite snapshot or let AI plan an impact-based run from your release scope and existing library.</p>
             </div>
             <button
-              aria-label="Close create execution dialog"
+              aria-label="Close create run dialog"
               className="ghost-button"
               disabled={isSubmitting}
               onClick={onClose}
@@ -5325,11 +5333,11 @@ function ExecutionCreateModal({
             </div>
 
             <div className="execution-create-grid">
-              <FormField label="Execution name">
+              <FormField label="Run name">
                 <input value={executionName} onChange={(event) => onExecutionNameChange(event.target.value)} />
               </FormField>
 
-              <FormField label="Assign to" hint="Sets the default owner for this execution and any snapped test case that does not override it later.">
+              <FormField label="Assign to" hint="Sets the default owner for this run and any snapped test case that does not override it later.">
                 <select
                   disabled={!projectId || !assigneeOptions.length}
                   value={selectedExecutionAssigneeId}
@@ -5347,7 +5355,7 @@ function ExecutionCreateModal({
               </FormField>
             </div>
 
-            <div className="execution-mode-switch" aria-label="Execution creation mode" role="group">
+            <div className="execution-mode-switch" aria-label="Run creation mode" role="group">
               <button
                 aria-pressed={!isSmartMode}
                 className={!isSmartMode ? "execution-mode-button is-active" : "execution-mode-button"}
@@ -5363,19 +5371,19 @@ function ExecutionCreateModal({
                 onClick={() => onExecutionCreateModeChange("smart")}
                 type="button"
               >
-                <strong>AI Smart Execution</strong>
+                <strong>AI Smart Run</strong>
                 <span>Pick impacted cases from release scope.</span>
               </button>
             </div>
 
             <div className="detail-summary">
               <strong>{selectedProject || "Select a project to continue"}</strong>
-              <span>{selectedAppType ? `${selectedAppType} app type selected for this execution.` : "Choose an app type to continue."}</span>
+              <span>{selectedAppType ? `${selectedAppType} app type selected for this run.` : "Choose an app type to continue."}</span>
               <span>
                 {isSmartMode
                   ? smartExecutionPreview
                     ? `${smartExecutionPreview.source_case_count} existing cases are available for impact analysis in this app type.`
-                    : "AI smart execution screens the current app type's existing cases exported as CSV."
+                    : "AI smart run screens the current app type's existing cases exported as CSV."
                   : scopeSuites.length
                     ? `${scopeSuites.length} suites available in the current scope.`
                     : "No suites available in the current scope yet."}
@@ -5500,8 +5508,8 @@ function ExecutionCreateModal({
                       <strong>{selectedSmartRequirementIds.length ? `${selectedSmartRequirementIds.length} impacted requirement${selectedSmartRequirementIds.length === 1 ? "" : "s"} selected` : "Requirement filter is optional"}</strong>
                       <span>
                         {selectedSmartRequirementIds.length
-                          ? "AI will screen only the cases linked to the selected requirements before building the Default execution suite."
-                          : "Choose impacted requirements if you want AI to narrow the candidate cases before planning the execution."}
+                          ? "AI will screen only the cases linked to the selected requirements before building the Default suite plan."
+                          : "Choose impacted requirements if you want AI to narrow the candidate cases before planning the run."}
                       </span>
                     </div>
 
@@ -5514,14 +5522,14 @@ function ExecutionCreateModal({
 
                 <div className="ai-studio-main">
                   <div className="detail-summary">
-                    <strong>{smartExecutionPreview ? `${selectedSmartCaseCount} impacted cases selected` : "AI Smart Execution"}</strong>
-                    <span>{smartExecutionPreview ? smartExecutionPreview.summary : "Generate an impact-based execution plan from release scope, additional context, or both."}</span>
+                    <strong>{smartExecutionPreview ? `${selectedSmartCaseCount} impacted cases selected` : "AI Smart Run"}</strong>
+                    <span>{smartExecutionPreview ? smartExecutionPreview.summary : "Generate an impact-based run plan from release scope, additional context, or both."}</span>
                     <span>
                       {smartExecutionPreview
                         ? `${smartExecutionPreview.source_case_count} existing cases were screened and ${smartExecutionPreview.matched_case_count} cases were suggested for this run.`
                         : selectedSmartRequirementIds.length
-                          ? `AI will use the selected project, app type, execution context, and only the cases linked to ${selectedSmartRequirementIds.length} selected requirement${selectedSmartRequirementIds.length === 1 ? "" : "s"}.`
-                          : "AI uses the selected project, app type, execution context, and existing cases exported as CSV."}
+                          ? `AI will use the selected project, app type, run context, and only the cases linked to ${selectedSmartRequirementIds.length} selected requirement${selectedSmartRequirementIds.length === 1 ? "" : "s"}.`
+                          : "AI uses the selected project, app type, run context, and existing cases exported as CSV."}
                     </span>
                   </div>
 
@@ -5533,7 +5541,7 @@ function ExecutionCreateModal({
 
                   {!integrations.length ? (
                     <div className="inline-message error-message">
-                      No active LLM integrations are available yet. Create one in Integrations to use AI smart execution.
+                      No active LLM integrations are available yet. Create one in Integrations to use AI smart runs.
                     </div>
                   ) : null}
 
@@ -5635,7 +5643,7 @@ function ExecutionCreateModal({
                 <FormField label="Suite scope" required>
                   <div className="suite-modal-picker-shell suite-modal-picker-shell--scope">
                     <SuiteScopePicker
-                      description="Select the suites to snapshot for this execution, then adjust their order if you want a different run sequence."
+                      description="Select the suites to snapshot for this run, then adjust their order if you want a different run sequence."
                       emptyMessage="No suites available for the current app type."
                       heading="Available suites"
                       onChange={onSuiteSelectionChange}
@@ -5652,7 +5660,7 @@ function ExecutionCreateModal({
 
           <div className="action-row execution-create-actions">
             <button className="primary-button" disabled={!canCreateExecution || isSubmitting || (isSmartMode && isPreviewingSmartExecution)} type="submit">
-              {isSubmitting ? "Creating…" : isSmartMode ? "Create AI smart execution" : "Create execution"}
+              {isSubmitting ? "Creating…" : isSmartMode ? "Create AI smart run" : "Create run"}
             </button>
             <button className="ghost-button" disabled={isSubmitting} onClick={onClose} type="button">
               Cancel
@@ -5735,7 +5743,7 @@ function CreateExecutionScheduleModal({
             <div className="execution-create-title">
               <p className="eyebrow">Scheduled Runs</p>
               <h3 id="create-execution-schedule-title">{isEditing ? "Edit schedule" : "Create schedule"}</h3>
-              <p>{isEditing ? "Adjust the recurring run without losing its execution history or current scope." : "Save a recurring run separately from the live execution board, then launch it when needed."}</p>
+              <p>{isEditing ? "Adjust the recurring run without losing its run history or current scope." : "Save a recurring run separately from the live run board, then launch it when needed."}</p>
             </div>
             <button aria-label={`Close ${isEditing ? "edit" : "create"} schedule dialog`} className="ghost-button" disabled={isSubmitting} onClick={onClose} type="button">
               Close
@@ -5753,7 +5761,7 @@ function CreateExecutionScheduleModal({
               <FormField label="Schedule name">
                 <input value={executionName} onChange={(event) => onExecutionNameChange(event.target.value)} />
               </FormField>
-              <FormField label="Assign to" hint="This user becomes the default owner each time the scheduled run creates a fresh execution.">
+              <FormField label="Assign to" hint="This user becomes the default owner each time the scheduled run creates a fresh run.">
                 <select
                   disabled={!projectId || !assigneeOptions.length}
                   value={selectedAssigneeId}
@@ -5797,7 +5805,7 @@ function CreateExecutionScheduleModal({
               selectedEnvironmentId={selectedEnvironmentId}
             />
 
-            <FormField label="Execution scope" required>
+            <FormField label="Run scope" required>
               <SuiteScopePicker
                 description="Pick the reusable suites that should be snapped whenever this schedule runs."
                 emptyMessage="No suites available in this app type yet."
@@ -5843,8 +5851,8 @@ function ExecutionContextSnapshotSummary({
     <div className="execution-context-summary-shell">
       <div className="execution-context-summary-head">
         <div className="execution-context-summary-copy">
-          <strong>Execution context snapshot</strong>
-          <span>Environment, configuration, and test data were frozen when this execution was created.</span>
+          <strong>Run context snapshot</strong>
+          <span>Environment, configuration, and test data were frozen when this run was created.</span>
         </div>
         {onViewFull ? (
           <button className="ghost-button" onClick={onViewFull} type="button">
@@ -5902,8 +5910,8 @@ function ExecutionContextSnapshotModal({
       >
         <div className="execution-context-modal-header">
           <div className="execution-context-modal-copy">
-            <p className="eyebrow">Execution Context Snapshot</p>
-            <h3 id="execution-context-modal-title">{execution.name || "Selected execution"}</h3>
+            <p className="eyebrow">Run Context Snapshot</p>
+            <h3 id="execution-context-modal-title">{execution.name || "Selected run"}</h3>
             <p>Review the exact environment, configuration, and test data preserved with this run. Later edits to reusable resources do not change this snapshot.</p>
           </div>
           <button className="ghost-button" onClick={onClose} type="button">
@@ -5916,7 +5924,7 @@ function ExecutionContextSnapshotModal({
 
           <div className="execution-context-modal-layout">
             <ExecutionContextSnapshotSection
-              description="Base URL, browser, notes, and environment variables preserved for this execution."
+              description="Base URL, browser, notes, and environment variables preserved for this run."
               title={environmentSummary?.name || execution.test_environment?.name || "No environment attached"}
             >
               {environmentSummary ? (
@@ -5944,7 +5952,7 @@ function ExecutionContextSnapshotModal({
                   />
                 </>
               ) : (
-                <div className="empty-state compact">No environment snapshot details were recorded for this execution.</div>
+                <div className="empty-state compact">No environment snapshot details were recorded for this run.</div>
               )}
             </ExecutionContextSnapshotSection>
 
@@ -5975,12 +5983,12 @@ function ExecutionContextSnapshotModal({
                   />
                 </>
               ) : (
-                <div className="empty-state compact">No configuration snapshot details were recorded for this execution.</div>
+                <div className="empty-state compact">No configuration snapshot details were recorded for this run.</div>
               )}
             </ExecutionContextSnapshotSection>
 
             <ExecutionContextSnapshotSection
-              description="The data rows below are the exact execution data snapshot used for this run."
+              description="The data rows below are the exact run data snapshot used for this run."
               title={dataSetSummary?.name || execution.test_data_set?.name || "No data set attached"}
             >
               {dataSetSummary ? (

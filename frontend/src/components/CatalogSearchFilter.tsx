@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 const POPOVER_VIEWPORT_PADDING = 12;
 const POPOVER_TRIGGER_GAP = 10;
@@ -138,6 +139,23 @@ export function CatalogSearchFilter({
     };
   }, [isOpen]);
 
+  const popover = isOpen ? (
+    <div
+      aria-labelledby={inputId}
+      className="catalog-filter-popover"
+      id={popoverId}
+      ref={popoverRef}
+      role="dialog"
+      style={popoverStyle}
+    >
+      <div className="catalog-filter-popover-header">
+        <strong>{title}</strong>
+        {subtitle ? <span>{subtitle}</span> : null}
+      </div>
+      {children}
+    </div>
+  ) : null;
+
   return (
     <div className="catalog-search-filter" ref={containerRef}>
       <div className="catalog-search-field">
@@ -165,22 +183,7 @@ export function CatalogSearchFilter({
         </button>
       </div>
 
-      {isOpen ? (
-        <div
-          aria-labelledby={inputId}
-          className="catalog-filter-popover"
-          id={popoverId}
-          ref={popoverRef}
-          role="dialog"
-          style={popoverStyle}
-        >
-          <div className="catalog-filter-popover-header">
-            <strong>{title}</strong>
-            {subtitle ? <span>{subtitle}</span> : null}
-          </div>
-          {children}
-        </div>
-      ) : null}
+      {popover && typeof document !== "undefined" && document.body ? createPortal(popover, document.body) : popover}
     </div>
   );
 }

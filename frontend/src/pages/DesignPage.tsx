@@ -13,6 +13,7 @@ import { LinkedTestCaseModal } from "../components/LinkedTestCaseModal";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { StepParameterDialog } from "../components/StepParameterDialog";
+import { SharedGroupLevelIcon } from "../components/StepAutomationEditor";
 import { StatusBadge } from "../components/StatusBadge";
 import {
   TileCardCaseIcon,
@@ -183,7 +184,12 @@ function StepKindIconBadge({
   label: string;
   tone: "default" | "shared" | "local";
 }) {
-  const icon = <ExecutionStepsIcon />;
+  const icon =
+    tone === "shared"
+      ? <SharedGroupLevelIcon kind="reusable" />
+      : tone === "local"
+        ? <SharedGroupLevelIcon kind="local" />
+        : <ExecutionStepsIcon />;
 
   return (
     <span
@@ -1275,13 +1281,13 @@ export function DesignPage() {
 
     if (!session?.user.id) {
       setMessageTone("error");
-      setMessage("You need an active session before creating an execution.");
+      setMessage("You need an active session before creating a run.");
       return;
     }
 
     if (!projectId || !appTypeId || !executionTargetSuiteIds.length) {
       setMessageTone("error");
-      setMessage("Select at least one suite in the current scope before creating an execution.");
+      setMessage("Select at least one suite in the current scope before creating a run.");
       return;
     }
 
@@ -1305,7 +1311,7 @@ export function DesignPage() {
       ]);
       navigate(`/executions?execution=${response.id}`);
     } catch (error) {
-      showError(error, "Unable to create execution");
+      showError(error, "Unable to create run");
     }
   };
 
@@ -1598,7 +1604,7 @@ export function DesignPage() {
         <PageHeader
           eyebrow="Test Design"
           title="Test Suites"
-          description="Shape suite structure, assign reusable cases, and keep executable design tidy enough for fast execution handoff."
+          description="Shape suite structure, assign reusable cases, and keep executable design tidy enough for fast run handoff."
           meta={[
             { label: "Suites", value: designMetrics.totalSuites },
             { label: "Cases", value: designMetrics.totalCases },
@@ -1900,7 +1906,7 @@ function SuiteSidebar({
       <div className="suite-design-panel-stack">
         <div className="design-sidebar-actions">
           <button className="primary-button" disabled={!canCreateSuite} onClick={onCreateSuite} type="button">Create Suite</button>
-          <button className="ghost-button" disabled={!canCreateExecution} onClick={onCreateExecution} type="button">Create Execution</button>
+          <button className="ghost-button" disabled={!canCreateExecution} onClick={onCreateExecution} type="button">Create Run</button>
         </div>
 
         <div className="design-list-toolbar suite-sidebar-toolbar">
@@ -1977,7 +1983,7 @@ function SuiteSidebar({
         {selectedSuiteCount ? (
           <div className="detail-summary suite-selection-summary">
             <strong>{selectedSuiteCount} suite{selectedSuiteCount === 1 ? "" : "s"} selected for bulk actions</strong>
-            <span>Checkbox selections power bulk delete and execution creation. Click a card body to keep curating one suite at a time.</span>
+            <span>Checkbox selections power bulk delete and run creation. Click a card body to keep curating one suite at a time.</span>
           </div>
         ) : null}
         <TileBrowserPane className="test-case-library-scroll suite-tile-browser">
@@ -2043,7 +2049,7 @@ function SuiteSidebar({
                         </TileCardFact>
                       </div>
                       <div className="tile-card-footer">
-                        <div className="history-bars" aria-label="Suite execution history">
+                        <div className="history-bars" aria-label="Suite run history">
                           {history.length ? history.map((result) => (
                             <span
                               key={`${suite.id}-${result.execution_id}`}
@@ -2278,7 +2284,7 @@ function TestCaseList({
           </div>
           <div className="mini-card">
             <strong>{casesWithHistory}</strong>
-            <span>Have execution history</span>
+            <span>Have run history</span>
           </div>
           <div className="mini-card">
             <strong>{selectedSuite ? "Ordered" : "Library"}</strong>
@@ -2375,7 +2381,16 @@ function TestCaseList({
 
         <TileBrowserPane className="test-case-library-scroll">
           {isLoading ? <TileCardSkeletonGrid /> : null}
-          {!isLoading && !cases.length ? <div className="empty-state compact">No test cases match this scope yet.</div> : null}
+          {!isLoading && !cases.length ? (
+            searchTerm || activeFilterCount ? (
+              <div className="empty-state compact">No test cases match this scope yet.</div>
+            ) : (
+              <div className="empty-state compact">
+                <div>No reusable test cases exist in this scope yet.</div>
+                <button className="primary-button" onClick={onCreateCase} type="button">Create first case</button>
+              </div>
+            )
+          ) : null}
 
           {!isLoading && cases.length && viewMode === "tile" ? (
             <div className="tile-browser-grid">
@@ -2456,7 +2471,7 @@ function TestCaseList({
                         </TileCardFact>
                       </div>
                       <div className="tile-card-footer">
-                        <div className="history-bars" aria-label="Execution history">
+                        <div className="history-bars" aria-label="Run history">
                           {history.length ? history.map((result) => (
                             <span
                               key={result.id}
@@ -2584,8 +2599,8 @@ function SuiteCaseEditorModal({
       ? "No draft steps added yet."
       : "No steps added yet for this case.";
   const historySectionSummary = history.length
-    ? "Review the latest preserved execution evidence for this reusable case."
-    : "No execution history has been recorded yet for this case.";
+    ? "Review the latest preserved run evidence for this reusable case."
+    : "No run history has been recorded yet for this case.";
   const groupedStepCount = displaySteps.filter((step) => Boolean(step.group_id)).length;
   const sharedGroupCount = new Set(
     displaySteps
@@ -2625,7 +2640,7 @@ function SuiteCaseEditorModal({
             </div>
             <div className="mini-card">
               <strong>{history.length}</strong>
-              <span>Execution records</span>
+              <span>Run records</span>
             </div>
             <div className="mini-card">
               <strong>{displaySteps.length}</strong>
@@ -2710,7 +2725,7 @@ function SuiteCaseEditorModal({
 
                 <div className="detail-summary">
                   <strong>{isCreatingCase ? "Create with steps attached" : "Live case definition"}</strong>
-                  <span>{isCreatingCase ? `This test case will be saved with ${displaySteps.length} draft step${displaySteps.length === 1 ? "" : "s"} attached.` : "Edits here update the reusable test case while historical execution evidence stays preserved."}</span>
+                  <span>{isCreatingCase ? `This test case will be saved with ${displaySteps.length} draft step${displaySteps.length === 1 ? "" : "s"} attached.` : "Edits here update the reusable test case while historical run evidence stays preserved."}</span>
                 </div>
 
                 <div className="action-row">
@@ -2751,7 +2766,12 @@ function SuiteCaseEditorModal({
                 ) : null}
 
                 {!isCreatingCase && isLoadingSteps ? <div className="empty-state compact">Loading steps…</div> : null}
-                {!displaySteps.length ? <div className="empty-state compact">{isCreatingCase ? "No draft steps yet. Add steps below before you save if this case needs guided execution." : "No steps yet for this test case."}</div> : null}
+                {!displaySteps.length ? (
+                  <div className="empty-state compact">
+                    <div>{isCreatingCase ? "No draft steps yet. Add steps below before you save if this case needs a guided run flow." : "No steps yet for this test case."}</div>
+                    {!isStepCreateVisible ? <button className="ghost-button" onClick={onOpenStepCreate} type="button">Add first step</button> : null}
+                  </div>
+                ) : null}
 
                 <div className="step-list">
                   {isCreatingCase
@@ -2786,7 +2806,7 @@ function SuiteCaseEditorModal({
                       ))}
                 </div>
 
-                {!isStepCreateVisible ? (
+                {!isStepCreateVisible && displaySteps.length ? (
                   <div className="action-row">
                     <button className="ghost-button" onClick={onOpenStepCreate} type="button">
                       + Add Step
@@ -2831,20 +2851,20 @@ function SuiteCaseEditorModal({
                 isExpanded={expandedSections.history}
                 onToggle={() => onToggleSection("history")}
                 summary={historySectionSummary}
-                title="Execution history"
+                title="Run history"
               >
                 <div className="step-editor step-history">
                   <div className="stack-list">
                     {history.map((result) => (
                       <div className="stack-item" key={result.id}>
                         <div>
-                          <strong>{result.test_case_title || selectedTestCase?.title || "Execution record"}</strong>
-                          <span>{result.error || result.logs || result.created_at || "Historical execution evidence retained."}</span>
+                          <strong>{result.test_case_title || selectedTestCase?.title || "Run record"}</strong>
+                          <span>{result.error || result.logs || result.created_at || "Historical run evidence retained."}</span>
                         </div>
                         <StatusBadge value={result.status} />
                       </div>
                     ))}
-                    {!history.length ? <div className="empty-state compact">No execution history yet for this test case.</div> : null}
+                    {!history.length ? <div className="empty-state compact">No run history yet for this test case.</div> : null}
                   </div>
                 </div>
               </EditorAccordionSection>
@@ -3137,11 +3157,11 @@ function SuiteExecutionModal({
           <div className="execution-create-header">
             <div className="execution-create-title">
               <p className="eyebrow">Suites</p>
-              <h3 id="create-suite-execution-title">Create execution</h3>
-              <p>Use the suites you selected here as the execution snapshot scope.</p>
+              <h3 id="create-suite-execution-title">Create run</h3>
+              <p>Use the suites you selected here as the run snapshot scope.</p>
             </div>
             <button
-              aria-label="Close create execution dialog"
+              aria-label="Close create run dialog"
               className="ghost-button"
               disabled={isSubmitting}
               onClick={onClose}
@@ -3153,7 +3173,7 @@ function SuiteExecutionModal({
 
           <div className="execution-create-body">
             <div className="execution-create-grid">
-              <FormField label="Execution name">
+              <FormField label="Run name">
                 <input
                   autoFocus
                   placeholder="Optional run name"
@@ -3161,7 +3181,7 @@ function SuiteExecutionModal({
                   onChange={(event) => onExecutionNameChange(event.target.value)}
                 />
               </FormField>
-              <FormField label="Assign to" hint="Sets the default owner for this execution and the test cases snapped into it.">
+              <FormField label="Assign to" hint="Sets the default owner for this run and the test cases snapped into it.">
                 <select
                   disabled={!projectId || !assigneeOptions.length}
                   value={selectedAssigneeId}
@@ -3200,7 +3220,7 @@ function SuiteExecutionModal({
             <FormField label="Suite scope" required>
               <div className="suite-modal-picker-shell suite-modal-picker-shell--scope">
                 <SuiteScopePicker
-                  description="Select the suites to snapshot for this execution, then adjust their order if you need a different run sequence."
+                  description="Select the suites to snapshot for this run, then adjust their order if you need a different run sequence."
                   emptyMessage="No suites available for this app type yet."
                   heading="Available suites"
                   onChange={onSuiteSelectionChange}
@@ -3215,7 +3235,7 @@ function SuiteExecutionModal({
 
           <div className="action-row execution-create-actions">
             <button className="primary-button" disabled={!canCreateExecution || isSubmitting} type="submit">
-              {isSubmitting ? "Creating…" : "Create execution"}
+              {isSubmitting ? "Creating…" : "Create run"}
             </button>
             <button className="ghost-button" disabled={isSubmitting} onClick={onClose} type="button">
               Cancel
@@ -3258,15 +3278,18 @@ function SuiteModal({
   const [name, setName] = useState(() => (mode === "edit" && suite ? suite.name : ""));
   const [parentId, setParentId] = useState(() => (mode === "edit" && suite ? suite.parent_id || "" : ""));
   const [localSelectedIds, setLocalSelectedIds] = useState<string[]>(() => initialSelectedIds);
+  const initialSelectedIdsKey = initialSelectedIds.join("::");
 
   useEffect(() => {
-    if (mode === "edit") {
+    if (mode === "edit" && suite) {
+      setName(suite.name);
+      setParentId(suite.parent_id || "");
       setLocalSelectedIds(initialSelectedIds);
       return;
     }
 
     setLocalSelectedIds((current) => current.filter((testCaseId) => availableCaseIdSet.has(testCaseId)));
-  }, [availableCaseIdSet, initialSelectedIds, mode]);
+  }, [availableCaseIdSet, initialSelectedIdsKey, mode, suite?.id, suite?.name, suite?.parent_id]);
 
   return (
     <div className="modal-backdrop" onClick={() => !isSaving && onClose()} role="presentation">

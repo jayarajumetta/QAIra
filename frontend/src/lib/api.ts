@@ -133,6 +133,155 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+type TestCaseImportSourceValue = "csv" | "junit_xml" | "testng_xml" | "postman_collection";
+
+type TestCaseImportBatchPayload = {
+  file_name?: string;
+  import_source: TestCaseImportSourceValue;
+  row_offset?: number;
+  rows: Array<Record<string, unknown>>;
+};
+
+type TestCaseBulkImportInput = {
+  app_type_id: string;
+  requirement_id?: string;
+  import_source?: TestCaseImportSourceValue;
+  rows?: Array<Record<string, unknown>>;
+  batches?: TestCaseImportBatchPayload[];
+};
+
+type TestCaseBulkImportResponse = {
+  imported: number;
+  failed: number;
+  created: Array<{ row: number; batch_index?: number; file_name?: string; import_source?: string; id: string; title: string }>;
+  errors: Array<{ row: number; batch_index?: number; file_name?: string; import_source?: string; title?: string | null; message: string }>;
+};
+
+const MAX_TEST_CASE_IMPORT_REQUEST_BYTES = 850_000;
+
+const estimateJsonBytes = (value: unknown) => {
+  const serialized = JSON.stringify(value);
+
+  if (typeof TextEncoder !== "undefined") {
+    return new TextEncoder().encode(serialized).length;
+  }
+
+  return serialized.length;
+};
+
+const createTestCaseImportPayload = (
+  input: TestCaseBulkImportInput,
+  batches: TestCaseImportBatchPayload[]
+): TestCaseBulkImportInput => ({
+  app_type_id: input.app_type_id,
+  requirement_id: input.requirement_id,
+  import_source: input.import_source,
+  batches
+});
+
+const splitOversizedTestCaseImportBatch = (
+  input: TestCaseBulkImportInput,
+  batch: TestCaseImportBatchPayload,
+  maxBytes = MAX_TEST_CASE_IMPORT_REQUEST_BYTES
+) => {
+  if (!batch.rows.length) {
+    return [];
+  }
+
+  const asSinglePayload = createTestCaseImportPayload(input, [batch]);
+
+  if (estimateJsonBytes(asSinglePayload) <= maxBytes || batch.rows.length === 1) {
+    return [batch];
+  }
+
+  const chunks: TestCaseImportBatchPayload[] = [];
+  let currentRows: Array<Record<string, unknown>> = [];
+  let currentRowOffset = Math.max(Number(batch.row_offset || 0) || 0, 0);
+
+  for (const row of batch.rows) {
+    const nextRows = [...currentRows, row];
+    const nextPayload = createTestCaseImportPayload(input, [{ ...batch, row_offset: currentRowOffset, rows: nextRows }]);
+
+    if (currentRows.length && estimateJsonBytes(nextPayload) > maxBytes) {
+      chunks.push({ ...batch, row_offset: currentRowOffset, rows: currentRows });
+      currentRowOffset += currentRows.length;
+      currentRows = [row];
+      continue;
+    }
+
+    currentRows = nextRows;
+  }
+
+  if (currentRows.length) {
+    chunks.push({ ...batch, row_offset: currentRowOffset, rows: currentRows });
+  }
+
+  return chunks;
+};
+
+const buildChunkedTestCaseImportRequests = (
+  input: TestCaseBulkImportInput,
+  maxBytes = MAX_TEST_CASE_IMPORT_REQUEST_BYTES
+) => {
+  const normalizedBatches = Array.isArray(input.batches) && input.batches.length
+    ? input.batches
+        .filter((batch) => Array.isArray(batch.rows) && batch.rows.length)
+        .flatMap((batch) => splitOversizedTestCaseImportBatch(input, batch, maxBytes))
+    : Array.isArray(input.rows) && input.rows.length
+      ? splitOversizedTestCaseImportBatch(
+          input,
+          {
+            file_name: undefined,
+            import_source: input.import_source || "csv",
+            row_offset: 0,
+            rows: input.rows
+          },
+          maxBytes
+        )
+      : [];
+
+  if (!normalizedBatches.length) {
+    return [input];
+  }
+
+  const requests: TestCaseBulkImportInput[] = [];
+  let currentBatches: TestCaseImportBatchPayload[] = [];
+
+  for (const batch of normalizedBatches) {
+    const candidatePayload = createTestCaseImportPayload(input, [...currentBatches, batch]);
+
+    if (currentBatches.length && estimateJsonBytes(candidatePayload) > maxBytes) {
+      requests.push(createTestCaseImportPayload(input, currentBatches));
+      currentBatches = [batch];
+      continue;
+    }
+
+    currentBatches = [...currentBatches, batch];
+  }
+
+  if (currentBatches.length) {
+    requests.push(createTestCaseImportPayload(input, currentBatches));
+  }
+
+  return requests.length ? requests : [input];
+};
+
+const mergeTestCaseImportResponses = (responses: TestCaseBulkImportResponse[]): TestCaseBulkImportResponse =>
+  responses.reduce<TestCaseBulkImportResponse>(
+    (aggregate, response) => ({
+      imported: aggregate.imported + response.imported,
+      failed: aggregate.failed + response.failed,
+      created: [...aggregate.created, ...response.created],
+      errors: [...aggregate.errors, ...response.errors]
+    }),
+    {
+      imported: 0,
+      failed: 0,
+      created: [],
+      errors: []
+    }
+  );
+
 export const api = {
   settings: {
     getLocalization: () => request<{ strings: Record<string, string> }>("/settings/localization"),
@@ -353,23 +502,36 @@ export const api = {
     bulkImport: (input: {
       app_type_id: string;
       requirement_id?: string;
-      import_source?: "csv" | "junit_xml" | "testng_xml" | "postman_collection";
+      import_source?: TestCaseImportSourceValue;
       rows?: Array<Record<string, unknown>>;
       batches?: Array<{
         file_name?: string;
-        import_source: "csv" | "junit_xml" | "testng_xml" | "postman_collection";
+        import_source: TestCaseImportSourceValue;
         rows: Array<Record<string, unknown>>;
       }>;
-    }) =>
-      request<{
-        imported: number;
-        failed: number;
-        created: Array<{ row: number; batch_index?: number; file_name?: string; import_source?: string; id: string; title: string }>;
-        errors: Array<{ row: number; batch_index?: number; file_name?: string; import_source?: string; title?: string | null; message: string }>;
-      }>("/test-cases/import", {
-        method: "POST",
-        body: JSON.stringify(input)
-      }),
+    }) => {
+      const requests = buildChunkedTestCaseImportRequests(input);
+
+      if (requests.length === 1) {
+        return request<TestCaseBulkImportResponse>("/test-cases/import", {
+          method: "POST",
+          body: JSON.stringify(requests[0])
+        });
+      }
+
+      return (async () => {
+        const responses: TestCaseBulkImportResponse[] = [];
+
+        for (const chunk of requests) {
+          responses.push(await request<TestCaseBulkImportResponse>("/test-cases/import", {
+            method: "POST",
+            body: JSON.stringify(chunk)
+          }));
+        }
+
+        return mergeTestCaseImportResponses(responses);
+      })();
+    },
     update: (id: string, input: Partial<{ app_type_id: string; suite_id: string; suite_ids: string[]; title: string; description: string; parameter_values: Record<string, string>; automated: "yes" | "no"; priority: number; status: string; requirement_id: string; requirement_ids: string[]; steps: Array<{ step_order?: number; action?: string; expected_result?: string; step_type?: TestStep["step_type"]; automation_code?: string; api_request?: TestStep["api_request"]; group_id?: string; group_name?: string; group_kind?: "local" | "reusable"; reusable_group_id?: string }> }>) =>
       request<{ updated: boolean }>(`/test-cases/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/test-cases/${id}`, { method: "DELETE" })

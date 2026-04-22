@@ -47,7 +47,7 @@ const navigation = [
         label: "Test Runs",
         shortLabel: "Runs",
         icon: PlayIcon,
-        subItems: [{ to: "/executions", label: "Execution Console", shortLabel: "Console", icon: "executions" }],
+        subItems: [{ to: "/executions", label: "Run Console", shortLabel: "Console", icon: "executions" }],
         matchPaths: ["/executions"],
         disabledWhenNoProjects: true
       },

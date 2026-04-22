@@ -25,7 +25,7 @@ export const WORKSPACE_PAGE_LABELS: Record<string, string> = {
   "/test-cases": "Test Cases",
   "/shared-steps": "Shared Step Groups",
   "/design": "Test Suites",
-  "/executions": "Executions",
+  "/executions": "Test Runs",
   "/test-environments": "Environments",
   "/test-data": "Test Data",
   "/test-configurations": "Configurations",

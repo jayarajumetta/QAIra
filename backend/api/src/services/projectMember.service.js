@@ -1,6 +1,18 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 
+const selectRoleById = db.prepare(`
+  SELECT id, name
+  FROM roles
+  WHERE id = ?
+`);
+
+const markUserAsWorkspaceAdmin = db.prepare(`
+  UPDATE users
+  SET is_workspace_admin = TRUE
+  WHERE id = ?
+`);
+
 exports.createProjectMember = async ({ project_id, user_id, role_id }) => {
   if (!project_id || !user_id || !role_id) {
     throw new Error("Missing required fields");
@@ -16,9 +28,7 @@ exports.createProjectMember = async ({ project_id, user_id, role_id }) => {
   `).get(user_id);
   if (!user) throw new Error("User not found");
 
-  const role = await db.prepare(`
-    SELECT id FROM roles WHERE id = ?
-  `).get(role_id);
+  const role = await selectRoleById.get(role_id);
   if (!role) throw new Error("Role not found");
 
   const existing = await db.prepare(`
@@ -35,6 +45,10 @@ exports.createProjectMember = async ({ project_id, user_id, role_id }) => {
     INSERT INTO project_members (id, project_id, user_id, role_id)
     VALUES (?, ?, ?, ?)
   `).run(id, project_id, user_id, role_id);
+
+  if (String(role.name || "").toLowerCase() === "admin") {
+    await markUserAsWorkspaceAdmin.run(user_id);
+  }
 
   return { id };
 };
@@ -90,11 +104,11 @@ exports.updateProjectMember = async (id, data) => {
     if (!user) throw new Error("User not found");
   }
 
+  let nextRole = null;
+
   if (data.role_id) {
-    const role = await db.prepare(`
-      SELECT id FROM roles WHERE id = ?
-    `).get(data.role_id);
-    if (!role) throw new Error("Role not found");
+    nextRole = await selectRoleById.get(data.role_id);
+    if (!nextRole) throw new Error("Role not found");
   }
 
   const nextProjectId = data.project_id ?? existing.project_id;
@@ -118,6 +132,10 @@ exports.updateProjectMember = async (id, data) => {
     data.role_id ?? existing.role_id,
     id
   );
+
+  if (String(nextRole?.name || "").toLowerCase() === "admin") {
+    await markUserAsWorkspaceAdmin.run(nextUserId);
+  }
 
   return { updated: true };
 };

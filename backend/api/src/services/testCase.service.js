@@ -432,6 +432,7 @@ const normalizeImportBatches = ({ batches = [], rows = [], import_source, file_n
         batch_index: index + 1,
         file_name: normalizeText(batch?.file_name || batch?.fileName) || `Batch ${index + 1}`,
         import_source: normalizeImportSource(batch?.import_source || batch?.importSource || import_source || "csv"),
+        row_offset: Math.max(Number(batch?.row_offset ?? batch?.rowOffset ?? 0) || 0, 0),
         rows: Array.isArray(batch?.rows) ? batch.rows.filter((row) => row && typeof row === "object" && !Array.isArray(row)) : []
       }))
       .filter((batch) => batch.rows.length);
@@ -442,6 +443,7 @@ const normalizeImportBatches = ({ batches = [], rows = [], import_source, file_n
         batch_index: 1,
         file_name: normalizeText(file_name) || getImportSourceLabel(import_source || "csv"),
         import_source: normalizeImportSource(import_source || "csv"),
+        row_offset: 0,
         rows: rows.filter((row) => row && typeof row === "object" && !Array.isArray(row))
       }].filter((batch) => batch.rows.length)
     : [];
@@ -913,6 +915,8 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
     });
 
     for (const [index, row] of batch.rows.entries()) {
+      const rowNumber = batch.row_offset + index + 1;
+
       try {
         const normalizedRow = row || {};
         const importedSteps = buildStepsFromImportRow(normalizedRow, { sharedGroupLookup }).map((step) => ({ ...step }));
@@ -976,7 +980,7 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
         });
 
         created.push({
-          row: index + 1,
+          row: rowNumber,
           batch_index: batch.batch_index,
           file_name: batch.file_name,
           import_source: batch.import_source,
@@ -985,7 +989,7 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
         });
       } catch (error) {
         errors.push({
-          row: index + 1,
+          row: rowNumber,
           batch_index: batch.batch_index,
           file_name: batch.file_name,
           import_source: batch.import_source,

@@ -102,7 +102,7 @@ const AUTH_CAPABILITY_SLIDES: Array<{
     id: "playbooks",
     eyebrow: "Reusable Coverage",
     title: "Link requirements, reusable cases, suites, and shared steps into one test flow.",
-    description: "Move from requirement coverage to suite planning without rebuilding the same scope. Shared steps, linked cases, and grouped flows stay connected across authoring and execution.",
+    description: "Move from requirement coverage to suite planning without rebuilding the same scope. Shared steps, linked cases, and grouped flows stay connected across authoring and runs.",
     theme: "amber",
     visual: "playbooks",
     metrics: [
@@ -111,13 +111,13 @@ const AUTH_CAPABILITY_SLIDES: Array<{
       { value: "9", label: "shared groups" }
     ],
     capabilities: ["Requirement traceability", "Shared step groups", "Suite-ready case reuse"],
-    footer: "Coverage stays deliberate, reusable, and ready to move into execution."
+    footer: "Coverage stays deliberate, reusable, and ready to move into runs."
   },
   {
     id: "evidence",
-    eyebrow: "Execution Evidence",
+    eyebrow: "Run Evidence",
     title: "Capture runs, failures, and proof in a format product and engineering can act on.",
-    description: "Execution history, notes, failure signals, and linked evidence stay attached to reusable coverage so audits, bug triage, and release reviews stay grounded in the same source.",
+    description: "Run history, notes, failure signals, and linked evidence stay attached to reusable coverage so audits, bug triage, and release reviews stay grounded in the same source.",
     theme: "teal",
     visual: "evidence",
     metrics: [
@@ -125,7 +125,7 @@ const AUTH_CAPABILITY_SLIDES: Array<{
       { value: "3", label: "handoff lanes" },
       { value: "24h", label: "audit ready" }
     ],
-    capabilities: ["Execution history", "Defect-ready summaries", "Release signals"],
+    capabilities: ["Run history", "Defect-ready summaries", "Release signals"],
     footer: "Evidence stays readable, linked, and ready for the next shipping decision."
   }
 ];
@@ -339,7 +339,7 @@ function getCurrentCopy(
   return {
     eyebrow: "Secure login",
     title: "Welcome back",
-    description: "Sign in to continue managing test design, execution, and traceability in one place.",
+    description: "Sign in to continue managing test design, runs, and traceability in one place.",
     submitLabel: "Sign in to QAira",
     loadingLabel: "Signing in…"
   };
@@ -1170,159 +1170,87 @@ function AuthCapabilityGraphic({
   visual: CapabilityVisual;
   layout: CapabilityLayout;
 }) {
-  if (visual === "marketplace") {
-    return (
-      <div className={`auth-capability-visual auth-marketplace-visual is-${layout}`} aria-hidden="true">
-        <div className="auth-marketplace-banner">
-          <span className="auth-visual-command-label">Featured packs</span>
-          <span className="auth-marketplace-status">4 live</span>
-        </div>
-
-        <div className="auth-marketplace-stack">
-          <div className="auth-marketplace-card is-primary">
-            <span className="auth-marketplace-badge">AI</span>
-            <div className="auth-marketplace-copy">
-              <strong>LLM Planner Pack</strong>
-              <span>Smart execution previews, AI case drafting, impact scoring</span>
-            </div>
-            <span className="auth-marketplace-pill">Active</span>
-          </div>
-
-          <div className="auth-marketplace-card">
-            <span className="auth-marketplace-badge is-amber">ID</span>
-            <div className="auth-marketplace-copy">
-              <strong>Access Pack</strong>
-              <span>Google sign-in, email verification, secure workspace entry</span>
-            </div>
-            <span className="auth-marketplace-pill is-muted">Configured</span>
-          </div>
-
-          <div className="auth-marketplace-card">
-            <span className="auth-marketplace-badge is-teal">DX</span>
-            <div className="auth-marketplace-copy">
-              <strong>Delivery Sync Pack</strong>
-              <span>Defect routing, release summaries, evidence-ready notifications</span>
-            </div>
-            <span className="auth-marketplace-pill is-muted">Ready</span>
-          </div>
-        </div>
-
-        <div className="auth-marketplace-strip">
-          <div className="auth-marketplace-stat">
-            <strong>OpenAI</strong>
-            <span>Primary planning model</span>
-          </div>
-          <div className="auth-marketplace-stat">
-            <strong>Google Auth</strong>
-            <span>Workspace access pack</span>
-          </div>
-          <div className="auth-marketplace-stat">
-            <strong>Email Sender</strong>
-            <span>Verification handoff</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (visual === "playbooks") {
-    return (
-      <div className={`auth-capability-visual auth-marketplace-visual auth-marketplace-visual--flow is-${layout}`} aria-hidden="true">
-        <div className="auth-marketplace-banner">
-          <span className="auth-visual-command-label">Execution flow</span>
-          <span className="auth-marketplace-status is-amber">Guided</span>
-        </div>
-
-        <div className="auth-marketplace-flow">
-          <div className="auth-marketplace-flow-card">
-            <span>Impacted requirements</span>
-            <strong>Payments + role sync</strong>
-          </div>
-          <div className="auth-marketplace-flow-card">
-            <span>Linked cases</span>
-            <strong>18 scoped</strong>
-          </div>
-          <div className="auth-marketplace-flow-card">
-            <span>Step packs</span>
-            <strong>Shared + local groups</strong>
-          </div>
-          <div className="auth-marketplace-flow-card is-primary">
-            <span>Run target</span>
-            <strong>Default suite</strong>
-          </div>
-        </div>
-
-        <div className="auth-marketplace-row auth-marketplace-row--two-up">
-          <div className="auth-marketplace-card">
-            <span className="auth-marketplace-badge">SG</span>
-            <div className="auth-marketplace-copy">
-              <strong>Shared Step Group Pack</strong>
-              <span>Reusable setup, role switching, and environment prep</span>
-            </div>
-            <span className="auth-marketplace-pill">Reusable</span>
-          </div>
-          <div className="auth-marketplace-card">
-            <span className="auth-marketplace-badge is-amber">LG</span>
-            <div className="auth-marketplace-copy">
-              <strong>Local Group Pack</strong>
-              <span>Case-specific branching kept close to the impacted release path</span>
-            </div>
-            <span className="auth-marketplace-pill is-muted">Focused</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const board =
+    visual === "marketplace"
+      ? {
+          eyebrow: "Connected stack",
+          note: "Feature-first workspace setup",
+          items: [
+            {
+              title: "AI design and planning",
+              detail: "Preview test ideas, generate cases, and keep design work in one place."
+            },
+            {
+              title: "Secure access controls",
+              detail: "Google sign-in, email verification, and admin-managed workspace entry."
+            },
+            {
+              title: "Integration-ready delivery",
+              detail: "Keep sync, handoff, and release workflows connected to the same QA surface."
+            }
+          ],
+          tags: ["AI-assisted design", "Admin access", "Integrations", "One workspace"]
+        }
+      : visual === "playbooks"
+        ? {
+            eyebrow: "Coverage workflow",
+            note: "Reusable traceability without clutter",
+            items: [
+              {
+                title: "Requirement-linked coverage",
+                detail: "Carry scope from requirements into reusable cases without rebuilding the same map."
+              },
+              {
+                title: "Shared and local step groups",
+                detail: "Reuse repeated setup while keeping case-specific branches close to the scenario."
+              },
+              {
+                title: "Suite-ready organization",
+                detail: "Move linked cases into suites and run flows with less manual reshaping."
+              }
+            ],
+            tags: ["Requirements", "Shared steps", "Reusable cases", "Suites"]
+          }
+        : {
+            eyebrow: "Run evidence",
+            note: "Readable proof for every run",
+            items: [
+              {
+                title: "Result history stays attached",
+                detail: "Runs, failures, and notes remain tied to the underlying reusable coverage."
+              },
+              {
+                title: "Proof-first handoff",
+                detail: "Keep evidence, outcome, and impacted scope together for product and engineering."
+              },
+              {
+                title: "Release-ready summaries",
+                detail: "Turn run data into a clear signal for audits, bug triage, and release reviews."
+              }
+            ],
+            tags: ["Test runs", "Linked evidence", "Defect handoff", "Release signal"]
+          };
 
   return (
-    <div className={`auth-capability-visual auth-marketplace-visual auth-marketplace-visual--evidence is-${layout}`} aria-hidden="true">
-      <div className="auth-marketplace-banner">
-        <span className="auth-visual-command-label">Evidence lanes</span>
-        <span className="auth-marketplace-status is-teal">Audit-ready</span>
+    <div className={`auth-capability-visual auth-feature-board is-${layout}`} aria-hidden="true">
+      <div className="auth-feature-board-head">
+        <span className="auth-visual-command-label">{board.eyebrow}</span>
+        <span className="auth-feature-board-note">{board.note}</span>
       </div>
 
-      <div className="auth-marketplace-stack">
-        <div className="auth-marketplace-card">
-          <span className="auth-marketplace-badge">EV</span>
-          <div className="auth-marketplace-copy">
-            <strong>Evidence Vault</strong>
-            <span>Upload images, notes, and structured results without losing step context</span>
+      <div className="auth-feature-list">
+        {board.items.map((item) => (
+          <div className="auth-feature-card" key={item.title}>
+            <strong>{item.title}</strong>
+            <p>{item.detail}</p>
           </div>
-          <span className="auth-marketplace-pill">Synced</span>
-        </div>
-
-        <div className="auth-marketplace-card">
-          <span className="auth-marketplace-badge is-teal">RS</span>
-          <div className="auth-marketplace-copy">
-            <strong>Release Summary Pack</strong>
-            <span>Pull impacted cases, outcomes, and blockers into one readable handoff</span>
-          </div>
-          <span className="auth-marketplace-pill is-muted">Exportable</span>
-        </div>
-
-        <div className="auth-marketplace-card">
-          <span className="auth-marketplace-badge is-amber">DF</span>
-          <div className="auth-marketplace-copy">
-            <strong>Defect Handoff Pack</strong>
-            <span>Bundle proof, linked steps, and impact notes for faster engineering triage</span>
-          </div>
-          <span className="auth-marketplace-pill is-muted">Ready</span>
-        </div>
+        ))}
       </div>
 
-      <div className="auth-marketplace-strip">
-        <div className="auth-marketplace-stat">
-          <strong>0 orphan runs</strong>
-          <span>Every result stays linked</span>
-        </div>
-        <div className="auth-marketplace-stat">
-          <strong>3 handoff lanes</strong>
-          <span>QA, product, engineering</span>
-        </div>
-        <div className="auth-marketplace-stat">
-          <strong>Proof first</strong>
-          <span>Images, notes, and status together</span>
-        </div>
+      <div className="auth-feature-tag-row">
+        {board.tags.map((tag) => (
+          <span className="auth-feature-tag" key={tag}>{tag}</span>
+        ))}
       </div>
     </div>
   );

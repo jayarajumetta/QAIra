@@ -10,7 +10,7 @@ const supportChannels = [
   },
   {
     title: "Release escalation",
-    description: "Use this channel when active execution blockers are affecting a release milestone or go-live decision.",
+    description: "Use this channel when active run blockers are affecting a release milestone or go-live decision.",
     value: "release-ops@qaira.local"
   },
   {
@@ -24,7 +24,7 @@ const playbooks = [
   "Workspace access and onboarding",
   "Project setup checklist",
   "Requirement to test-case design flow",
-  "Execution incident triage guide",
+  "Run incident triage guide",
   "Integrations and API key rotation"
 ];
 

@@ -14,9 +14,14 @@ const selectRoleByName = db.prepare(`
 const selectAdminUsers = db.prepare(`
   SELECT DISTINCT users.id
   FROM users
-  JOIN project_members ON project_members.user_id = users.id
-  JOIN roles ON roles.id = project_members.role_id
-  WHERE roles.name = 'admin'
+  WHERE COALESCE(users.is_workspace_admin, FALSE) = TRUE
+     OR EXISTS (
+       SELECT 1
+       FROM project_members
+       JOIN roles ON roles.id = project_members.role_id
+       WHERE project_members.user_id = users.id
+         AND LOWER(roles.name) = 'admin'
+     )
 `);
 
 const insertProjectMember = db.prepare(`
@@ -31,7 +36,7 @@ const insertAppType = db.prepare(`
 `);
 
 const selectUserById = db.prepare(`
-  SELECT id
+  SELECT id, is_workspace_admin
   FROM users
   WHERE id = ?
 `);
@@ -251,7 +256,7 @@ exports.createProject = async ({ name, description, created_by, member_ids, app_
 
   const adminRole = await selectRoleByName.get("admin");
   const memberRole = await selectRoleByName.get("member");
-  const creatorRoleId = memberRole?.id || adminRole?.id;
+  const creatorRoleId = user.is_workspace_admin ? (adminRole?.id || memberRole?.id) : (memberRole?.id || adminRole?.id);
   const selectedMemberRoleId = memberRole?.id || adminRole?.id;
 
   if (!creatorRoleId || !selectedMemberRoleId) {

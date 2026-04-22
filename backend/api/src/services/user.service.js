@@ -36,7 +36,7 @@ const selectRoleByName = db.prepare(`
 `);
 
 const selectUserById = db.prepare(`
-  SELECT id, email, name
+  SELECT id, email, name, is_workspace_admin
   FROM users
   WHERE id = ?
 `);
@@ -70,13 +70,21 @@ const selectOtherProjectAdmin = db.prepare(`
 `);
 
 const selectWorkspaceAdminUsers = db.prepare(`
-  SELECT DISTINCT users.id
+  SELECT users.id
   FROM users
-  JOIN project_members ON project_members.user_id = users.id
-  JOIN roles ON roles.id = project_members.role_id
   WHERE users.id != ?
-    AND LOWER(roles.name) = 'admin'
+    AND (
+      COALESCE(users.is_workspace_admin, FALSE) = TRUE
+      OR EXISTS (
+        SELECT 1
+        FROM project_members
+        JOIN roles ON roles.id = project_members.role_id
+        WHERE project_members.user_id = users.id
+          AND LOWER(roles.name) = 'admin'
+      )
+    )
   ORDER BY users.id ASC
+  LIMIT 1
 `);
 
 const selectProjectMembership = db.prepare(`
@@ -120,6 +128,29 @@ const clearExecutionScheduleAssignments = db.prepare(`
   WHERE assigned_to = ?
 `);
 
+const clearExecutionsCreatedBy = db.prepare(`
+  UPDATE executions
+  SET created_by = NULL
+  WHERE created_by = ?
+`);
+
+const clearExecutionResultExecutors = db.prepare(`
+  UPDATE execution_results
+  SET executed_by = NULL
+  WHERE executed_by = ?
+`);
+
+const clearWorkspaceTransactionCreators = db.prepare(`
+  UPDATE workspace_transactions
+  SET created_by = NULL
+  WHERE created_by = ?
+`);
+
+const deleteFeedbackForUser = db.prepare(`
+  DELETE FROM feedback
+  WHERE user_id = ?
+`);
+
 const deleteProjectMembershipsForUser = db.prepare(`
   DELETE FROM project_members
   WHERE user_id = ?
@@ -160,6 +191,8 @@ const normalizeAvatarDataUrl = (value) => {
   return normalized;
 };
 
+const isAdminRole = (role) => String(role?.name || "").trim().toLowerCase() === "admin";
+
 exports.createUser = async ({ email, password_hash, name, role_id }) => {
   if (!email || !password_hash || !role_id) {
     throw new Error("Missing required fields");
@@ -182,8 +215,8 @@ exports.createUser = async ({ email, password_hash, name, role_id }) => {
   const id = uuid();
 
   const createUserStatement = db.prepare(`
-    INSERT INTO users (id, email, password_hash, name)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO users (id, email, password_hash, name, is_workspace_admin)
+    VALUES (?, ?, ?, ?, ?)
   `);
   const projects = await db.prepare(`SELECT id FROM projects`).all();
   const createMembership = db.prepare(`
@@ -192,7 +225,7 @@ exports.createUser = async ({ email, password_hash, name, role_id }) => {
   `);
 
   const transaction = db.transaction(async () => {
-    await createUserStatement.run(id, normalizedEmail, password_hash, normalizeName(name));
+    await createUserStatement.run(id, normalizedEmail, password_hash, normalizeName(name), isAdminRole(role));
 
     for (const project of projects) {
       await createMembership.run(uuid(), project.id, id, role_id);
@@ -207,14 +240,17 @@ exports.createUser = async ({ email, password_hash, name, role_id }) => {
 exports.getUsers = async () => {
   return db.prepare(`
     SELECT users.id, users.email, users.name, users.avatar_data_url, users.created_at,
-      (
-        SELECT roles.name
-        FROM project_members
-        JOIN roles ON roles.id = project_members.role_id
-        WHERE project_members.user_id = users.id
-        ORDER BY CASE roles.name WHEN 'admin' THEN 0 ELSE 1 END
-        LIMIT 1
-      ) AS role
+      CASE
+        WHEN COALESCE(users.is_workspace_admin, FALSE) THEN 'admin'
+        ELSE COALESCE((
+          SELECT roles.name
+          FROM project_members
+          JOIN roles ON roles.id = project_members.role_id
+          WHERE project_members.user_id = users.id
+          ORDER BY CASE roles.name WHEN 'admin' THEN 0 ELSE 1 END
+          LIMIT 1
+        ), 'member')
+      END AS role
     FROM users
     ORDER BY created_at DESC
   `).all();
@@ -223,14 +259,17 @@ exports.getUsers = async () => {
 exports.getUser = async (id) => {
   const user = await db.prepare(`
     SELECT users.id, users.email, users.name, users.avatar_data_url, users.created_at,
-      (
-        SELECT roles.name
-        FROM project_members
-        JOIN roles ON roles.id = project_members.role_id
-        WHERE project_members.user_id = users.id
-        ORDER BY CASE roles.name WHEN 'admin' THEN 0 ELSE 1 END
-        LIMIT 1
-      ) AS role
+      CASE
+        WHEN COALESCE(users.is_workspace_admin, FALSE) THEN 'admin'
+        ELSE COALESCE((
+          SELECT roles.name
+          FROM project_members
+          JOIN roles ON roles.id = project_members.role_id
+          WHERE project_members.user_id = users.id
+          ORDER BY CASE roles.name WHEN 'admin' THEN 0 ELSE 1 END
+          LIMIT 1
+        ), 'member')
+      END AS role
     FROM users
     WHERE users.id = ?
   `).get(id);
@@ -260,12 +299,14 @@ exports.updateUser = async (id, data) => {
     }
   }
 
+  let nextRole = null;
+
   if (data.role_id) {
-    const role = await db.prepare(`
-      SELECT id FROM roles WHERE id = ?
+    nextRole = await db.prepare(`
+      SELECT id, name FROM roles WHERE id = ?
     `).get(data.role_id);
 
-    if (!role) throw new Error("Role not found");
+    if (!nextRole) throw new Error("Role not found");
   }
 
   const nextAvatarDataUrl =
@@ -279,7 +320,7 @@ exports.updateUser = async (id, data) => {
 
   const updateUserStatement = db.prepare(`
     UPDATE users
-    SET email = ?, password_hash = ?, name = ?, avatar_data_url = ?
+    SET email = ?, password_hash = ?, name = ?, avatar_data_url = ?, is_workspace_admin = ?
     WHERE id = ?
   `);
   const updateMembershipRoles = db.prepare(`
@@ -295,6 +336,7 @@ exports.updateUser = async (id, data) => {
       data.password_hash ?? existing.password_hash,
       nextName,
       nextAvatarDataUrl,
+      nextRole ? isAdminRole(nextRole) : existing.is_workspace_admin,
       id
     );
 
@@ -371,6 +413,10 @@ exports.deleteUser = async (id) => {
     await clearExecutionAssignments.run(id);
     await clearExecutionCaseAssignments.run(id);
     await clearExecutionScheduleAssignments.run(id);
+    await clearExecutionsCreatedBy.run(id);
+    await clearExecutionResultExecutors.run(id);
+    await clearWorkspaceTransactionCreators.run(id);
+    await deleteFeedbackForUser.run(id);
     await deleteProjectMembershipsForUser.run(id);
     await deleteUserById.run(id);
   });

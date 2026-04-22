@@ -5,7 +5,7 @@ import { Panel } from "../components/Panel";
 import { ToastMessage } from "../components/ToastMessage";
 
 const notificationFeed = [
-  { title: "Execution failed in Checkout Regression", detail: "2 minutes ago · Web Portal · Assigned to release team", tone: "error" },
+  { title: "Run failed in Checkout Regression", detail: "2 minutes ago · Web Portal · Assigned to release team", tone: "error" },
   { title: "AI design preview completed", detail: "18 minutes ago · Requirement coverage updated", tone: "success" },
   { title: "New integration was activated", detail: "1 hour ago · OpenAI production key rotated", tone: "info" },
   { title: "Project membership changed", detail: "Today · Two new members added to Mobile QA", tone: "neutral" }

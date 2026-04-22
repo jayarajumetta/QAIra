@@ -44,9 +44,10 @@ export function StepParameterDialog({
       items: parameters.filter((parameter) => parameter.scope === "r")
     }
   ].filter((group) => group.items.length);
+  const parameterCount = parameters.length;
 
   return (
-    <div className="modal-backdrop" onClick={onClose} role="presentation">
+    <div className="modal-backdrop modal-backdrop--scroll" onClick={onClose} role="presentation">
       <div
         aria-label={title}
         aria-modal="true"
@@ -54,14 +55,18 @@ export function StepParameterDialog({
         onClick={(event) => event.stopPropagation()}
         role="dialog"
       >
-        <div className="suite-create-header">
+        <div className="suite-create-header step-parameter-dialog-header">
           <div className="suite-create-title">
+            <p className="eyebrow">Test data</p>
             <h3>{title}</h3>
             <p>{subtitle}</p>
           </div>
-          <button className="ghost-button" onClick={onClose} type="button">
-            Close
-          </button>
+          <div className="step-parameter-dialog-head-meta">
+            <span className="count-pill">{parameterCount} field{parameterCount === 1 ? "" : "s"}</span>
+            <button className="ghost-button" onClick={onClose} type="button">
+              Close
+            </button>
+          </div>
         </div>
 
         <div className="step-parameter-dialog-body">
@@ -102,6 +107,17 @@ export function StepParameterDialog({
           ) : (
             <div className="empty-state compact">No `@params` detected in these steps yet.</div>
           )}
+        </div>
+
+        <div className="step-parameter-dialog-footer">
+          <span>
+            {parameterCount
+              ? `${parameterCount} detected field${parameterCount === 1 ? "" : "s"} stay scoped to this case, suite, or run context.`
+              : "Detected params will appear here once steps reference @tokens."}
+          </span>
+          <button className="ghost-button" onClick={onClose} type="button">
+            Done
+          </button>
         </div>
       </div>
     </div>

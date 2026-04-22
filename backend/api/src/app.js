@@ -2,7 +2,8 @@ const fastify = require("fastify")({
   logger: true,
   requestIdLogLabel: "reqId",
   disableRequestLogging: false,
-  requestTimeout: 30000
+  requestTimeout: 120000,
+  bodyLimit: 32 * 1024 * 1024
 });
 
 const cors = require("@fastify/cors");
@@ -21,7 +22,7 @@ const createError = (message, statusCode) => {
 
 const getCurrentUser = async (id) => {
   const user = await db.prepare(`
-    SELECT id, email, name, avatar_data_url, auth_provider, email_verified, created_at
+    SELECT id, email, name, avatar_data_url, auth_provider, email_verified, created_at, is_workspace_admin
     FROM users
     WHERE id = ?
   `).get(id);
@@ -30,18 +31,21 @@ const getCurrentUser = async (id) => {
     return null;
   }
 
+  const { is_workspace_admin, ...rest } = user;
+
   const roleRow = await db.prepare(`
-    SELECT roles.name
-    FROM project_members
-    JOIN roles ON roles.id = project_members.role_id
-    WHERE project_members.user_id = ?
-    ORDER BY CASE roles.name WHEN 'admin' THEN 0 ELSE 1 END
-    LIMIT 1
+    SELECT EXISTS (
+      SELECT 1
+      FROM project_members
+      JOIN roles ON roles.id = project_members.role_id
+      WHERE project_members.user_id = ?
+        AND LOWER(roles.name) = 'admin'
+    ) AS has_admin_membership
   `).get(id);
 
   return {
-    ...user,
-    role: roleRow?.name === "admin" ? "admin" : "member"
+    ...rest,
+    role: is_workspace_admin || roleRow?.has_admin_membership ? "admin" : "member"
   };
 };
 

@@ -13,6 +13,7 @@ CREATE TABLE users (
   password_hash TEXT NOT NULL,
   name TEXT,
   avatar_data_url TEXT,
+  is_workspace_admin BOOLEAN NOT NULL DEFAULT FALSE,
   auth_provider TEXT NOT NULL DEFAULT 'local',
   google_sub TEXT UNIQUE,
   email_verified BOOLEAN NOT NULL DEFAULT FALSE,
@@ -92,7 +93,7 @@ CREATE TABLE feedback (
   message TEXT NOT NULL,
   status TEXT DEFAULT 'open',
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (user_id) REFERENCES users(id)
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE integrations (

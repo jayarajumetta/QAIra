@@ -518,6 +518,8 @@ export function ProjectsPage() {
       queryClient.invalidateQueries({ queryKey: ["test-steps"] }),
       queryClient.invalidateQueries({ queryKey: ["executions"] }),
       queryClient.invalidateQueries({ queryKey: ["execution-results"] }),
+      queryClient.invalidateQueries({ queryKey: ["workspace-transactions"] }),
+      queryClient.invalidateQueries({ queryKey: ["workspace-transaction-events"] }),
       queryClient.invalidateQueries({ queryKey: ["integrations"] }),
       queryClient.invalidateQueries({ queryKey: ["project-sync-transactions"] })
     ]);

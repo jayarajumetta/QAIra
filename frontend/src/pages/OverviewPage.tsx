@@ -5,7 +5,6 @@ import { FolderIcon, LayersIcon, PlayIcon } from "../components/AppIcons";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { ProgressMeter } from "../components/ProgressMeter";
-import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 import type { ExecutionResult } from "../types";
@@ -117,6 +116,8 @@ export function OverviewPage() {
   const navigate = useNavigate();
   const { session } = useAuth();
   const {
+    users,
+    feedback,
     projects,
     requirements,
     appTypes,
@@ -127,6 +128,8 @@ export function OverviewPage() {
     executionResults
   } = useWorkspaceData();
 
+  const usersList = users.data || [];
+  const feedbackList = feedback.data || [];
   const projectsList = projects.data || [];
   const requirementsList = requirements.data || [];
   const appTypesList = appTypes.data || [];
@@ -231,6 +234,20 @@ export function OverviewPage() {
     [automationReadiness, passRate, requirementCoverage]
   );
 
+  const adminUserCount = useMemo(
+    () => usersList.filter((user) => user.role === "admin").length,
+    [usersList]
+  );
+
+  const openFeedbackCount = useMemo(
+    () =>
+      feedbackList.filter((item) => {
+        const normalizedStatus = String(item.status || "open").trim().toLowerCase();
+        return normalizedStatus !== "closed" && normalizedStatus !== "resolved";
+      }).length,
+    [feedbackList]
+  );
+
   const readinessTone = resolveScoreTone(releaseReadinessScore);
   const readinessRingStyle = {
     background: `conic-gradient(${scoreAccent(readinessTone)} 0 ${releaseReadinessScore}%, rgba(18, 40, 75, 0.08) ${releaseReadinessScore}% 100%)`
@@ -254,7 +271,7 @@ export function OverviewPage() {
 
   const readinessNarrative = useMemo(() => {
     if (!projectsList.length && !requirementsList.length && !testCasesList.length) {
-      return "Start by defining release scope, shaping reusable suites, and capturing the first execution signal.";
+      return "Start by defining release scope, shaping reusable suites, and capturing the first run signal.";
     }
 
     if (releaseReadinessScore >= 85) {
@@ -262,7 +279,7 @@ export function OverviewPage() {
     }
 
     if (releaseReadinessScore >= 65) {
-      return "The release picture is taking shape, but a few design and execution gaps still stand between status reporting and confidence.";
+      return "The release picture is taking shape, but a few design and run gaps still stand between status reporting and confidence.";
     }
 
     return "The product story is still missing enough coverage or run evidence that the dashboard should drive action before release calls.";
@@ -325,7 +342,7 @@ export function OverviewPage() {
       {
         id: "executions",
         title: "Run release checks",
-        detail: "Open the execution hub to triage failed runs, monitor active checks, and capture new evidence.",
+        detail: "Open Test Runs to triage failed runs, monitor active checks, and capture new evidence.",
         meta: `${executionStatusCounts.running} running · ${executionStatusCounts.failed} failed`,
         to: "/executions",
         tone: executionStatusCounts.failed ? "error" as const : executionStatusCounts.running ? "info" as const : "success" as const
@@ -333,13 +350,94 @@ export function OverviewPage() {
     ];
   }, [casesMissingStepsCount, coverageGapCount, executionStatusCounts.failed, executionStatusCounts.running, suitesList.length]);
 
+  const workspacePillars = useMemo(() => {
+    return [
+      {
+        id: "scope",
+        eyebrow: "Scope map",
+        value: compactNumberFormatter.format(requirementsList.length),
+        title: "Requirements and app surfaces stay anchored to active product scope.",
+        description: "Projects, app types, and mapped requirements define the QA surface the rest of the workspace builds on.",
+        tone: requirementCoverage >= 80 ? "success" as const : requirementsList.length ? "info" as const : "neutral" as const,
+        chipLabel: `${requirementCoverage}% mapped`,
+        stats: [
+          `${projectsList.length} project${projectsList.length === 1 ? "" : "s"}`,
+          `${appTypesList.length} app type${appTypesList.length === 1 ? "" : "s"}`,
+          `${coverageGapCount} uncovered`
+        ]
+      },
+      {
+        id: "design",
+        eyebrow: "Reusable design",
+        value: compactNumberFormatter.format(testCasesList.length),
+        title: "Suites, cases, and executable steps are turning scope into reusable assets.",
+        description: "This is where QAira is strongest today: reusable cases, suite structure, and run-ready authoring.",
+        tone: automationReadiness >= 70 ? "success" as const : testCasesList.length ? "info" as const : "neutral" as const,
+        chipLabel: `${automationReadiness}% executable`,
+        stats: [
+          `${suitesList.length} suite${suitesList.length === 1 ? "" : "s"}`,
+          `${casesWithStepsCount} with steps`,
+          `${casesMissingStepsCount} to finish`
+        ]
+      },
+      {
+        id: "execution",
+        eyebrow: "Run evidence",
+        value: compactNumberFormatter.format(executionsList.length),
+        title: "Run history, pass rate, and hotspots show where release confidence is real or still weak.",
+        description: "Runs and result signals turn reusable design work into something product and engineering can act on.",
+        tone: resultStatusCounts.failed ? "error" as const : passRate >= 80 ? "success" as const : "info" as const,
+        chipLabel: `${passRate}% pass rate`,
+        stats: [
+          `${executionStatusCounts.running} running`,
+          `${resultStatusCounts.failed} failed`,
+          `${resultStatusCounts.blocked} blocked`
+        ]
+      },
+      {
+        id: "team",
+        eyebrow: "People and intake",
+        value: compactNumberFormatter.format(usersList.length),
+        title: "Access control and workspace feedback stay visible alongside delivery work.",
+        description: "The tool already covers admin access, user management, and feedback intake, so the dashboard should acknowledge them.",
+        tone: openFeedbackCount ? "info" as const : "neutral" as const,
+        chipLabel: `${openFeedbackCount} open feedback`,
+        stats: [
+          `${adminUserCount} admin${adminUserCount === 1 ? "" : "s"}`,
+          `${Math.max(usersList.length - adminUserCount, 0)} member${usersList.length - adminUserCount === 1 ? "" : "s"}`,
+          `${feedbackList.length} total feedback`
+        ]
+      }
+    ];
+  }, [
+    adminUserCount,
+    appTypesList.length,
+    automationReadiness,
+    casesMissingStepsCount,
+    casesWithStepsCount,
+    coverageGapCount,
+    executionStatusCounts.running,
+    executionsList.length,
+    feedbackList.length,
+    openFeedbackCount,
+    passRate,
+    projectsList.length,
+    requirementCoverage,
+    requirementsList.length,
+    resultStatusCounts.blocked,
+    resultStatusCounts.failed,
+    suitesList.length,
+    testCasesList.length,
+    usersList.length
+  ]);
+
   const attentionQueue = useMemo(() => {
     const failedExecutions = recentExecutions
       .filter((execution) => execution.status === "failed")
       .slice(0, 2)
       .map((execution) => ({
         id: `execution-${execution.id}`,
-        title: execution.name || "Unnamed execution",
+        title: execution.name || "Unnamed run",
         detail: `${execution.projectName} release check ended failed and needs triage in the execution hub.`,
         label: "Investigate run",
         tone: "error" as const,
@@ -447,7 +545,7 @@ export function OverviewPage() {
       }>>((items, result) => {
         const key = result.test_case_id;
         const current = items[key];
-        const detail = result.error || result.suite_name || "Execution instability needs follow-up.";
+        const detail = result.error || result.suite_name || "Run instability needs follow-up.";
 
         if (!current) {
           items[key] = {
@@ -555,7 +653,7 @@ export function OverviewPage() {
         id: "evidence",
         label: "Evidence",
         value: latestExecutionResultsList.length,
-        detail: "Captured execution signals",
+        detail: "Captured run signals",
         chipLabel: latestExecutionResultsList.length ? "Observed" : "Pending",
         tone: latestExecutionResultsList.length ? "success" as const : "neutral" as const
       }
@@ -577,7 +675,7 @@ export function OverviewPage() {
         tone: automationReadiness >= 70 ? "success" as const : "info" as const
       },
       {
-        label: "Execution confidence",
+        label: "Run confidence",
         value: passRate,
         detail: `${resultStatusCounts.failed} failed · ${resultStatusCounts.blocked} blocked`,
         tone: resultStatusCounts.failed ? "danger" as const : passRate >= 80 ? "success" as const : "info" as const
@@ -605,12 +703,12 @@ export function OverviewPage() {
     <div className="page-content">
       <PageHeader
         eyebrow="Dashboard"
-        title={`Product quality cockpit for ${session?.user.name || "your team"}`}
-        description="See coverage depth, execution quality, and release readiness in one place so the next quality decision is obvious."
+        title={`QAira workspace dashboard for ${session?.user.name || "your team"}`}
+        description="Track scope, reusable design assets, run evidence, and the next quality actions in one view that matches how QAira is actually being used today."
         meta={[
-          { label: "Projects", value: projectsList.length },
-          { label: "Pass rate", value: `${passRate}%` },
-          { label: "Active runs", value: executionStatusCounts.running }
+          { label: "Requirements mapped", value: `${requirementCoverage}%` },
+          { label: "Executable cases", value: `${casesWithStepsCount}/${testCasesList.length || 0}` },
+          { label: "Pass rate", value: `${passRate}%` }
         ]}
         actions={
           <>
@@ -633,8 +731,8 @@ export function OverviewPage() {
       <div className="dashboard-hero-grid">
         <Panel
           className="dashboard-command-panel"
-          title="Release readiness command center"
-          subtitle="What a product owner needs to know right now across coverage, automation depth, and release evidence."
+          title="Workspace quality snapshot"
+          subtitle="A grounded read on the current QAira workspace across scope traceability, executable design, and result evidence."
         >
           <div className="dashboard-command-shell">
             <div className="dashboard-command-copy">
@@ -671,8 +769,8 @@ export function OverviewPage() {
 
         <Panel
           className="dashboard-action-panel"
-          title="Next best actions"
-          subtitle="Jump straight into the product and quality workflows that move release confidence fastest."
+          title="Recommended next moves"
+          subtitle="The actions most likely to improve coverage quality, execution confidence, or day-to-day workspace hygiene."
         >
           <div className="dashboard-action-grid">
             {quickActions.map((action) => (
@@ -697,17 +795,27 @@ export function OverviewPage() {
         </Panel>
       </div>
 
-      <div className="stats-grid">
-        <StatCard label="Products" value={projectsList.length} hint="Active product lines in the workspace" />
-        <StatCard label="Release Surfaces" value={appTypesList.length} hint="Web, API, mobile, and unified delivery lanes" />
-        <StatCard label="Reusable Suites" value={suitesList.length} hint="Low-code suite structures ready for reuse" />
-        <StatCard label="Reusable Cases" value={compactNumberFormatter.format(testCasesList.length)} hint="Reusable quality assets available for delivery" />
-        <StatCard label="Executable Cases" value={`${casesWithStepsCount}/${testCasesList.length || 0}`} hint="Cases already shaped for step-based execution" />
-        <StatCard label="Release Checks" value={executionsList.length} hint="Execution runs captured for product evidence" />
+      <div className="dashboard-pillar-grid">
+        {workspacePillars.map((pillar) => (
+          <div className="dashboard-pillar-card" key={pillar.id}>
+            <div className="dashboard-pillar-head">
+              <span className="dashboard-funnel-label">{pillar.eyebrow}</span>
+              <DashboardToneChip label={pillar.chipLabel} tone={pillar.tone} />
+            </div>
+            <strong>{pillar.value}</strong>
+            <span className="dashboard-pillar-title">{pillar.title}</span>
+            <p>{pillar.description}</p>
+            <div className="dashboard-pillar-stats">
+              {pillar.stats.map((stat) => (
+                <span className="dashboard-pillar-stat" key={stat}>{stat}</span>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
 
       <div className="two-column-grid">
-        <Panel title="Release lanes" subtitle="Each delivery surface combines design depth, executable readiness, and run quality in one lane.">
+        <Panel title="Release lanes" subtitle="App types where scope, reusable cases, suites, and run health come together into a real delivery lane.">
           <div className="stack-list">
             {releaseLanes.map((lane) => (
               <button
@@ -736,7 +844,7 @@ export function OverviewPage() {
           </div>
         </Panel>
 
-        <Panel title="Attention queue" subtitle="The shortest path to better release confidence, prioritized for a product owner and quality lead.">
+        <Panel title="Attention queue" subtitle="The shortest path to a healthier workspace, prioritized from the current gaps and unstable signals.">
           <div className="stack-list">
             {attentionQueue.map((item) => (
               <button
@@ -758,7 +866,7 @@ export function OverviewPage() {
       </div>
 
       <div className="two-column-grid">
-        <Panel title="Automation funnel" subtitle="Track how product scope turns into reusable low-code assets and execution evidence.">
+        <Panel title="QA flow" subtitle="How scope is currently moving through reusable design and into run evidence inside QAira.">
           <div className="dashboard-funnel-grid">
             {funnelMetrics.map((metric) => (
               <div className="dashboard-funnel-card" key={metric.id}>
@@ -771,7 +879,7 @@ export function OverviewPage() {
           </div>
         </Panel>
 
-        <Panel title="Execution momentum" subtitle="Run evidence over time, plus the current operating posture for release checks.">
+        <Panel title="Run momentum" subtitle="Run activity over time, plus the current posture for ongoing and unstable checks.">
           {hasActivityData ? (
             <div className="dashboard-momentum-shell">
               <div className="activity-chart">
@@ -808,7 +916,7 @@ export function OverviewPage() {
       </div>
 
       <div className="two-column-grid">
-        <Panel title="Risk hotspots" subtitle="The reusable cases creating the loudest risk signal across recent executions.">
+        <Panel title="Risk hotspots" subtitle="The cases creating the loudest failure or blocked signal across recent run evidence.">
           <div className="stack-list">
             {riskHotspots.map((hotspot) => (
               <button
@@ -831,7 +939,7 @@ export function OverviewPage() {
           </div>
         </Panel>
 
-        <Panel title="Recent release checks" subtitle="Latest execution snapshots with a quick read on pass rate, failures, and drill-down status.">
+        <Panel title="Recent release checks" subtitle="Latest run snapshots with a quick read on pass rate, failures, and current status.">
           <div className="stack-list">
             {recentExecutions.map((execution) => (
               <button
@@ -841,7 +949,7 @@ export function OverviewPage() {
                 type="button"
               >
                 <div className="dashboard-run-copy">
-                  <strong>{execution.name || "Unnamed execution"}</strong>
+                  <strong>{execution.name || "Unnamed run"}</strong>
                   <span>{execution.projectName} · {execution.appTypeName} · {(execution.trigger || "manual").toUpperCase()}</span>
                   <ProgressMeter
                     detail={`${execution.summary.passed} passed · ${execution.summary.failed} failed · ${execution.summary.blocked} blocked`}

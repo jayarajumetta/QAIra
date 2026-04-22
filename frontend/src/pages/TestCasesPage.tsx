@@ -594,7 +594,7 @@ function TestCaseDeleteIcon() {
 function TestCaseRunIcon() {
   return (
     <TestCaseActionIcon>
-      <path d="m9 7 8 5-8 5z" />
+      <path d="m9 7 8 5-8 5z" fill="currentColor" stroke="none" />
     </TestCaseActionIcon>
   );
 }
@@ -1337,7 +1337,7 @@ export function TestCasesPage() {
     if (scope === "r") {
       return {
         disabled: false,
-        hint: "Preview only here. Real executions resolve @r values from the attached execution data set."
+        hint: "Preview only here. Real runs resolve @r values from the attached run data set."
       };
     }
 
@@ -2147,7 +2147,7 @@ export function TestCasesPage() {
   };
 
   const handleDeleteCase = async () => {
-    if (!selectedTestCase || !window.confirm(`Delete test case "${selectedTestCase.title}"? Historical execution evidence will stay preserved.`)) {
+    if (!selectedTestCase || !window.confirm(`Delete test case "${selectedTestCase.title}"? Historical run evidence will stay preserved.`)) {
       return;
     }
 
@@ -2162,7 +2162,7 @@ export function TestCasesPage() {
       setSelectedStepIds([]);
       setStepInsertIndex(null);
       setStepInsertGroupContext(null);
-      showSuccess("Test case deleted. Execution snapshots remain available.");
+      showSuccess("Test case deleted. Run snapshots remain available.");
       await refreshCases();
     } catch (error) {
       showError(error, "Unable to delete test case");
@@ -2217,7 +2217,7 @@ export function TestCasesPage() {
       }
 
       if (!failedResults.length) {
-        showSuccess(`${deletedIds.length} test case${deletedIds.length === 1 ? "" : "s"} deleted. Execution history remains preserved.`);
+        showSuccess(`${deletedIds.length} test case${deletedIds.length === 1 ? "" : "s"} deleted. Run history remains preserved.`);
         return;
       }
 
@@ -2314,13 +2314,13 @@ export function TestCasesPage() {
 
     if (!session?.user.id) {
       setMessageTone("error");
-      setMessage("You need an active session before creating an execution.");
+      setMessage("You need an active session before creating a run.");
       return;
     }
 
     if (!projectId || !appTypeId || !selectedActionTestCaseIds.length) {
       setMessageTone("error");
-      setMessage("Select one or more test cases before creating an execution.");
+      setMessage("Select one or more test cases before creating a run.");
       return;
     }
 
@@ -2345,7 +2345,7 @@ export function TestCasesPage() {
       ]);
       navigate(`/executions?execution=${response.id}`);
     } catch (error) {
-      showError(error, "Unable to create execution");
+      showError(error, "Unable to create run");
     }
   };
 
@@ -3400,7 +3400,7 @@ export function TestCasesPage() {
         setStepInsertGroupContext(null);
       }
 
-      showSuccess("Test case deleted. Execution snapshots remain available.");
+      showSuccess("Test case deleted. Run snapshots remain available.");
       await refreshCases();
     } catch (error) {
       showError(error, "Unable to delete test case");
@@ -4003,8 +4003,8 @@ export function TestCasesPage() {
       ? "No draft steps added yet."
       : "No steps added yet for this test case.";
   const historySectionSummary = selectedHistory.length
-    ? "Review the latest recorded outcomes and preserved execution evidence for this reusable test case."
-    : "No execution history has been recorded for this reusable test case yet.";
+    ? "Review the latest recorded outcomes and preserved run evidence for this reusable test case."
+    : "No run history has been recorded for this reusable test case yet.";
   const parameterDialogHeaderContent = (
     <div className="step-parameter-dialog-context">
       <div className="step-parameter-dialog-context-card">
@@ -4375,7 +4375,7 @@ export function TestCasesPage() {
               },
               {
                 label: "Delete case",
-                description: "Remove this test case while preserving execution history.",
+                description: "Remove this test case while preserving run history.",
                 icon: <TrashIcon />,
                 onClick: () => void handleDeleteCaseItem(testCase),
                 disabled: deleteTestCase.isPending,
@@ -4690,7 +4690,7 @@ export function TestCasesPage() {
           className="page-header--test-cases"
           eyebrow="Test Cases"
           title="Test Case Library"
-          description="Build reusable coverage with clean step detail, requirement traceability, suite linkage, and execution-ready exports."
+          description="Build reusable coverage with clean step detail, requirement traceability, suite linkage, and run-ready exports."
           meta={[
             { label: "Cases", value: coverageMetrics.total },
             { label: "Mapped", value: coverageMetrics.covered },
@@ -4973,7 +4973,7 @@ export function TestCasesPage() {
                                 className="is-run"
                                 disabled={isRunningCase || isAcceptingCase || isRejectingCase || !projectId || !appTypeId || !session?.user.id}
                                 onClick={() => void handleRunTestCase(testCase.id)}
-                                title="Run test case in execution console"
+                                title="Run test case in Test Runs"
                               >
                                 <TestCaseRunIcon />
                               </TestCaseTileActionButton>
@@ -5020,7 +5020,7 @@ export function TestCasesPage() {
                             </TileCardFact>
                           </div>
                           <div className="tile-card-footer">
-                            <div className="history-bars" aria-label="Execution history">
+                            <div className="history-bars" aria-label="Run history">
                               {history.length ? history.map((result) => (
                                 <span
                                   key={result.id}
@@ -5049,7 +5049,14 @@ export function TestCasesPage() {
                 />
               ) : null}
               {!isLibraryLoading && !filteredCases.length ? (
-                <div className="empty-state compact">{testCases.length ? "No test cases match the current search." : "No test cases found for this app type."}</div>
+                testCases.length ? (
+                  <div className="empty-state compact">No test cases match the current search.</div>
+                ) : (
+                  <div className="empty-state compact">
+                    <div>No test cases exist for this app type yet.</div>
+                    <button className="primary-button" disabled={!appTypeId} onClick={() => beginCreateCase()} type="button">Create first case</button>
+                  </div>
+                )
               ) : null}
             </TileBrowserPane>
           </Panel>
@@ -5370,9 +5377,14 @@ export function TestCasesPage() {
 
                       {!displaySteps.length ? (
                         <div className="empty-state compact">
-                          {isCreating
-                            ? "No draft steps yet. Use the inline + action to add the first step or insert a shared group."
-                            : "No steps yet for this test case. Use the inline + action to add one or insert a shared group."}
+                          <div>
+                            {isCreating
+                              ? "No draft steps yet. Use the inline + action to add the first step or insert a shared group."
+                              : "No steps yet for this test case. Use the inline + action to add one or insert a shared group."}
+                          </div>
+                          {stepInsertIndex === null ? (
+                            <button className="ghost-button" onClick={() => activateStepInsert(0, null)} type="button">Add first step</button>
+                          ) : null}
                         </div>
                       ) : null}
 
@@ -5392,13 +5404,13 @@ export function TestCasesPage() {
                       isExpanded={expandedSections.history}
                       onToggle={() => setExpandedSections((current) => ({ ...current, history: !current.history }))}
                       summary={historySectionSummary}
-                      title="Execution history"
+                      title="Run history"
                     >
                       <div className="step-editor step-history">
                         <div className="stack-list">
                           {selectedHistory.map((result) => {
                             const execution = executionsById[result.execution_id];
-                            const executionLabel = execution?.name?.trim() || `Execution ${result.execution_id.slice(0, 8)}`;
+                            const executionLabel = execution?.name?.trim() || `Run ${result.execution_id.slice(0, 8)}`;
                             const executionSummary = [
                               execution?.status ? `Run ${execution.status}` : null,
                               formatExecutionHistoryDate(result.created_at)
@@ -5406,10 +5418,10 @@ export function TestCasesPage() {
                             const historyDetail =
                               result.error ||
                               (result.status === "passed"
-                                ? "Passed in this execution snapshot."
+                                ? "Passed in this run snapshot."
                                 : result.status === "failed"
-                                  ? "Failed in this execution snapshot."
-                                  : "Blocked in this execution snapshot.");
+                                  ? "Failed in this run snapshot."
+                                  : "Blocked in this run snapshot.");
 
                             return (
                               <div className="stack-item execution-history-item" key={result.id}>
@@ -5522,7 +5534,7 @@ export function TestCasesPage() {
             automation_code: stepDrafts[editingAutomationStep.id]?.automation_code ?? editingAutomationStep.automation_code,
             api_request: stepDrafts[editingAutomationStep.id]?.api_request ?? editingAutomationStep.api_request
           }}
-          subtitle="Use @t for case data, @s for suite-shared data, and @r for execution-level data previews."
+          subtitle="Use @t for case data, @s for suite-shared data, and @r for run-level data previews."
           title={`Step ${editingAutomationStep.step_order} automation`}
         />
       ) : null}
@@ -5600,7 +5612,7 @@ export function TestCasesPage() {
               <div className="import-modal-title">
                 <p className="eyebrow">Bulk Import</p>
                 <h3 id="bulk-import-title">Import test cases from external sources</h3>
-                <p>Queue CSV, JUnit XML, TestNG XML, or Postman collection files together. CSV imports become manual cases, JUnit and TestNG imports keep automated suite and property data, and Postman requests land as API steps with <code>{"{{vars}}"}</code> converted into case test data.</p>
+                <p>Queue CSV, JUnit XML, TestNG XML, or Postman collection files together. CSV imports become manual cases, JUnit and TestNG imports keep automated suite and property data, and Postman requests land as API steps with <code>{"{{vars}}"}</code> converted into case test data. Large imports are sent in smaller batches automatically.</p>
               </div>
               <button aria-label="Close bulk import dialog" className="ghost-button" disabled={importTestCases.isPending} onClick={() => {
                 setImportBatches([]);
@@ -5840,10 +5852,11 @@ function TestCaseSuiteModal({
   const [name, setName] = useState("");
   const [parentId, setParentId] = useState("");
   const [localSelectedIds, setLocalSelectedIds] = useState<string[]>(() => initialSelectedIds);
+  const initialSelectedIdsKey = initialSelectedIds.join("::");
 
   useEffect(() => {
     setLocalSelectedIds(initialSelectedIds);
-  }, [initialSelectedIds]);
+  }, [initialSelectedIdsKey]);
 
   return (
     <div className="modal-backdrop" onClick={() => !isSaving && onClose()} role="presentation">
@@ -6140,7 +6153,7 @@ function TestCaseExecutionModal({
             <div className="execution-create-title">
               <p className="eyebrow">Test Cases</p>
               <h3 id="create-test-case-execution-title">Create Run</h3>
-              <p>The selected test cases will open directly in the execution console without creating a suite first.</p>
+              <p>The selected test cases will open directly in Test Runs without creating a suite first.</p>
             </div>
             <button
               aria-label="Close create run dialog"
@@ -6199,7 +6212,7 @@ function TestCaseExecutionModal({
               selectedEnvironmentId={selectedEnvironmentId}
             />
 
-            <FormField label="Execution scope" required>
+            <FormField label="Run scope" required>
               <div className="selection-summary-card">
                 <div className="selection-summary-header">
                   <div>
@@ -6563,18 +6576,20 @@ function getStepKindMeta(groupKind?: TestStep["group_kind"] | null) {
 
 function StepKindIconBadge({
   label,
-  tone: _tone
+  tone
 }: {
   label: string;
   tone: "default" | "shared" | "local";
 }) {
+  const className = tone === "shared" ? "step-kind-badge is-shared" : tone === "local" ? "step-kind-badge is-local" : "step-kind-badge is-standard";
+
   return (
     <span
       aria-label={label}
-      className="step-kind-badge is-standard"
+      className={className}
       title={label}
     >
-      <StandardStepIcon />
+      {tone === "shared" ? <SharedGroupLevelIcon kind="reusable" /> : tone === "local" ? <SharedGroupLevelIcon kind="local" /> : <StandardStepIcon />}
     </span>
   );
 }
