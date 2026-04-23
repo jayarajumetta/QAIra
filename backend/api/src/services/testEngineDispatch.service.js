@@ -1,15 +1,17 @@
-const { URL } = require("url");
 const db = require("../db");
 const { v4: uuid } = require("uuid");
+const executionResultService = require("./executionResult.service");
 const workspaceTransactionService = require("./workspaceTransaction.service");
+const apiRequestExecutionService = require("./apiRequestExecution.service");
+const executionStepRuntimeService = require("./executionStepRuntime.service");
 const {
   normalizeApiRequest,
   normalizeRichText,
   normalizeTestStepType
 } = require("../utils/testStepAutomation");
 
-const SUPPORTED_ENGINE_STEP_TYPES = new Set(["web", "api"]);
-const DISPATCH_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.TESTENGINE_DISPATCH_CONCURRENCY || 4)));
+const SUPPORTED_ENGINE_STEP_TYPES = new Set(["api"]);
+const DEFAULT_LEASE_SECONDS = Math.max(30, Number(process.env.TESTENGINE_JOB_LEASE_SECONDS || 90));
 
 const selectProject = db.prepare(`
   SELECT id, name, display_id
@@ -29,6 +31,89 @@ const selectTestCaseDispatchMetadata = db.prepare(`
   WHERE id = ?
 `);
 
+const selectExecutionCaseIds = db.prepare(`
+  SELECT test_case_id
+  FROM execution_case_snapshots
+  WHERE execution_id = ?
+`);
+
+const selectLatestResultsForExecution = db.prepare(`
+  SELECT DISTINCT ON (test_case_id) test_case_id, status
+  FROM execution_results
+  WHERE execution_id = ?
+  ORDER BY test_case_id ASC, created_at DESC, id DESC
+`);
+
+const settleExecutionStatus = db.prepare(`
+  UPDATE executions
+  SET status = ?, ended_at = CURRENT_TIMESTAMP
+  WHERE id = ? AND status = 'running'
+`);
+
+const insertJob = db.prepare(`
+  INSERT INTO test_engine_jobs (
+    id,
+    engine_run_id,
+    integration_id,
+    project_id,
+    app_type_id,
+    app_type_kind,
+    execution_id,
+    test_case_id,
+    test_case_title,
+    transaction_id,
+    engine_host,
+    payload,
+    runtime_state,
+    status,
+    attempts,
+    leased_by,
+    lease_expires_at,
+    started_at,
+    completed_at,
+    last_error,
+    created_by
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+const selectJob = db.prepare(`
+  SELECT *
+  FROM test_engine_jobs
+  WHERE id = ?
+`);
+
+const updateJobLeaseState = db.prepare(`
+  UPDATE test_engine_jobs
+  SET status = ?,
+      leased_by = ?,
+      lease_expires_at = ?,
+      started_at = COALESCE(started_at, ?),
+      updated_at = CURRENT_TIMESTAMP
+  WHERE id = ?
+`);
+
+const updateJobRuntimeState = db.prepare(`
+  UPDATE test_engine_jobs
+  SET status = ?,
+      runtime_state = ?,
+      lease_expires_at = ?,
+      last_error = ?,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE id = ?
+`);
+
+const finalizeJobState = db.prepare(`
+  UPDATE test_engine_jobs
+  SET status = ?,
+      runtime_state = ?,
+      lease_expires_at = NULL,
+      completed_at = ?,
+      last_error = ?,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE id = ?
+`);
+
 const normalizeText = (value) => {
   if (typeof value !== "string") {
     return null;
@@ -38,7 +123,42 @@ const normalizeText = (value) => {
   return normalized || null;
 };
 
+const nowIso = () => new Date().toISOString();
+
+const normalizeJsonValue = (value, fallback) => {
+  if (value === null || value === undefined || value === "") {
+    return fallback;
+  }
+
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return fallback;
+    }
+  }
+
+  return value;
+};
+
 const normalizeStringRecord = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.entries(value).reduce((accumulator, [key, entry]) => {
+    const normalizedKey = normalizeText(String(key || "").replace(/^@+/, ""))?.toLowerCase();
+
+    if (!normalizedKey) {
+      return accumulator;
+    }
+
+    accumulator[normalizedKey] = entry === undefined || entry === null ? "" : String(entry);
+    return accumulator;
+  }, {});
+};
+
+const normalizeCapturedValuesRecord = (value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
   }
@@ -97,26 +217,11 @@ const resolveEngineStepType = (stepType, appTypeKind) => {
     return normalized;
   }
 
-  if (normalized === "android" || normalized === "ios") {
-    return null;
-  }
-
-  if (appTypeKind === "api") {
+  if (appTypeKind === "api" && !normalized) {
     return "api";
   }
 
-  return "web";
-};
-
-const buildRunEndpoint = (baseUrl) => {
-  const normalizedBaseUrl = normalizeText(baseUrl);
-
-  if (!normalizedBaseUrl) {
-    throw new Error("The active Test Engine integration is missing a host URL");
-  }
-
-  const root = normalizedBaseUrl.endsWith("/") ? normalizedBaseUrl : `${normalizedBaseUrl}/`;
-  return new URL("api/v1/runs", root).toString();
+  return null;
 };
 
 const buildManualSpec = ({ caseSnapshot, steps, execution }) => {
@@ -153,7 +258,6 @@ const buildManualSpec = ({ caseSnapshot, steps, execution }) => {
 
 const buildEngineEnvelope = ({
   engineRunId,
-  integration,
   execution,
   project,
   appType,
@@ -177,10 +281,10 @@ const buildEngineEnvelope = ({
   trigger: "execution",
   source_mode: "manual-handover",
   automated: true,
-  browser: integration.config?.browser || "chromium",
-  headless: integration.config?.headless !== false,
-  max_repair_attempts: Number(integration.config?.max_repair_attempts) || 2,
-  run_timeout_seconds: Number(integration.config?.run_timeout_seconds) || 1800,
+  browser: "chromium",
+  headless: true,
+  max_repair_attempts: 0,
+  run_timeout_seconds: 1800,
   manual_spec: buildManualSpec({ caseSnapshot, steps, execution }),
   steps,
   suite_parameters: normalizeStringRecord(caseSnapshot.suite_parameter_values),
@@ -213,17 +317,14 @@ const buildEngineEnvelope = ({
       }
     : null,
   artifact_policy: {
-    trace_mode: integration.config?.trace_mode || "on-first-retry",
-    video_mode: integration.config?.video_mode || "retain-on-failure",
-    screenshot_on_failure: true,
-    capture_console: integration.config?.capture_console !== false,
-    capture_network: integration.config?.capture_network !== false,
-    artifact_retention_days: Number(integration.config?.artifact_retention_days) || 14
+    trace_mode: "off",
+    video_mode: "off",
+    screenshot_on_failure: false,
+    capture_console: false,
+    capture_network: false,
+    artifact_retention_days: 7
   },
-  callback: {
-    url: integration.config?.callback_url,
-    signing_secret: integration.config?.callback_secret
-  }
+  callback: null
 });
 
 const summarizeWarnings = (warnings) => {
@@ -232,6 +333,145 @@ const summarizeWarnings = (warnings) => {
   }
 
   return warnings.map((warning) => String(warning)).filter(Boolean);
+};
+
+const parseStructuredLogs = (value) => {
+  const parsed = normalizeJsonValue(value, {});
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {
+      stepStatuses: {},
+      stepNotes: {},
+      stepEvidence: {},
+      stepApiDetails: {}
+    };
+  }
+
+  return {
+    stepStatuses: parsed.stepStatuses && typeof parsed.stepStatuses === "object" && !Array.isArray(parsed.stepStatuses)
+      ? { ...parsed.stepStatuses }
+      : {},
+    stepNotes: parsed.stepNotes && typeof parsed.stepNotes === "object" && !Array.isArray(parsed.stepNotes)
+      ? { ...parsed.stepNotes }
+      : {},
+    stepEvidence: parsed.stepEvidence && typeof parsed.stepEvidence === "object" && !Array.isArray(parsed.stepEvidence)
+      ? { ...parsed.stepEvidence }
+      : {},
+    stepApiDetails: parsed.stepApiDetails && typeof parsed.stepApiDetails === "object" && !Array.isArray(parsed.stepApiDetails)
+      ? { ...parsed.stepApiDetails }
+      : {}
+  };
+};
+
+const parseRuntimeState = (value) => {
+  const parsed = normalizeJsonValue(value, {});
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {
+      captured_values: {},
+      logs: parseStructuredLogs(null)
+    };
+  }
+
+  return {
+    captured_values: normalizeCapturedValuesRecord(parsed.captured_values),
+    logs: parseStructuredLogs(parsed.logs)
+  };
+};
+
+const hydrateJob = (row) => {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    ...row,
+    payload: normalizeJsonValue(row.payload, {}),
+    runtime_state: parseRuntimeState(row.runtime_state)
+  };
+};
+
+const buildRuntimeParameterValues = (envelope, capturedValues = {}) => {
+  const values = {};
+
+  Object.entries(envelope.suite_parameters || {}).forEach(([key, value]) => {
+    const normalizedKey = normalizeText(String(key || "").replace(/^@+/, ""))?.toLowerCase();
+    if (!normalizedKey) {
+      return;
+    }
+    values[`s.${normalizedKey.replace(/^s\./, "")}`] = String(value ?? "");
+  });
+
+  Object.entries(envelope.case_parameters || {}).forEach(([key, value]) => {
+    const normalizedKey = normalizeText(String(key || "").replace(/^@+/, ""))?.toLowerCase();
+    if (!normalizedKey) {
+      return;
+    }
+    values[`t.${normalizedKey.replace(/^t\./, "")}`] = String(value ?? "");
+  });
+
+  Object.entries(envelope.manual_spec?.test_data || {}).forEach(([key, value]) => {
+    const normalizedKey = normalizeText(String(key || "").replace(/^@+/, ""))?.toLowerCase();
+    if (!normalizedKey) {
+      return;
+    }
+    values[`t.${normalizedKey.replace(/^t\./, "")}`] = String(value ?? "");
+  });
+
+  (envelope.environment?.variables || []).forEach((entry) => {
+    if (!entry?.key) {
+      return;
+    }
+    values[`r.${normalizeText(entry.key).replace(/^r\./, "").toLowerCase()}`] = String(entry.value ?? "");
+  });
+
+  (envelope.configuration?.variables || []).forEach((entry) => {
+    if (!entry?.key) {
+      return;
+    }
+    values[`r.${normalizeText(entry.key).replace(/^r\./, "").toLowerCase()}`] = String(entry.value ?? "");
+  });
+
+  if (envelope.data_set?.mode === "key_value") {
+    (envelope.data_set.rows || []).forEach((row) => {
+      Object.entries(row).forEach(([key, value]) => {
+        const normalizedKey = normalizeText(key)?.toLowerCase();
+
+        if (!normalizedKey) {
+          return;
+        }
+
+        values[`t.${normalizedKey}`] = String(value ?? "");
+      });
+    });
+  } else if (Array.isArray(envelope.data_set?.rows) && envelope.data_set.rows.length) {
+    Object.entries(envelope.data_set.rows[0] || {}).forEach(([key, value]) => {
+      const normalizedKey = normalizeText(key)?.toLowerCase();
+
+      if (!normalizedKey) {
+        return;
+      }
+
+      values[`t.${normalizedKey}`] = String(value ?? "");
+    });
+  }
+
+  return {
+    ...values,
+    ...normalizeCapturedValuesRecord(capturedValues)
+  };
+};
+
+const resultStatusToJobStatus = (status) => {
+  if (status === "passed") {
+    return "completed";
+  }
+
+  if (status === "aborted") {
+    return "aborted";
+  }
+
+  return "failed";
 };
 
 async function planExecutionDispatch(execution) {
@@ -272,7 +512,7 @@ async function planExecutionDispatch(execution) {
 
     if (!rawSteps.length) {
       unsupportedAutomatedCaseCount += 1;
-      warnings.push(`${caseSnapshot.test_case_title}: automated case has no snapped steps to hand off.`);
+      warnings.push(`${caseSnapshot.test_case_title}: automated case has no snapped steps to queue.`);
       continue;
     }
 
@@ -282,7 +522,7 @@ async function planExecutionDispatch(execution) {
 
       if (!stepType) {
         stepWarnings.push(
-          `${caseSnapshot.test_case_title}: step ${stepSnapshot.step_order} uses ${stepSnapshot.step_type || "an unsupported type"} and stays manual.`
+          `${caseSnapshot.test_case_title}: step ${stepSnapshot.step_order} is not part of the API-first engine path yet.`
         );
         return null;
       }
@@ -302,7 +542,7 @@ async function planExecutionDispatch(execution) {
       };
     }).filter(Boolean);
 
-    if (stepWarnings.length) {
+    if (stepWarnings.length || normalizedSteps.length !== rawSteps.length) {
       unsupportedAutomatedCaseCount += 1;
       warnings.push(...stepWarnings);
       continue;
@@ -327,8 +567,40 @@ async function planExecutionDispatch(execution) {
     manual_case_count: manualCaseCount,
     unsupported_automated_case_count: unsupportedAutomatedCaseCount,
     warnings: summarizeWarnings(warnings),
-    eligibleCases
+    eligibleCases: eligibleCases.sort((left, right) =>
+      Number(left.case_snapshot.sort_order || 0) - Number(right.case_snapshot.sort_order || 0)
+    )
   };
+}
+
+async function settleExecutionIfComplete(executionId) {
+  const requiredCaseIds = new Set(
+    (await selectExecutionCaseIds.all(executionId))
+      .map((row) => normalizeText(row.test_case_id))
+      .filter(Boolean)
+  );
+
+  if (!requiredCaseIds.size) {
+    return;
+  }
+
+  const latestResults = await selectLatestResultsForExecution.all(executionId);
+  const latestStatusByCaseId = new Map(
+    latestResults.map((result) => [normalizeText(result.test_case_id), normalizeText(result.status)])
+  );
+
+  if (
+    [...requiredCaseIds].some((testCaseId) => !latestStatusByCaseId.has(testCaseId))
+    || [...latestStatusByCaseId.values()].some((status) => status === "running")
+  ) {
+    return;
+  }
+
+  const nextExecutionStatus = [...latestStatusByCaseId.values()].every((status) => status === "passed")
+    ? "completed"
+    : "failed";
+
+  await settleExecutionStatus.run(nextExecutionStatus, executionId);
 }
 
 async function queueExecutionDispatch({ plan, integration, initiatedBy }) {
@@ -342,12 +614,9 @@ async function queueExecutionDispatch({ plan, integration, initiatedBy }) {
     };
   }
 
-  const queuedItems = [];
-
   for (const item of plan.eligibleCases) {
     const envelope = buildEngineEnvelope({
       engineRunId: item.engine_run_id,
-      integration,
       execution: plan.execution,
       project: plan.project,
       appType: plan.appType,
@@ -362,14 +631,14 @@ async function queueExecutionDispatch({ plan, integration, initiatedBy }) {
       action: "testengine_run",
       status: "queued",
       title: `Automated handoff for ${item.case_snapshot.test_case_title}`,
-      description: "Queued for Test Engine dispatch.",
+      description: "Queued for Test Engine execution.",
       metadata: {
         source: "qaira",
         engine_run_id: item.engine_run_id,
         execution_id: plan.execution.id,
         test_case_id: item.case_snapshot.test_case_id,
         engine_host: integration.base_url || null,
-        source_mode: envelope.source_mode
+        queue_mode: "qaira-pull"
       },
       related_kind: "testengine_run",
       related_id: item.engine_run_id,
@@ -380,7 +649,7 @@ async function queueExecutionDispatch({ plan, integration, initiatedBy }) {
     await workspaceTransactionService.appendTransactionEvent(transaction.id, {
       level: "info",
       phase: "dispatch.queued",
-      message: `Queued ${item.case_snapshot.test_case_title} for Test Engine dispatch.`,
+      message: `Queued ${item.case_snapshot.test_case_title} for Test Engine execution.`,
       details: {
         execution_id: plan.execution.id,
         test_case_id: item.case_snapshot.test_case_id,
@@ -388,133 +657,366 @@ async function queueExecutionDispatch({ plan, integration, initiatedBy }) {
       }
     });
 
-    queuedItems.push({
-      transaction_id: transaction.id,
-      engine_run_id: item.engine_run_id,
-      case_snapshot: item.case_snapshot,
-      envelope
-    });
+    await insertJob.run(
+      uuid(),
+      item.engine_run_id,
+      integration.id || null,
+      plan.execution.project_id,
+      plan.execution.app_type_id || null,
+      plan.appType?.type || "web",
+      plan.execution.id,
+      item.case_snapshot.test_case_id,
+      item.case_snapshot.test_case_title,
+      transaction.id,
+      integration.base_url || null,
+      envelope,
+      {
+        captured_values: {},
+        logs: parseStructuredLogs(null)
+      },
+      "queued",
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      initiatedBy || plan.execution.created_by || null
+    );
   }
-
-  queueBackgroundDispatch({
-    queuedItems,
-    integration
-  });
 
   return {
     automated_case_count: plan.automated_case_count,
-    queued_for_engine_count: queuedItems.length,
+    queued_for_engine_count: plan.eligibleCases.length,
     manual_case_count: plan.manual_case_count,
     unsupported_automated_case_count: plan.unsupported_automated_case_count,
     warnings: plan.warnings
   };
 }
 
-async function runWithConcurrency(items, limit, handler) {
-  let nextIndex = 0;
+async function getQueuedJob(id) {
+  const job = hydrateJob(await selectJob.get(id));
 
-  const worker = async () => {
-    while (nextIndex < items.length) {
-      const currentIndex = nextIndex;
-      nextIndex += 1;
-      await handler(items[currentIndex]);
-    }
-  };
-
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, () => worker())
-  );
-}
-
-async function dispatchQueuedItem({ queuedItem, integration, endpoint }) {
-  const headers = {
-    "content-type": "application/json",
-    "x-qaira-source": "qaira"
-  };
-
-  if (integration.api_key) {
-    headers.authorization = `Bearer ${integration.api_key}`;
+  if (!job) {
+    throw new Error("Test Engine queue job not found");
   }
 
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(queuedItem.envelope)
-    });
+  return job;
+}
 
-    const contentType = response.headers.get("content-type") || "";
-    const rawBody = await response.text();
-    const payload = contentType.includes("application/json") && rawBody
-      ? JSON.parse(rawBody)
-      : {};
+exports.leaseNextQueuedJob = db.transaction(async ({ worker_id, engine_host, lease_seconds } = {}) => {
+  const normalizedWorkerId = normalizeText(worker_id) || "testengine-worker";
+  const normalizedEngineHost = normalizeText(engine_host);
+  const safeLeaseSeconds = Math.max(30, Number(lease_seconds) || DEFAULT_LEASE_SECONDS);
+  const params = [];
+  let query = `
+    SELECT *
+    FROM test_engine_jobs
+    WHERE app_type_kind = 'api'
+      AND (
+        status = 'queued'
+        OR (
+          status IN ('leased', 'running')
+          AND lease_expires_at IS NOT NULL
+          AND lease_expires_at < CURRENT_TIMESTAMP
+          AND completed_at IS NULL
+        )
+      )
+  `;
 
-    if (!response.ok) {
-      throw new Error(payload.message || `Test Engine returned status ${response.status}`);
-    }
+  if (normalizedEngineHost) {
+    query += ` AND (engine_host IS NULL OR engine_host = ?)`;
+    params.push(normalizedEngineHost);
+  }
 
-    const engineState = normalizeText(payload.state) || "queued";
-    const transactionStatus = engineState === "running" || engineState === "building-script" || engineState === "healing"
-      ? "running"
-      : "queued";
+  query += ` ORDER BY created_at ASC, id ASC LIMIT 1 FOR UPDATE SKIP LOCKED`;
 
-    await workspaceTransactionService.appendTransactionEvent(queuedItem.transaction_id, {
-      level: "success",
-      phase: "run.accepted",
-      message: normalizeText(payload.summary) || `Test Engine accepted ${queuedItem.case_snapshot.test_case_title}.`,
+  const result = await db.query(query, params);
+  const row = result.rows[0];
+
+  if (!row) {
+    return null;
+  }
+
+  const leaseExpiresAt = new Date(Date.now() + safeLeaseSeconds * 1000).toISOString();
+
+  await db.query(
+    `
+      UPDATE test_engine_jobs
+      SET status = 'leased',
+          leased_by = ?,
+          lease_expires_at = ?,
+          attempts = attempts + 1,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `,
+    [normalizedWorkerId, leaseExpiresAt, row.id]
+  );
+
+  const leased = await getQueuedJob(row.id);
+
+  if (leased.transaction_id) {
+    await workspaceTransactionService.appendTransactionEvent(leased.transaction_id, {
+      level: "info",
+      phase: "queue.leased",
+      message: `${leased.test_case_title} was leased by the Test Engine worker.`,
       details: {
-        execution_id: queuedItem.envelope.qaira_execution_id,
-        test_case_id: queuedItem.case_snapshot.test_case_id,
-        engine_run_id: queuedItem.engine_run_id,
-        engine_state: engineState
-      },
-      status: transactionStatus,
-      metadata: {
-        engine_state: engineState
+        job_id: leased.id,
+        worker_id: normalizedWorkerId,
+        lease_expires_at: leaseExpiresAt
       }
     });
-  } catch (error) {
-    await workspaceTransactionService.appendTransactionEvent(queuedItem.transaction_id, {
-      level: "error",
-      phase: "dispatch.failed",
-      message: error instanceof Error ? error.message : "Test Engine dispatch failed.",
-      details: {
-        execution_id: queuedItem.envelope.qaira_execution_id,
-        test_case_id: queuedItem.case_snapshot.test_case_id,
-        engine_run_id: queuedItem.engine_run_id
-      },
-      status: "failed"
-    });
-
-    await workspaceTransactionService.updateTransaction(queuedItem.transaction_id, {
-      status: "failed",
-      description: error instanceof Error ? error.message : "Test Engine dispatch failed.",
-      completed_at: new Date().toISOString()
-    });
-  }
-}
-
-function queueBackgroundDispatch({ queuedItems, integration }) {
-  if (!queuedItems.length) {
-    return;
   }
 
-  setImmediate(() => {
-    void (async () => {
-      const endpoint = buildRunEndpoint(integration.base_url);
+  return {
+    ...leased,
+    lease_expires_at: leaseExpiresAt
+  };
+});
 
-      await runWithConcurrency(queuedItems, DISPATCH_CONCURRENCY, async (queuedItem) => {
-        await dispatchQueuedItem({
-          queuedItem,
-          integration,
-          endpoint
-        });
-      });
-    })().catch((error) => {
-      console.error("Test Engine dispatch queue failed", error);
-    });
+exports.startQueuedJob = async ({ job_id, worker_id } = {}) => {
+  const job = await getQueuedJob(job_id);
+  const normalizedWorkerId = normalizeText(worker_id) || job.leased_by || "testengine-worker";
+  const leaseExpiresAt = new Date(Date.now() + DEFAULT_LEASE_SECONDS * 1000).toISOString();
+  const runtimeState = parseRuntimeState(job.runtime_state);
+  const logs = parseStructuredLogs(runtimeState.logs);
+  const startedAt = job.started_at || nowIso();
+
+  await updateJobLeaseState.run("running", normalizedWorkerId, leaseExpiresAt, startedAt, job.id);
+
+  const result = await executionResultService.upsertExecutionResult({
+    execution_id: job.execution_id,
+    test_case_id: job.test_case_id,
+    app_type_id: job.app_type_id,
+    status: "running",
+    duration_ms: null,
+    error: null,
+    logs: JSON.stringify(logs),
+    executed_by: job.created_by || null
   });
-}
 
+  if (job.transaction_id) {
+    await workspaceTransactionService.appendTransactionEvent(job.transaction_id, {
+      level: "info",
+      phase: "run.started",
+      message: `${job.test_case_title} started in the Test Engine.`,
+      details: {
+        job_id: job.id,
+        execution_result_id: result.id,
+        worker_id: normalizedWorkerId
+      },
+      status: "running",
+      description: "Engine execution running.",
+      metadata: {
+        execution_result_id: result.id,
+        current_phase: "running"
+      }
+    });
+  }
+
+  return {
+    job_id: job.id,
+    execution_result_id: result.id,
+    status: "running"
+  };
+};
+
+exports.executeQueuedApiStep = async ({ job_id, step_id } = {}) => {
+  const job = await getQueuedJob(job_id);
+
+  if (!job.payload?.steps?.length) {
+    throw new Error("Queued job payload is missing step data");
+  }
+
+  const step = job.payload.steps.find((entry) => entry.id === step_id);
+
+  if (!step) {
+    throw new Error("Queued job step not found");
+  }
+
+  const runtimeState = parseRuntimeState(job.runtime_state);
+  const existingLogs = parseStructuredLogs(runtimeState.logs);
+  const parameterValues = buildRuntimeParameterValues(job.payload, runtimeState.captured_values);
+  const stepResult = await apiRequestExecutionService.executeApiRequestStep({
+    api_request: step.api_request,
+    parameter_values: parameterValues
+  });
+  const formattedStepNote = executionStepRuntimeService.formatApiStepEvidenceNote(stepResult);
+  const mergedLogs = {
+    ...existingLogs,
+    stepStatuses: {
+      ...existingLogs.stepStatuses,
+      [step.id]: stepResult.status
+    },
+    stepNotes: {
+      ...existingLogs.stepNotes,
+      [step.id]: formattedStepNote
+    },
+    stepEvidence: {
+      ...existingLogs.stepEvidence
+    },
+    stepApiDetails: {
+      ...existingLogs.stepApiDetails,
+      [step.id]: stepResult.detail
+    }
+  };
+  const nextRuntimeState = {
+    captured_values: {
+      ...runtimeState.captured_values,
+      ...normalizeCapturedValuesRecord(stepResult.captures)
+    },
+    logs: mergedLogs
+  };
+  const startedAt = job.started_at ? new Date(job.started_at).getTime() : Date.now();
+  const durationMs = Math.max(Date.now() - startedAt, stepResult.duration_ms || 0);
+  const caseStatus = stepResult.status === "failed" ? "failed" : "running";
+
+  await updateJobRuntimeState.run(
+    "running",
+    nextRuntimeState,
+    new Date(Date.now() + DEFAULT_LEASE_SECONDS * 1000).toISOString(),
+    stepResult.status === "failed" ? stepResult.note : null,
+    job.id
+  );
+
+  const result = await executionResultService.upsertExecutionResult({
+    execution_id: job.execution_id,
+    test_case_id: job.test_case_id,
+    app_type_id: job.app_type_id,
+    status: caseStatus,
+    duration_ms: durationMs,
+    error: stepResult.status === "failed" ? stepResult.note : null,
+    logs: JSON.stringify(mergedLogs),
+    executed_by: job.created_by || null
+  });
+
+  if (job.transaction_id) {
+    await workspaceTransactionService.appendTransactionEvent(job.transaction_id, {
+      level: stepResult.status === "failed" ? "error" : "info",
+      phase: stepResult.status === "failed" ? "step.failed" : "step.completed",
+      message: stepResult.note,
+      details: {
+        job_id: job.id,
+        step_id: step.id,
+        step_order: step.order,
+        execution_result_id: result.id,
+        captures: stepResult.captures
+      },
+      status: "running",
+      metadata: {
+        execution_result_id: result.id,
+        current_phase: stepResult.status === "failed" ? "step-failed" : "step-completed",
+        last_step_id: step.id
+      }
+    });
+  }
+
+  return {
+    job_id: job.id,
+    step_id: step.id,
+    status: stepResult.status,
+    note: stepResult.note,
+    detail: stepResult.detail,
+    captures: stepResult.captures,
+    case_status: caseStatus,
+    execution_result_id: result.id
+  };
+};
+
+exports.completeQueuedJob = async ({ job_id, status, error } = {}) => {
+  const job = await getQueuedJob(job_id);
+  const runtimeState = parseRuntimeState(job.runtime_state);
+  const logs = parseStructuredLogs(runtimeState.logs);
+  const stepIds = Array.isArray(job.payload?.steps) ? job.payload.steps.map((step) => step.id) : [];
+  const resolvedStatuses = stepIds.map((stepId) => logs.stepStatuses[stepId]).filter(Boolean);
+  let finalStatus = normalizeText(status);
+
+  if (finalStatus !== "passed" && finalStatus !== "failed" && finalStatus !== "blocked") {
+    if (resolvedStatuses.includes("failed")) {
+      finalStatus = "failed";
+    } else if (stepIds.length && resolvedStatuses.length === stepIds.length && resolvedStatuses.every((value) => value === "passed")) {
+      finalStatus = "passed";
+    } else {
+      finalStatus = "blocked";
+    }
+  }
+
+  const startedAt = job.started_at ? new Date(job.started_at).getTime() : Date.now();
+  const durationMs = Math.max(Date.now() - startedAt, 0);
+  const errorMessage = normalizeText(error) || (finalStatus === "failed" ? "API execution failed." : null);
+  const completedAt = nowIso();
+
+  await finalizeJobState.run(
+    resultStatusToJobStatus(finalStatus),
+    runtimeState,
+    completedAt,
+    errorMessage,
+    job.id
+  );
+
+  const result = await executionResultService.upsertExecutionResult({
+    execution_id: job.execution_id,
+    test_case_id: job.test_case_id,
+    app_type_id: job.app_type_id,
+    status: finalStatus,
+    duration_ms: durationMs,
+    error: errorMessage,
+    logs: JSON.stringify(logs),
+    executed_by: job.created_by || null
+  });
+
+  if (job.transaction_id) {
+    await workspaceTransactionService.appendTransactionEvent(job.transaction_id, {
+      level: finalStatus === "passed" ? "success" : finalStatus === "failed" ? "error" : "warning",
+      phase: finalStatus === "passed" ? "run.completed" : finalStatus === "failed" ? "run.failed" : "run.blocked",
+      message:
+        finalStatus === "passed"
+          ? `${job.test_case_title} completed successfully.`
+          : errorMessage || `${job.test_case_title} finished with ${finalStatus}.`,
+      details: {
+        job_id: job.id,
+        execution_result_id: result.id,
+        status: finalStatus
+      },
+      status: finalStatus === "passed" ? "completed" : "failed",
+      description:
+        finalStatus === "passed"
+          ? "Engine execution completed."
+          : errorMessage || "Engine execution failed.",
+      metadata: {
+        execution_result_id: result.id,
+        current_phase: finalStatus === "passed" ? "completed" : "failed"
+      }
+    });
+
+    await workspaceTransactionService.updateTransaction(job.transaction_id, {
+      status: finalStatus === "passed" ? "completed" : "failed",
+      completed_at: completedAt,
+      description:
+        finalStatus === "passed"
+          ? "Engine execution completed."
+          : errorMessage || "Engine execution failed."
+    });
+  }
+
+  await settleExecutionIfComplete(job.execution_id);
+
+  return {
+    job_id: job.id,
+    execution_result_id: result.id,
+    status: finalStatus
+  };
+};
+
+exports.failQueuedJob = async ({ job_id, message } = {}) => {
+  return exports.completeQueuedJob({
+    job_id,
+    status: "failed",
+    error: normalizeText(message) || "Test Engine execution failed."
+  });
+};
+
+exports.getQueuedJob = getQueuedJob;
 exports.planExecutionDispatch = planExecutionDispatch;
 exports.queueExecutionDispatch = queueExecutionDispatch;
+exports.settleExecutionIfComplete = settleExecutionIfComplete;

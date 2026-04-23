@@ -1,0 +1,116 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Backend API",
+      "type": "pwa-node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/backend/api",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--watch",
+        "--inspect=9230"
+      ],
+      "program": "${workspaceFolder}/backend/api/src/server.js",
+      "console": "integratedTerminal",
+      "outputCapture": "std",
+      "autoAttachChildProcesses": true,
+      "skipFiles": [
+        "<node_internals>/**"
+      ],
+      "preLaunchTask": "postgres:up",
+      "env": {
+        "NODE_ENV": "development",
+        "PORT": "3000",
+        "PGHOST": "localhost",
+        "PGPORT": "5432",
+        "PGUSER": "qaira",
+        "PGPASSWORD": "qaira",
+        "PGDATABASE": "qaira",
+        "SESSION_SECRET": "qaira-dev-secret",
+        "TESTENGINE_SHARED_SECRET": "qaira-testengine-dev-secret",
+        "CORS_ORIGIN": "http://localhost:5173,http://127.0.0.1:5173"
+      }
+    },
+    {
+      "name": "Backend API (Attach 9230)",
+      "type": "pwa-node",
+      "request": "attach",
+      "port": 9230,
+      "cwd": "${workspaceFolder}/backend/api",
+      "restart": true,
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
+    },
+    {
+      "name": "Test Engine",
+      "type": "pwa-node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/testengine/backend",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--watch",
+        "--inspect=9231",
+        "--import",
+        "tsx"
+      ],
+      "program": "${workspaceFolder}/testengine/backend/src/server.ts",
+      "console": "integratedTerminal",
+      "outputCapture": "std",
+      "autoAttachChildProcesses": true,
+      "skipFiles": [
+        "<node_internals>/**"
+      ],
+      "env": {
+        "NODE_ENV": "development",
+        "PORT": "4301",
+        "ENGINE_NAME": "QAira Test Engine",
+        "LOG_LEVEL": "debug",
+        "ARTIFACT_ROOT": "${workspaceFolder}/testengine/backend/.artifacts",
+        "QAIRA_API_BASE_URL": "http://localhost:3000",
+        "QAIRA_TESTENGINE_SECRET": "qaira-testengine-dev-secret",
+        "ENGINE_PUBLIC_URL": "http://localhost:4301"
+      }
+    },
+    {
+      "name": "Test Engine (Attach 9231)",
+      "type": "pwa-node",
+      "request": "attach",
+      "port": 9231,
+      "cwd": "${workspaceFolder}/testengine/backend",
+      "restart": true,
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
+    },
+    {
+      "name": "Frontend",
+      "type": "pwa-chrome",
+      "request": "launch",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}/frontend",
+      "sourceMaps": true,
+      "preLaunchTask": "frontend:dev"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full Stack Debug",
+      "configurations": [
+        "Backend API",
+        "Test Engine",
+        "Frontend"
+      ],
+      "stopAll": true
+    },
+    {
+      "name": "API + Test Engine Debug",
+      "configurations": [
+        "Backend API",
+        "Test Engine"
+      ],
+      "stopAll": true
+    }
+  ]
+}

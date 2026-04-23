@@ -6,10 +6,38 @@ export type ExecutionStepEvidence = {
   mimeType?: string;
 };
 
+export type ExecutionApiAssertion = {
+  kind: string;
+  passed: boolean;
+  target?: string | null;
+  expected?: string | null;
+  actual?: string | null;
+};
+
+export type ExecutionStepApiDetail = {
+  step_id?: string;
+  request?: {
+    method?: string;
+    url?: string;
+    headers?: Record<string, string>;
+    body?: string | null;
+  };
+  response?: {
+    status?: number;
+    status_text?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    json?: unknown;
+  };
+  captures?: Record<string, string>;
+  assertions?: ExecutionApiAssertion[];
+};
+
 export type ExecutionLogsPayload = {
   stepStatuses?: Record<string, ExecutionStepStatus>;
   stepNotes?: Record<string, string>;
   stepEvidence?: Record<string, ExecutionStepEvidence>;
+  stepApiDetails?: Record<string, ExecutionStepApiDetail>;
 };
 
 const isExecutionEvidenceDataUrl = (value: string) =>
@@ -62,7 +90,10 @@ export function parseExecutionLogs(logs: string | null): ExecutionLogsPayload {
         ? payload.stepStatuses
         : {},
       stepNotes: typeof payload.stepNotes === "object" && payload.stepNotes && !Array.isArray(payload.stepNotes) ? payload.stepNotes : {},
-      stepEvidence: normalizeStepEvidence(payload.stepEvidence)
+      stepEvidence: normalizeStepEvidence(payload.stepEvidence),
+      stepApiDetails: typeof payload.stepApiDetails === "object" && payload.stepApiDetails && !Array.isArray(payload.stepApiDetails)
+        ? payload.stepApiDetails
+        : {}
     };
   } catch {
     return {};
@@ -73,22 +104,27 @@ export function stringifyExecutionLogs(payload: ExecutionLogsPayload): string {
   return JSON.stringify({
     stepStatuses: payload.stepStatuses || {},
     stepNotes: payload.stepNotes || {},
-    stepEvidence: payload.stepEvidence || {}
+    stepEvidence: payload.stepEvidence || {},
+    stepApiDetails: payload.stepApiDetails || {}
   });
 }
 
 export function deriveCaseStatusFromSteps(
   stepIds: string[],
   stepStatuses: Record<string, ExecutionStepStatus>
-): "passed" | "failed" | "blocked" {
+): "running" | "passed" | "failed" | "blocked" {
   if (!stepIds.length) {
     return "passed";
   }
 
-  const allResolved = stepIds.every((id) => Boolean(stepStatuses[id]));
-  if (!allResolved) {
-    return "blocked";
+  if (Object.values(stepStatuses).some((status) => status === "failed")) {
+    return "failed";
   }
 
-  return Object.values(stepStatuses).some((s) => s === "failed") ? "failed" : "passed";
+  const allResolved = stepIds.every((id) => Boolean(stepStatuses[id]));
+  if (!allResolved) {
+    return Object.keys(stepStatuses).length ? "running" : "blocked";
+  }
+
+  return "passed";
 }

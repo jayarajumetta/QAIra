@@ -434,6 +434,21 @@ export const api = {
       request<Integration[]>(`/integrations${toQueryString(query)}`),
     create: (input: { type: Integration["type"]; name: string; base_url?: string; api_key?: string; model?: string; project_key?: string; username?: string; config?: Record<string, unknown>; is_active?: boolean }) =>
       request<{ id: string }>("/integrations", { method: "POST", body: JSON.stringify(input) }),
+    testConnection: (input: { type: Integration["type"]; base_url?: string; config?: Record<string, unknown> }) =>
+      request<{
+        ok: boolean;
+        type: "testengine";
+        base_url: string;
+        health_url: string;
+        capabilities_url: string;
+        latency_ms: number;
+        service: string;
+        runner: string;
+        ui: string;
+        control_plane: string;
+        supported_step_types: string[];
+        qaira_result_log_compatibility?: string | null;
+      }>("/integrations/test-connection", { method: "POST", body: JSON.stringify(input) }),
     update: (id: string, input: Partial<{ type: Integration["type"]; name: string; base_url: string; api_key: string; model: string; project_key: string; username: string; config: Record<string, unknown>; is_active: boolean }>) =>
       request<{ updated: boolean }>(`/integrations/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/integrations/${id}`, { method: "DELETE" })
@@ -634,6 +649,18 @@ export const api = {
       request<{ id: string }>("/executions", { method: "POST", body: JSON.stringify(input) }),
     update: (id: string, input: { assigned_to?: string }) =>
       request<{ updated: boolean }>(`/executions/${id}`, { method: "PUT", body: JSON.stringify(input) }),
+    runApiStep: (executionId: string, testCaseId: string, stepId: string) =>
+      request<{
+        execution_id: string;
+        test_case_id: string;
+        step_id: string;
+        step_status: "passed" | "failed";
+        case_status: ExecutionResult["status"];
+        execution_status: Execution["status"];
+        note: string;
+        detail: import("../lib/executionLogs").ExecutionStepApiDetail | null;
+        execution_result_id: string;
+      }>(`/executions/${executionId}/cases/${testCaseId}/steps/${stepId}/run`, { method: "POST" }),
     updateCaseAssignment: (executionId: string, testCaseId: string, input: { assigned_to?: string }) =>
       request<{ updated: boolean }>(`/executions/${executionId}/cases/${testCaseId}/assignment`, { method: "PUT", body: JSON.stringify(input) }),
     rerun: (id: string, input: { failed_only?: boolean; created_by: string; name?: string }) =>

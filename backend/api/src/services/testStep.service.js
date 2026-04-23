@@ -1,6 +1,7 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 const sharedStepSyncService = require("./sharedStepSync.service");
+const apiRequestExecutionService = require("./apiRequestExecution.service");
 const {
   normalizeApiRequest,
   normalizeRichText,
@@ -345,60 +346,7 @@ exports.getTestStep = async (id) => {
 };
 
 exports.runApiRequestPreview = async (input) => {
-  const request = normalizeApiRequest(input);
-
-  if (!request) {
-    throw new Error("A valid API request is required");
-  }
-
-  const url = ensureHttpUrl(request.url);
-  const headers = new Headers();
-  const method = request.method || "GET";
-
-  for (const header of request.headers || []) {
-    if (!header?.key) {
-      continue;
-    }
-
-    headers.set(header.key, header.value || "");
-  }
-
-  const startedAt = Date.now();
-  let response;
-
-  try {
-    response = await fetch(url, {
-      method,
-      headers,
-      body: method === "GET" || method === "HEAD" ? undefined : serializeApiBody(request, headers),
-      signal: AbortSignal.timeout(20000)
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("API request timed out after 20 seconds");
-    }
-
-    throw new Error(error instanceof Error ? error.message : "Unable to run API request preview");
-  }
-
-  const bodyText = await response.text();
-  const contentType = response.headers.get("content-type");
-
-  return {
-    request: {
-      method,
-      url
-    },
-    response: {
-      status: response.status,
-      ok: response.ok,
-      headers: mapResponseHeaders(response),
-      content_type: contentType,
-      body_text: bodyText,
-      body_json: parseResponseJson(bodyText, contentType),
-      duration_ms: Date.now() - startedAt
-    }
-  };
+  return apiRequestExecutionService.runApiRequestPreview(input);
 };
 
 exports.updateTestStep = async (id, data = {}) => {

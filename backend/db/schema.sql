@@ -352,7 +352,7 @@ CREATE TABLE execution_results (
   suite_id TEXT,
   suite_name TEXT,
   app_type_id TEXT NOT NULL,
-  status TEXT CHECK(status IN ('passed','failed','blocked')),
+  status TEXT CHECK(status IN ('running','passed','failed','blocked')),
   duration_ms INTEGER,
   error TEXT,
   logs TEXT,
@@ -500,6 +500,43 @@ CREATE INDEX IF NOT EXISTS idx_execution_results_case_created_at
 
 CREATE INDEX IF NOT EXISTS idx_execution_results_app_type_created_at
   ON execution_results (app_type_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS test_engine_jobs (
+  id TEXT PRIMARY KEY,
+  engine_run_id TEXT NOT NULL UNIQUE,
+  integration_id TEXT,
+  project_id TEXT NOT NULL,
+  app_type_id TEXT,
+  app_type_kind TEXT NOT NULL DEFAULT 'web',
+  execution_id TEXT NOT NULL,
+  test_case_id TEXT NOT NULL,
+  test_case_title TEXT NOT NULL,
+  transaction_id TEXT,
+  engine_host TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  runtime_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'leased', 'running', 'completed', 'failed', 'aborted')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  leased_by TEXT,
+  lease_expires_at TIMESTAMPTZ,
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  last_error TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (app_type_id) REFERENCES app_types(id) ON DELETE CASCADE,
+  FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE,
+  FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_engine_jobs_queue
+  ON test_engine_jobs (status, app_type_kind, engine_host, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_test_engine_jobs_execution_case
+  ON test_engine_jobs (execution_id, test_case_id);
 
 CREATE TABLE IF NOT EXISTS ai_test_case_generation_jobs (
   id TEXT PRIMARY KEY,

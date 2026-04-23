@@ -57,6 +57,151 @@ const normalizeTestEngineVideoMode = (value, fallback = "retain-on-failure") => 
   return ["off", "on", "retain-on-failure"].includes(normalized) ? normalized : fallback;
 };
 
+const TESTENGINE_CONNECTION_TIMEOUT_MS = Math.max(
+  1500,
+  normalizeInteger(process.env.TESTENGINE_CONNECTION_TIMEOUT_MS) || 5000
+);
+
+const ensureAbsoluteHttpUrl = (value, label) => {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    throw new Error(`${label} is required`);
+  }
+
+  let parsed;
+
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error(`${label} must be an absolute http or https URL`);
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`${label} must use http or https`);
+  }
+
+  return parsed;
+};
+
+const fetchWithTimeout = async (url, init = {}, timeoutMs = TESTENGINE_CONNECTION_TIMEOUT_MS) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Request timed out after ${timeoutMs}ms`);
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+const readResponsePayload = async (response) => {
+  const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+  const rawBody = await response.text();
+
+  if (!rawBody) {
+    return null;
+  }
+
+  if (!contentType.includes("application/json")) {
+    return rawBody;
+  }
+
+  try {
+    return JSON.parse(rawBody);
+  } catch {
+    return rawBody;
+  }
+};
+
+const testTestEngineConnection = async ({ base_url }) => {
+  const engineBaseUrl = ensureAbsoluteHttpUrl(base_url, "Engine host URL");
+  const normalizedBaseUrl = engineBaseUrl.toString().replace(/\/+$/, "");
+  const healthUrl = new URL("/health", engineBaseUrl).toString();
+  const capabilitiesUrl = new URL("/api/v1/capabilities", engineBaseUrl).toString();
+  const startedAt = Date.now();
+
+  let healthResponse;
+
+  try {
+    healthResponse = await fetchWithTimeout(healthUrl, {
+      headers: {
+        accept: "application/json"
+      }
+    });
+  } catch (error) {
+    throw new Error(
+      `Unable to reach Test Engine health endpoint at ${healthUrl}: ${error instanceof Error ? error.message : "request failed"}`
+    );
+  }
+
+  const healthPayload = await readResponsePayload(healthResponse);
+
+  if (!healthResponse.ok) {
+    throw new Error(
+      `Test Engine health check failed with status ${healthResponse.status}${healthResponse.statusText ? ` ${healthResponse.statusText}` : ""}`
+    );
+  }
+
+  if (!healthPayload || typeof healthPayload !== "object" || healthPayload.ok !== true) {
+    throw new Error("The target host responded, but it does not look like a healthy QAira Test Engine service");
+  }
+
+  let capabilitiesResponse;
+
+  try {
+    capabilitiesResponse = await fetchWithTimeout(capabilitiesUrl, {
+      headers: {
+        accept: "application/json"
+      }
+    });
+  } catch (error) {
+    throw new Error(
+      `Reached the Test Engine host, but capabilities could not be read from ${capabilitiesUrl}: ${error instanceof Error ? error.message : "request failed"}`
+    );
+  }
+
+  const capabilitiesPayload = await readResponsePayload(capabilitiesResponse);
+
+  if (!capabilitiesResponse.ok) {
+    throw new Error(
+      `Test Engine capabilities check failed with status ${capabilitiesResponse.status}${capabilitiesResponse.statusText ? ` ${capabilitiesResponse.statusText}` : ""}`
+    );
+  }
+
+  if (!capabilitiesPayload || typeof capabilitiesPayload !== "object" || !capabilitiesPayload.runner) {
+    throw new Error("The target host responded, but its capabilities payload is missing the expected runner metadata");
+  }
+
+  const supportedStepTypes = Array.isArray(capabilitiesPayload.supported_step_types)
+    ? capabilitiesPayload.supported_step_types.filter((item) => typeof item === "string")
+    : [];
+
+  return {
+    ok: true,
+    type: "testengine",
+    base_url: normalizedBaseUrl,
+    health_url: healthUrl,
+    capabilities_url: capabilitiesUrl,
+    latency_ms: Math.max(Date.now() - startedAt, 1),
+    service: normalizeText(healthPayload.service) || "QAira Test Engine",
+    runner: normalizeText(capabilitiesPayload.runner) || normalizeText(healthPayload.runner) || "unknown",
+    ui: normalizeText(healthPayload.ui) || normalizeText(capabilitiesPayload.control_plane) || "unknown",
+    control_plane: normalizeText(capabilitiesPayload.control_plane) || "unknown",
+    supported_step_types: supportedStepTypes,
+    qaira_result_log_compatibility: normalizeText(capabilitiesPayload.qaira_result_log_compatibility) || null
+  };
+};
+
 const normalizeConfig = (type, input, username) => {
   const raw = normalizeObject(input);
   const integrationTypeConfig = INTEGRATION_TYPE_OPTIONS.find((option) => option.value === type)?.defaults || {};
@@ -164,51 +309,22 @@ const normalizeConfig = (type, input, username) => {
 
   if (type === "testengine") {
     const project_id = normalizeText(raw.project_id);
-    const callback_url = normalizeText(raw.callback_url);
-    const callback_secret = normalizeText(raw.callback_secret);
-    const max_repair_attempts = normalizeInteger(raw.max_repair_attempts) ?? Number(integrationTypeConfig.max_repair_attempts ?? 2);
-    const artifact_retention_days = normalizeInteger(raw.artifact_retention_days) ?? Number(integrationTypeConfig.artifact_retention_days ?? 14);
-    const run_timeout_seconds = normalizeInteger(raw.run_timeout_seconds) ?? Number(integrationTypeConfig.run_timeout_seconds ?? 1800);
-
-    if (!project_id) {
-      throw new Error("Test Engine integrations require a project");
-    }
-
-    if (!callback_url) {
-      throw new Error("Test Engine integrations require a QAira callback URL");
-    }
-
-    if (!callback_secret) {
-      throw new Error("Test Engine integrations require a callback signing secret");
-    }
-
-    if (!max_repair_attempts || max_repair_attempts < 0) {
-      throw new Error("Test Engine integrations require a valid max repair attempt count");
-    }
-
-    if (!artifact_retention_days || artifact_retention_days <= 0) {
-      throw new Error("Test Engine integrations require a valid artifact retention window");
-    }
-
-    if (!run_timeout_seconds || run_timeout_seconds <= 0) {
-      throw new Error("Test Engine integrations require a valid run timeout");
-    }
 
     return {
       project_id,
-      callback_url,
-      callback_secret,
       runner: "playwright",
+      dispatch_mode: "qaira-pull",
+      execution_scope: "api-first",
       browser: normalizeTestEngineBrowser(raw.browser, String(integrationTypeConfig.browser || "chromium")),
       headless: raw.headless !== false,
       healing_enabled: raw.healing_enabled !== false,
-      max_repair_attempts,
-      trace_mode: normalizeTestEngineTraceMode(raw.trace_mode, String(integrationTypeConfig.trace_mode || "on-first-retry")),
-      video_mode: normalizeTestEngineVideoMode(raw.video_mode, String(integrationTypeConfig.video_mode || "retain-on-failure")),
+      max_repair_attempts: normalizeInteger(raw.max_repair_attempts) ?? Number(integrationTypeConfig.max_repair_attempts ?? 0),
+      trace_mode: normalizeTestEngineTraceMode(raw.trace_mode, String(integrationTypeConfig.trace_mode || "off")),
+      video_mode: normalizeTestEngineVideoMode(raw.video_mode, String(integrationTypeConfig.video_mode || "off")),
       capture_console: raw.capture_console !== false,
       capture_network: raw.capture_network !== false,
-      artifact_retention_days,
-      run_timeout_seconds,
+      artifact_retention_days: normalizeInteger(raw.artifact_retention_days) ?? Number(integrationTypeConfig.artifact_retention_days ?? 7),
+      run_timeout_seconds: normalizeInteger(raw.run_timeout_seconds) ?? Number(integrationTypeConfig.run_timeout_seconds ?? 1800),
       promote_healed_patches: normalizeText(raw.promote_healed_patches) || String(integrationTypeConfig.promote_healed_patches || "review")
     };
   }
@@ -279,10 +395,6 @@ const validatePayload = (payload) => {
   if (type === "testengine") {
     if (!base_url) {
       throw new Error("Test Engine integrations require a host URL");
-    }
-
-    if (!api_key) {
-      throw new Error("Test Engine integrations require an engine access token");
     }
   }
 
@@ -382,21 +494,37 @@ exports.getActiveIntegrationByTypeForProject = async (type, projectId) => {
 
   const normalizedProjectId = normalizeText(projectId);
 
-  if (!normalizedProjectId) {
-    return null;
+  if (normalizedProjectId) {
+    const projectScopedIntegration = await db.prepare(`
+      SELECT *
+      FROM integrations
+      WHERE type = ?
+        AND is_active = TRUE
+        AND config->>'project_id' = ?
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1
+    `).get(type, normalizedProjectId);
+
+    if (projectScopedIntegration) {
+      return normalizeIntegration(projectScopedIntegration);
+    }
   }
 
-  const integration = await db.prepare(`
+  const globalIntegration = await db.prepare(`
     SELECT *
     FROM integrations
     WHERE type = ?
       AND is_active = TRUE
-      AND config->>'project_id' = ?
+      AND COALESCE(NULLIF(config->>'project_id', ''), '') = ''
     ORDER BY updated_at DESC, created_at DESC
     LIMIT 1
-  `).get(type, normalizedProjectId);
+  `).get(type);
 
-  return normalizeIntegration(integration || null);
+  if (globalIntegration) {
+    return normalizeIntegration(globalIntegration);
+  }
+
+  return normalizedProjectId ? null : exports.getActiveIntegrationByType(type);
 };
 
 exports.updateIntegration = async (id, input) => {
@@ -458,4 +586,18 @@ exports.mergeIntegrationConfig = async (id, configUpdates = {}) => {
   `).run(nextConfig, id);
 
   return exports.getIntegration(id);
+};
+
+exports.testConnection = async (input = {}) => {
+  const type = normalizeText(input.type);
+
+  validateType(type);
+
+  if (type === "testengine") {
+    return testTestEngineConnection({
+      base_url: input.base_url
+    });
+  }
+
+  throw new Error("Connection testing is currently available only for Test Engine integrations");
 };

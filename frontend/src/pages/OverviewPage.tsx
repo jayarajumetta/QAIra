@@ -19,6 +19,7 @@ const compactNumberFormatter = new Intl.NumberFormat("en", {
 const monthFormatter = new Intl.DateTimeFormat("en", { month: "short" });
 
 const EMPTY_EXECUTION_SUMMARY = {
+  running: 0,
   passed: 0,
   failed: 0,
   blocked: 0,
@@ -68,6 +69,7 @@ function scoreAccent(tone: DashboardTone) {
 function buildExecutionSegments(
   passedCount: number,
   failedCount: number,
+  runningCount: number,
   blockedCount: number,
   totalCount: number
 ) {
@@ -75,11 +77,12 @@ function buildExecutionSegments(
     return [{ value: 100, tone: "neutral" as const }];
   }
 
-  const pendingCount = Math.max(totalCount - passedCount - failedCount - blockedCount, 0);
+  const pendingCount = Math.max(totalCount - passedCount - failedCount - runningCount - blockedCount, 0);
 
   return [
     { value: (passedCount / totalCount) * 100, tone: "success" as const },
     { value: (failedCount / totalCount) * 100, tone: "danger" as const },
+    { value: (runningCount / totalCount) * 100, tone: "info" as const },
     { value: (blockedCount / totalCount) * 100, tone: "info" as const },
     { value: (pendingCount / totalCount) * 100, tone: "neutral" as const }
   ].filter((segment) => segment.value > 0);
@@ -159,6 +162,8 @@ export function OverviewPage() {
 
       if (result.status === "passed") {
         summary[result.execution_id].passed += 1;
+      } else if (result.status === "running") {
+        summary[result.execution_id].running += 1;
       } else if (result.status === "failed") {
         summary[result.execution_id].failed += 1;
       } else if (result.status === "blocked") {
@@ -217,7 +222,7 @@ export function OverviewPage() {
         counts.total += 1;
         return counts;
       },
-      { passed: 0, failed: 0, blocked: 0, total: 0 }
+      { running: 0, passed: 0, failed: 0, blocked: 0, total: 0 }
     );
   }, [latestExecutionResultsList]);
 
@@ -389,7 +394,7 @@ export function OverviewPage() {
         tone: resultStatusCounts.failed ? "error" as const : passRate >= 80 ? "success" as const : "info" as const,
         chipLabel: `${passRate}% pass rate`,
         stats: [
-          `${executionStatusCounts.running} running`,
+          `${resultStatusCounts.running} active`,
           `${resultStatusCounts.failed} failed`,
           `${resultStatusCounts.blocked} blocked`
         ]
@@ -426,6 +431,7 @@ export function OverviewPage() {
     requirementsList.length,
     resultStatusCounts.blocked,
     resultStatusCounts.failed,
+    resultStatusCounts.running,
     suitesList.length,
     testCasesList.length,
     usersList.length
@@ -474,6 +480,7 @@ export function OverviewPage() {
         const executableCases = scopedCases.filter((testCase) => (caseStepCountById[testCase.id] || 0) > 0).length;
         const passedCount = scopedResults.filter((result) => result.status === "passed").length;
         const failedCount = scopedResults.filter((result) => result.status === "failed").length;
+        const runningCount = scopedResults.filter((result) => result.status === "running").length;
         const blockedCount = scopedResults.filter((result) => result.status === "blocked").length;
         const automationScore = scopedCases.length ? Math.round((executableCases / scopedCases.length) * 100) : 0;
         const qualityScore = scopedResults.length ? Math.round((passedCount / scopedResults.length) * 100) : 0;
@@ -501,6 +508,10 @@ export function OverviewPage() {
           destination = "/executions";
         } else if (qualityScore > 0) {
           label = "Needs hardening";
+          tone = "info";
+          destination = "/executions";
+        } else if (runningCount) {
+          label = "In progress";
           tone = "info";
           destination = "/executions";
         }
@@ -677,11 +688,11 @@ export function OverviewPage() {
       {
         label: "Run confidence",
         value: passRate,
-        detail: `${resultStatusCounts.failed} failed · ${resultStatusCounts.blocked} blocked`,
+        detail: `${resultStatusCounts.failed} failed · ${resultStatusCounts.blocked} blocked · ${resultStatusCounts.running} running`,
         tone: resultStatusCounts.failed ? "danger" as const : passRate >= 80 ? "success" as const : "info" as const
       }
     ];
-  }, [automationReadiness, casesWithStepsCount, mappedRequirementsCount, passRate, requirementCoverage, requirementsList.length, resultStatusCounts.blocked, resultStatusCounts.failed, testCasesList.length]);
+  }, [automationReadiness, casesWithStepsCount, mappedRequirementsCount, passRate, requirementCoverage, requirementsList.length, resultStatusCounts.blocked, resultStatusCounts.failed, resultStatusCounts.running, testCasesList.length]);
 
   const topRecommendation = useMemo(() => {
     if (coverageGaps.length) {
@@ -696,8 +707,12 @@ export function OverviewPage() {
       return `${resultStatusCounts.failed + resultStatusCounts.blocked} unstable execution signal${resultStatusCounts.failed + resultStatusCounts.blocked === 1 ? "" : "s"} still need triage.`;
     }
 
+    if (resultStatusCounts.running) {
+      return `${resultStatusCounts.running} execution signal${resultStatusCounts.running === 1 ? " is" : "s are"} actively running through the queue right now.`;
+    }
+
     return "No critical blockers are dominating the board. The quality conversation can move from firefighting to planning.";
-  }, [casesMissingStepsCount, coverageGapCount, resultStatusCounts.blocked, resultStatusCounts.failed]);
+  }, [casesMissingStepsCount, coverageGapCount, resultStatusCounts.blocked, resultStatusCounts.failed, resultStatusCounts.running]);
 
   return (
     <div className="page-content">
@@ -952,10 +967,11 @@ export function OverviewPage() {
                   <strong>{execution.name || "Unnamed run"}</strong>
                   <span>{execution.projectName} · {execution.appTypeName} · {(execution.trigger || "manual").toUpperCase()}</span>
                   <ProgressMeter
-                    detail={`${execution.summary.passed} passed · ${execution.summary.failed} failed · ${execution.summary.blocked} blocked`}
+                    detail={`${execution.summary.passed} passed · ${execution.summary.running} running · ${execution.summary.failed} failed · ${execution.summary.blocked} blocked`}
                     segments={buildExecutionSegments(
                       execution.summary.passed,
                       execution.summary.failed,
+                      execution.summary.running,
                       execution.summary.blocked,
                       execution.summary.total
                     )}

@@ -1,6 +1,8 @@
 import Fastify from "fastify";
 import { buildAcceptedRun, buildCapabilities } from "./lib/pipeline.js";
-import { getRun, listRuns, saveRun } from "./lib/runStore.js";
+import { queueRunExecution, saveAcceptedRun } from "./lib/executor.js";
+import { startQueueWorker } from "./lib/queueWorker.js";
+import { getRun, getRunEnvelope, listRuns, saveRun } from "./lib/runStore.js";
 import type { EngineRunEnvelope } from "./contracts/qaira.js";
 
 const port = Number.parseInt(process.env.PORT || "4301", 10);
@@ -53,7 +55,8 @@ app.post("/api/v1/runs", async (request, reply) => {
     return { message: "callback.url and callback.signing_secret are required" };
   }
 
-  const accepted = saveRun(buildAcceptedRun(envelope));
+  const accepted = saveAcceptedRun(envelope, buildAcceptedRun(envelope));
+  queueRunExecution(envelope, accepted, app.log);
   reply.code(202);
   return {
     id: accepted.id,
@@ -71,6 +74,13 @@ app.post("/api/v1/runs/:id/retry", async (request, reply) => {
     return { message: "Run not found" };
   }
 
+  const envelope = getRunEnvelope(params.id);
+
+  if (!envelope) {
+    reply.code(409);
+    return { message: "Run handoff payload is no longer available for retry" };
+  }
+
   const retried = saveRun({
     ...existing,
     state: "running",
@@ -78,11 +88,15 @@ app.post("/api/v1/runs/:id/retry", async (request, reply) => {
     healing_succeeded: false,
     summary: "Retry requested. Deterministic Playwright execution will run before any healing attempt.",
     updated_at: new Date().toISOString()
-  });
+  }, envelope);
+
+  queueRunExecution(envelope, retried, app.log);
 
   reply.code(202);
   return retried;
 });
+
+startQueueWorker(app.log);
 
 app.listen({
   port,

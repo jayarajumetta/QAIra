@@ -581,7 +581,7 @@ export type ExecutionResult = {
   suite_id?: string | null;
   suite_name?: string | null;
   app_type_id: string;
-  status: "passed" | "failed" | "blocked";
+  status: "running" | "passed" | "failed" | "blocked";
   duration_ms: number | null;
   error: string | null;
   logs: string | null;

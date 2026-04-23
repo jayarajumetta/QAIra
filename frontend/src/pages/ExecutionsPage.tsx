@@ -14,6 +14,7 @@ import { Panel } from "../components/Panel";
 import {
   AutomationCodeIcon,
   CodePreviewDialog,
+  JsonResponseTreeNode,
   SharedGroupLevelIcon,
   StandardStepIcon,
   StepIconButton as InlineStepToolButton,
@@ -38,6 +39,7 @@ import {
   deriveCaseStatusFromSteps,
   parseExecutionLogs,
   stringifyExecutionLogs,
+  type ExecutionStepApiDetail,
   type ExecutionStepEvidence,
   type ExecutionStepStatus
 } from "../lib/executionLogs";
@@ -108,7 +110,8 @@ type ExecutionStepBlock = {
 type ExecutionIssueFilter = "all" | "with-issues" | "clean";
 type ExecutionEvidenceFilter = "all" | "with-evidence" | "no-evidence";
 type ExecutionCreateMode = "manual" | "smart";
-type TestRunsView = "executions" | "scheduled" | "operations";
+type TestRunsView = "test-case-runs" | "suite-runs" | "scheduled-runs" | "batch-process";
+type CatalogViewMode = "tile" | "list";
 
 type ExecutionAssigneeOption = AssigneeOption;
 
@@ -116,6 +119,24 @@ type ExecutionEvidencePreviewState = {
   stepLabel: string;
   fileName: string | null;
   dataUrl: string;
+};
+
+type ExecutionApiDetailState = {
+  step: TestStep;
+  detail: ExecutionStepApiDetail | null;
+  note: string;
+  status: ExecutionResult["status"] | "queued";
+};
+
+type ExecutionApiStepDialogProps = {
+  step: TestStep;
+  detail: ExecutionStepApiDetail | null;
+  note: string;
+  status: ExecutionResult["status"] | "queued";
+  canRun: boolean;
+  isRunning: boolean;
+  onClose: () => void;
+  onRun: () => void;
 };
 
 type SmartExecutionRequirementOption = {
@@ -127,6 +148,15 @@ type SmartExecutionRequirementOption = {
 
 type ExecutionScheduleCadence = "once" | "daily" | "weekly" | "monthly";
 
+const BATCH_PROCESS_CATEGORIES = new Set([
+  "bulk_import",
+  "ai_generation",
+  "backup",
+  "automation_build",
+  "smart_execution",
+  "reporting"
+]);
+
 const EMPTY_EXECUTION_RUN_SUMMARY: ExecutionRunSummary = {
   passed: 0,
   failed: 0,
@@ -137,6 +167,44 @@ const EMPTY_EXECUTION_RUN_SUMMARY: ExecutionRunSummary = {
   timedCount: 0,
   latestActivityAt: null,
   totalDurationMs: 0
+};
+
+const DEFAULT_CATALOG_VIEW_MODE_BY_RUN_VIEW: Record<TestRunsView, CatalogViewMode> = {
+  "test-case-runs": "tile",
+  "suite-runs": "tile",
+  "scheduled-runs": "tile",
+  "batch-process": "tile"
+};
+
+const DEFAULT_RUN_LIBRARY_SEARCH_BY_VIEW: Record<TestRunsView, string> = {
+  "test-case-runs": "",
+  "suite-runs": "",
+  "scheduled-runs": "",
+  "batch-process": ""
+};
+
+const WORKSPACE_TRANSACTION_METADATA_LABELS: Record<string, string> = {
+  current_phase: "Current phase",
+  queue_lane: "Queue lane",
+  provider: "Provider",
+  repository: "Repository",
+  branch: "Branch",
+  file_name: "File name",
+  import_source: "Import source",
+  exported: "Reports exported",
+  imported: "Imported",
+  failed: "Failed",
+  total_rows: "Total rows",
+  processed_items: "Processed items",
+  total_items: "Total items",
+  built_cases: "Scripts built",
+  reused_scripts: "Scripts reused",
+  healed_cases: "Cases healed",
+  generated_cases_count: "Cases generated",
+  requirement_count: "Requirements",
+  selected_case_count: "Selected cases",
+  matched_case_count: "Matched cases",
+  worker_count: "Workers"
 };
 
 const DEFAULT_DURATION_LABEL = "0s";
@@ -521,7 +589,7 @@ function describeWorkspaceTransaction(
           ? `${formatCountLabel(processedItems, "item")} processed of ${formatCountLabel(totalItems, "item")}`
           : currentPhase
             ? `Phase: ${currentPhase}`
-            : "AI automation build operation";
+            : "AI automation build process";
 
     return {
       icon: <AutomationCodeIcon />,
@@ -656,6 +724,73 @@ function resolveWorkspaceTransactionSummary(
   return transaction.description || presentation.detail;
 }
 
+function formatWorkspaceTransactionActionLabel(value: string | null | undefined) {
+  const normalized = String(value || "").trim();
+
+  if (!normalized) {
+    return "Not recorded";
+  }
+
+  return normalized.replace(/_/g, " ");
+}
+
+function formatWorkspaceTransactionMetadataLabel(key: string) {
+  return WORKSPACE_TRANSACTION_METADATA_LABELS[key] || key.replace(/_/g, " ");
+}
+
+function formatWorkspaceTransactionMetadataValue(value: unknown): string {
+  if (value === undefined || value === null || value === "") {
+    return "Not recorded";
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+
+  if (Array.isArray(value)) {
+    const normalized = value
+      .map((entry) => formatWorkspaceTransactionMetadataValue(entry))
+      .filter((entry) => entry && entry !== "Not recorded");
+
+    return normalized.length ? normalized.join(", ") : "Not recorded";
+  }
+
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "[Object]";
+    }
+  }
+
+  return String(value);
+}
+
+function resolveWorkspaceTransactionMetadataEntries(transaction: WorkspaceTransaction) {
+  return Object.entries(transaction.metadata || {})
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => ({
+      key,
+      label: formatWorkspaceTransactionMetadataLabel(key),
+      value
+    }));
+}
+
+function resolveWorkspaceTransactionReadableMetadata(transaction: WorkspaceTransaction) {
+  return resolveWorkspaceTransactionMetadataEntries(transaction).filter(({ value }) => typeof value !== "object" || Array.isArray(value));
+}
+
+function resolveWorkspaceTransactionComplexMetadata(transaction: WorkspaceTransaction) {
+  const entries = resolveWorkspaceTransactionMetadataEntries(transaction).filter(({ value }) => typeof value === "object" && value !== null && !Array.isArray(value));
+
+  return entries.length
+    ? entries.reduce<Record<string, unknown>>((accumulator, { key, value }) => {
+        accumulator[key] = value;
+        return accumulator;
+      }, {})
+    : null;
+}
+
 function executionImpactLevelLabel(level: SmartExecutionImpactCase["impact_level"]) {
   return level.charAt(0).toUpperCase() + level.slice(1);
 }
@@ -670,6 +805,21 @@ function averageDuration(values: Array<number | null | undefined>) {
   return Math.round(scoped.reduce((sum, value) => sum + value, 0) / scoped.length);
 }
 
+function isExecutionRunsView(view: TestRunsView) {
+  return view === "test-case-runs" || view === "suite-runs";
+}
+
+function resolveExecutionRunBucket(execution: Execution): Extract<TestRunsView, "test-case-runs" | "suite-runs"> {
+  return execution.suite_ids.length ? "suite-runs" : "test-case-runs";
+}
+
+function isBatchProcessTransaction(transaction: WorkspaceTransaction) {
+  return BATCH_PROCESS_CATEGORIES.has(transaction.category)
+    || transaction.action === "testengine_run"
+    || transaction.action === "execution_report_export"
+    || transaction.action === "run_report_export";
+}
+
 export function ExecutionsPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -677,7 +827,7 @@ export function ExecutionsPage() {
   const [projectId, setProjectId] = useCurrentProject();
   const [appTypeId, setAppTypeId] = useState("");
   const [executionCreateMode, setExecutionCreateMode] = useState<ExecutionCreateMode>("manual");
-  const [testRunsView, setTestRunsView] = useState<TestRunsView>("executions");
+  const [testRunsView, setTestRunsView] = useState<TestRunsView>("suite-runs");
   const [selectedSuiteIds, setSelectedSuiteIds] = useState<string[]>([]);
   const [isCreateExecutionModalOpen, setIsCreateExecutionModalOpen] = useState(false);
   const [isCreateScheduleModalOpen, setIsCreateScheduleModalOpen] = useState(false);
@@ -710,8 +860,8 @@ export function ExecutionsPage() {
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const [activeTab, setActiveTab] = useState<ExecutionTab>("overview");
-  const [executionSearch, setExecutionSearch] = useState("");
-  const [catalogViewMode, setCatalogViewMode] = useState<"tile" | "list">("tile");
+  const [runLibrarySearchByView, setRunLibrarySearchByView] = useState<Record<TestRunsView, string>>(DEFAULT_RUN_LIBRARY_SEARCH_BY_VIEW);
+  const [catalogViewModeByView, setCatalogViewModeByView] = useState<Record<TestRunsView, CatalogViewMode>>(DEFAULT_CATALOG_VIEW_MODE_BY_RUN_VIEW);
   const [isExecutionListMinimized, setIsExecutionListMinimized] = useState(false);
   const [isSuiteTreeMinimized, setIsSuiteTreeMinimized] = useState(false);
   const [isExecutionHealthExpanded, setIsExecutionHealthExpanded] = useState(true);
@@ -724,12 +874,16 @@ export function ExecutionsPage() {
   const [caseTimerStartedAtById, setCaseTimerStartedAtById] = useState<Record<string, number>>({});
   const [executionFinalizeAction, setExecutionFinalizeAction] = useState<"complete" | "abort" | null>(null);
   const [uploadingEvidenceStepId, setUploadingEvidenceStepId] = useState("");
+  const [runningExecutionApiStepId, setRunningExecutionApiStepId] = useState("");
   const [executionEvidencePreview, setExecutionEvidencePreview] = useState<ExecutionEvidencePreviewState | null>(null);
+  const [executionApiDetailState, setExecutionApiDetailState] = useState<ExecutionApiDetailState | null>(null);
   const [isExecutionContextModalOpen, setIsExecutionContextModalOpen] = useState(false);
   const [codePreviewState, setCodePreviewState] = useState<{ title: string; subtitle: string; code: string } | null>(null);
   const [executionAssignmentDraft, setExecutionAssignmentDraft] = useState("");
   const [caseAssignmentDraft, setCaseAssignmentDraft] = useState("");
   const executionCardMeasureRef = useRef<HTMLDivElement | null>(null);
+  const executionSearch = runLibrarySearchByView[testRunsView];
+  const catalogViewMode = catalogViewModeByView[testRunsView];
   const deferredExecutionSearch = useDeferredValue(executionSearch);
 
   const projectsQuery = useQuery({
@@ -748,7 +902,14 @@ export function ExecutionsPage() {
   });
   const executionsQuery = useQuery({
     queryKey: ["executions", projectId, appTypeId],
-    queryFn: () => api.executions.list(projectId ? { project_id: projectId, app_type_id: appTypeId || undefined } : undefined)
+    queryFn: () => api.executions.list(projectId ? { project_id: projectId, app_type_id: appTypeId || undefined } : undefined),
+    refetchInterval: (query) =>
+      Array.isArray(query.state.data) && query.state.data.some((execution) => {
+        const status = normalizeExecutionStatus(execution.status);
+        return status === "queued" || status === "running";
+      })
+        ? 2500
+        : false
   });
   const executionSchedulesQuery = useQuery({
     queryKey: ["execution-schedules", projectId, appTypeId],
@@ -761,7 +922,11 @@ export function ExecutionsPage() {
   const selectedExecutionQuery = useQuery({
     queryKey: ["execution", selectedExecutionId],
     queryFn: () => api.executions.get(selectedExecutionId),
-    enabled: Boolean(selectedExecutionId)
+    enabled: Boolean(selectedExecutionId),
+    refetchInterval: (query) => {
+      const status = normalizeExecutionStatus((query.state.data as Execution | undefined)?.status);
+      return status === "queued" || status === "running" ? 2000 : false;
+    }
   });
   const appTypesQuery = useQuery({
     queryKey: ["app-types", projectId],
@@ -786,11 +951,22 @@ export function ExecutionsPage() {
   const executionResultsQuery = useQuery({
     queryKey: ["execution-results", selectedExecutionId],
     queryFn: () => api.executionResults.list({ execution_id: selectedExecutionId }),
-    enabled: Boolean(selectedExecutionId)
+    enabled: Boolean(selectedExecutionId),
+    refetchInterval: () => {
+      const status = normalizeExecutionStatus(selectedExecutionQuery.data?.status);
+      return status === "queued" || status === "running" ? 2000 : false;
+    }
   });
   const allExecutionResultsQuery = useQuery({
     queryKey: ["execution-results"],
-    queryFn: () => api.executionResults.list()
+    queryFn: () => api.executionResults.list(),
+    refetchInterval: () =>
+      Array.isArray(executionsQuery.data) && executionsQuery.data.some((execution) => {
+        const status = normalizeExecutionStatus(execution.status);
+        return status === "queued" || status === "running";
+      })
+        ? 2000
+        : false
   });
   const integrationsQuery = useQuery({
     queryKey: ["integrations", "llm"],
@@ -802,14 +978,22 @@ export function ExecutionsPage() {
     queryFn: () => api.workspaceTransactions.list({
       project_id: projectId || undefined,
       app_type_id: appTypeId || undefined,
-      limit: 24
+      limit: 100
     }),
-    enabled: Boolean(projectId && session)
+    enabled: Boolean(projectId && session),
+    refetchInterval: (query) =>
+      Array.isArray(query.state.data) && query.state.data.some((transaction) => ["queued", "running"].includes(transaction.status))
+        ? 2500
+        : false
   });
   const selectedWorkspaceTransactionEventsQuery = useQuery({
     queryKey: ["workspace-transaction-events", selectedOperationId],
     queryFn: () => api.workspaceTransactions.events(selectedOperationId),
-    enabled: Boolean(selectedOperationId && session)
+    enabled: Boolean(selectedOperationId && session),
+    refetchInterval: () => {
+      const selectedTransaction = (workspaceTransactionsQuery.data || []).find((transaction) => transaction.id === selectedOperationId);
+      return selectedTransaction && ["queued", "running"].includes(selectedTransaction.status) ? 2000 : false;
+    }
   });
 
   const createExecution = useMutation({ mutationFn: api.executions.create });
@@ -835,6 +1019,10 @@ export function ExecutionsPage() {
   const startExecution = useMutation({ mutationFn: api.executions.start });
   const completeExecution = useMutation({
     mutationFn: ({ id, status }: { id: string; status: "completed" | "failed" | "aborted" }) => api.executions.complete(id, { status })
+  });
+  const runExecutionApiStep = useMutation({
+    mutationFn: ({ executionId, testCaseId, stepId }: { executionId: string; testCaseId: string; stepId: string }) =>
+      api.executions.runApiStep(executionId, testCaseId, stepId)
   });
   const createResult = useMutation({ mutationFn: api.executionResults.create });
   const updateResult = useMutation({
@@ -878,12 +1066,7 @@ export function ExecutionsPage() {
   );
   const workspaceTransactions = useMemo(
     () =>
-      (workspaceTransactionsQuery.data || []).filter(
-        (transaction) =>
-          transaction.category === "bulk_import" ||
-          transaction.category === "ai_generation" ||
-          transaction.category === "backup"
-      ),
+      (workspaceTransactionsQuery.data || []).filter((transaction) => isBatchProcessTransaction(transaction)),
     [workspaceTransactionsQuery.data]
   );
   const workspaceTransactionStatusCounts = useMemo(
@@ -949,25 +1132,23 @@ export function ExecutionsPage() {
   }, [requirements, smartExecutionLibraryCases]);
 
   useEffect(() => {
-    if (testRunsView !== "operations") {
+    if (testRunsView !== "batch-process") {
       return;
     }
 
-    if (selectedOperationId && filteredWorkspaceTransactions.some((transaction) => transaction.id === selectedOperationId)) {
+    if (!selectedOperationId) {
       return;
     }
 
-    setSelectedOperationId(filteredWorkspaceTransactions[0]?.id || workspaceTransactions[0]?.id || "");
-  }, [filteredWorkspaceTransactions, selectedOperationId, testRunsView, workspaceTransactions]);
-
-  useEffect(() => {
-    if (testRunsView === "operations" && catalogViewMode !== "list") {
-      setCatalogViewMode("list");
+    if (workspaceTransactions.some((transaction) => transaction.id === selectedOperationId)) {
+      return;
     }
-  }, [catalogViewMode, testRunsView]);
+
+    setSelectedOperationId("");
+  }, [selectedOperationId, testRunsView, workspaceTransactions]);
 
   useEffect(() => {
-    if (testRunsView !== "scheduled") {
+    if (testRunsView !== "scheduled-runs") {
       return;
     }
 
@@ -1255,6 +1436,15 @@ export function ExecutionsPage() {
     const requestedExecutionId = searchParams.get("execution");
 
     if (requestedExecutionId) {
+      const requestedExecution = executions.find((execution) => execution.id === requestedExecutionId);
+
+      if (requestedExecution) {
+        const requestedView = resolveExecutionRunBucket(requestedExecution);
+        if (testRunsView !== requestedView) {
+          setTestRunsView(requestedView);
+        }
+      }
+
       if (selectedExecutionId !== requestedExecutionId) {
         setSelectedExecutionId(requestedExecutionId);
       }
@@ -1264,10 +1454,10 @@ export function ExecutionsPage() {
     if (selectedExecutionId && !executions.some((execution) => execution.id === selectedExecutionId)) {
       setSelectedExecutionId("");
     }
-  }, [executions, searchParams, selectedExecutionId]);
+  }, [executions, searchParams, selectedExecutionId, testRunsView]);
 
   useEffect(() => {
-    if (testRunsView === "scheduled") {
+    if (!isExecutionRunsView(testRunsView)) {
       setSelectedExecutionId("");
       setFocusedSuiteId("");
       setSelectedTestCaseId("");
@@ -1280,7 +1470,7 @@ export function ExecutionsPage() {
   const selectedExecutionSuiteIds = selectedExecution?.suite_ids || [];
   const selectedExecutionSuites = selectedExecution?.suite_snapshots || [];
   const currentExecutionStatus = normalizeExecutionStatus(selectedExecution?.status);
-  const isExecutionScopeReadOnly = testRunsView === "executions" && Boolean(selectedExecution);
+  const isExecutionScopeReadOnly = isExecutionRunsView(testRunsView) && Boolean(selectedExecution);
   const isExecutionStarted = currentExecutionStatus === "running";
   const isExecutionLocked =
     currentExecutionStatus === "completed" || currentExecutionStatus === "failed" || currentExecutionStatus === "aborted";
@@ -1478,6 +1668,8 @@ export function ExecutionsPage() {
     setBulkSelectedStepIds([]);
     setActiveTab("overview");
     setExecutionEvidencePreview(null);
+    setExecutionApiDetailState(null);
+    setRunningExecutionApiStepId("");
   }, [selectedExecutionId, selectedTestCaseId]);
 
   useEffect(() => {
@@ -1487,7 +1679,9 @@ export function ExecutionsPage() {
   const resultByCaseId = useMemo(() => {
     const map: Record<string, ExecutionResult> = {};
     executionResults.forEach((result) => {
-      map[result.test_case_id] = result;
+      if (!map[result.test_case_id]) {
+        map[result.test_case_id] = result;
+      }
     });
     return map;
   }, [executionResults]);
@@ -1500,6 +1694,7 @@ export function ExecutionsPage() {
   const stepStatuses = selectedCaseLogs.stepStatuses || {};
   const stepNotes = selectedCaseLogs.stepNotes || {};
   const stepEvidence = selectedCaseLogs.stepEvidence || {};
+  const stepApiDetails = selectedCaseLogs.stepApiDetails || {};
 
   const caseDerivedStatus = (testCase: ExecutionCaseView): ExecutionResult["status"] | "queued" => {
     const result = resultByCaseId[testCase.id];
@@ -1511,7 +1706,7 @@ export function ExecutionsPage() {
       const scopedCases = displayCasesBySuiteId[suite.id] || [];
       const passedCount = scopedCases.filter((testCase) => caseDerivedStatus(testCase) === "passed").length;
       const failedCount = scopedCases.filter((testCase) => caseDerivedStatus(testCase) === "failed").length;
-      const blockedCount = scopedCases.filter((testCase) => caseDerivedStatus(testCase) === "blocked").length;
+      const blockedCount = scopedCases.filter((testCase) => ["blocked", "running"].includes(caseDerivedStatus(testCase))).length;
       const percent = scopedCases.length
         ? Math.round(((passedCount + failedCount + blockedCount) / scopedCases.length) * 100)
         : 0;
@@ -1532,7 +1727,7 @@ export function ExecutionsPage() {
     const totalCases = executionCaseOrder.length;
     const passedCount = executionCaseOrder.filter((testCase) => caseDerivedStatus(testCase) === "passed").length;
     const failedCount = executionCaseOrder.filter((testCase) => caseDerivedStatus(testCase) === "failed").length;
-    const blockedCount = executionCaseOrder.filter((testCase) => caseDerivedStatus(testCase) === "blocked").length;
+    const blockedCount = executionCaseOrder.filter((testCase) => ["blocked", "running"].includes(caseDerivedStatus(testCase))).length;
     const percent = totalCases ? Math.round(((passedCount + failedCount + blockedCount) / totalCases) * 100) : 0;
 
     return {
@@ -1553,12 +1748,12 @@ export function ExecutionsPage() {
         summary[status] = (summary[status] || 0) + 1;
         return summary;
       },
-      { queued: 0, passed: 0, failed: 0, blocked: 0 } as Record<string, number>
+      { queued: 0, running: 0, passed: 0, failed: 0, blocked: 0 } as Record<string, number>
     );
   }, [executionCaseOrder, resultByCaseId]);
 
   const blockingCases = useMemo(
-    () => executionCaseOrder.filter((testCase) => ["failed", "blocked"].includes(caseDerivedStatus(testCase))).slice(0, 8),
+    () => executionCaseOrder.filter((testCase) => ["failed", "blocked", "running"].includes(caseDerivedStatus(testCase))).slice(0, 8),
     [executionCaseOrder, resultByCaseId]
   );
 
@@ -1862,7 +2057,7 @@ export function ExecutionsPage() {
       }
 
       closeScheduleBuilder();
-      setTestRunsView("scheduled");
+      setTestRunsView("scheduled-runs");
       await refreshExecutionSchedules();
       if (editingScheduleId) {
         setSelectedScheduleId(editingScheduleId);
@@ -1920,7 +2115,6 @@ export function ExecutionsPage() {
   const handleRunExecutionSchedule = async (scheduleId: string) => {
     try {
       const response = await runExecutionSchedule.mutateAsync(scheduleId);
-      setTestRunsView("executions");
       focusExecution(response.id);
       await Promise.all([refreshExecutionScope(response.id), refreshExecutionSchedules()]);
       showSuccess("Scheduled run was launched as a fresh run.");
@@ -2183,6 +2377,44 @@ export function ExecutionsPage() {
     });
   };
 
+  const handleRunExecutionApiStep = async (step: TestStep) => {
+    if (!selectedExecution || !selectedTestCaseId) {
+      return;
+    }
+
+    setRunningExecutionApiStepId(step.id);
+
+    try {
+      const response = await runExecutionApiStep.mutateAsync({
+        executionId: selectedExecution.id,
+        testCaseId: selectedTestCaseId,
+        stepId: step.id
+      });
+
+      await refreshExecutionScope(selectedExecution.id);
+      setExecutionApiDetailState({
+        step,
+        detail: response.detail,
+        note: response.note,
+        status: response.step_status
+      });
+      showSuccess(`Step ${step.step_order} ${response.step_status}.`);
+    } catch (error) {
+      showError(error, "Unable to run API step");
+    } finally {
+      setRunningExecutionApiStepId((current) => (current === step.id ? "" : current));
+    }
+  };
+
+  const openExecutionApiDetail = (step: TestStep) => {
+    setExecutionApiDetailState({
+      step,
+      detail: stepApiDetails[step.id] || null,
+      note: stepNotes[step.id] || "",
+      status: stepStatuses[step.id] || "queued"
+    });
+  };
+
   useEffect(() => {
     setCaseAssignmentDraft(selectedExecutionCaseExplicitAssigneeId);
   }, [selectedExecutionCase?.id, selectedExecutionCaseExplicitAssigneeId]);
@@ -2309,6 +2541,9 @@ export function ExecutionsPage() {
   );
   const resolvedEvidenceArtifactCount = resolvedStepNoteCount + resolvedStepImageCount;
 
+  const selectedExecutionAppTypeKind = selectedExecution?.app_type_id
+    ? appTypes.find((appType) => appType.id === selectedExecution.app_type_id)?.type || null
+    : null;
   const selectedExecutionAppTypeLabel =
     appTypeNameById[selectedExecution?.app_type_id || ""] || selectedExecution?.app_type_id || "No app type scoped";
   const selectedExecutionProjectLabel =
@@ -2324,14 +2559,49 @@ export function ExecutionsPage() {
       ? `This case is currently following ${resolveUserPrimaryLabel(selectedExecution.assigned_user)} from the run.`
       : "No assignee is set yet for this run or this case.";
   const remainingCaseCount = Math.max(executionProgress.totalCases - executionProgress.completedCases, 0);
+  const isSelectedExecutionTestCaseRun = Boolean(selectedExecution && !selectedExecutionSuiteIds.length);
   const selectedCaseStatusLabel = selectedExecutionCase ? caseDerivedStatus(selectedExecutionCase) : executionProgress.derivedStatus;
-  const activeExecutionStage = selectedExecutionCase ? "case" : selectedExecution ? "suites" : "executions";
+  const activeExecutionStage = selectedExecutionCase ? "case" : selectedExecution ? (isSelectedExecutionTestCaseRun ? "cases" : "suites") : "executions";
   const showExecutionListHeader =
-    testRunsView === "scheduled"
+    testRunsView === "scheduled-runs"
       ? !selectedSchedule
-      : testRunsView === "operations"
+      : testRunsView === "batch-process"
         ? !selectedWorkspaceTransaction
         : !selectedExecution;
+  const runLibraryTitle =
+    testRunsView === "test-case-runs"
+      ? "Test case runs"
+      : testRunsView === "suite-runs"
+        ? "Suite runs"
+        : testRunsView === "scheduled-runs"
+          ? "Scheduled runs"
+          : "Batch process";
+  const runLibrarySubtitle =
+    testRunsView === "test-case-runs"
+      ? "Open direct case runs, review case outcomes quickly, and jump straight into the snapped test case details."
+      : testRunsView === "suite-runs"
+        ? "Browse suite-scoped runs, expand grouped coverage, and move into the focused run console when a case needs attention."
+        : testRunsView === "scheduled-runs"
+          ? "Keep recurring release checks separate from live runs, then launch one instantly when the team is ready."
+          : "Track imports, exports, AI generation, and other long-running background work in one place.";
+  const runLibrarySearchPlaceholder =
+    testRunsView === "scheduled-runs"
+      ? "Search scheduled runs"
+      : testRunsView === "batch-process"
+        ? "Search batch process records"
+        : `Search ${testRunsView === "test-case-runs" ? "test case runs" : "suite runs"}`;
+  const runLibrarySearchTitle =
+    testRunsView === "scheduled-runs"
+      ? "Filter scheduled runs"
+      : testRunsView === "batch-process"
+        ? "Filter batch process records"
+        : "Filter runs";
+  const runLibrarySearchSubtitle =
+    testRunsView === "scheduled-runs"
+      ? "Filter scheduled runs by cadence, timing, or scope context."
+      : testRunsView === "batch-process"
+        ? "Search titles, providers, repositories, or generated artifact details."
+        : "Filter run tiles by the status and facts shown on each card.";
   const executionControlTitle =
     currentExecutionStatus === "running"
       ? "Run is live"
@@ -2348,6 +2618,40 @@ export function ExecutionsPage() {
         : currentExecutionStatus === "aborted"
           ? "This run was stopped early. Captured evidence remains available for review."
           : "This run has been completed. Evidence remains available for review.";
+  const handleCatalogViewModeChange = (nextValue: CatalogViewMode) => {
+    setCatalogViewModeByView((current) =>
+      current[testRunsView] === nextValue
+        ? current
+        : {
+            ...current,
+            [testRunsView]: nextValue
+          }
+    );
+  };
+  const handleRunLibrarySearchChange = (nextValue: string) => {
+    setRunLibrarySearchByView((current) =>
+      current[testRunsView] === nextValue
+        ? current
+        : {
+            ...current,
+            [testRunsView]: nextValue
+        }
+    );
+  };
+  const handleTestRunsViewChange = (nextValue: TestRunsView) => {
+    if (nextValue === testRunsView) {
+      if (nextValue === "batch-process") {
+        setSelectedOperationId("");
+      }
+      return;
+    }
+
+    if (nextValue === "batch-process") {
+      setSelectedOperationId("");
+    }
+
+    setTestRunsView(nextValue);
+  };
 
   const closeExecutionDrilldown = () => {
     setSelectedExecutionId("");
@@ -2359,6 +2663,13 @@ export function ExecutionsPage() {
   const closeCaseDrilldown = () => {
     setSelectedTestCaseId("");
     syncExecutionSearchParams(selectedExecutionId, null);
+  };
+
+  const openWorkspaceTransactionDetail = (transactionId: string) => {
+    setSelectedOperationId(transactionId);
+  };
+  const closeWorkspaceTransactionDetail = () => {
+    setSelectedOperationId("");
   };
 
   const toggleSuiteGroup = (suiteId: string) => {
@@ -2374,6 +2685,26 @@ export function ExecutionsPage() {
     () => Array.from(new Set(executions.map((execution) => normalizeExecutionStatus(execution.status)))),
     [executions]
   );
+  const executionRunCounts = useMemo(
+    () =>
+      executions.reduce<Record<Extract<TestRunsView, "test-case-runs" | "suite-runs">, number>>(
+        (counts, execution) => {
+          counts[resolveExecutionRunBucket(execution)] += 1;
+          return counts;
+        },
+        {
+          "test-case-runs": 0,
+          "suite-runs": 0
+        }
+      ),
+    [executions]
+  );
+  const activeExecutionRowsCount =
+    testRunsView === "test-case-runs"
+      ? executionRunCounts["test-case-runs"]
+      : testRunsView === "suite-runs"
+        ? executionRunCounts["suite-runs"]
+        : 0;
 
   const filteredExecutions = useMemo(() => {
     const search = deferredExecutionSearch.trim().toLowerCase();
@@ -2414,6 +2745,32 @@ export function ExecutionsPage() {
       return true;
     });
   }, [deferredExecutionSearch, executionEvidenceFilter, executionIssueFilter, executionStatusFilter, executionSummaryById, executions, projectNameById]);
+  const filteredTestCaseExecutions = useMemo(
+    () => filteredExecutions.filter((execution) => resolveExecutionRunBucket(execution) === "test-case-runs"),
+    [filteredExecutions]
+  );
+  const filteredSuiteExecutions = useMemo(
+    () => filteredExecutions.filter((execution) => resolveExecutionRunBucket(execution) === "suite-runs"),
+    [filteredExecutions]
+  );
+  const activeExecutionCatalogRows = useMemo(
+    () =>
+      testRunsView === "test-case-runs"
+        ? filteredTestCaseExecutions
+        : testRunsView === "suite-runs"
+          ? filteredSuiteExecutions
+          : [],
+    [filteredSuiteExecutions, filteredTestCaseExecutions, testRunsView]
+  );
+  const availableExecutionCatalogRows = useMemo(
+    () =>
+      testRunsView === "test-case-runs"
+        ? executions.filter((execution) => resolveExecutionRunBucket(execution) === "test-case-runs")
+        : testRunsView === "suite-runs"
+          ? executions.filter((execution) => resolveExecutionRunBucket(execution) === "suite-runs")
+          : [],
+    [executions, testRunsView]
+  );
 
   const filteredSchedules = useMemo(() => {
     const search = deferredExecutionSearch.trim().toLowerCase();
@@ -2426,6 +2783,22 @@ export function ExecutionsPage() {
       return !search || [schedule.name, appTypeName, assigneeLabel, nextRunLabel].some((value) => value.toLowerCase().includes(search));
     });
   }, [appTypeNameById, deferredExecutionSearch, executionSchedules]);
+
+  useEffect(() => {
+    if (!isExecutionRunsView(testRunsView) || !selectedExecutionId) {
+      return;
+    }
+
+    if (availableExecutionCatalogRows.some((execution) => execution.id === selectedExecutionId)) {
+      return;
+    }
+
+    setSelectedExecutionId("");
+    setFocusedSuiteId("");
+    setSelectedTestCaseId("");
+    syncExecutionSearchParams("", null);
+  }, [availableExecutionCatalogRows, selectedExecutionId, testRunsView]);
+
   const executionListColumns = useMemo<Array<DataTableColumn<Execution>>>(() => [
     {
       key: "execution",
@@ -2506,7 +2879,7 @@ export function ExecutionsPage() {
                   description: "Open this run and review its evidence.",
                   icon: <OpenIcon />,
                   onClick: () => {
-                    setTestRunsView("executions");
+                    setTestRunsView(resolveExecutionRunBucket(execution));
                     focusExecution(execution.id);
                   }
                 },
@@ -2590,7 +2963,7 @@ export function ExecutionsPage() {
                 description: "Review cadence, suites, and direct cases for this schedule.",
                 icon: <CalendarIcon />,
                 onClick: () => {
-                  setTestRunsView("scheduled");
+                  setTestRunsView("scheduled-runs");
                   setSelectedScheduleId(schedule.id);
                 }
               },
@@ -2623,7 +2996,7 @@ export function ExecutionsPage() {
   const operationListColumns = useMemo<Array<DataTableColumn<WorkspaceTransaction>>>(() => [
     {
       key: "operation",
-      label: "Operation",
+      label: "Batch process",
       canToggle: false,
       render: (transaction) => {
         const presentation = describeWorkspaceTransaction(transaction, {
@@ -2669,12 +3042,12 @@ export function ExecutionsPage() {
           <CatalogActionMenu
             actions={[
               {
-                label: "Open operation",
+                label: "Open batch process",
                 description: "Inspect transaction metadata and event logs.",
                 icon: <ActivityIcon />,
                 onClick: () => {
-                  setTestRunsView("operations");
-                  setSelectedOperationId(transaction.id);
+                  setTestRunsView("batch-process");
+                  openWorkspaceTransactionDetail(transaction.id);
                 }
               }
             ]}
@@ -2690,7 +3063,7 @@ export function ExecutionsPage() {
     Number(executionIssueFilter !== "all") +
     Number(executionEvidenceFilter !== "all");
 
-  const executionCardMeasureTarget = filteredExecutions[0] || null;
+  const executionCardMeasureTarget = activeExecutionCatalogRows[0] || null;
 
   useEffect(() => {
     const node = executionCardMeasureRef.current;
@@ -2830,45 +3203,71 @@ export function ExecutionsPage() {
         <PageHeader
           eyebrow="Test Runs"
           title={
-            testRunsView === "executions"
-              ? "Test Runs"
-              : testRunsView === "scheduled"
-                ? "Scheduled Runs"
-                : "Operations Activity"
+            testRunsView === "test-case-runs"
+              ? "Test Case Runs"
+              : testRunsView === "suite-runs"
+                ? "Suite Runs"
+                : testRunsView === "scheduled-runs"
+                  ? "Scheduled Runs"
+                  : "Batch Process"
           }
           description={
-            testRunsView === "executions"
-              ? "Launch scoped runs, monitor live progress, and capture failure evidence without losing the surrounding suite and case context."
-              : testRunsView === "scheduled"
-                ? "Plan recurring release checks separately from live runs so teams can see what is scheduled next without cluttering the active runs board."
-                : "Review imports, scheduled AI generation, and project backup syncs with full traceable logs."
+            testRunsView === "test-case-runs"
+              ? "Review direct case runs without forcing them through a default suite wrapper, then open any run or case tile for its full detail view."
+              : testRunsView === "suite-runs"
+                ? "Launch suite-scoped runs, monitor live progress, and capture failure evidence without losing the surrounding suite and case context."
+                : testRunsView === "scheduled-runs"
+                  ? "Plan recurring release checks separately from live runs so teams can see what is scheduled next without cluttering the active runs board."
+                  : "Review imports, exports, AI generation, and other background jobs with full traceable details."
           }
           meta={[
             {
-              label: testRunsView === "executions" ? "Runs" : testRunsView === "scheduled" ? "Schedules" : "Operations",
-              value: testRunsView === "executions" ? executions.length : testRunsView === "scheduled" ? executionSchedules.length : workspaceTransactions.length
+              label:
+                testRunsView === "test-case-runs"
+                  ? "Case runs"
+                  : testRunsView === "suite-runs"
+                    ? "Suite runs"
+                    : testRunsView === "scheduled-runs"
+                      ? "Schedules"
+                      : "Batch records",
+              value:
+                testRunsView === "test-case-runs" || testRunsView === "suite-runs"
+                  ? activeExecutionRowsCount
+                  : testRunsView === "scheduled-runs"
+                    ? executionSchedules.length
+                    : workspaceTransactions.length
             },
             {
-              label: testRunsView === "executions" ? "Blocking cases" : testRunsView === "scheduled" ? "Active schedules" : "Running now",
+              label:
+                testRunsView === "test-case-runs" || testRunsView === "suite-runs"
+                  ? "Blocking cases"
+                  : testRunsView === "scheduled-runs"
+                    ? "Active schedules"
+                    : "Running now",
               value:
-                testRunsView === "executions"
+                testRunsView === "test-case-runs" || testRunsView === "suite-runs"
                   ? blockingCases.length
-                  : testRunsView === "scheduled"
+                  : testRunsView === "scheduled-runs"
                     ? executionSchedules.filter((schedule) => schedule.is_active).length
                     : workspaceTransactionStatusCounts.running || 0
             },
             {
-              label: testRunsView === "executions" ? "Completion" : testRunsView === "scheduled" ? "Next due" : "Failures",
+              label:
+                testRunsView === "test-case-runs" || testRunsView === "suite-runs"
+                  ? "Completion"
+                  : testRunsView === "scheduled-runs"
+                    ? "Next due"
+                    : "Failures",
               value:
-                testRunsView === "executions"
+                testRunsView === "test-case-runs" || testRunsView === "suite-runs"
                   ? `${executionProgress.percent}%`
-                  : testRunsView === "scheduled"
+                  : testRunsView === "scheduled-runs"
                     ? (filteredSchedules[0]?.next_run_at ? formatExecutionTimestamp(filteredSchedules[0].next_run_at, "Not set") : "Not set")
                     : workspaceTransactionStatusCounts.failed || 0
             }
           ]}
           actions={
-            testRunsView === "operations" ? undefined : (
+            testRunsView === "batch-process" ? undefined : (
               <>
                 <button
                   className="ghost-button"
@@ -2893,18 +3292,19 @@ export function ExecutionsPage() {
       <SubnavTabs
         ariaLabel="Test runs views"
         items={[
-          { value: "executions", label: "Runs", meta: `${executions.length}`, icon: <ExecutionRunIcon /> },
-          { value: "scheduled", label: "Scheduled", meta: `${executionSchedules.length}`, icon: <ExecutionScheduleIcon /> },
-          { value: "operations", label: "Operations", meta: `${workspaceTransactions.length}`, icon: <ActivityIcon /> }
+          { value: "test-case-runs", label: "Test Case Runs", meta: `${executionRunCounts["test-case-runs"]}`, icon: <TestCaseBoardIcon /> },
+          { value: "suite-runs", label: "Suite Runs", meta: `${executionRunCounts["suite-runs"]}`, icon: <ExecutionSuiteIcon /> },
+          { value: "scheduled-runs", label: "Scheduled Runs", meta: `${executionSchedules.length}`, icon: <ExecutionScheduleIcon /> },
+          { value: "batch-process", label: "Batch Process", meta: `${workspaceTransactions.length}`, icon: <ActivityIcon /> }
         ]}
-        onChange={setTestRunsView}
+        onChange={handleTestRunsViewChange}
         value={testRunsView}
       />
 
       <WorkspaceScopeBar
-        appTypeId={testRunsView === "executions" ? selectedExecution?.app_type_id || appTypeId : appTypeId}
+        appTypeId={isExecutionRunsView(testRunsView) ? selectedExecution?.app_type_id || appTypeId : appTypeId}
         appTypes={appTypes}
-        appTypeValueLabel={testRunsView === "executions" && selectedExecution ? selectedExecutionAppTypeLabel : undefined}
+        appTypeValueLabel={isExecutionRunsView(testRunsView) && selectedExecution ? selectedExecutionAppTypeLabel : undefined}
         disabled={isExecutionScopeReadOnly}
         onAppTypeChange={(value) => {
           setAppTypeId(value);
@@ -2917,8 +3317,8 @@ export function ExecutionsPage() {
           setSelectedSuiteIds([]);
           resetExecutionContextSelection();
         }}
-        projectId={testRunsView === "executions" ? selectedExecution?.project_id || projectId : projectId}
-        projectValueLabel={testRunsView === "executions" && selectedExecution ? selectedExecutionProjectLabel : undefined}
+        projectId={isExecutionRunsView(testRunsView) ? selectedExecution?.project_id || projectId : projectId}
+        projectValueLabel={isExecutionRunsView(testRunsView) && selectedExecution ? selectedExecutionProjectLabel : undefined}
         projects={projects}
       />
 
@@ -2926,41 +3326,23 @@ export function ExecutionsPage() {
         browseView={(
           <Panel
             className="execution-panel execution-panel--list"
-            title={
-              testRunsView === "executions"
-                ? "Run library"
-                : testRunsView === "scheduled"
-                  ? "Scheduled runs"
-                  : "Operations list"
-            }
-            subtitle={
-              testRunsView === "executions"
-                ? "Start from the run catalog, then drill into suites, cases, and step progress one focused screen at a time."
-                : testRunsView === "scheduled"
-                  ? "Keep recurring release checks separate from live runs, then launch one instantly when the team is ready."
-                  : "Inspect imports, AI generation, and backup syncs as traceable operational records."
-            }
+            title={runLibraryTitle}
+            subtitle={runLibrarySubtitle}
           >
             <div className="design-list-toolbar">
-              {testRunsView === "operations" ? null : <CatalogViewToggle onChange={setCatalogViewMode} value={catalogViewMode} />}
+              <CatalogViewToggle onChange={handleCatalogViewModeChange} value={catalogViewMode} />
               <CatalogSearchFilter
-                activeFilterCount={testRunsView === "executions" ? activeExecutionFilterCount : 0}
-                ariaLabel={testRunsView === "executions" ? "Search runs" : testRunsView === "scheduled" ? "Search schedules" : "Search operations"}
-                onChange={setExecutionSearch}
-                placeholder={testRunsView === "executions" ? "Search runs" : testRunsView === "scheduled" ? "Search schedules" : "Search operations"}
-                subtitle={
-                  testRunsView === "executions"
-                    ? "Filter run tiles by the status and facts shown on each card."
-                    : testRunsView === "scheduled"
-                      ? "Filter scheduled runs by cadence, timing, or scope context."
-                      : "Search titles, providers, repositories, or backup artifacts."
-                }
-                title={testRunsView === "executions" ? "Filter runs" : testRunsView === "scheduled" ? "Filter schedules" : "Filter operations"}
+                activeFilterCount={isExecutionRunsView(testRunsView) ? activeExecutionFilterCount : 0}
+                ariaLabel={runLibrarySearchPlaceholder}
+                onChange={handleRunLibrarySearchChange}
+                placeholder={runLibrarySearchPlaceholder}
+                subtitle={runLibrarySearchSubtitle}
+                title={runLibrarySearchTitle}
                 type="search"
                 value={executionSearch}
               >
                 <div className="catalog-filter-grid">
-                  {testRunsView === "executions" ? (
+                  {isExecutionRunsView(testRunsView) ? (
                   <label className="catalog-filter-field">
                     <span>Status</span>
                     <select
@@ -2977,7 +3359,7 @@ export function ExecutionsPage() {
                   </label>
                   ) : null}
 
-                  {testRunsView === "executions" ? (
+                  {isExecutionRunsView(testRunsView) ? (
                   <label className="catalog-filter-field">
                     <span>Issue count</span>
                     <select
@@ -2991,7 +3373,7 @@ export function ExecutionsPage() {
                   </label>
                   ) : null}
 
-                  {testRunsView === "executions" ? (
+                  {isExecutionRunsView(testRunsView) ? (
                   <label className="catalog-filter-field">
                     <span>Evidence activity</span>
                     <select
@@ -3023,14 +3405,14 @@ export function ExecutionsPage() {
               </CatalogSearchFilter>
             </div>
 
-            {(testRunsView === "executions" ? executionsQuery.isLoading : testRunsView === "scheduled" ? executionSchedulesQuery.isLoading : workspaceTransactionsQuery.isLoading) ? (
+            {(isExecutionRunsView(testRunsView) ? executionsQuery.isLoading : testRunsView === "scheduled-runs" ? executionSchedulesQuery.isLoading : workspaceTransactionsQuery.isLoading) ? (
               <TileCardSkeletonGrid />
             ) : null}
 
-            {!(testRunsView === "executions" ? executionsQuery.isLoading : testRunsView === "scheduled" ? executionSchedulesQuery.isLoading : workspaceTransactionsQuery.isLoading) ? (
-              <div className={catalogViewMode === "tile" ? "tile-browser-grid" : ""}>
-                {testRunsView === "executions" && catalogViewMode === "tile"
-                  ? filteredExecutions.map((execution) => (
+            {!(isExecutionRunsView(testRunsView) ? executionsQuery.isLoading : testRunsView === "scheduled-runs" ? executionSchedulesQuery.isLoading : workspaceTransactionsQuery.isLoading) ? (
+              <div className={catalogViewMode === "tile" ? `tile-browser-grid${testRunsView === "batch-process" ? " batch-process-browser-grid" : ""}` : ""}>
+                {isExecutionRunsView(testRunsView) && catalogViewMode === "tile"
+                  ? activeExecutionCatalogRows.map((execution) => (
                       <ExecutionListCard
                         key={execution.id}
                         execution={execution}
@@ -3041,7 +3423,7 @@ export function ExecutionsPage() {
                       />
                     ))
                   : null}
-                {testRunsView === "scheduled" && catalogViewMode === "tile"
+                {testRunsView === "scheduled-runs" && catalogViewMode === "tile"
                   ? filteredSchedules.map((schedule) => (
                       <ExecutionScheduleCard
                         key={schedule.id}
@@ -3054,78 +3436,30 @@ export function ExecutionsPage() {
                       />
                     ))
                   : null}
-                {testRunsView === "operations" && catalogViewMode === "tile"
-                  ? filteredWorkspaceTransactions.map((transaction) => {
-                      const presentation = describeWorkspaceTransaction(transaction, {
-                        appTypeNameById,
-                        projectNameById
-                      });
-                      const summary = resolveWorkspaceTransactionSummary(transaction, presentation);
-                      const scopeLabel = transaction.app_type_id
-                        ? appTypeNameById[transaction.app_type_id] || "App type scope"
-                        : transaction.project_id
-                          ? projectNameById[transaction.project_id] || "Project scope"
-                          : "Workspace scope";
-                      const statusTone: BoardStatusTone =
-                        transaction.status === "queued" || transaction.status === "running" || transaction.status === "failed"
-                          ? transaction.status
-                          : "completed";
-
-                      return (
-                        <div
-                          className={selectedWorkspaceTransaction?.id === transaction.id ? "record-card tile-card execution-card virtual-card is-active" : "record-card tile-card execution-card virtual-card"}
-                          key={transaction.id}
-                        >
-                          <button className="tile-card-main execution-schedule-card-button" onClick={() => setSelectedOperationId(transaction.id)} type="button">
-                            <div className="tile-card-header">
-                              <div aria-hidden="true" className={`record-card-icon execution status-${statusTone}`}>
-                                {presentation.icon}
-                              </div>
-                              <div className="tile-card-title-group">
-                                <strong>{transaction.title}</strong>
-                                <span className="execution-card-assignee">{presentation.eyebrow}</span>
-                              </div>
-                              <ExecutionStatusIndicator status={statusTone} />
-                            </div>
-
-                            <div className="execution-card-facts" aria-label="Operation facts">
-                              <ExecutionCardFact ariaLabel={`Scope ${scopeLabel}`} label={scopeLabel} title={`Scope ${scopeLabel}`}>
-                                <ActivityIcon />
-                              </ExecutionCardFact>
-                              <ExecutionCardFact ariaLabel={`Last activity ${formatExecutionTimestamp(transaction.latest_event_at || transaction.updated_at || transaction.created_at, "Timestamp unavailable")}`} label={formatExecutionTimestamp(transaction.latest_event_at || transaction.updated_at || transaction.created_at, "Timestamp unavailable")} title={`Last activity ${formatExecutionTimestamp(transaction.latest_event_at || transaction.updated_at || transaction.created_at, "Timestamp unavailable")}`}>
-                                <ExecutionTimeIcon />
-                              </ExecutionCardFact>
-                              <ExecutionCardFact ariaLabel={`${transaction.event_count || 0} logged events`} label={formatCountLabel(transaction.event_count || 0, "event")} title={`${transaction.event_count || 0} logged events`}>
-                                <ExecutionScopeIcon />
-                              </ExecutionCardFact>
-                              <ExecutionCardFact ariaLabel={summary} label={summary} title={summary}>
-                                <ExecutionRunIcon />
-                              </ExecutionCardFact>
-                            </div>
-                          </button>
-
-                          <div className="action-row execution-schedule-actions">
-                            <button className="ghost-button" onClick={() => setSelectedOperationId(transaction.id)} type="button">
-                              <OpenIcon />
-                              <span>Open details</span>
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })
+                {testRunsView === "batch-process" && catalogViewMode === "tile"
+                  ? filteredWorkspaceTransactions.map((transaction) => (
+                      <WorkspaceTransactionCard
+                        appTypeNameById={appTypeNameById}
+                        isActive={selectedWorkspaceTransaction?.id === transaction.id}
+                        key={transaction.id}
+                        onSelect={() => openWorkspaceTransactionDetail(transaction.id)}
+                        projectNameById={projectNameById}
+                        transaction={transaction}
+                      />
+                    ))
                   : null}
-                {testRunsView === "executions" && catalogViewMode === "list" ? (
+                {isExecutionRunsView(testRunsView) && catalogViewMode === "list" ? (
                   <DataTable
                     columns={executionListColumns}
                     emptyMessage="No runs created yet."
                     getRowClassName={(execution) => (selectedExecution?.id === execution.id ? "is-active-row" : "")}
                     getRowKey={(execution) => execution.id}
                     onRowClick={(execution) => focusExecution(execution.id)}
-                    rows={filteredExecutions}
+                    rows={activeExecutionCatalogRows}
                     storageKey="qaira:executions:list-columns"
                   />
                 ) : null}
-                {testRunsView === "scheduled" && catalogViewMode === "list" ? (
+                {testRunsView === "scheduled-runs" && catalogViewMode === "list" ? (
                   <DataTable
                     columns={executionScheduleListColumns}
                     emptyMessage="No schedules created yet."
@@ -3136,30 +3470,35 @@ export function ExecutionsPage() {
                     storageKey="qaira:execution-schedules:list-columns"
                   />
                 ) : null}
-                {testRunsView === "operations" && catalogViewMode === "list" ? (
+                {testRunsView === "batch-process" && catalogViewMode === "list" ? (
                   <DataTable
                     columns={operationListColumns}
-                    emptyMessage="No operations have been recorded yet."
+                    emptyMessage="No batch process records have been recorded yet."
                     getRowClassName={(transaction) => (selectedWorkspaceTransaction?.id === transaction.id ? "is-active-row" : "")}
                     getRowKey={(transaction) => transaction.id}
-                    onRowClick={(transaction) => setSelectedOperationId(transaction.id)}
+                    onRowClick={(transaction) => openWorkspaceTransactionDetail(transaction.id)}
                     rows={filteredWorkspaceTransactions}
                     storageKey="qaira:operations:list-columns"
                   />
                 ) : null}
-                {testRunsView === "executions" && !filteredExecutions.length ? <div className="empty-state compact">No runs created yet.</div> : null}
-                {testRunsView === "scheduled" && !filteredSchedules.length ? <div className="empty-state compact">No schedules created yet.</div> : null}
-                {testRunsView === "operations" && !filteredWorkspaceTransactions.length ? <div className="empty-state compact">No operations have been recorded for this scope yet.</div> : null}
+                {isExecutionRunsView(testRunsView) && !activeExecutionCatalogRows.length ? (
+                  <div className="empty-state compact">
+                    {testRunsView === "test-case-runs" ? "No direct test case runs created yet." : "No suite runs created yet."}
+                  </div>
+                ) : null}
+                {testRunsView === "scheduled-runs" && !filteredSchedules.length ? <div className="empty-state compact">No schedules created yet.</div> : null}
+                {testRunsView === "batch-process" && !filteredWorkspaceTransactions.length ? <div className="empty-state compact">No batch process records have been recorded for this scope yet.</div> : null}
               </div>
             ) : null}
           </Panel>
         )}
         detailView={(
-          testRunsView === "operations" ? (
+          testRunsView === "batch-process" ? (
             <Panel
+              actions={selectedWorkspaceTransaction ? <WorkspaceBackButton label="Back to batch process" onClick={closeWorkspaceTransactionDetail} /> : undefined}
               className="execution-panel execution-panel--detail"
-              title="Operation detail"
-              subtitle={selectedWorkspaceTransaction ? "Inspect metadata, recent state, and the full event timeline for this operation." : "Select an operation from the left to inspect its trace log."}
+              title={selectedWorkspaceTransaction ? selectedWorkspaceTransaction.title : "Batch process detail"}
+              subtitle={selectedWorkspaceTransaction ? "Inspect metadata, recent state, and the full event timeline for this background process." : "Select a batch process tile or list row to inspect its trace log."}
             >
               {selectedWorkspaceTransaction ? (
                 (() => {
@@ -3168,12 +3507,26 @@ export function ExecutionsPage() {
                     projectNameById
                   });
                   const summary = resolveWorkspaceTransactionSummary(selectedWorkspaceTransaction, presentation);
+                  const readableMetadata = resolveWorkspaceTransactionReadableMetadata(selectedWorkspaceTransaction);
+                  const complexMetadata = resolveWorkspaceTransactionComplexMetadata(selectedWorkspaceTransaction);
+                  const durationLabel = formatDuration(
+                    computeExecutionDurationMs(
+                      selectedWorkspaceTransaction.started_at || selectedWorkspaceTransaction.created_at || null,
+                      selectedWorkspaceTransaction.completed_at || selectedWorkspaceTransaction.updated_at || null,
+                      liveNow
+                    ),
+                    DEFAULT_DURATION_LABEL
+                  );
+                  const relatedLabel =
+                    selectedWorkspaceTransaction.related_kind && selectedWorkspaceTransaction.related_id
+                      ? `${formatWorkspaceTransactionActionLabel(selectedWorkspaceTransaction.related_kind)} · ${selectedWorkspaceTransaction.related_id}`
+                      : "Not linked";
 
                   return (
                 <div className="detail-stack">
                   <div className="detail-summary">
                     <strong>{selectedWorkspaceTransaction.title}</strong>
-                    <span>{summary || "No summary provided for this operation."}</span>
+                    <span>{selectedWorkspaceTransaction.description || summary || "No summary provided for this background process."}</span>
                     <span>{selectedWorkspaceTransaction.created_user ? resolveUserPrimaryLabel(selectedWorkspaceTransaction.created_user) : "System"} · {formatExecutionTimestamp(selectedWorkspaceTransaction.created_at, "Timestamp unavailable")}</span>
                   </div>
 
@@ -3185,6 +3538,10 @@ export function ExecutionsPage() {
                     <div className="mini-card">
                       <strong>{selectedWorkspaceTransaction.event_count || 0}</strong>
                       <span>Events</span>
+                    </div>
+                    <div className="mini-card">
+                      <strong>{durationLabel}</strong>
+                      <span>Duration</span>
                     </div>
                     <div className="mini-card">
                       <strong>{formatExecutionTimestamp(selectedWorkspaceTransaction.latest_event_at || selectedWorkspaceTransaction.updated_at, "Not recorded")}</strong>
@@ -3209,16 +3566,46 @@ export function ExecutionsPage() {
                     <div className="stack-item">
                       <div>
                         <strong>Action</strong>
-                        <span>{selectedWorkspaceTransaction.action.replace(/_/g, " ")}</span>
+                        <span>{formatWorkspaceTransactionActionLabel(selectedWorkspaceTransaction.action)}</span>
                       </div>
                     </div>
-                    {Object.keys(selectedWorkspaceTransaction.metadata || {}).length ? (
+                    <div className="stack-item">
+                      <div>
+                        <strong>Category</strong>
+                        <span>{formatWorkspaceTransactionActionLabel(selectedWorkspaceTransaction.category)}</span>
+                      </div>
+                    </div>
+                    <div className="stack-item">
+                      <div>
+                        <strong>Related record</strong>
+                        <span>{relatedLabel}</span>
+                      </div>
+                    </div>
+                    {readableMetadata.length ? (
                       <div className="stack-item execution-operation-metadata">
                         <div>
-                          <strong>Metadata</strong>
-                          <span>Operational context captured for this event.</span>
+                          <strong>Captured details</strong>
+                          <span>Readable metadata collected for this batch process.</span>
                         </div>
-                        <code className="execution-operation-json">{JSON.stringify(selectedWorkspaceTransaction.metadata, null, 2)}</code>
+                        <div className="stack-list execution-operation-detail-list">
+                          {readableMetadata.map((entry) => (
+                            <div className="stack-item" key={entry.key}>
+                              <div>
+                                <strong>{entry.label}</strong>
+                                <span>{formatWorkspaceTransactionMetadataValue(entry.value)}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {complexMetadata ? (
+                      <div className="stack-item execution-operation-metadata">
+                        <div>
+                          <strong>Raw metadata</strong>
+                          <span>Structured context that did not fit into the readable detail fields above.</span>
+                        </div>
+                        <code className="execution-operation-json">{JSON.stringify(complexMetadata, null, 2)}</code>
                       </div>
                     ) : null}
                   </div>
@@ -3226,7 +3613,7 @@ export function ExecutionsPage() {
                   <div className="execution-context-summary-head">
                     <div className="execution-context-summary-copy">
                       <strong>Trace log</strong>
-                      <span>Every recorded stage for this operation appears below in the order it happened.</span>
+                      <span>Every recorded stage for this batch process appears below in the order it happened.</span>
                     </div>
                     <span className="count-pill">
                       {selectedWorkspaceTransactionEventsQuery.isLoading
@@ -3240,11 +3627,11 @@ export function ExecutionsPage() {
                   ) : null}
 
                   {!selectedWorkspaceTransactionEventsQuery.error && selectedWorkspaceTransactionEventsQuery.isLoading ? (
-                    <div className="empty-state compact">Loading operation events…</div>
+                    <div className="empty-state compact">Loading batch process events…</div>
                   ) : null}
 
                   {!selectedWorkspaceTransactionEventsQuery.error && !(selectedWorkspaceTransactionEventsQuery.data || []).length && !selectedWorkspaceTransactionEventsQuery.isLoading ? (
-                    <div className="empty-state compact">No event log has been recorded for this operation yet.</div>
+                    <div className="empty-state compact">No event log has been recorded for this batch process yet.</div>
                   ) : null}
 
                   {!selectedWorkspaceTransactionEventsQuery.error && (selectedWorkspaceTransactionEventsQuery.data || []).length ? (
@@ -3269,10 +3656,10 @@ export function ExecutionsPage() {
                   );
                 })()
               ) : (
-                <div className="empty-state compact">Choose an operation to review trace logs, counts, and provider metadata.</div>
+                <div className="empty-state compact">Choose a batch process tile to review its full timeline, captured metadata, and related job context.</div>
               )}
             </Panel>
-          ) : testRunsView === "scheduled" ? (
+          ) : testRunsView === "scheduled-runs" ? (
             <Panel
               className="execution-panel execution-panel--detail"
               title="Scheduled run"
@@ -3598,6 +3985,8 @@ export function ExecutionsPage() {
                                           return (
                                             <ExecutionCompactStepRow
                                               evidence={stepEvidence[step.id] || null}
+                                              canInspectApi={step.step_type === "api" || (!step.step_type && selectedExecutionAppTypeKind === "api")}
+                                              isRunningApi={runningExecutionApiStepId === step.id}
                                               isLocked={!isExecutionStarted || isExecutionLocked}
                                               isSelected={bulkSelectedStepIds.includes(step.id)}
                                               isUploadingEvidence={uploadingEvidenceStepId === step.id}
@@ -3606,8 +3995,10 @@ export function ExecutionsPage() {
                                               parameterValues={executionStepParameterValues}
                                               onFail={() => void handleRecordStep(step.id, "failed")}
                                               onDeleteEvidence={() => void handleDeleteStepEvidence(step)}
+                                              onInspectApi={() => openExecutionApiDetail(step)}
                                               onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
                                               onPass={() => void handleRecordStep(step.id, "passed")}
+                                              onRunApi={() => void handleRunExecutionApiStep(step)}
                                               onPreviewCode={() => openExecutionStepAutomationPreview(step)}
                                               onUploadEvidence={(file) => void handleUploadStepEvidence(step, file)}
                                               onToggleSelect={(checked) =>
@@ -3632,6 +4023,8 @@ export function ExecutionsPage() {
                                 return (
                                   <ExecutionCompactStepRow
                                     evidence={stepEvidence[step.id] || null}
+                                    canInspectApi={step.step_type === "api" || (!step.step_type && selectedExecutionAppTypeKind === "api")}
+                                    isRunningApi={runningExecutionApiStepId === step.id}
                                     isLocked={!isExecutionStarted || isExecutionLocked}
                                     isSelected={bulkSelectedStepIds.includes(step.id)}
                                     isUploadingEvidence={uploadingEvidenceStepId === step.id}
@@ -3640,8 +4033,10 @@ export function ExecutionsPage() {
                                     parameterValues={executionStepParameterValues}
                                     onFail={() => void handleRecordStep(step.id, "failed")}
                                     onDeleteEvidence={() => void handleDeleteStepEvidence(step)}
+                                    onInspectApi={() => openExecutionApiDetail(step)}
                                     onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
                                     onPass={() => void handleRecordStep(step.id, "passed")}
+                                    onRunApi={() => void handleRunExecutionApiStep(step)}
                                     onPreviewCode={() => openExecutionStepAutomationPreview(step)}
                                     onUploadEvidence={(file) => void handleUploadStepEvidence(step, file)}
                                     onToggleSelect={(checked) =>
@@ -3736,8 +4131,12 @@ export function ExecutionsPage() {
             <Panel
               className="execution-panel execution-panel--tree"
               actions={<WorkspaceBackButton label="Back to run library" onClick={closeExecutionDrilldown} />}
-              title={selectedExecution?.name || "Run suites"}
-              subtitle="Expand suite groups to review snapped test cases inline and jump straight into the run workspace."
+              title={selectedExecution?.name || (isSelectedExecutionTestCaseRun ? "Run cases" : "Run suites")}
+              subtitle={
+                isSelectedExecutionTestCaseRun
+                  ? "Open the snapped case tiles for this run and jump directly into the case workspace when deeper evidence is needed."
+                  : "Expand suite groups to review snapped test cases inline and jump straight into the run workspace."
+              }
             >
               {selectedExecution ? (
                 <div className="detail-stack">
@@ -3761,7 +4160,11 @@ export function ExecutionsPage() {
 
                         <div className="execution-health-heading">
                           <strong>{selectedExecution.name || "Unnamed run"}</strong>
-                          <span>{selectedExecutionSuiteIds.length} suites snapped into this run with {executionProgress.totalCases} cases preserved for run evidence.</span>
+                          <span>
+                            {isSelectedExecutionTestCaseRun
+                              ? `${executionProgress.totalCases} direct test case${executionProgress.totalCases === 1 ? "" : "s"} preserved for run evidence.`
+                              : `${selectedExecutionSuiteIds.length} suites snapped into this run with ${executionProgress.totalCases} cases preserved for run evidence.`}
+                          </span>
                         </div>
 
                         <ProgressMeter
@@ -3889,6 +4292,27 @@ export function ExecutionsPage() {
                       </div>
                     </div>
 
+                    {isSelectedExecutionTestCaseRun ? (
+                      <div className="suite-tree">
+                        <div className="tree-children">
+                          {executionCaseOrder.map((testCase) => (
+                            <ExecutionSuiteCaseCard
+                              assignedUser={testCase.assigned_user || selectedExecution?.assigned_user || null}
+                              caseStatus={caseDerivedStatus(testCase)}
+                              durationLabel={formatDuration(resolveCaseDurationMs(testCase.id, resultByCaseId[testCase.id]), DEFAULT_DURATION_LABEL)}
+                              isActive={selectedTestCaseId === testCase.id}
+                              isNext={nextFocusCase?.id === testCase.id}
+                              key={testCase.id}
+                              onSelect={() => focusExecutionCase(testCase.id)}
+                              stepCount={(stepsByCaseId[testCase.id] || []).length}
+                              suiteName="Test case run"
+                              testCase={testCase}
+                            />
+                          ))}
+                          {!executionCaseOrder.length ? <div className="empty-state compact">No direct test cases were snapped into this run.</div> : null}
+                        </div>
+                      </div>
+                    ) : (
                     <div className="suite-tree">
                       {executionSuites.map((suite) => {
                         const suiteCases = displayCasesBySuiteId[suite.id] || [];
@@ -4035,6 +4459,7 @@ export function ExecutionsPage() {
                       })}
                       {!executionSuites.length ? <div className="empty-state compact">No suites were selected for this execution.</div> : null}
                     </div>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -4044,9 +4469,9 @@ export function ExecutionsPage() {
           )
         )}
         isDetailOpen={
-          testRunsView === "scheduled"
+          testRunsView === "scheduled-runs"
             ? Boolean(selectedSchedule)
-            : testRunsView === "operations"
+            : testRunsView === "batch-process"
               ? Boolean(selectedWorkspaceTransaction)
               : Boolean(selectedExecution)
         }
@@ -4080,6 +4505,19 @@ export function ExecutionsPage() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {executionApiDetailState ? (
+        <ExecutionApiStepDialog
+          canRun={!isExecutionLocked && Boolean(selectedExecution && selectedTestCaseId) && Boolean(executionApiDetailState.step.api_request)}
+          detail={executionApiDetailState.detail}
+          isRunning={runningExecutionApiStepId === executionApiDetailState.step.id}
+          note={executionApiDetailState.note}
+          onClose={() => setExecutionApiDetailState(null)}
+          onRun={() => void handleRunExecutionApiStep(executionApiDetailState.step)}
+          status={executionApiDetailState.status}
+          step={executionApiDetailState.step}
+        />
       ) : null}
 
       {codePreviewState ? (
@@ -4271,6 +4709,284 @@ function ExecutionAccordionSection({
   );
 }
 
+function ExecutionApiStepDialog({
+  step,
+  detail,
+  note,
+  status,
+  canRun,
+  isRunning,
+  onClose,
+  onRun
+}: ExecutionApiStepDialogProps) {
+  const [selectedJsonPath, setSelectedJsonPath] = useState<{ path: string; value: unknown } | null>(null);
+  const requestHeaders = useMemo(
+    () =>
+      detail?.request?.headers
+        ? Object.entries(detail.request.headers).sort(([left], [right]) => left.localeCompare(right))
+        : (step.api_request?.headers || [])
+            .filter((header) => header?.key)
+            .map((header) => [String(header.key), String(header.value || "")] as const),
+    [detail?.request?.headers, step.api_request?.headers]
+  );
+  const responseHeaders = useMemo(
+    () => Object.entries(detail?.response?.headers || {}).sort(([left], [right]) => left.localeCompare(right)),
+    [detail?.response?.headers]
+  );
+  const captures = useMemo(
+    () => Object.entries(detail?.captures || {}).sort(([left], [right]) => left.localeCompare(right)),
+    [detail?.captures]
+  );
+  const assertions = detail?.assertions || (step.api_request?.validations || []).map((validation) => ({
+    kind: validation.kind || "status",
+    passed: false,
+    target: validation.target || null,
+    expected: validation.expected || null,
+    actual: null
+  }));
+  const requestBody =
+    detail?.request?.body !== undefined
+      ? detail.request.body
+      : step.api_request?.body || null;
+  const responseJson = detail?.response?.json !== undefined ? detail.response.json : null;
+  const responseBody = detail?.response
+    ? detail.response.json !== undefined && detail.response.json !== null
+      ? JSON.stringify(detail.response.json, null, 2)
+      : detail.response.body || ""
+    : "";
+  const selectedJsonValue = useMemo(() => {
+    if (!selectedJsonPath) {
+      return "";
+    }
+
+    if (selectedJsonPath.value === null || selectedJsonPath.value === undefined) {
+      return String(selectedJsonPath.value);
+    }
+
+    if (typeof selectedJsonPath.value === "string") {
+      return selectedJsonPath.value;
+    }
+
+    try {
+      return JSON.stringify(selectedJsonPath.value, null, 2);
+    } catch {
+      return String(selectedJsonPath.value);
+    }
+  }, [selectedJsonPath]);
+
+  useEffect(() => {
+    setSelectedJsonPath(null);
+  }, [detail?.response?.body, detail?.response?.status, step.id]);
+
+  return (
+    <div className="modal-backdrop modal-backdrop--scroll" onClick={onClose} role="presentation">
+      <div
+        aria-label={`Step ${step.step_order} API execution details`}
+        aria-modal="true"
+        className="modal-card resource-modal-card execution-api-detail-modal"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <div className="resource-modal-header">
+          <div className="resource-modal-title">
+            <div className="execution-api-detail-title-row">
+              <span className="execution-step-type-chip">
+                <StepTypeIcon size={14} type={step.step_type || "api"} />
+              </span>
+              <StatusBadge value={status} />
+            </div>
+            <h3>{`Step ${step.step_order} API details`}</h3>
+            <p>{step.action || "Inspect the snapped API request, latest response, and configured assertions for this run."}</p>
+          </div>
+          <button className="ghost-button" onClick={onClose} type="button">
+            Close
+          </button>
+        </div>
+        <div className="resource-form">
+          <div className="resource-form-body execution-api-detail-body">
+            <div className="metric-strip compact">
+              <div className="mini-card">
+                <strong>{detail?.request?.method || step.api_request?.method || "GET"}</strong>
+                <span>Method</span>
+              </div>
+              <div className="mini-card">
+                <strong>{detail?.response?.status ?? "Pending"}</strong>
+                <span>Response</span>
+              </div>
+              <div className="mini-card">
+                <strong>{assertions.length}</strong>
+                <span>Assertions</span>
+              </div>
+            </div>
+
+            <div className="automation-response-results">
+              <div className="automation-response-header">
+                <div>
+                  <strong>API response capture</strong>
+                  <span>Use the same QAira backend API step runner that powers engine-side API execution, then inspect the persisted request, response, assertions, and captures for this run.</span>
+                </div>
+                {canRun ? (
+                  <button
+                    className="primary-button automation-run-button"
+                    disabled={isRunning}
+                    onClick={onRun}
+                    type="button"
+                  >
+                    <PlayIcon />
+                    <span>{isRunning ? "Running..." : "Run step"}</span>
+                  </button>
+                ) : null}
+              </div>
+
+              <div className="automation-response-meta">
+                <strong>Request</strong>
+                <span>{detail?.request?.url || step.api_request?.url || "No request URL captured yet."}</span>
+                {requestHeaders.length ? (
+                  <div className="automation-response-headers">
+                    {requestHeaders.map(([key, value]) => (
+                      <span className="automation-response-header-chip" key={key}>
+                        <strong>{key}</strong>
+                        <span>{value}</span>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                {requestBody ? (
+                  <pre className="automation-code-block automation-code-block--compact automation-code-block--selection">
+                    <code>{requestBody}</code>
+                  </pre>
+                ) : null}
+              </div>
+
+              <div className="automation-response-meta">
+                <strong>Response</strong>
+                <span>
+                  {detail?.response
+                    ? `${detail.response.status} ${detail.response.status_text || ""}`.trim()
+                    : "This step has not returned a structured API response yet."}
+                </span>
+                {detail?.response ? (
+                  <div className="automation-response-summary">
+                    <span className={status === "passed" ? "automation-response-pill is-success" : status === "failed" ? "automation-response-pill is-danger" : "automation-response-pill"}>
+                      {detail.response.status}
+                    </span>
+                    <span className="automation-response-pill">{detail.request?.method || step.api_request?.method || "GET"}</span>
+                    <span className="automation-response-pill">{detail.response.headers?.["content-type"] || "Unknown content type"}</span>
+                  </div>
+                ) : null}
+                {responseHeaders.length ? (
+                  <div className="automation-response-headers">
+                    {responseHeaders.map(([key, value]) => (
+                      <span className="automation-response-header-chip" key={key}>
+                        <strong>{key}</strong>
+                        <span>{value}</span>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                {responseBody ? (
+                  <pre className="automation-code-block automation-code-block--compact automation-code-block--selection">
+                    <code>{responseBody}</code>
+                  </pre>
+                ) : null}
+              </div>
+
+              {responseJson !== null && responseJson !== undefined ? (
+                <div className="automation-response-tree-shell">
+                  <div className="automation-response-tree-panel">
+                    <strong>JSON path explorer</strong>
+                    <span>Inspect the structured response with the same read format used in API authoring.</span>
+                    <div className="api-response-tree">
+                      <JsonResponseTreeNode
+                        depth={0}
+                        label="$"
+                        onSelect={setSelectedJsonPath}
+                        path="$"
+                        selectedPath={selectedJsonPath?.path || ""}
+                        value={responseJson}
+                      />
+                    </div>
+                  </div>
+                  <div className="automation-response-selection">
+                    <strong>Selected node</strong>
+                    <span>{selectedJsonPath ? selectedJsonPath.path : "Choose a node from the JSON hierarchy to inspect its value."}</span>
+                    {selectedJsonPath ? (
+                      <pre className="automation-code-block automation-code-block--compact automation-code-block--selection">
+                        <code>{selectedJsonValue}</code>
+                      </pre>
+                    ) : null}
+                    {captures.length ? (
+                      <div className="automation-response-save">
+                        <strong>Captured params</strong>
+                        <span>These values were persisted from the response and are available to later steps in this run.</span>
+                        <div className="automation-response-headers">
+                          {captures.map(([key, value]) => (
+                            <span className="automation-response-header-chip" key={key}>
+                              <strong>{key}</strong>
+                              <span>{value}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="automation-response-meta">
+                <strong>Assertions</strong>
+                {assertions.length ? (
+                  <div className="execution-api-assertion-list">
+                    {assertions.map((assertion, index) => (
+                      <div className="execution-api-assertion-row" key={`${assertion.kind}-${assertion.target || "status"}-${index}`}>
+                        <span className={assertion.passed ? "automation-response-pill is-success" : "automation-response-pill is-danger"}>
+                          {assertion.passed ? "Passed" : detail ? "Failed" : "Configured"}
+                        </span>
+                        <div className="execution-api-assertion-copy">
+                          <strong>{assertion.kind}{assertion.target ? ` · ${assertion.target}` : ""}</strong>
+                          <span>
+                            {assertion.expected ? `Expected ${assertion.expected}` : "No explicit expected value"}
+                            {detail && assertion.actual !== undefined && assertion.actual !== null ? ` · Actual ${assertion.actual}` : ""}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-state compact">No assertions configured for this API step.</div>
+                )}
+              </div>
+
+              {captures.length && (responseJson === null || responseJson === undefined) ? (
+                <div className="automation-response-meta">
+                  <strong>Captured values</strong>
+                  <div className="automation-response-headers">
+                    {captures.map(([key, value]) => (
+                      <span className="automation-response-header-chip" key={key}>
+                        <strong>{key}</strong>
+                        <span>{value}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {note ? (
+                <div className="automation-response-meta">
+                  <strong>Run note</strong>
+                  <pre className="automation-code-block automation-code-block--compact automation-code-block--selection">
+                    <code>{note}</code>
+                  </pre>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ExecutionAccordionChevronIcon() {
   return (
     <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width="18">
@@ -4317,6 +5033,7 @@ function ExecutionListCard({
   const totalScopedCases = execution.case_snapshots?.length || summary.total || 0;
   const resolvedTotal = Math.max(totalScopedCases, summary.total, 0);
   const executionStatus = normalizeExecutionStatus(execution.status);
+  const isTestCaseRun = execution.suite_ids.length === 0;
   const issueCount = summary.failed + summary.blocked;
   const durationLabel = formatDuration(
     computeExecutionDurationMs(execution.started_at, execution.ended_at, liveNow),
@@ -4358,11 +5075,19 @@ function ExecutionListCard({
 
         <div className="execution-card-facts" aria-label="Run facts">
           <ExecutionCardFact
-            ariaLabel={`${execution.suite_ids.length} suites in scope`}
-            label={String(execution.suite_ids.length)}
-            title={`${execution.suite_ids.length} suites in scope`}
+            ariaLabel={
+              isTestCaseRun
+                ? `${resolvedTotal} direct test case${resolvedTotal === 1 ? "" : "s"} in scope`
+                : `${execution.suite_ids.length} suites in scope`
+            }
+            label={isTestCaseRun ? String(resolvedTotal) : String(execution.suite_ids.length)}
+            title={
+              isTestCaseRun
+                ? `${resolvedTotal} direct test case${resolvedTotal === 1 ? "" : "s"} in scope`
+                : `${execution.suite_ids.length} suites in scope`
+            }
           >
-            <ExecutionSuiteIcon />
+            {isTestCaseRun ? <ExecutionScopeIcon /> : <ExecutionSuiteIcon />}
           </ExecutionCardFact>
           <ExecutionCardFact
             ariaLabel={resolvedTotal ? `${summary.total} of ${resolvedTotal} cases touched` : `${summary.total} cases touched`}
@@ -4466,6 +5191,81 @@ function ExecutionScheduleCard({
         <button className="ghost-button danger" onClick={onDelete} type="button">
           <ExecutionDeleteIcon />
           <span>Delete</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceTransactionCard({
+  transaction,
+  isActive,
+  onSelect,
+  appTypeNameById,
+  projectNameById
+}: {
+  transaction: WorkspaceTransaction;
+  isActive: boolean;
+  onSelect: () => void;
+  appTypeNameById: Record<string, string>;
+  projectNameById: Record<string, string>;
+}) {
+  const presentation = describeWorkspaceTransaction(transaction, {
+    appTypeNameById,
+    projectNameById
+  });
+  const summary = resolveWorkspaceTransactionSummary(transaction, presentation);
+  const scopeLabel = transaction.app_type_id
+    ? appTypeNameById[transaction.app_type_id] || "App type scope"
+    : transaction.project_id
+      ? projectNameById[transaction.project_id] || "Project scope"
+      : "Workspace scope";
+  const statusTone: BoardStatusTone =
+    transaction.status === "queued" || transaction.status === "running" || transaction.status === "failed"
+      ? transaction.status
+      : "completed";
+  const latestActivityLabel = formatExecutionTimestamp(
+    transaction.latest_event_at || transaction.updated_at || transaction.created_at,
+    "Timestamp unavailable"
+  );
+  const actionLabel = formatWorkspaceTransactionActionLabel(transaction.action);
+
+  return (
+    <div className={isActive ? "record-card tile-card execution-card workspace-transaction-card virtual-card is-active" : "record-card tile-card execution-card workspace-transaction-card virtual-card"}>
+      <button className="tile-card-main execution-schedule-card-button workspace-transaction-card-button" onClick={onSelect} type="button">
+        <div className="tile-card-header">
+          <div aria-hidden="true" className={`record-card-icon execution status-${statusTone}`}>
+            {presentation.icon}
+          </div>
+          <div className="tile-card-title-group">
+            <strong>{transaction.title}</strong>
+            <span className="execution-card-assignee execution-card-assignee--wrap">{presentation.eyebrow}</span>
+          </div>
+          <ExecutionStatusIndicator status={statusTone} />
+        </div>
+
+        <div className="execution-card-facts" aria-label="Batch process facts">
+          <ExecutionCardFact ariaLabel={`Scope ${scopeLabel}`} label={scopeLabel} title={`Scope ${scopeLabel}`}>
+            <ActivityIcon />
+          </ExecutionCardFact>
+          <ExecutionCardFact ariaLabel={`Action ${actionLabel}`} label={actionLabel} title={`Action ${actionLabel}`}>
+            <ExecutionRunIcon />
+          </ExecutionCardFact>
+          <ExecutionCardFact ariaLabel={`${transaction.event_count || 0} logged events`} label={formatCountLabel(transaction.event_count || 0, "event")} title={`${transaction.event_count || 0} logged events`}>
+            <ExecutionScopeIcon />
+          </ExecutionCardFact>
+          <ExecutionCardFact ariaLabel={`Last activity ${latestActivityLabel}`} label={latestActivityLabel} title={`Last activity ${latestActivityLabel}`}>
+            <ExecutionTimeIcon />
+          </ExecutionCardFact>
+        </div>
+
+        <p className="tile-card-description workspace-transaction-card-summary">{summary}</p>
+      </button>
+
+      <div className="action-row execution-schedule-actions workspace-transaction-card-actions">
+        <button className="ghost-button" onClick={onSelect} type="button">
+          <OpenIcon />
+          <span>Open details</span>
         </button>
       </div>
     </div>
@@ -4983,6 +5783,8 @@ function ExecutionCompactStepRow({
   status,
   note,
   evidence,
+  canInspectApi,
+  isRunningApi,
   parameterValues,
   isLocked,
   isSelected,
@@ -4990,7 +5792,9 @@ function ExecutionCompactStepRow({
   onToggleSelect,
   onPass,
   onFail,
+  onRunApi,
   onDeleteEvidence,
+  onInspectApi,
   onNoteBlur,
   onUploadEvidence,
   onViewEvidence,
@@ -5000,6 +5804,8 @@ function ExecutionCompactStepRow({
   status: ExecutionResult["status"] | "queued";
   note: string;
   evidence: ExecutionStepEvidence | null;
+  canInspectApi: boolean;
+  isRunningApi: boolean;
   parameterValues: Record<string, string>;
   isLocked: boolean;
   isSelected: boolean;
@@ -5007,7 +5813,9 @@ function ExecutionCompactStepRow({
   onToggleSelect: (checked: boolean) => void;
   onPass: () => void;
   onFail: () => void;
+  onRunApi: () => void;
   onDeleteEvidence: () => void;
+  onInspectApi: () => void;
   onNoteBlur: (value: string) => void;
   onUploadEvidence: (file: File) => void;
   onViewEvidence: () => void;
@@ -5042,9 +5850,21 @@ function ExecutionCompactStepRow({
       <div className="execution-step-col-action execution-step-copy" role="cell">
         <div className="execution-step-badges">
           <StepKindIconBadge label="Standard step" tone={stepKind.tone} />
-          <span className="execution-step-type-chip" title={`Step type: ${String(step.step_type || "web").toUpperCase()}`}>
-            <StepTypeIcon size={14} type={step.step_type} />
-          </span>
+          {canInspectApi ? (
+            <button
+              aria-label={`Inspect API details for step ${step.step_order}`}
+              className="execution-step-type-chip execution-step-type-chip--button"
+              onClick={onInspectApi}
+              title="Inspect API request, response, and assertions"
+              type="button"
+            >
+              <StepTypeIcon size={14} type={step.step_type || "api"} />
+            </button>
+          ) : (
+            <span className="execution-step-type-chip" title={`Step type: ${String(step.step_type || "web").toUpperCase()}`}>
+              <StepTypeIcon size={14} type={step.step_type} />
+            </span>
+          )}
           <InlineStepToolButton
             ariaLabel={`Preview automation for step ${step.step_order}`}
             className="is-active"
@@ -5074,10 +5894,22 @@ function ExecutionCompactStepRow({
       </span>
       <span className="execution-step-col-actions" role="cell">
         <div className="execution-step-mark-buttons">
+          {canInspectApi ? (
+            <button
+              aria-label={`Run API step ${step.step_order}`}
+              className="execution-step-action-button execution-step-run"
+              disabled={isLocked || isRunningApi}
+              onClick={onRunApi}
+              title="Run API step through QAira backend"
+              type="button"
+            >
+              <PlayIcon />
+            </button>
+          ) : null}
           <button
             aria-label={`Mark step ${step.step_order} as passed`}
             className="execution-step-action-button execution-step-pass"
-            disabled={isLocked}
+            disabled={isLocked || isRunningApi}
             onClick={onPass}
             title="Mark passed"
             type="button"
@@ -5087,7 +5919,7 @@ function ExecutionCompactStepRow({
           <button
             aria-label={`Mark step ${step.step_order} as failed`}
             className="execution-step-action-button execution-step-fail"
-            disabled={isLocked}
+            disabled={isLocked || isRunningApi}
             onClick={onFail}
             title="Mark failed"
             type="button"

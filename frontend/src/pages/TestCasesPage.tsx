@@ -3577,6 +3577,10 @@ export function TestCasesPage() {
         project_id: projectId,
         app_type_id: appTypeId,
         test_case_ids: [testCaseId],
+        test_environment_id: selectedExecutionEnvironmentId || undefined,
+        test_configuration_id: selectedExecutionConfigurationId || undefined,
+        test_data_set_id: selectedExecutionDataSetId || undefined,
+        assigned_to: selectedExecutionAssigneeId || undefined,
         name: `${testCase.title} Run`,
         created_by: session.user.id
       });
@@ -4142,9 +4146,29 @@ export function TestCasesPage() {
     closeCaseWorkspace();
   };
 
+  const isSelectedCaseRunning =
+    Boolean(selectedTestCase?.id)
+    && schedulerActionCaseId === selectedTestCase?.id
+    && schedulerActionKind === "run";
   const caseHeaderActions = (
     <div className="panel-head-actions-row">
       <WorkspaceBackButton label="Back to test case tiles" onClick={handleWorkspaceBack} />
+      {selectedTestCase ? (
+        <button
+          className="test-case-tile-action-button is-run test-case-header-run-button"
+          disabled={isSelectedCaseRunning || !projectId || !appTypeId || !session?.user.id}
+          onClick={() => void handleRunTestCase(selectedTestCase.id)}
+          title={
+            selectedTestCase.automated === "yes"
+              ? "Run the automated test case now in Test Runs"
+              : "Create and open a manual run for this test case"
+          }
+          type="button"
+        >
+          <TestCaseRunIcon />
+          <span>{isSelectedCaseRunning ? "Starting…" : "Run test"}</span>
+        </button>
+      ) : null}
       {isCaseWorkspaceOpen ? (
         <button
           className="ghost-button"

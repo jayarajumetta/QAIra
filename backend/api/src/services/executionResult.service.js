@@ -181,13 +181,14 @@ exports.updateExecutionResult = async (id, data) => {
 
   await db.prepare(`
     UPDATE execution_results
-    SET status = ?, duration_ms = ?, error = ?, logs = ?
+    SET status = ?, duration_ms = ?, error = ?, logs = ?, executed_by = ?
     WHERE id = ?
   `).run(
     status,
     data.duration_ms ?? existing.duration_ms,
     data.error ?? existing.error,
     data.logs ?? existing.logs,
+    data.executed_by ?? existing.executed_by,
     id
   );
 
@@ -205,7 +206,8 @@ exports.upsertExecutionResult = async (data) => {
       status: data.status,
       duration_ms: data.duration_ms,
       error: data.error,
-      logs: data.logs
+      logs: data.logs,
+      executed_by: data.executed_by
     });
 
     return exports.getExecutionResult(existing.id);

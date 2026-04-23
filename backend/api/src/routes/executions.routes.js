@@ -151,6 +151,17 @@ module.exports = async function (fastify) {
     });
   });
 
+  fastify.post("/executions/:id/cases/:testCaseId/steps/:stepId/run", async (req) => {
+    await fastify.authenticate(req);
+
+    const execution = await service.getExecution(req.params.id);
+    await projectService.getProject(execution.project_id, req.user.id);
+
+    return service.runExecutionApiStep(req.params.id, req.params.testCaseId, req.params.stepId, {
+      executed_by: req.user.id
+    });
+  });
+
 
   // COMPLETE EXECUTION
   fastify.post("/executions/:id/complete", async (req) => {

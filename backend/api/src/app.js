@@ -1,3 +1,5 @@
+const crypto = require("crypto");
+
 const fastify = require("fastify")({ 
   logger: {
     level: process.env.LOG_LEVEL || "info"
@@ -20,6 +22,21 @@ const createError = (message, statusCode) => {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
+};
+
+const engineSecretMatches = (provided, expected) => {
+  const left = String(provided || "").trim();
+  const right = String(expected || "").trim();
+
+  if (!left || !right || left.length !== right.length) {
+    return false;
+  }
+
+  try {
+    return crypto.timingSafeEqual(Buffer.from(left), Buffer.from(right));
+  } catch {
+    return false;
+  }
 };
 
 const getCurrentUser = async (id) => {
@@ -129,6 +146,23 @@ fastify.decorate("requireAdmin", async (req) => {
 
   if (req.user.role !== "admin") {
     throw createError("Admin access required", 403);
+  }
+});
+
+fastify.decorate("authenticateTestEngine", async (req) => {
+  const provided =
+    req.headers["x-qaira-testengine-secret"]
+    || req.headers["x-testengine-secret"]
+    || (typeof req.headers.authorization === "string" && req.headers.authorization.startsWith("Bearer ")
+      ? req.headers.authorization.slice("Bearer ".length)
+      : "");
+  const expected =
+    process.env.TESTENGINE_SHARED_SECRET
+    || process.env.QAIRA_TESTENGINE_SECRET
+    || "qaira-testengine-dev-secret";
+
+  if (!engineSecretMatches(provided, expected)) {
+    throw createError("Test Engine authentication failed", 401);
   }
 });
 

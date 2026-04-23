@@ -11,6 +11,19 @@ const selectTestCase = db.prepare(`
   WHERE id = ?
 `);
 
+const selectExecutionCaseCount = db.prepare(`
+  SELECT COUNT(*)::int AS count
+  FROM execution_case_snapshots
+  WHERE execution_id = ?
+`);
+
+const selectLatestResultsForExecution = db.prepare(`
+  SELECT DISTINCT ON (test_case_id) test_case_id, status
+  FROM execution_results
+  WHERE execution_id = ?
+  ORDER BY test_case_id ASC, created_at DESC, id DESC
+`);
+
 const FINAL_ENGINE_EVENTS = new Set(["run.completed", "run.failed", "run.incident"]);
 
 const normalizeText = (value) => {
@@ -44,7 +57,8 @@ const parseStructuredLogs = (value) => {
     return {
       stepStatuses: {},
       stepNotes: {},
-      stepEvidence: {}
+      stepEvidence: {},
+      stepApiDetails: {}
     };
   }
 
@@ -55,7 +69,8 @@ const parseStructuredLogs = (value) => {
       return {
         stepStatuses: {},
         stepNotes: {},
-        stepEvidence: {}
+        stepEvidence: {},
+        stepApiDetails: {}
       };
     }
   }
@@ -64,14 +79,16 @@ const parseStructuredLogs = (value) => {
     return {
       stepStatuses: {},
       stepNotes: {},
-      stepEvidence: {}
+      stepEvidence: {},
+      stepApiDetails: {}
     };
   }
 
   return {
     stepStatuses: isPlainObject(value.stepStatuses) ? { ...value.stepStatuses } : {},
     stepNotes: isPlainObject(value.stepNotes) ? { ...value.stepNotes } : {},
-    stepEvidence: isPlainObject(value.stepEvidence) ? { ...value.stepEvidence } : {}
+    stepEvidence: isPlainObject(value.stepEvidence) ? { ...value.stepEvidence } : {},
+    stepApiDetails: isPlainObject(value.stepApiDetails) ? { ...value.stepApiDetails } : {}
   };
 };
 
@@ -94,6 +111,10 @@ const mergeLogsPayload = (current, patch) => {
     stepEvidence: {
       ...base.stepEvidence,
       ...next.stepEvidence
+    },
+    stepApiDetails: {
+      ...base.stepApiDetails,
+      ...next.stepApiDetails
     }
   };
 };
@@ -137,29 +158,42 @@ const buildLogsPayloadFromStepOutcomes = (stepOutcomes = []) =>
     {
       stepStatuses: {},
       stepNotes: {},
-      stepEvidence: {}
+      stepEvidence: {},
+      stepApiDetails: {}
     }
   );
 
 const countEntries = (value) => (isPlainObject(value) ? Object.keys(value).length : 0);
 
-const deriveCaseStatus = (explicitStatus, stepStatuses, fallbackStatus, event) => {
+const deriveCaseStatus = (explicitStatus, stepStatuses, expectedStepIds, fallbackStatus, event) => {
   if (explicitStatus === "passed" || explicitStatus === "failed" || explicitStatus === "blocked") {
     return explicitStatus;
   }
 
-  const values = Object.values(stepStatuses || {}).filter(Boolean);
+  const normalizedExpectedStepIds = Array.isArray(expectedStepIds) ? expectedStepIds.filter(Boolean) : [];
+  const values =
+    normalizedExpectedStepIds.length > 0
+      ? normalizedExpectedStepIds.map((stepId) => stepStatuses?.[stepId]).filter(Boolean)
+      : Object.values(stepStatuses || {}).filter(Boolean);
 
   if (values.includes("failed")) {
     return "failed";
   }
 
-  if (values.length && values.every((value) => value === "passed")) {
+  if (
+    normalizedExpectedStepIds.length > 0
+    && values.length === normalizedExpectedStepIds.length
+    && values.every((value) => value === "passed")
+  ) {
     return "passed";
   }
 
   if (event === "run.failed" || event === "run.incident") {
     return "failed";
+  }
+
+  if (event === "run.completed" && values.length && values.every((value) => value === "passed")) {
+    return "passed";
   }
 
   if (fallbackStatus === "passed" || fallbackStatus === "failed" || fallbackStatus === "blocked") {
@@ -245,7 +279,39 @@ async function ensureTransaction({
   return workspaceTransactionService.getTransaction(created.id);
 }
 
-exports.handleRunCallback = async ({ headers, payload }) => {
+async function settleExecutionIfComplete(execution) {
+  if (!execution?.id) {
+    return;
+  }
+
+  const totalCaseCount = Number((await selectExecutionCaseCount.get(execution.id))?.count || 0);
+
+  if (!totalCaseCount) {
+    return;
+  }
+
+  const latestResults = await selectLatestResultsForExecution.all(execution.id);
+  const latestStatusByCaseId = new Map(
+    latestResults.map((result) => [normalizeText(result.test_case_id), normalizeText(result.status)])
+  );
+  const requiredCaseIds = new Set((execution.case_snapshots || []).map((snapshot) => normalizeText(snapshot.test_case_id)).filter(Boolean));
+
+  if (!requiredCaseIds.size || [...requiredCaseIds].some((testCaseId) => !latestStatusByCaseId.has(testCaseId))) {
+    return;
+  }
+
+  const nextExecutionStatus = [...latestStatusByCaseId.values()].every((status) => status === "passed")
+    ? "completed"
+    : "failed";
+
+  try {
+    await executionService.completeExecution(execution.id, nextExecutionStatus);
+  } catch {
+    // Another callback may have already settled the execution.
+  }
+}
+
+exports.handleRunCallback = async ({ headers, payload, rawPayload }) => {
   if (!isPlainObject(payload)) {
     throw new Error("Callback payload must be an object");
   }
@@ -274,7 +340,11 @@ exports.handleRunCallback = async ({ headers, payload }) => {
   }
 
   const providedSignature = resolveCallbackSignature(headers);
-  const expectedSignature = buildExpectedSignature(callbackSecret, JSON.stringify(payload));
+  const serializedPayload =
+    typeof rawPayload === "string" && rawPayload.trim()
+      ? rawPayload
+      : JSON.stringify(payload);
+  const expectedSignature = buildExpectedSignature(callbackSecret, serializedPayload);
 
   if (!signatureMatches(providedSignature, expectedSignature)) {
     const error = new Error("Invalid Test Engine callback signature");
@@ -290,7 +360,10 @@ exports.handleRunCallback = async ({ headers, payload }) => {
 
   if (execution.status === "queued") {
     try {
-      await executionService.startExecution(execution.id, { skip_testengine_dispatch: true });
+      await executionService.startExecution(execution.id, {
+        skip_testengine_dispatch: true,
+        initiated_by: execution.assigned_to || execution.created_by || null
+      });
     } catch {
       // Another callback may have already moved the execution into running.
     }
@@ -315,10 +388,15 @@ exports.handleRunCallback = async ({ headers, payload }) => {
     mergeLogsPayload(existingResult?.logs || null, logsFromCaseResult),
     logsFromStepOutcomes
   );
+  const expectedStepIds = (execution.step_snapshots || [])
+    .filter((snapshot) => snapshot.test_case_id === testCaseId)
+    .map((snapshot) => normalizeText(snapshot.snapshot_step_id))
+    .filter(Boolean);
 
   const status = deriveCaseStatus(
     normalizeText(resultPayload.status),
     mergedLogs.stepStatuses,
+    expectedStepIds,
     existingResult?.status || null,
     event
   );
@@ -338,7 +416,7 @@ exports.handleRunCallback = async ({ headers, payload }) => {
     duration_ms: durationMs,
     error: errorMessage,
     logs: JSON.stringify(mergedLogs),
-    executed_by: existingResult?.executed_by || null
+    executed_by: existingResult?.executed_by || caseSnapshot.assigned_to || execution.assigned_to || null
   });
 
   const transaction = await ensureTransaction({
@@ -395,6 +473,8 @@ exports.handleRunCallback = async ({ headers, payload }) => {
       metadata: metadataPatch,
       completed_at: emittedAt || new Date().toISOString()
     });
+
+    await settleExecutionIfComplete(execution);
   }
 
   return {

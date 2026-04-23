@@ -3,9 +3,9 @@ const { v4: uuid } = require("uuid");
 const { sanitizeVariablesForRead } = require("../utils/contextVariables");
 const integrationService = require("./integration.service");
 const testEngineDispatchService = require("./testEngineDispatch.service");
-
-const DIRECT_CASE_SUITE_ID = "default";
-const DIRECT_CASE_SUITE_NAME = "Default";
+const executionResultService = require("./executionResult.service");
+const apiRequestExecutionService = require("./apiRequestExecution.service");
+const executionStepRuntimeService = require("./executionStepRuntime.service");
 
 const getSuiteIdsForExecution = db.prepare(`
   SELECT suite_id, suite_name
@@ -161,6 +161,18 @@ const updateExecutionCaseAssignment = db.prepare(`
   WHERE execution_id = ? AND test_case_id = ?
 `);
 
+const assignExecutionOwnershipIfMissing = db.prepare(`
+  UPDATE executions
+  SET assigned_to = COALESCE(assigned_to, ?)
+  WHERE id = ?
+`);
+
+const assignExecutionCaseOwnershipIfMissing = db.prepare(`
+  UPDATE execution_case_snapshots
+  SET assigned_to = COALESCE(assigned_to, ?)
+  WHERE execution_id = ?
+`);
+
 const selectProjectMember = db.prepare(`
   SELECT id
   FROM project_members
@@ -216,6 +228,87 @@ function normalizeParameterValues(values = {}) {
     next[normalizedKey] = value === undefined || value === null ? "" : String(value);
     return next;
   }, {});
+}
+
+function buildExecutionRuntimeParameterValues(execution, caseSnapshot, capturedValues = {}) {
+  const values = {};
+
+  Object.entries(normalizeParameterValues(caseSnapshot?.suite_parameter_values)).forEach(([key, value]) => {
+    values[`s.${key.replace(/^s\./, "")}`] = value;
+  });
+
+  Object.entries(normalizeParameterValues(caseSnapshot?.parameter_values)).forEach(([key, value]) => {
+    values[`t.${key.replace(/^t\./, "")}`] = value;
+  });
+
+  (execution?.test_environment?.snapshot?.variables || []).forEach((entry) => {
+    const normalizedKey = String(entry?.key || "").trim().replace(/^@+/, "").toLowerCase();
+
+    if (!normalizedKey) {
+      return;
+    }
+
+    values[`r.${normalizedKey.replace(/^r\./, "")}`] = entry?.value === undefined || entry?.value === null ? "" : String(entry.value);
+  });
+
+  (execution?.test_configuration?.snapshot?.variables || []).forEach((entry) => {
+    const normalizedKey = String(entry?.key || "").trim().replace(/^@+/, "").toLowerCase();
+
+    if (!normalizedKey) {
+      return;
+    }
+
+    values[`r.${normalizedKey.replace(/^r\./, "")}`] = entry?.value === undefined || entry?.value === null ? "" : String(entry.value);
+  });
+
+  const dataSetSnapshot = execution?.test_data_set?.snapshot || null;
+
+  if (dataSetSnapshot?.mode === "key_value") {
+    (dataSetSnapshot.rows || []).forEach((row) => {
+      Object.entries(row || {}).forEach(([key, value]) => {
+        const normalizedKey = String(key || "").trim().toLowerCase();
+
+        if (!normalizedKey) {
+          return;
+        }
+
+        values[`t.${normalizedKey}`] = value === undefined || value === null ? "" : String(value);
+      });
+    });
+  } else if (Array.isArray(dataSetSnapshot?.rows) && dataSetSnapshot.rows.length) {
+    Object.entries(dataSetSnapshot.rows[0] || {}).forEach(([key, value]) => {
+      const normalizedKey = String(key || "").trim().toLowerCase();
+
+      if (!normalizedKey) {
+        return;
+      }
+
+      values[`t.${normalizedKey}`] = value === undefined || value === null ? "" : String(value);
+    });
+  }
+
+  Object.entries(capturedValues || {}).forEach(([key, value]) => {
+    const normalizedKey = String(key || "").trim().replace(/^@+/, "").toLowerCase();
+
+    if (!normalizedKey) {
+      return;
+    }
+
+    values[normalizedKey] = value === undefined || value === null ? "" : String(value);
+  });
+
+  return values;
+}
+
+function resolveExecutionCaseDurationMs(execution, existingResult) {
+  const executionStartedAt = execution?.started_at ? new Date(execution.started_at).getTime() : 0;
+  const existingCreatedAt = existingResult?.created_at ? new Date(existingResult.created_at).getTime() : 0;
+  const startedAt = executionStartedAt || existingCreatedAt || Date.now();
+  const computed = Math.max(Date.now() - startedAt, 0);
+
+  return typeof existingResult?.duration_ms === "number"
+    ? Math.max(existingResult.duration_ms, computed)
+    : computed;
 }
 
 function shapeAssignedUser(user) {
@@ -336,6 +429,46 @@ async function validateExecutionAssignee(projectId, assignedTo) {
   return assignedUser;
 }
 
+function resolveExecutionAssignee(assignedTo, createdBy) {
+  return normalizeText(assignedTo) || normalizeText(createdBy) || null;
+}
+
+async function resolveExecutionAssigneeForCreate(projectId, assignedTo, createdBy) {
+  const explicitAssignee = normalizeText(assignedTo);
+
+  if (explicitAssignee) {
+    await validateExecutionAssignee(projectId, explicitAssignee);
+    return explicitAssignee;
+  }
+
+  const creatorId = normalizeText(createdBy);
+
+  if (!creatorId) {
+    return null;
+  }
+
+  const creatorMembership = await selectProjectMember.get(projectId, creatorId);
+  return creatorMembership ? creatorId : null;
+}
+
+async function resolveExecutionOwnershipCandidate(projectId, ...candidateIds) {
+  for (const candidateId of candidateIds) {
+    const normalizedCandidateId = normalizeText(candidateId);
+
+    if (!normalizedCandidateId) {
+      continue;
+    }
+
+    const membership = await selectProjectMember.get(projectId, normalizedCandidateId);
+
+    if (membership) {
+      return normalizedCandidateId;
+    }
+  }
+
+  return null;
+}
+
 async function resolveExecutionContextResource({ id, label, projectId, appTypeId, lookup, snapshotBuilder }) {
   if (!id) {
     return null;
@@ -366,6 +499,7 @@ async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
   const seenCaseIds = new Set();
   const caseSnapshots = [];
   const stepSnapshots = [];
+  const resolvedAssignedTo = normalizeText(options.assignedTo) || null;
   let sortOrder = 0;
 
   for (const suiteRow of suiteRows) {
@@ -390,7 +524,8 @@ async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
         status: suiteCase.status,
         parameter_values: normalizeParameterValues(suiteCase.parameter_values),
         suite_parameter_values: normalizeParameterValues(suiteCase.suite_parameter_values),
-        sort_order: sortOrder
+        sort_order: sortOrder,
+        assigned_to: resolvedAssignedTo
       });
 
       const steps = await selectStepsForCase.all(suiteCase.test_case_id);
@@ -418,9 +553,8 @@ async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
   }
 
   const directCases = Array.isArray(options.directCases) ? options.directCases : [];
-  const directSuiteRow = options.directSuiteRow || null;
 
-  if (directSuiteRow && directCases.length) {
+  if (directCases.length) {
     for (const directCase of directCases) {
       if (seenCaseIds.has(directCase.test_case_id)) {
         continue;
@@ -434,13 +568,14 @@ async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
         test_case_id: directCase.test_case_id,
         test_case_title: directCase.test_case_title,
         test_case_description: directCase.test_case_description,
-        suite_id: directSuiteRow.suite_id,
-        suite_name: directSuiteRow.suite_name,
+        suite_id: null,
+        suite_name: null,
         priority: directCase.priority,
         status: directCase.status,
         parameter_values: normalizeParameterValues(directCase.parameter_values),
         suite_parameter_values: {},
-        sort_order: sortOrder
+        sort_order: sortOrder,
+        assigned_to: resolvedAssignedTo
       });
 
       const steps = await selectStepsForCase.all(directCase.test_case_id);
@@ -547,7 +682,10 @@ async function attachDetailedScope(execution) {
     suiteRows.map((row) => ({
       suite_id: row.suite_id,
       suite_name: row.suite_name || "Deleted Suite"
-    }))
+    })),
+    {
+      assignedTo: hydrated.assigned_to || null
+    }
   );
 
   return {
@@ -589,7 +727,7 @@ exports.createExecution = async ({
 
   if (!user) throw new Error("Invalid user");
 
-  await validateExecutionAssignee(project_id, assigned_to);
+  const resolvedAssignedTo = await resolveExecutionAssigneeForCreate(project_id, assigned_to, created_by);
 
   if (app_type_id) {
     const appType = await db.prepare(`
@@ -692,14 +830,6 @@ exports.createExecution = async ({
     directCaseRows.push(testCase);
   }
 
-  const directSuiteRow = directCaseRows.length
-    ? {
-        suite_id: DIRECT_CASE_SUITE_ID,
-        suite_name: DIRECT_CASE_SUITE_NAME
-      }
-    : null;
-  const executionSuiteRows = directSuiteRow ? [...suiteRows, directSuiteRow] : suiteRows;
-
   const id = uuid();
 
   const transaction = db.transaction(async () => {
@@ -739,18 +869,18 @@ exports.createExecution = async ({
       selectedDataSet?.id || null,
       selectedDataSet?.name || null,
       selectedDataSet?.snapshot || null,
-      assigned_to || null,
+      resolvedAssignedTo,
       created_by
     );
 
-    for (const suiteRow of executionSuiteRows) {
+    for (const suiteRow of suiteRows) {
       await insertExecutionSuite.run(id, suiteRow.suite_id, suiteRow.suite_name);
     }
 
     const snapshotPayload = await buildSnapshotPayload(id, suiteRows, {
       persisted: true,
       directCases: directCaseRows,
-      directSuiteRow
+      assignedTo: resolvedAssignedTo
     });
 
     for (const caseSnapshot of snapshotPayload.caseSnapshots) {
@@ -875,6 +1005,9 @@ exports.rerunExecution = async (id, { failed_only = false, created_by, name } = 
   const rerunName =
     normalizeText(name) ||
     `${sourceExecution.name || "Execution Run"}${failed_only ? " Failed Rerun" : " Rerun"}`;
+  const rerunAssignedTo = resolveExecutionAssignee(created_by, sourceExecution.assigned_to);
+
+  await validateExecutionAssignee(sourceExecution.project_id, rerunAssignedTo);
 
   const transaction = db.transaction(async () => {
     await db.prepare(`
@@ -913,7 +1046,7 @@ exports.rerunExecution = async (id, { failed_only = false, created_by, name } = 
       sourceExecution.test_data_set?.id || null,
       sourceExecution.test_data_set?.name || null,
       sourceExecution.test_data_set?.snapshot || null,
-      sourceExecution.assigned_to || null,
+      rerunAssignedTo,
       created_by
     );
 
@@ -934,7 +1067,7 @@ exports.rerunExecution = async (id, { failed_only = false, created_by, name } = 
         snapshot.parameter_values || {},
         snapshot.suite_parameter_values || {},
         index + 1,
-        snapshot.assigned_to || null
+        rerunAssignedTo
       );
     }
 
@@ -968,6 +1101,18 @@ exports.startExecution = async (id, options = {}) => {
 
   if (execution.status !== "queued") {
     throw new Error("Only queued executions can be started");
+  }
+
+  const initiatedBy = await resolveExecutionOwnershipCandidate(
+    execution.project_id,
+    options.initiated_by,
+    execution.assigned_to,
+    execution.created_by
+  );
+
+  if (initiatedBy) {
+    await assignExecutionOwnershipIfMissing.run(initiatedBy, id);
+    await assignExecutionCaseOwnershipIfMissing.run(initiatedBy, id);
   }
 
   let dispatchPlan = null;
@@ -1035,7 +1180,7 @@ exports.startExecution = async (id, options = {}) => {
 };
 
 exports.completeExecution = async (id, status) => {
-  if (!["completed", "failed"].includes(status)) {
+  if (!["completed", "failed", "aborted"].includes(status)) {
     throw new Error("Invalid completion status");
   }
 
@@ -1052,6 +1197,99 @@ exports.completeExecution = async (id, status) => {
   `).run(status, id);
 
   return { completed: true };
+};
+
+exports.runExecutionApiStep = async (executionId, testCaseId, stepId, { executed_by } = {}) => {
+  const execution = await exports.getExecution(executionId);
+
+  if (execution.status !== "running") {
+    throw new Error("Only running executions support API step execution");
+  }
+
+  const caseSnapshot = (execution.case_snapshots || []).find((snapshot) => snapshot.test_case_id === testCaseId);
+
+  if (!caseSnapshot) {
+    throw new Error("Execution test case not found");
+  }
+
+  const stepSnapshot = (execution.step_snapshots || []).find((snapshot) =>
+    snapshot.test_case_id === testCaseId && snapshot.snapshot_step_id === stepId
+  );
+
+  if (!stepSnapshot) {
+    throw new Error("Execution step not found");
+  }
+
+  const apiRequest = parseJsonValue(stepSnapshot.api_request, null);
+
+  if ((stepSnapshot.step_type && stepSnapshot.step_type !== "api") || !apiRequest) {
+    throw new Error("Only API execution steps can be run through the execution console");
+  }
+
+  const existingResult = await executionResultService.findLatestExecutionResult({
+    execution_id: executionId,
+    test_case_id: testCaseId
+  });
+  const existingLogs = executionStepRuntimeService.parseStructuredLogs(existingResult?.logs || null);
+  const capturedValues = executionStepRuntimeService.extractCapturedValuesFromLogs(existingLogs);
+  const parameterValues = buildExecutionRuntimeParameterValues(execution, caseSnapshot, capturedValues);
+  const stepResult = await apiRequestExecutionService.executeApiRequestStep({
+    api_request: apiRequest,
+    parameter_values: parameterValues
+  });
+  const formattedStepNote = executionStepRuntimeService.formatApiStepEvidenceNote(stepResult);
+  const mergedLogs = {
+    ...existingLogs,
+    stepStatuses: {
+      ...existingLogs.stepStatuses,
+      [stepId]: stepResult.status
+    },
+    stepNotes: {
+      ...existingLogs.stepNotes,
+      [stepId]: formattedStepNote
+    },
+    stepEvidence: {
+      ...existingLogs.stepEvidence
+    },
+    stepApiDetails: {
+      ...existingLogs.stepApiDetails,
+      [stepId]: stepResult.detail
+    }
+  };
+  const caseStepIds = (execution.step_snapshots || [])
+    .filter((snapshot) => snapshot.test_case_id === testCaseId)
+    .sort((left, right) => left.step_order - right.step_order)
+    .map((snapshot) => snapshot.snapshot_step_id);
+  const caseStatus = executionStepRuntimeService.deriveCaseStatusFromStepStatuses(
+    caseStepIds,
+    mergedLogs.stepStatuses
+  );
+  const result = await executionResultService.upsertExecutionResult({
+    execution_id: executionId,
+    test_case_id: testCaseId,
+    app_type_id: execution.app_type_id,
+    status: caseStatus,
+    duration_ms: resolveExecutionCaseDurationMs(execution, existingResult),
+    error: caseStatus === "failed" ? stepResult.note : null,
+    logs: JSON.stringify(mergedLogs),
+    executed_by: normalizeText(executed_by) || execution.assigned_to || null
+  });
+
+  await testEngineDispatchService.settleExecutionIfComplete(executionId);
+
+  const refreshedExecution = await selectExecutionRecord.get(executionId);
+
+  return {
+    execution_id: executionId,
+    test_case_id: testCaseId,
+    step_id: stepId,
+    step_status: stepResult.status,
+    case_status: caseStatus,
+    execution_status: refreshedExecution?.status || execution.status,
+    note: formattedStepNote,
+    detail: stepResult.detail,
+    execution_result_id: result.id
+  };
 };
 
 exports.updateExecution = async (id, input = {}) => {

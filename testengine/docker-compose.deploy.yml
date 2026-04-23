@@ -7,6 +7,9 @@ services:
       NODE_ENV: production
       ENGINE_NAME: ${ENGINE_NAME:-QAira Test Engine}
       ARTIFACT_ROOT: /artifacts
+      QAIRA_API_BASE_URL: ${QAIRA_API_BASE_URL:-http://host.docker.internal:3000}
+      QAIRA_TESTENGINE_SECRET: ${QAIRA_TESTENGINE_SECRET:-qaira-testengine-dev-secret}
+      ENGINE_PUBLIC_URL: ${ENGINE_PUBLIC_URL:-http://localhost:4301}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
     ports:

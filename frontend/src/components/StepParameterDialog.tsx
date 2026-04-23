@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { FormField } from "./FormField";
 import type { StepParameterDefinition } from "../lib/stepParameters";
 
@@ -7,6 +7,78 @@ type StepParameterDialogInputState = {
   hint?: string;
   placeholder?: string;
 };
+
+const PARAMETER_UTILITY_EXAMPLES = {
+  randomNumber: "{{randomNumber}}",
+  randomString: "{{randomString}}",
+  date: "{{date}}"
+} as const;
+
+const PARAMETER_UTILITY_TOKEN_PATTERN = /\{\{\s*(randomNumber|randomString|date)(?::([^}]+))?\s*\}\}/g;
+
+function StepParameterUtilityIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="15" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width="15">
+      <path d="M12 3v3" />
+      <path d="M12 18v3" />
+      <path d="m4.8 7.8 2.1 2.1" />
+      <path d="m17.1 14.1 2.1 2.1" />
+      <path d="M3 12h3" />
+      <path d="M18 12h3" />
+      <path d="m4.8 16.2 2.1-2.1" />
+      <path d="m17.1 9.9 2.1-2.1" />
+      <circle cx="12" cy="12" r="4.25" />
+    </svg>
+  );
+}
+
+function generateRandomNumber(length = 6) {
+  const safeLength = Math.max(1, Math.min(12, Number.isFinite(length) ? Math.round(length) : 6));
+  return Array.from({ length: safeLength }, () => Math.floor(Math.random() * 10)).join("");
+}
+
+function generateRandomString(length = 8) {
+  const safeLength = Math.max(1, Math.min(32, Number.isFinite(length) ? Math.round(length) : 8));
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+  return Array.from({ length: safeLength }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
+}
+
+function formatGeneratedDate(format = "YYYY-MM-DD") {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  const seconds = String(now.getSeconds()).padStart(2, "0");
+
+  return format
+    .replace(/YYYY/g, String(year))
+    .replace(/MM/g, month)
+    .replace(/DD/g, day)
+    .replace(/HH/g, hours)
+    .replace(/mm/g, minutes)
+    .replace(/ss/g, seconds);
+}
+
+function evaluateParameterUtilityTemplate(template: string) {
+  return String(template || "").replace(PARAMETER_UTILITY_TOKEN_PATTERN, (_, rawKind: string, rawOption: string | undefined) => {
+    const option = String(rawOption || "").trim();
+
+    if (rawKind === "randomNumber") {
+      const parsedLength = Number.parseInt(option || "6", 10);
+      return generateRandomNumber(Number.isFinite(parsedLength) ? parsedLength : 6);
+    }
+
+    if (rawKind === "randomString") {
+      const parsedLength = Number.parseInt(option || "8", 10);
+      return generateRandomString(Number.isFinite(parsedLength) ? parsedLength : 8);
+    }
+
+    return formatGeneratedDate(option || "YYYY-MM-DD");
+  });
+}
 
 export function StepParameterDialog({
   title,
@@ -45,6 +117,45 @@ export function StepParameterDialog({
     }
   ].filter((group) => group.items.length);
   const parameterCount = parameters.length;
+  const [activeUtilityParameter, setActiveUtilityParameter] = useState("");
+  const [utilityDrafts, setUtilityDrafts] = useState<Record<string, string>>({});
+  const [utilityFeedbackByParameter, setUtilityFeedbackByParameter] = useState<Record<string, string>>({});
+
+  const toggleUtilityBuilder = (parameterName: string) => {
+    const nextValue = activeUtilityParameter === parameterName ? "" : parameterName;
+
+    if (nextValue) {
+      setUtilityDrafts((currentDrafts) =>
+        Object.prototype.hasOwnProperty.call(currentDrafts, parameterName)
+          ? currentDrafts
+          : { ...currentDrafts, [parameterName]: values[parameterName] || "" }
+      );
+    }
+
+    setActiveUtilityParameter(nextValue);
+  };
+
+  const appendUtilityToken = (parameterName: string, token: string) => {
+    setUtilityDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [parameterName]: `${currentDrafts[parameterName] || values[parameterName] || ""}${token}`
+    }));
+    setUtilityFeedbackByParameter((current) => ({
+      ...current,
+      [parameterName]: ""
+    }));
+  };
+
+  const applyUtilityTemplate = (parameterName: string) => {
+    const template = utilityDrafts[parameterName] || "";
+    const evaluatedValue = evaluateParameterUtilityTemplate(template);
+
+    onChange(parameterName, evaluatedValue);
+    setUtilityFeedbackByParameter((current) => ({
+      ...current,
+      [parameterName]: evaluatedValue ? "Generated and applied to the field." : "Applied an empty generated value."
+    }));
+  };
 
   return (
     <div className="modal-backdrop modal-backdrop--scroll" onClick={onClose} role="presentation">
@@ -91,12 +202,67 @@ export function StepParameterDialog({
                             inputState.hint || ""
                           ].filter(Boolean).join(" ")}
                         >
-                          <input
-                            disabled={inputState.disabled}
-                            placeholder={inputState.placeholder || `Value for ${parameter.token}`}
-                            value={values[parameter.name] || ""}
-                            onChange={(event) => onChange(parameter.name, event.target.value)}
-                          />
+                          <div className="step-parameter-input-row">
+                            <input
+                              disabled={inputState.disabled}
+                              placeholder={inputState.placeholder || `Value for ${parameter.token}`}
+                              value={values[parameter.name] || ""}
+                              onChange={(event) => onChange(parameter.name, event.target.value)}
+                            />
+                            <button
+                              aria-label={`Open utility generator for ${parameter.token}`}
+                              className={activeUtilityParameter === parameter.name ? "step-parameter-utility-trigger is-active" : "step-parameter-utility-trigger"}
+                              disabled={inputState.disabled}
+                              onClick={() => toggleUtilityBuilder(parameter.name)}
+                              title="Open generation utilities"
+                              type="button"
+                            >
+                              <StepParameterUtilityIcon />
+                            </button>
+                          </div>
+                          {activeUtilityParameter === parameter.name ? (
+                            <div className="step-parameter-utility-panel">
+                              <div className="step-parameter-utility-actions">
+                                <button className="ghost-button" onClick={() => appendUtilityToken(parameter.name, PARAMETER_UTILITY_EXAMPLES.randomNumber)} type="button">
+                                  Random number
+                                </button>
+                                <button className="ghost-button" onClick={() => appendUtilityToken(parameter.name, PARAMETER_UTILITY_EXAMPLES.randomString)} type="button">
+                                  Random string
+                                </button>
+                                <button className="ghost-button" onClick={() => appendUtilityToken(parameter.name, PARAMETER_UTILITY_EXAMPLES.date)} type="button">
+                                  Date
+                                </button>
+                              </div>
+                              <textarea
+                                className="step-parameter-utility-template"
+                                onChange={(event) => {
+                                  const nextValue = event.target.value;
+                                  setUtilityDrafts((currentDrafts) => ({
+                                    ...currentDrafts,
+                                    [parameter.name]: nextValue
+                                  }));
+                                  setUtilityFeedbackByParameter((current) => ({
+                                    ...current,
+                                    [parameter.name]: ""
+                                  }));
+                                }}
+                                placeholder="Example: ORD-{{randomNumber:6}}-{{date:YYYYMMDD}}"
+                                rows={3}
+                                value={utilityDrafts[parameter.name] || ""}
+                              />
+                              <div className="step-parameter-utility-footer">
+                                <span>
+                                  Use plain text plus <code>{"{{randomNumber}}"}</code>, <code>{"{{randomString}}"}</code>, or <code>{"{{date}}"}</code>. Concatenation works automatically.
+                                </span>
+                                <button className="primary-button" onClick={() => applyUtilityTemplate(parameter.name)} type="button">
+                                  Generate value
+                                </button>
+                              </div>
+                              {utilityFeedbackByParameter[parameter.name] ? (
+                                <span className="step-parameter-utility-feedback">{utilityFeedbackByParameter[parameter.name]}</span>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </FormField>
                       </div>
                     );

@@ -1,14 +1,36 @@
-import type { EngineRunRecord } from "../contracts/qaira.js";
+import type { EngineRunEnvelope, EngineRunRecord } from "../contracts/qaira.js";
 
 const runs = new Map<string, EngineRunRecord>();
+const envelopes = new Map<string, EngineRunEnvelope>();
 
-export function saveRun(record: EngineRunRecord) {
+export function saveRun(record: EngineRunRecord, envelope?: EngineRunEnvelope) {
   runs.set(record.id, record);
+
+  if (envelope) {
+    envelopes.set(record.id, envelope);
+  }
+
   return record;
 }
 
 export function getRun(id: string) {
   return runs.get(id) || null;
+}
+
+export function getRunEnvelope(id: string) {
+  return envelopes.get(id) || null;
+}
+
+export function updateRun(id: string, updater: (record: EngineRunRecord) => EngineRunRecord) {
+  const existing = runs.get(id);
+
+  if (!existing) {
+    return null;
+  }
+
+  const next = updater(existing);
+  runs.set(id, next);
+  return next;
 }
 
 export function listRuns() {

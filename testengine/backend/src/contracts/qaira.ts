@@ -86,10 +86,37 @@ export type QairaExecutionStepEvidence = {
   mimeType?: string;
 };
 
+export type QairaExecutionApiAssertion = {
+  kind: string;
+  passed: boolean;
+  target?: string | null;
+  expected?: string | null;
+  actual?: string | null;
+};
+
+export type QairaExecutionStepApiDetail = {
+  request: {
+    method: string;
+    url: string;
+    headers: Record<string, string>;
+    body: string | null;
+  };
+  response: {
+    status: number;
+    status_text: string;
+    headers: Record<string, string>;
+    body: string;
+    json: unknown;
+  };
+  captures: Record<string, string>;
+  assertions: QairaExecutionApiAssertion[];
+};
+
 export type QairaExecutionLogsPayload = {
   stepStatuses?: Record<string, QairaExecutionResultStatus>;
   stepNotes?: Record<string, string>;
   stepEvidence?: Record<string, QairaExecutionStepEvidence>;
+  stepApiDetails?: Record<string, QairaExecutionStepApiDetail>;
 };
 
 export type EngineArtifactKind =
@@ -177,10 +204,10 @@ export type EngineRunEnvelope = {
     rows: Array<Record<string, string>>;
   } | null;
   artifact_policy: EngineRunArtifactPolicy;
-  callback: {
+  callback?: {
     url: string;
     signing_secret: string;
-  };
+  } | null;
 };
 
 export type EngineArtifactBundle = {
@@ -256,4 +283,22 @@ export type EngineCallbackPayload = {
   artifact_bundle: EngineArtifactBundle;
   patch_proposals: EnginePatchProposal[];
   emitted_at: string;
+};
+
+export type EngineQueueRuntimeState = {
+  captured_values?: Record<string, string>;
+  logs?: QairaExecutionLogsPayload;
+};
+
+export type EngineQueuedJob = {
+  id: string;
+  engine_run_id: string;
+  execution_id: string;
+  test_case_id: string;
+  test_case_title: string;
+  engine_host?: string | null;
+  status: "queued" | "leased" | "running" | "completed" | "failed" | "aborted" | string;
+  payload: EngineRunEnvelope;
+  runtime_state?: EngineQueueRuntimeState;
+  lease_expires_at?: string | null;
 };

@@ -45,17 +45,18 @@ const sanitizeIntegration = (integration) => {
       api_key: null,
       config: {
         project_id: config.project_id || null,
-        callback_url: config.callback_url || null,
         runner: config.runner || "playwright",
+        dispatch_mode: config.dispatch_mode || "qaira-pull",
+        execution_scope: config.execution_scope || "api-first",
         browser: config.browser || "chromium",
         headless: config.headless !== false,
         healing_enabled: config.healing_enabled !== false,
-        max_repair_attempts: config.max_repair_attempts ?? 2,
-        trace_mode: config.trace_mode || "on-first-retry",
-        video_mode: config.video_mode || "retain-on-failure",
+        max_repair_attempts: config.max_repair_attempts ?? 0,
+        trace_mode: config.trace_mode || "off",
+        video_mode: config.video_mode || "off",
         capture_console: config.capture_console !== false,
         capture_network: config.capture_network !== false,
-        artifact_retention_days: config.artifact_retention_days ?? 14,
+        artifact_retention_days: config.artifact_retention_days ?? 7,
         run_timeout_seconds: config.run_timeout_seconds ?? 1800,
         promote_healed_patches: config.promote_healed_patches || "review"
       }
@@ -104,6 +105,18 @@ module.exports = async function (fastify) {
     return integrations
       .filter((integration) => ["llm", "google_drive", "github", "testengine"].includes(integration.type) && integration.is_active)
       .map(sanitizeIntegration);
+  });
+
+  fastify.post("/integrations/test-connection", async (req) => {
+    await fastify.requireAdmin(req);
+
+    fastify.validate({
+      type: { required: true, type: "string", enum: INTEGRATION_TYPE_VALUES },
+      base_url: { required: false, type: "string" },
+      config: { required: false, type: "object" }
+    }, req.body);
+
+    return service.testConnection(req.body);
   });
 
   fastify.get("/integrations/:id", async (req) => {

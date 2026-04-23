@@ -1,0 +1,602 @@
+const { normalizeApiRequest } = require("../utils/testStepAutomation");
+
+const STEP_PARAMETER_PATTERN = /(?<![A-Za-z0-9_])@(?:(t|s|r)\.)?([A-Za-z][A-Za-z0-9_-]*)/gi;
+
+const normalizeText = (value) => {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const normalized = value.trim();
+  return normalized;
+};
+
+const stringifyValue = (value) => {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
+const normalizeContextKey = (value) => normalizeText(String(value || "").replace(/^@+/, "")).toLowerCase();
+
+const ensureHttpUrl = (value) => {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    throw new Error("A request URL is required");
+  }
+
+  let parsed;
+
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error("Request URL must be an absolute http or https URL");
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Only http and https URLs are supported");
+  }
+
+  return parsed.toString();
+};
+
+const mapResponseHeaders = (response) =>
+  Array.from(response.headers.entries()).reduce((accumulator, [key, value]) => {
+    accumulator[key.toLowerCase()] = value;
+    return accumulator;
+  }, {});
+
+const parseResponseJson = (bodyText, contentType) => {
+  const normalizedBody = typeof bodyText === "string" ? bodyText.trim() : "";
+  const normalizedType = String(contentType || "").toLowerCase();
+
+  if (!normalizedBody) {
+    return null;
+  }
+
+  if (!normalizedType.includes("json") && !/^[\[{]/.test(normalizedBody)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(normalizedBody);
+  } catch {
+    return null;
+  }
+};
+
+const serializeApiBody = (request, headers) => {
+  const body = request.body || "";
+  const mode = request.body_mode || "none";
+
+  if (!body || mode === "none") {
+    return undefined;
+  }
+
+  if (mode === "json") {
+    if (!headers.has("content-type")) {
+      headers.set("content-type", "application/json");
+    }
+    return body;
+  }
+
+  if (mode === "form") {
+    if (!headers.has("content-type")) {
+      headers.set("content-type", "application/x-www-form-urlencoded;charset=UTF-8");
+    }
+    return body;
+  }
+
+  if (mode === "xml" && !headers.has("content-type")) {
+    headers.set("content-type", "application/xml");
+  }
+
+  if (mode === "text" && !headers.has("content-type")) {
+    headers.set("content-type", "text/plain;charset=UTF-8");
+  }
+
+  return body;
+};
+
+const resolveContextValue = (values, rawKey, fallbackScope = "t") => {
+  const normalizedKey = normalizeContextKey(rawKey);
+
+  if (!normalizedKey) {
+    return "";
+  }
+
+  if (Object.prototype.hasOwnProperty.call(values, normalizedKey)) {
+    return stringifyValue(values[normalizedKey]);
+  }
+
+  if (!normalizedKey.includes(".")) {
+    const scoped = `${fallbackScope}.${normalizedKey}`;
+
+    if (Object.prototype.hasOwnProperty.call(values, scoped)) {
+      return stringifyValue(values[scoped]);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(values, `s.${normalizedKey}`)) {
+      return stringifyValue(values[`s.${normalizedKey}`]);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(values, `r.${normalizedKey}`)) {
+      return stringifyValue(values[`r.${normalizedKey}`]);
+    }
+  }
+
+  return "";
+};
+
+const interpolateText = (value, parameterValues = {}) =>
+  String(value || "").replace(STEP_PARAMETER_PATTERN, (_match, scope, rawName) => {
+    const normalizedKey = scope ? `${String(scope).toLowerCase()}.${String(rawName).toLowerCase()}` : String(rawName).toLowerCase();
+    return resolveContextValue(parameterValues, normalizedKey, scope ? String(scope).toLowerCase() : "t");
+  });
+
+const resolveApiRequestParameters = (request, parameterValues = {}) => {
+  if (!request) {
+    return null;
+  }
+
+  return {
+    ...request,
+    url: interpolateText(request.url, parameterValues),
+    body: interpolateText(request.body, parameterValues),
+    headers: (request.headers || []).map((header) => ({
+      key: interpolateText(header.key, parameterValues),
+      value: interpolateText(header.value, parameterValues)
+    })),
+    validations: (request.validations || []).map((validation) => ({
+      ...validation,
+      target: interpolateText(validation.target, parameterValues),
+      expected: interpolateText(validation.expected, parameterValues)
+    }))
+  };
+};
+
+const parseJsonPath = (path) => {
+  const normalized = normalizeText(path);
+
+  if (!normalized || normalized === "$") {
+    return [];
+  }
+
+  if (!normalized.startsWith("$")) {
+    throw new Error("JPath must start with $");
+  }
+
+  const tokens = [];
+  let index = 1;
+
+  while (index < normalized.length) {
+    const current = normalized[index];
+
+    if (current === ".") {
+      index += 1;
+      const nextIndex = index;
+
+      while (index < normalized.length && normalized[index] !== "." && normalized[index] !== "[") {
+        index += 1;
+      }
+
+      const token = normalized.slice(nextIndex, index).trim();
+
+      if (!token) {
+        throw new Error("JPath contains an empty property segment");
+      }
+
+      tokens.push(token);
+      continue;
+    }
+
+    if (current === "[") {
+      index += 1;
+
+      if (index >= normalized.length) {
+        throw new Error("JPath is missing a closing bracket");
+      }
+
+      const quote = normalized[index];
+
+      if (quote === "\"" || quote === "'") {
+        index += 1;
+        const nextIndex = index;
+
+        while (index < normalized.length && normalized[index] !== quote) {
+          index += 1;
+        }
+
+        if (index >= normalized.length) {
+          throw new Error("JPath has an unterminated quoted property");
+        }
+
+        const token = normalized.slice(nextIndex, index);
+        index += 1;
+
+        if (normalized[index] !== "]") {
+          throw new Error("JPath has an invalid quoted property segment");
+        }
+
+        index += 1;
+        tokens.push(token);
+        continue;
+      }
+
+      const nextIndex = index;
+
+      while (index < normalized.length && normalized[index] !== "]") {
+        index += 1;
+      }
+
+      if (index >= normalized.length) {
+        throw new Error("JPath is missing a closing bracket");
+      }
+
+      const rawToken = normalized.slice(nextIndex, index).trim();
+      index += 1;
+
+      if (!/^\d+$/.test(rawToken)) {
+        throw new Error("Only numeric array indexes are supported in bracket notation");
+      }
+
+      tokens.push(Number(rawToken));
+      continue;
+    }
+
+    throw new Error(`Unexpected token "${current}" in JPath`);
+  }
+
+  return tokens;
+};
+
+const readJsonPathValue = (source, path) => {
+  try {
+    const tokens = parseJsonPath(path);
+    let current = source;
+
+    for (const token of tokens) {
+      if (typeof token === "number") {
+        if (!Array.isArray(current)) {
+          return { found: false, error: `Path ${path} does not point to an array before [${token}]` };
+        }
+
+        if (token < 0 || token >= current.length) {
+          return { found: false, error: `Path ${path} is missing array index [${token}]` };
+        }
+
+        current = current[token];
+        continue;
+      }
+
+      if (!current || typeof current !== "object" || !(token in current)) {
+        return { found: false, error: `Path ${path} is missing property "${token}"` };
+      }
+
+      current = current[token];
+    }
+
+    return { found: true, value: current };
+  } catch (error) {
+    return {
+      found: false,
+      error: error instanceof Error ? error.message : "Invalid JPath"
+    };
+  }
+};
+
+const parseAssertionExpectedValue = (value) => {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized === "true") {
+    return true;
+  }
+
+  if (normalized === "false") {
+    return false;
+  }
+
+  if (normalized === "null") {
+    return null;
+  }
+
+  if (/^-?\d+(\.\d+)?$/.test(normalized)) {
+    return Number(normalized);
+  }
+
+  if (/^[\[{"]/.test(normalized)) {
+    try {
+      return JSON.parse(normalized);
+    } catch {
+      return normalized;
+    }
+  }
+
+  return normalized;
+};
+
+const areAssertionValuesEqual = (left, right) => {
+  if (left === right) {
+    return true;
+  }
+
+  if (typeof left === "object" && left !== null && typeof right === "object" && right !== null) {
+    try {
+      return JSON.stringify(left) === JSON.stringify(right);
+    } catch {
+      return false;
+    }
+  }
+
+  return false;
+};
+
+const evaluateApiAssertions = (preview, validations = []) => {
+  const effectiveValidations = validations.length ? validations : [{ kind: "status", expected: "200" }];
+
+  return effectiveValidations.map((validation) => {
+    const kind = normalizeText(validation.kind || "status") || "status";
+    const target = normalizeText(validation.target);
+    const expected = normalizeText(validation.expected);
+
+    if (kind === "status") {
+      const expectedStatus = Number(expected || "200") || 200;
+      const passed = preview.response.status === expectedStatus;
+
+      return {
+        kind,
+        passed,
+        target: null,
+        expected: String(expectedStatus),
+        actual: String(preview.response.status),
+        summary: passed
+          ? `Matched expected status ${expectedStatus}.`
+          : `Expected status ${expectedStatus}, received ${preview.response.status}.`
+      };
+    }
+
+    if (kind === "header") {
+      const headerName = String(target || "content-type").toLowerCase();
+      const actual = preview.response.headers[headerName] || "";
+      const passed = actual === (expected || "");
+
+      return {
+        kind,
+        passed,
+        target: headerName,
+        expected: expected || "",
+        actual,
+        summary: passed
+          ? `Header matched ${headerName}.`
+          : `Expected "${expected || ""}", received "${actual || "(empty)"}".`
+      };
+    }
+
+    if (kind === "body_contains") {
+      const bodyText = String(preview.response.body_text || "");
+      const passed = bodyText.includes(expected || "");
+
+      return {
+        kind,
+        passed,
+        target: target || null,
+        expected: expected || "",
+        actual: bodyText,
+        summary: passed
+          ? "Expected text was found in the response body."
+          : `Could not find "${expected || ""}" in the response body.`
+      };
+    }
+
+    if (preview.response.body_json === null || preview.response.body_json === undefined) {
+      return {
+        kind,
+        passed: false,
+        target: target || "$",
+        expected: expected || "",
+        actual: null,
+        summary: "Response body is not JSON, so this JPath assertion could not be evaluated."
+      };
+    }
+
+    const resolved = readJsonPathValue(preview.response.body_json, target || "$");
+
+    if (!resolved.found) {
+      return {
+        kind,
+        passed: false,
+        target: target || "$",
+        expected: expected || "",
+        actual: null,
+        summary: resolved.error
+      };
+    }
+
+    const expectedValue = parseAssertionExpectedValue(expected);
+    const passed = areAssertionValuesEqual(resolved.value, expectedValue);
+
+    return {
+      kind,
+      passed,
+      target: target || "$",
+      expected: stringifyValue(expectedValue),
+      actual: stringifyValue(resolved.value),
+      summary: passed
+        ? `Matched ${target || "$"} = ${stringifyValue(resolved.value)}.`
+        : `Expected ${stringifyValue(expectedValue)}, received ${stringifyValue(resolved.value)}.`
+    };
+  });
+};
+
+const extractCaptures = (request, preview) => {
+  const captures = {};
+
+  for (const capture of request.captures || []) {
+    const parameter = normalizeText(capture.parameter);
+
+    if (!parameter) {
+      continue;
+    }
+
+    const source = preview.response.body_json !== null && preview.response.body_json !== undefined
+      ? preview.response.body_json
+      : preview.response.body_text;
+    const resolved = readJsonPathValue(source, capture.path || "$");
+    captures[parameter] = resolved.found ? stringifyValue(resolved.value) : "";
+  }
+
+  return captures;
+};
+
+const runResolvedApiRequest = async (request) => {
+  const normalizedRequest = normalizeApiRequest(request);
+
+  if (!normalizedRequest) {
+    throw new Error("A valid API request is required");
+  }
+
+  const url = ensureHttpUrl(normalizedRequest.url);
+  const method = normalizedRequest.method || "GET";
+  const headers = new Headers();
+
+  for (const header of normalizedRequest.headers || []) {
+    const key = normalizeText(header.key);
+
+    if (!key) {
+      continue;
+    }
+
+    headers.set(key, header.value || "");
+  }
+
+  const startedAt = Date.now();
+  let response;
+
+  try {
+    response = await fetch(url, {
+      method,
+      headers,
+      body: method === "GET" || method === "HEAD" ? undefined : serializeApiBody(normalizedRequest, headers),
+      signal: AbortSignal.timeout(20000)
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("API request timed out after 20 seconds");
+    }
+
+    throw new Error(error instanceof Error ? error.message : "Unable to run API request");
+  }
+
+  const bodyText = await response.text();
+  const contentType = response.headers.get("content-type");
+
+  return {
+    request: {
+      method,
+      url,
+      headers: Object.fromEntries(headers.entries()),
+      body: normalizedRequest.body || null
+    },
+    response: {
+      status: response.status,
+      ok: response.ok,
+      status_text: response.statusText,
+      headers: mapResponseHeaders(response),
+      content_type: contentType,
+      body_text: bodyText,
+      body_json: parseResponseJson(bodyText, contentType),
+      duration_ms: Date.now() - startedAt
+    }
+  };
+};
+
+exports.runApiRequestPreview = async (input, options = {}) => {
+  const request = normalizeApiRequest(resolveApiRequestParameters(input, options.parameterValues || {}));
+
+  if (!request) {
+    throw new Error("A valid API request is required");
+  }
+
+  const preview = await runResolvedApiRequest(request);
+
+  return {
+    request: {
+      method: preview.request.method,
+      url: preview.request.url
+    },
+    response: {
+      status: preview.response.status,
+      ok: preview.response.ok,
+      headers: preview.response.headers,
+      content_type: preview.response.content_type,
+      body_text: preview.response.body_text,
+      body_json: preview.response.body_json,
+      duration_ms: preview.response.duration_ms
+    }
+  };
+};
+
+exports.executeApiRequestStep = async ({ api_request, parameter_values = {} } = {}) => {
+  const request = normalizeApiRequest(resolveApiRequestParameters(api_request, parameter_values));
+
+  if (!request) {
+    throw new Error("A valid API request is required");
+  }
+
+  const preview = await runResolvedApiRequest(request);
+  const assertions = evaluateApiAssertions(preview, request.validations || []);
+  const captures = extractCaptures(request, preview);
+  const firstFailure = assertions.find((assertion) => !assertion.passed);
+  const passed = assertions.every((assertion) => assertion.passed);
+
+  return {
+    status: passed ? "passed" : "failed",
+    duration_ms: preview.response.duration_ms,
+    note: passed
+      ? `${preview.request.method} ${preview.request.url} passed with ${preview.response.status}.`
+      : firstFailure?.summary || `${preview.request.method} ${preview.request.url} failed with ${preview.response.status}.`,
+    detail: {
+      request: {
+        method: preview.request.method,
+        url: preview.request.url,
+        headers: preview.request.headers,
+        body: preview.request.body
+      },
+      response: {
+        status: preview.response.status,
+        status_text: preview.response.status_text,
+        headers: preview.response.headers,
+        body: preview.response.body_text,
+        json: preview.response.body_json
+      },
+      captures,
+      assertions: assertions.map((assertion) => ({
+        kind: assertion.kind,
+        passed: assertion.passed,
+        target: assertion.target,
+        expected: assertion.expected,
+        actual: assertion.actual
+      }))
+    },
+    captures
+  };
+};

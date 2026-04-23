@@ -65,6 +65,11 @@ const DEFAULT_INTEGRATION_TYPE: Integration["type"] = "llm";
 const getIntegrationTypeDefinition = (type: Integration["type"], definitions: IntegrationTypeDefinition[]) =>
   definitions.find((definition) => definition.value === type);
 
+const getLlmDefaultBaseUrl = (definitions: IntegrationTypeDefinition[]) => {
+  const llmDefaults = getIntegrationTypeDefinition("llm", definitions)?.defaults || {};
+  return typeof llmDefaults.base_url === "string" ? llmDefaults.base_url : "";
+};
+
 const buildEmptyDraft = (
   definitions: IntegrationTypeDefinition[],
   preferredType: Integration["type"] = DEFAULT_INTEGRATION_TYPE
@@ -81,7 +86,7 @@ const buildEmptyDraft = (
   return {
     type: defaultType,
     name: "",
-    base_url: typeof llmDefaults.base_url === "string" ? llmDefaults.base_url : "",
+    base_url: defaultType === "llm" && typeof llmDefaults.base_url === "string" ? llmDefaults.base_url : "",
     api_key: "",
     model: "",
     project_key: "",
@@ -130,6 +135,8 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
   const llmDefaults = getIntegrationTypeDefinition("llm", definitions)?.defaults || {};
   const emailDefaults = getIntegrationTypeDefinition("email", definitions)?.defaults || {};
   const testEngineDefaults = getIntegrationTypeDefinition("testengine", definitions)?.defaults || {};
+  const llmDefaultBaseUrl = getLlmDefaultBaseUrl(definitions);
+  const nextBaseUrl = current.base_url === llmDefaultBaseUrl ? "" : current.base_url;
 
   if (type === "llm") {
     return {
@@ -143,6 +150,7 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
     return {
       ...current,
       type,
+      base_url: nextBaseUrl,
       smtp_port: current.smtp_port || String(emailDefaults.smtp_port ?? "587"),
       sender_email: current.sender_email || (typeof emailDefaults.sender_email === "string" ? emailDefaults.sender_email : ""),
       sender_name: current.sender_name || (typeof emailDefaults.sender_name === "string" ? emailDefaults.sender_name : "")
@@ -153,6 +161,7 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
     return {
       ...current,
       type,
+      base_url: nextBaseUrl,
       sync_schedule_mode: current.sync_schedule_mode || "manual"
     };
   }
@@ -161,6 +170,7 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
     return {
       ...current,
       type,
+      base_url: nextBaseUrl,
       github_branch: current.github_branch || "main",
       github_directory: current.github_directory || "qaira-sync",
       github_file_extension: current.github_file_extension || "ts",
@@ -172,6 +182,7 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
     return {
       ...current,
       type,
+      base_url: nextBaseUrl,
       engine_browser: (current.engine_browser || String(testEngineDefaults.browser || "chromium")) as IntegrationDraft["engine_browser"],
       engine_headless: current.engine_headless,
       engine_healing_enabled: current.engine_healing_enabled,
@@ -187,7 +198,8 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
 
   return {
     ...current,
-    type
+    type,
+    base_url: nextBaseUrl
   };
 }
 
@@ -304,20 +316,20 @@ function buildIntegrationConfig(draft: IntegrationDraft, definitions: Integratio
 
   if (draft.type === "testengine") {
     return {
-      project_id: draft.engine_project_id,
-      callback_url: draft.engine_callback_url.trim(),
-      callback_secret: draft.engine_callback_secret.trim(),
+      project_id: draft.engine_project_id || undefined,
       runner: "playwright",
-      browser: draft.engine_browser,
-      headless: draft.engine_headless,
-      healing_enabled: draft.engine_healing_enabled,
-      max_repair_attempts: Number.parseInt(draft.engine_max_repair_attempts, 10),
-      trace_mode: draft.engine_trace_mode,
-      video_mode: draft.engine_video_mode,
-      capture_console: draft.engine_capture_console,
-      capture_network: draft.engine_capture_network,
-      artifact_retention_days: Number.parseInt(draft.engine_artifact_retention_days, 10),
-      run_timeout_seconds: Number.parseInt(draft.engine_run_timeout_seconds, 10),
+      dispatch_mode: "qaira-pull",
+      execution_scope: "api-first",
+      browser: "chromium",
+      headless: true,
+      healing_enabled: false,
+      max_repair_attempts: 0,
+      trace_mode: "off",
+      video_mode: "off",
+      capture_console: false,
+      capture_network: false,
+      artifact_retention_days: 7,
+      run_timeout_seconds: 1800,
       promote_healed_patches: "review"
     };
   }
@@ -373,17 +385,9 @@ function getIntegrationSummary(integration: Integration, definitions: Integratio
   }
 
   if (integration.type === "testengine") {
-    const browser = typeof config.browser === "string" ? config.browser : "chromium";
-    const repairAttempts =
-      typeof config.max_repair_attempts === "number"
-        ? config.max_repair_attempts
-        : typeof config.max_repair_attempts === "string"
-          ? config.max_repair_attempts
-          : "2";
-
     return {
       primary: integration.base_url || "Engine host not set",
-      secondary: `${browser} · repair ${repairAttempts} · ${config.healing_enabled === false ? "deterministic only" : "self-healing on"}`
+      secondary: `${typeof config.project_id === "string" && config.project_id.trim() ? "project-specific" : "all projects"} · queue pull · API-first`
     };
   }
 
@@ -411,6 +415,7 @@ export function IntegrationsPage() {
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const [draft, setDraft] = useState<IntegrationDraft>(emptyDraft);
+  const [testConnectionSummary, setTestConnectionSummary] = useState("");
 
   const integrationsQuery = useQuery({
     queryKey: ["integrations"],
@@ -424,6 +429,7 @@ export function IntegrationsPage() {
   });
 
   const createIntegration = useMutation({ mutationFn: api.integrations.create });
+  const testIntegrationConnection = useMutation({ mutationFn: api.integrations.testConnection });
   const updateIntegration = useMutation({
     mutationFn: ({ id, input }: { id: string; input: Parameters<typeof api.integrations.update>[1] }) =>
       api.integrations.update(id, input)
@@ -480,6 +486,10 @@ export function IntegrationsPage() {
     setSelectedIntegrationId("");
     setDraft(emptyDraft);
   }, [defaultIntegrationType, emptyDraft, integrationTypeDefinitions, isCreating, selectedIntegration, selectedIntegrationId]);
+
+  useEffect(() => {
+    setTestConnectionSummary("");
+  }, [draft.type, draft.base_url, draft.engine_project_id]);
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["integrations"] });
@@ -547,6 +557,29 @@ export function IntegrationsPage() {
     setSelectedIntegrationId("");
     setIsCreating(false);
     setDraft(emptyDraft);
+  };
+
+  const handleTestConnection = async () => {
+    try {
+      const result = await testIntegrationConnection.mutateAsync({
+        type: draft.type,
+        base_url: draft.base_url.trim() || undefined,
+        config: buildIntegrationConfig(draft, integrationTypeDefinitions)
+      });
+      const supportedStepTypes = result.supported_step_types.length
+        ? result.supported_step_types.join(", ")
+        : "not reported";
+      const compatibility = result.qaira_result_log_compatibility
+        ? ` Logs ${result.qaira_result_log_compatibility}.`
+        : "";
+      const summary = `${result.service} responded in ${result.latency_ms} ms from ${result.base_url}. Runner ${result.runner}, control plane ${result.control_plane}, supported steps ${supportedStepTypes}.${compatibility}`;
+
+      setTestConnectionSummary(summary);
+      showSuccess(`Test Engine connection verified. ${result.runner} · ${supportedStepTypes}.`);
+    } catch (error) {
+      setTestConnectionSummary("");
+      showError(error, "Unable to verify Test Engine connection");
+    }
   };
 
   return (
@@ -898,16 +931,16 @@ export function IntegrationsPage() {
                 {isTestEngine ? (
                   <>
                     <div className="empty-state compact integration-helper">
-                      QAira remains the only run UI. This provider is the remote Playwright execution backend that receives automated case handoff, reuses attached scripts on repeat runs, and only applies controlled locator or wait healing before raising an incident bundle.
+                      QAira remains the only run UI. Configure only the Test Engine host here. QAira now derives the queue, pull-based execution flow, and API-first runtime defaults automatically, so you no longer need to manage callback URLs, signing secrets, or engine tokens from this screen.
                     </div>
 
                     <div className="record-grid">
-                      <FormField label="Project">
+                      <FormField label="Project Scope">
                         <select
                           value={draft.engine_project_id}
                           onChange={(event) => setDraft((current) => ({ ...current, engine_project_id: event.target.value }))}
                         >
-                          <option value="">Select a project</option>
+                          <option value="">All projects (default)</option>
                           {projects.map((project) => (
                             <option key={project.id} value={project.id}>{project.name}</option>
                           ))}
@@ -924,143 +957,15 @@ export function IntegrationsPage() {
                     </div>
 
                     <div className="record-grid">
-                      <FormField label="Engine Access Token">
-                        <input
-                          type="password"
-                          value={draft.api_key}
-                          onChange={(event) => setDraft((current) => ({ ...current, api_key: event.target.value }))}
-                        />
-                      </FormField>
-
-                      <FormField label="QAira Callback URL">
-                        <input
-                          placeholder="https://qaira.company.internal/api/testengine/callbacks/runs"
-                          value={draft.engine_callback_url}
-                          onChange={(event) => setDraft((current) => ({ ...current, engine_callback_url: event.target.value }))}
-                        />
-                      </FormField>
+                      <div className="empty-state compact integration-helper">
+                        Derived automatically after save:
+                        <strong> queue pull mode</strong>, <strong>API-first execution</strong>, deterministic engine defaults, and QAira-managed queued, running, step, case, and run updates.
+                      </div>
                     </div>
 
-                    <div className="record-grid">
-                      <FormField label="Callback Signing Secret">
-                        <input
-                          type="password"
-                          value={draft.engine_callback_secret}
-                          onChange={(event) => setDraft((current) => ({ ...current, engine_callback_secret: event.target.value }))}
-                        />
-                      </FormField>
-
-                      <FormField label="Default Browser">
-                        <select
-                          value={draft.engine_browser}
-                          onChange={(event) => setDraft((current) => ({ ...current, engine_browser: event.target.value as IntegrationDraft["engine_browser"] }))}
-                        >
-                          <option value="chromium">Chromium</option>
-                          <option value="firefox">Firefox</option>
-                          <option value="webkit">WebKit</option>
-                        </select>
-                      </FormField>
-                    </div>
-
-                    <div className="record-grid">
-                      <FormField label="Trace Capture">
-                        <select
-                          value={draft.engine_trace_mode}
-                          onChange={(event) => setDraft((current) => ({ ...current, engine_trace_mode: event.target.value as IntegrationDraft["engine_trace_mode"] }))}
-                        >
-                          <option value="off">Off</option>
-                          <option value="on">Always on</option>
-                          <option value="on-first-retry">On first retry</option>
-                          <option value="retain-on-failure">Retain on failure</option>
-                        </select>
-                      </FormField>
-
-                      <FormField label="Video Capture">
-                        <select
-                          value={draft.engine_video_mode}
-                          onChange={(event) => setDraft((current) => ({ ...current, engine_video_mode: event.target.value as IntegrationDraft["engine_video_mode"] }))}
-                        >
-                          <option value="off">Off</option>
-                          <option value="on">Always on</option>
-                          <option value="retain-on-failure">Retain on failure</option>
-                        </select>
-                      </FormField>
-                    </div>
-
-                    <div className="record-grid">
-                      <FormField label="Max Repair Attempts">
-                        <input
-                          inputMode="numeric"
-                          placeholder="2"
-                          value={draft.engine_max_repair_attempts}
-                          onChange={(event) => setDraft((current) => ({ ...current, engine_max_repair_attempts: event.target.value }))}
-                        />
-                      </FormField>
-
-                      <FormField label="Run Timeout Seconds">
-                        <input
-                          inputMode="numeric"
-                          placeholder="1800"
-                          value={draft.engine_run_timeout_seconds}
-                          onChange={(event) => setDraft((current) => ({ ...current, engine_run_timeout_seconds: event.target.value }))}
-                        />
-                      </FormField>
-                    </div>
-
-                    <div className="record-grid">
-                      <FormField label="Artifact Retention Days">
-                        <input
-                          inputMode="numeric"
-                          placeholder="14"
-                          value={draft.engine_artifact_retention_days}
-                          onChange={(event) => setDraft((current) => ({ ...current, engine_artifact_retention_days: event.target.value }))}
-                        />
-                      </FormField>
-
-                      <FormField label="Runner">
-                        <input disabled value="Playwright" />
-                      </FormField>
-                    </div>
-
-                    <div className="record-grid">
-                      <label className="checkbox-field">
-                        <input
-                          checked={draft.engine_headless}
-                          onChange={(event) => setDraft((current) => ({ ...current, engine_headless: event.target.checked }))}
-                          type="checkbox"
-                        />
-                        <span>Run headless in Docker</span>
-                      </label>
-
-                      <label className="checkbox-field">
-                        <input
-                          checked={draft.engine_healing_enabled}
-                          onChange={(event) => setDraft((current) => ({ ...current, engine_healing_enabled: event.target.checked }))}
-                          type="checkbox"
-                        />
-                        <span>Enable locator and wait self-healing</span>
-                      </label>
-                    </div>
-
-                    <div className="record-grid">
-                      <label className="checkbox-field">
-                        <input
-                          checked={draft.engine_capture_console}
-                          onChange={(event) => setDraft((current) => ({ ...current, engine_capture_console: event.target.checked }))}
-                          type="checkbox"
-                        />
-                        <span>Capture browser console logs</span>
-                      </label>
-
-                      <label className="checkbox-field">
-                        <input
-                          checked={draft.engine_capture_network}
-                          onChange={(event) => setDraft((current) => ({ ...current, engine_capture_network: event.target.checked }))}
-                          type="checkbox"
-                        />
-                        <span>Capture network logs and HAR</span>
-                      </label>
-                    </div>
+                    {testConnectionSummary ? (
+                      <div className="inline-message success-message">{testConnectionSummary}</div>
+                    ) : null}
                   </>
                 ) : null}
 
@@ -1074,6 +979,16 @@ export function IntegrationsPage() {
                 </label>
 
                 <div className="action-row">
+                  {isTestEngine ? (
+                    <button
+                      className="ghost-button"
+                      disabled={testIntegrationConnection.isPending || !draft.base_url.trim()}
+                      onClick={() => void handleTestConnection()}
+                      type="button"
+                    >
+                      {testIntegrationConnection.isPending ? "Testing connection..." : "Test connection"}
+                    </button>
+                  ) : null}
                   <button className="primary-button" type="submit">{isCreating ? "Create integration" : "Save integration"}</button>
                   {!isCreating && selectedIntegration ? (
                     <button className="ghost-button danger" onClick={() => void handleDelete()} type="button">

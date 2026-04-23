@@ -853,7 +853,7 @@ function evaluateValidationResult(
   };
 }
 
-function JsonResponseTreeNode({
+export function JsonResponseTreeNode({
   label,
   value,
   path,

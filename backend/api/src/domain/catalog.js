@@ -145,6 +145,7 @@ const EXECUTION_FINAL_STATUS_OPTIONS = freezeOptions([
 ]);
 
 const EXECUTION_RESULT_STATUS_OPTIONS = freezeOptions([
+  { value: "running", label: "Running" },
   { value: "passed", label: "Passed" },
   { value: "failed", label: "Failed" },
   { value: "blocked", label: "Blocked" }

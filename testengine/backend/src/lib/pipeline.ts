@@ -6,6 +6,7 @@ const nowIso = () => new Date().toISOString();
 export function buildAcceptedRun(envelope: EngineRunEnvelope): EngineRunRecord {
   const timestamp = nowIso();
   const artifactRoot = `artifacts/${envelope.engine_run_id}`;
+  const isApiOnlyRun = envelope.steps.every((step) => step.step_type === "api");
   const generatedScriptPath =
     envelope.source_mode === "attached-script"
       ? envelope.attached_script?.path || null
@@ -21,22 +22,29 @@ export function buildAcceptedRun(envelope: EngineRunEnvelope): EngineRunRecord {
     qaira_execution_id: envelope.qaira_execution_id || envelope.qaira_run_id,
     qaira_test_case_id: envelope.qaira_test_case_id,
     test_case_title: envelope.qaira_test_case_title,
-    state: envelope.source_mode === "attached-script" ? "running" : "building-script",
+    state:
+      isApiOnlyRun
+        ? "running"
+        : envelope.source_mode === "attached-script"
+          ? "running"
+          : "building-script",
     source_mode: envelope.source_mode,
     browser: envelope.browser,
     deterministic_attempted: true,
     healing_attempted: false,
     healing_succeeded: false,
     summary:
-      envelope.source_mode === "attached-script"
+      isApiOnlyRun
+        ? "Executing automated API steps deterministically in the Test Engine."
+        : envelope.source_mode === "attached-script"
         ? "Using the attached Playwright script for deterministic execution."
         : "Generating a Playwright script from the current manual handover before deterministic execution.",
     generated_script_path: generatedScriptPath,
     locator_map_path: locatorMapPath,
     artifact_bundle: {
       trace_path: `${artifactRoot}/trace.zip`,
-      video_path: envelope.artifact_policy.video_mode === "off" ? null : `${artifactRoot}/video.webm`,
-      screenshot_paths: [`${artifactRoot}/screenshots/step-failure.png`],
+      video_path: envelope.artifact_policy.video_mode === "off" || isApiOnlyRun ? null : `${artifactRoot}/video.webm`,
+      screenshot_paths: isApiOnlyRun ? [] : [`${artifactRoot}/screenshots/step-failure.png`],
       console_log_path: envelope.artifact_policy.capture_console ? `${artifactRoot}/console.log` : null,
       network_har_path: envelope.artifact_policy.capture_network ? `${artifactRoot}/network.har` : null,
       dom_snapshot_path: `${artifactRoot}/dom.html`,

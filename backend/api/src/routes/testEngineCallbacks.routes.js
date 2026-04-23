@@ -1,7 +1,23 @@
+const { Readable } = require("stream");
 const service = require("../services/testEngineCallback.service");
 
+const captureRawCallbackBody = async (req, _reply, payload) => {
+  const chunks = [];
+
+  for await (const chunk of payload) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  const bodyBuffer = Buffer.concat(chunks);
+  req.rawBody = bodyBuffer.toString("utf8");
+
+  const replayStream = Readable.from(bodyBuffer);
+  replayStream.receivedEncodedLength = bodyBuffer.length;
+  return replayStream;
+};
+
 module.exports = async function (fastify) {
-  fastify.post("/api/testengine/callbacks/runs", async (req) => {
+  fastify.post("/api/testengine/callbacks/runs", { preParsing: captureRawCallbackBody }, async (req) => {
     fastify.validate({
       engine_run_id: { required: true, type: "string" },
       qaira_run_id: { required: false, type: "string" },
@@ -17,7 +33,8 @@ module.exports = async function (fastify) {
 
     return service.handleRunCallback({
       headers: req.headers,
-      payload: req.body
+      payload: req.body,
+      rawPayload: req.rawBody || null
     });
   });
 };
