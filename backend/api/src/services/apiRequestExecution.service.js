@@ -80,6 +80,45 @@ const parseResponseJson = (bodyText, contentType) => {
   }
 };
 
+const escapeXml = (value) =>
+  String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+
+const buildApiEvidenceDataUrl = ({
+  status,
+  title,
+  url,
+  method,
+  responseStatus,
+  captureLines
+}) => {
+  const bg = status === "passed" ? "#dff7ec" : status === "failed" ? "#ffe6ea" : "#eef2ff";
+  const accent = status === "passed" ? "#0f9d6c" : status === "failed" ? "#cd3658" : "#5b6fd8";
+  const lines = [
+    `${method} ${url}`,
+    title,
+    responseStatus ? `Response ${responseStatus}` : null,
+    ...captureLines.slice(0, 2)
+  ].filter(Boolean);
+
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="220" viewBox="0 0 900 220">`,
+    `<rect width="900" height="220" rx="22" fill="${bg}"/>`,
+    `<rect x="28" y="28" width="844" height="164" rx="18" fill="#ffffff" stroke="${accent}" stroke-width="4"/>`,
+    `<text x="52" y="72" font-size="28" font-family="Arial, sans-serif" fill="${accent}" font-weight="700">${escapeXml(status.toUpperCase())}</text>`,
+    ...lines.map((line, index) =>
+      `<text x="52" y="${112 + index * 28}" font-size="${index === 0 ? 22 : 18}" font-family="Arial, sans-serif" fill="#16324f">${escapeXml(line)}</text>`
+    ),
+    `</svg>`
+  ].join("");
+
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+};
+
 const serializeApiBody = (request, headers) => {
   const body = request.body || "";
   const mode = request.body_mode || "none";
@@ -567,6 +606,7 @@ exports.executeApiRequestStep = async ({ api_request, parameter_values = {} } = 
   const captures = extractCaptures(request, preview);
   const firstFailure = assertions.find((assertion) => !assertion.passed);
   const passed = assertions.every((assertion) => assertion.passed);
+  const captureLines = Object.entries(captures).map(([key, value]) => `Captured ${key} = ${stringifyValue(value)}`);
 
   return {
     status: passed ? "passed" : "failed",
@@ -597,6 +637,18 @@ exports.executeApiRequestStep = async ({ api_request, parameter_values = {} } = 
         actual: assertion.actual
       }))
     },
-    captures
+    captures,
+    evidence: {
+      dataUrl: buildApiEvidenceDataUrl({
+        status: passed ? "passed" : "failed",
+        title: request.url || "API step",
+        url: preview.request.url,
+        method: preview.request.method,
+        responseStatus: `${preview.response.status} ${preview.response.status_text}`.trim(),
+        captureLines
+      }),
+      fileName: `api-step-${passed ? "passed" : "failed"}.svg`,
+      mimeType: "image/svg+xml"
+    }
   };
 };

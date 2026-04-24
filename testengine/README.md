@@ -134,7 +134,19 @@ Or from the repo root:
 
 ```bash
 ./run-testengine.sh
+./start-testengine-ops.sh
 ./release-testengine.sh
+```
+
+For a separate Test Engine host that should also forward OTEL/OPS settings into the
+container environment, prefer:
+
+```bash
+QAIRA_API_BASE_URL=https://qaira.qualipal.in/api \
+QAIRA_TESTENGINE_SECRET=replace-with-your-shared-secret \
+ENGINE_PUBLIC_URL=https://engine.qualipal.in \
+OPS_OTLP_ENDPOINT=https://ops.company.internal:4318 \
+./start-testengine-ops.sh
 ```
 
 On Apple Silicon or other ARM64 hosts, QAira defaults the Selenium browser node to

@@ -401,7 +401,7 @@ CREATE TABLE app_settings (
 ALTER TABLE integrations DROP CONSTRAINT IF EXISTS integrations_type_check;
 ALTER TABLE integrations
   ADD CONSTRAINT integrations_type_check
-  CHECK (type IN ('llm', 'jira', 'email', 'google_auth', 'google_drive', 'github', 'testengine'));
+  CHECK (type IN ('llm', 'jira', 'email', 'google_auth', 'google_drive', 'github', 'testengine', 'ops'));
 
 CREATE INDEX IF NOT EXISTS idx_integrations_type_active
   ON integrations (type, is_active);

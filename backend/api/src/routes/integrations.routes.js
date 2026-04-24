@@ -64,6 +64,27 @@ const sanitizeIntegration = (integration) => {
     };
   }
 
+  if (integration.type === "ops") {
+    return {
+      ...integration,
+      api_key: null,
+      config: {
+        project_id: config.project_id || null,
+        events_path: config.events_path || "/api/v1/events",
+        health_path: config.health_path || "/health",
+        api_key_header: config.api_key_header || "Authorization",
+        api_key_prefix: Object.prototype.hasOwnProperty.call(config, "api_key_prefix") ? config.api_key_prefix : "Bearer",
+        service_name: config.service_name || "qaira-testengine",
+        environment: config.environment || "production",
+        timeout_ms: config.timeout_ms ?? 4000,
+        emit_step_events: config.emit_step_events !== false,
+        emit_case_events: config.emit_case_events !== false,
+        emit_suite_events: config.emit_suite_events !== false,
+        emit_run_events: config.emit_run_events !== false
+      }
+    };
+  }
+
   return {
     ...integration,
     api_key: null,
@@ -104,7 +125,7 @@ module.exports = async function (fastify) {
     }
 
     return integrations
-      .filter((integration) => ["llm", "google_drive", "github", "testengine"].includes(integration.type) && integration.is_active)
+      .filter((integration) => ["llm", "google_drive", "github", "testengine", "ops"].includes(integration.type) && integration.is_active)
       .map(sanitizeIntegration);
   });
 
@@ -114,6 +135,7 @@ module.exports = async function (fastify) {
     fastify.validate({
       type: { required: true, type: "string", enum: INTEGRATION_TYPE_VALUES },
       base_url: { required: false, type: "string" },
+      api_key: { required: false, type: "string" },
       config: { required: false, type: "object" }
     }, req.body);
 

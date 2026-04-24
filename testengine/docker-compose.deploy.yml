@@ -13,6 +13,8 @@ services:
       SELENIUM_GRID_URL: ${SELENIUM_GRID_URL:-http://selenium-hub:4444/wd/hub}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-qaira-testengine}
+      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-service.name=qaira-testengine}
     ports:
       - "${TESTENGINE_PORT:-4301}:4301"
     volumes:

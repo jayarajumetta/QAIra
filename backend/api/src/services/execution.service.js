@@ -6,6 +6,7 @@ const testEngineDispatchService = require("./testEngineDispatch.service");
 const executionResultService = require("./executionResult.service");
 const apiRequestExecutionService = require("./apiRequestExecution.service");
 const executionStepRuntimeService = require("./executionStepRuntime.service");
+const opsTelemetryService = require("./opsTelemetry.service");
 
 const getSuiteIdsForExecution = db.prepare(`
   SELECT suite_id, suite_name
@@ -1173,6 +1174,16 @@ exports.startExecution = async (id, options = {}) => {
     }
   }
 
+  try {
+    await opsTelemetryService.emitExecutionHierarchyEvents({
+      execution_id: id,
+      source: "qaira.execution.start",
+      summary: "Execution started."
+    });
+  } catch {
+    // OPS telemetry is best-effort and must not block execution start.
+  }
+
   return {
     started: true,
     ...dispatchSummary
@@ -1249,7 +1260,8 @@ exports.runExecutionApiStep = async (executionId, testCaseId, stepId, { executed
       [stepId]: formattedStepNote
     },
     stepEvidence: {
-      ...existingLogs.stepEvidence
+      ...existingLogs.stepEvidence,
+      ...(stepResult.evidence ? { [stepId]: stepResult.evidence } : {})
     },
     stepApiDetails: {
       ...existingLogs.stepApiDetails,
@@ -1276,6 +1288,24 @@ exports.runExecutionApiStep = async (executionId, testCaseId, stepId, { executed
   });
 
   await testEngineDispatchService.settleExecutionIfComplete(executionId);
+
+  try {
+    await opsTelemetryService.emitExecutionHierarchyEvents({
+      execution_id: executionId,
+      test_case_id: testCaseId,
+      step_id: stepId,
+      source: "qaira.execution-console",
+      summary: formattedStepNote,
+      execution_result_id: result.id,
+      step_status: stepResult.status,
+      step_note: formattedStepNote,
+      step_detail: stepResult.detail,
+      step_evidence: stepResult.evidence,
+      captures: stepResult.captures
+    });
+  } catch {
+    // OPS telemetry is best-effort and must not block API step execution.
+  }
 
   const refreshedExecution = await selectExecutionRecord.get(executionId);
 

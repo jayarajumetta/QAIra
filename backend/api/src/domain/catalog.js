@@ -85,6 +85,25 @@ const INTEGRATION_TYPE_OPTIONS = freezeOptions([
       run_timeout_seconds: 1800,
       promote_healed_patches: "review"
     }
+  },
+  {
+    value: "ops",
+    label: "OPS Telemetry",
+    description: "External operational telemetry sink for execution step, case, suite, and run updates.",
+    icon: "OP",
+    defaults: {
+      events_path: "/api/v1/events",
+      health_path: "/health",
+      api_key_header: "Authorization",
+      api_key_prefix: "Bearer",
+      service_name: "qaira-testengine",
+      environment: "production",
+      timeout_ms: 4000,
+      emit_step_events: true,
+      emit_case_events: true,
+      emit_suite_events: true,
+      emit_run_events: true
+    }
   }
 ]);
 

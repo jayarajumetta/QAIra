@@ -434,23 +434,34 @@ export const api = {
       request<Integration[]>(`/integrations${toQueryString(query)}`),
     create: (input: { type: Integration["type"]; name: string; base_url?: string; api_key?: string; model?: string; project_key?: string; username?: string; config?: Record<string, unknown>; is_active?: boolean }) =>
       request<{ id: string }>("/integrations", { method: "POST", body: JSON.stringify(input) }),
-    testConnection: (input: { type: Integration["type"]; base_url?: string; config?: Record<string, unknown> }) =>
-      request<{
-        ok: boolean;
-        type: "testengine";
-        base_url: string;
-        health_url: string;
-        capabilities_url: string;
-        latency_ms: number;
-        service: string;
-        runner: string;
-        ui: string;
-        control_plane: string;
-        execution_scope: string;
-        supported_step_types: string[];
-        supported_web_engines: string[];
-        qaira_result_log_compatibility?: string | null;
-      }>("/integrations/test-connection", { method: "POST", body: JSON.stringify(input) }),
+    testConnection: (input: { type: Integration["type"]; base_url?: string; api_key?: string; config?: Record<string, unknown> }) =>
+      request<
+        | {
+            ok: boolean;
+            type: "testengine";
+            base_url: string;
+            health_url: string;
+            capabilities_url: string;
+            latency_ms: number;
+            service: string;
+            runner: string;
+            ui: string;
+            control_plane: string;
+            execution_scope: string;
+            supported_step_types: string[];
+            supported_web_engines: string[];
+            qaira_result_log_compatibility?: string | null;
+          }
+        | {
+            ok: boolean;
+            type: "ops";
+            base_url: string;
+            health_url: string;
+            latency_ms: number;
+            service: string;
+            events_path: string;
+          }
+      >("/integrations/test-connection", { method: "POST", body: JSON.stringify(input) }),
     update: (id: string, input: Partial<{ type: Integration["type"]; name: string; base_url: string; api_key: string; model: string; project_key: string; username: string; config: Record<string, unknown>; is_active: boolean }>) =>
       request<{ updated: boolean }>(`/integrations/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/integrations/${id}`, { method: "DELETE" })

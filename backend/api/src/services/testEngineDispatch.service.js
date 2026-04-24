@@ -4,6 +4,7 @@ const executionResultService = require("./executionResult.service");
 const workspaceTransactionService = require("./workspaceTransaction.service");
 const apiRequestExecutionService = require("./apiRequestExecution.service");
 const executionStepRuntimeService = require("./executionStepRuntime.service");
+const opsTelemetryService = require("./opsTelemetry.service");
 const {
   normalizeApiRequest,
   normalizeRichText,
@@ -920,6 +921,18 @@ exports.startQueuedJob = async ({ job_id, worker_id } = {}) => {
     });
   }
 
+  try {
+    await opsTelemetryService.emitExecutionHierarchyEvents({
+      execution_id: job.execution_id,
+      test_case_id: job.test_case_id,
+      source: "testengine.queue.start",
+      summary: `${job.test_case_title} started in the Test Engine.`,
+      execution_result_id: result.id
+    });
+  } catch {
+    // OPS telemetry is best-effort and must not block queue processing.
+  }
+
   return {
     job_id: job.id,
     execution_result_id: result.id,
@@ -959,7 +972,8 @@ exports.executeQueuedApiStep = async ({ job_id, step_id } = {}) => {
       [step.id]: formattedStepNote
     },
     stepEvidence: {
-      ...existingLogs.stepEvidence
+      ...existingLogs.stepEvidence,
+      ...(stepResult.evidence ? { [step.id]: stepResult.evidence } : {})
     },
     stepApiDetails: {
       ...existingLogs.stepApiDetails,
@@ -977,7 +991,8 @@ exports.executeQueuedApiStep = async ({ job_id, step_id } = {}) => {
   };
   const startedAt = job.started_at ? new Date(job.started_at).getTime() : Date.now();
   const durationMs = Math.max(Date.now() - startedAt, stepResult.duration_ms || 0);
-  const caseStatus = stepResult.status === "failed" ? "failed" : "running";
+  const stepIds = Array.isArray(job.payload?.steps) ? job.payload.steps.map((entry) => entry.id) : [];
+  const caseStatus = executionStepRuntimeService.deriveCaseStatusFromStepStatuses(stepIds, mergedLogs.stepStatuses);
 
   await updateJobRuntimeState.run(
     "running",
@@ -1017,6 +1032,24 @@ exports.executeQueuedApiStep = async ({ job_id, step_id } = {}) => {
         last_step_id: step.id
       }
     });
+  }
+
+  try {
+    await opsTelemetryService.emitExecutionHierarchyEvents({
+      execution_id: job.execution_id,
+      test_case_id: job.test_case_id,
+      step_id: step.id,
+      source: "testengine.queue.api-step",
+      summary: formattedStepNote,
+      execution_result_id: result.id,
+      step_status: stepResult.status,
+      step_note: formattedStepNote,
+      step_detail: stepResult.detail,
+      step_evidence: stepResult.evidence,
+      captures: stepResult.captures
+    });
+  } catch {
+    // OPS telemetry is best-effort and must not block queue processing.
   }
 
   return {
@@ -1158,6 +1191,24 @@ exports.reportQueuedStep = async ({
     });
   }
 
+  try {
+    await opsTelemetryService.emitExecutionHierarchyEvents({
+      execution_id: job.execution_id,
+      test_case_id: job.test_case_id,
+      step_id: step.id,
+      source: "testengine.queue.web-step",
+      summary: normalizeText(note) || `${job.test_case_title}: step ${step.order} ${normalizedStatus}.`,
+      execution_result_id: result.id,
+      step_status: normalizedStatus,
+      step_note: normalizeText(note) || "",
+      step_detail: normalizedApiDetail,
+      step_evidence: normalizedEvidence,
+      captures: normalizedCaptures
+    });
+  } catch {
+    // OPS telemetry is best-effort and must not block queue processing.
+  }
+
   return {
     job_id: job.id,
     step_id: step.id,
@@ -1290,6 +1341,18 @@ exports.completeQueuedJob = async ({
   }
 
   await settleExecutionIfComplete(job.execution_id);
+
+  try {
+    await opsTelemetryService.emitExecutionHierarchyEvents({
+      execution_id: job.execution_id,
+      test_case_id: job.test_case_id,
+      source: "testengine.queue.complete",
+      summary: normalizedSummary,
+      execution_result_id: result.id
+    });
+  } catch {
+    // OPS telemetry is best-effort and must not block queue processing.
+  }
 
   return {
     job_id: job.id,

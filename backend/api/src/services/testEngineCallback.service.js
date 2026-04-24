@@ -3,6 +3,7 @@ const db = require("../db");
 const executionService = require("./execution.service");
 const executionResultService = require("./executionResult.service");
 const integrationService = require("./integration.service");
+const opsTelemetryService = require("./opsTelemetry.service");
 const workspaceTransactionService = require("./workspaceTransaction.service");
 
 const selectTestCase = db.prepare(`
@@ -425,6 +426,34 @@ exports.handleRunCallback = async ({ headers, payload, rawPayload }) => {
     logs: JSON.stringify(mergedLogs),
     executed_by: existingResult?.executed_by || caseSnapshot.assigned_to || execution.assigned_to || null
   });
+
+  const latestStepOutcome = Array.isArray(payload.step_outcomes) && payload.step_outcomes.length
+    ? payload.step_outcomes[payload.step_outcomes.length - 1]
+    : null;
+  const latestStepEvidence =
+    latestStepOutcome?.evidence_image && typeof latestStepOutcome.evidence_image === "object" && !Array.isArray(latestStepOutcome.evidence_image)
+      ? {
+          dataUrl: normalizeText(latestStepOutcome.evidence_image.data_url) || "",
+          fileName: normalizeText(latestStepOutcome.evidence_image.file_name) || undefined,
+          mimeType: normalizeText(latestStepOutcome.evidence_image.mime_type) || undefined
+        }
+      : null;
+
+  try {
+    await opsTelemetryService.emitExecutionHierarchyEvents({
+      execution_id: execution.id,
+      test_case_id: testCaseId,
+      step_id: normalizeText(latestStepOutcome?.step_id),
+      source: "testengine.callback",
+      summary: summary || `Test Engine reported ${event}`,
+      execution_result_id: result.id,
+      step_status: normalizeText(latestStepOutcome?.status),
+      step_note: normalizeText(latestStepOutcome?.note),
+      step_evidence: latestStepEvidence?.dataUrl ? latestStepEvidence : null
+    });
+  } catch {
+    // OPS telemetry is best-effort and must not block callback handling.
+  }
 
   const transaction = await ensureTransaction({
     engineRunId,

@@ -212,6 +212,54 @@ const testTestEngineConnection = async ({ base_url }) => {
   };
 };
 
+const testOpsConnection = async ({ base_url, config = {}, api_key } = {}) => {
+  const opsBaseUrl = ensureAbsoluteHttpUrl(base_url, "OPS host URL");
+  const normalizedBaseUrl = opsBaseUrl.toString().replace(/\/+$/, "");
+  const normalizedConfig = normalizeObject(config);
+  const healthUrl = new URL(normalizeText(normalizedConfig.health_path) || "/health", opsBaseUrl).toString();
+  const startedAt = Date.now();
+  const authHeaderName = normalizeText(normalizedConfig.api_key_header) || "Authorization";
+  const authHeaderPrefix = Object.prototype.hasOwnProperty.call(normalizedConfig, "api_key_prefix")
+    ? String(normalizedConfig.api_key_prefix ?? "")
+    : "Bearer";
+  const normalizedApiKey = normalizeText(api_key);
+  const headers = {
+    accept: "application/json"
+  };
+
+  if (normalizedApiKey) {
+    headers[authHeaderName] = authHeaderPrefix ? `${authHeaderPrefix} ${normalizedApiKey}` : normalizedApiKey;
+  }
+
+  let healthResponse;
+
+  try {
+    healthResponse = await fetchWithTimeout(healthUrl, { headers });
+  } catch (error) {
+    throw new Error(
+      `Unable to reach OPS health endpoint at ${healthUrl}: ${error instanceof Error ? error.message : "request failed"}`
+    );
+  }
+
+  const healthPayload = await readResponsePayload(healthResponse);
+
+  if (!healthResponse.ok) {
+    throw new Error(
+      `OPS health check failed with status ${healthResponse.status}${healthResponse.statusText ? ` ${healthResponse.statusText}` : ""}`
+    );
+  }
+
+  return {
+    ok: true,
+    type: "ops",
+    base_url: normalizedBaseUrl,
+    health_url: healthUrl,
+    latency_ms: Math.max(Date.now() - startedAt, 1),
+    service: normalizeText(healthPayload?.service) || "OPS service",
+    events_path: normalizeText(normalizedConfig.events_path) || "/api/v1/events"
+  };
+};
+
 const normalizeConfig = (type, input, username) => {
   const raw = normalizeObject(input);
   const integrationTypeConfig = INTEGRATION_TYPE_OPTIONS.find((option) => option.value === type)?.defaults || {};
@@ -341,6 +389,26 @@ const normalizeConfig = (type, input, username) => {
     };
   }
 
+  if (type === "ops") {
+    return {
+      project_id: normalizeText(raw.project_id),
+      events_path: normalizeText(raw.events_path) || String(integrationTypeConfig.events_path || "/api/v1/events"),
+      health_path: normalizeText(raw.health_path) || String(integrationTypeConfig.health_path || "/health"),
+      api_key_header: normalizeText(raw.api_key_header) || String(integrationTypeConfig.api_key_header || "Authorization"),
+      api_key_prefix:
+        raw.api_key_prefix === ""
+          ? ""
+          : normalizeText(raw.api_key_prefix) || String(integrationTypeConfig.api_key_prefix || "Bearer"),
+      service_name: normalizeText(raw.service_name) || String(integrationTypeConfig.service_name || "qaira-testengine"),
+      environment: normalizeText(raw.environment) || String(integrationTypeConfig.environment || "production"),
+      timeout_ms: Math.max(500, normalizeInteger(raw.timeout_ms) ?? Number(integrationTypeConfig.timeout_ms ?? 4000)),
+      emit_step_events: raw.emit_step_events !== false,
+      emit_case_events: raw.emit_case_events !== false,
+      emit_suite_events: raw.emit_suite_events !== false,
+      emit_run_events: raw.emit_run_events !== false
+    };
+  }
+
   return {};
 };
 
@@ -407,6 +475,12 @@ const validatePayload = (payload) => {
   if (type === "testengine") {
     if (!base_url) {
       throw new Error("Test Engine integrations require a host URL");
+    }
+  }
+
+  if (type === "ops") {
+    if (!base_url) {
+      throw new Error("OPS integrations require a host URL");
     }
   }
 
@@ -611,5 +685,13 @@ exports.testConnection = async (input = {}) => {
     });
   }
 
-  throw new Error("Connection testing is currently available only for Test Engine integrations");
+  if (type === "ops") {
+    return testOpsConnection({
+      base_url: input.base_url,
+      config: input.config,
+      api_key: input.api_key
+    });
+  }
+
+  throw new Error("Connection testing is currently available only for Test Engine and OPS integrations");
 };

@@ -52,6 +52,18 @@ type IntegrationDraft = {
   engine_capture_network: boolean;
   engine_artifact_retention_days: string;
   engine_run_timeout_seconds: string;
+  ops_project_id: string;
+  ops_events_path: string;
+  ops_health_path: string;
+  ops_api_key_header: string;
+  ops_api_key_prefix: string;
+  ops_service_name: string;
+  ops_environment: string;
+  ops_timeout_ms: string;
+  ops_emit_step_events: boolean;
+  ops_emit_case_events: boolean;
+  ops_emit_suite_events: boolean;
+  ops_emit_run_events: boolean;
 };
 
 type IntegrationTypeDefinition = {
@@ -83,6 +95,7 @@ const buildEmptyDraft = (
   const llmDefaults = getIntegrationTypeDefinition("llm", definitions)?.defaults || {};
   const emailDefaults = getIntegrationTypeDefinition("email", definitions)?.defaults || {};
   const testEngineDefaults = getIntegrationTypeDefinition("testengine", definitions)?.defaults || {};
+  const opsDefaults = getIntegrationTypeDefinition("ops", definitions)?.defaults || {};
 
   return {
     type: defaultType,
@@ -121,7 +134,19 @@ const buildEmptyDraft = (
     engine_capture_console: testEngineDefaults.capture_console !== false,
     engine_capture_network: testEngineDefaults.capture_network !== false,
     engine_artifact_retention_days: String(testEngineDefaults.artifact_retention_days ?? "14"),
-    engine_run_timeout_seconds: String(testEngineDefaults.run_timeout_seconds ?? "1800")
+    engine_run_timeout_seconds: String(testEngineDefaults.run_timeout_seconds ?? "1800"),
+    ops_project_id: "",
+    ops_events_path: typeof opsDefaults.events_path === "string" ? opsDefaults.events_path : "/api/v1/events",
+    ops_health_path: typeof opsDefaults.health_path === "string" ? opsDefaults.health_path : "/health",
+    ops_api_key_header: typeof opsDefaults.api_key_header === "string" ? opsDefaults.api_key_header : "Authorization",
+    ops_api_key_prefix: typeof opsDefaults.api_key_prefix === "string" ? opsDefaults.api_key_prefix : "Bearer",
+    ops_service_name: typeof opsDefaults.service_name === "string" ? opsDefaults.service_name : "qaira-testengine",
+    ops_environment: typeof opsDefaults.environment === "string" ? opsDefaults.environment : "production",
+    ops_timeout_ms: String(opsDefaults.timeout_ms ?? "4000"),
+    ops_emit_step_events: opsDefaults.emit_step_events !== false,
+    ops_emit_case_events: opsDefaults.emit_case_events !== false,
+    ops_emit_suite_events: opsDefaults.emit_suite_events !== false,
+    ops_emit_run_events: opsDefaults.emit_run_events !== false
   };
 };
 
@@ -137,6 +162,7 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
   const llmDefaults = getIntegrationTypeDefinition("llm", definitions)?.defaults || {};
   const emailDefaults = getIntegrationTypeDefinition("email", definitions)?.defaults || {};
   const testEngineDefaults = getIntegrationTypeDefinition("testengine", definitions)?.defaults || {};
+  const opsDefaults = getIntegrationTypeDefinition("ops", definitions)?.defaults || {};
   const llmDefaultBaseUrl = getLlmDefaultBaseUrl(definitions);
   const nextBaseUrl = current.base_url === llmDefaultBaseUrl ? "" : current.base_url;
 
@@ -196,6 +222,28 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
       engine_capture_network: current.engine_capture_network,
       engine_artifact_retention_days: current.engine_artifact_retention_days || String(testEngineDefaults.artifact_retention_days ?? "14"),
       engine_run_timeout_seconds: current.engine_run_timeout_seconds || String(testEngineDefaults.run_timeout_seconds ?? "1800")
+    };
+  }
+
+  if (type === "ops") {
+    return {
+      ...current,
+      type,
+      base_url: nextBaseUrl,
+      ops_events_path: current.ops_events_path || String(opsDefaults.events_path || "/api/v1/events"),
+      ops_health_path: current.ops_health_path || String(opsDefaults.health_path || "/health"),
+      ops_api_key_header: current.ops_api_key_header || String(opsDefaults.api_key_header || "Authorization"),
+      ops_api_key_prefix:
+        current.ops_api_key_prefix === ""
+          ? ""
+          : current.ops_api_key_prefix || String(opsDefaults.api_key_prefix || "Bearer"),
+      ops_service_name: current.ops_service_name || String(opsDefaults.service_name || "qaira-testengine"),
+      ops_environment: current.ops_environment || String(opsDefaults.environment || "production"),
+      ops_timeout_ms: current.ops_timeout_ms || String(opsDefaults.timeout_ms ?? "4000"),
+      ops_emit_step_events: current.ops_emit_step_events,
+      ops_emit_case_events: current.ops_emit_case_events,
+      ops_emit_suite_events: current.ops_emit_suite_events,
+      ops_emit_run_events: current.ops_emit_run_events
     };
   }
 
@@ -272,7 +320,27 @@ function getDraftFromIntegration(
         ? String(config.run_timeout_seconds)
         : typeof config.run_timeout_seconds === "string"
           ? config.run_timeout_seconds
-          : emptyDraft.engine_run_timeout_seconds
+          : emptyDraft.engine_run_timeout_seconds,
+    ops_project_id: typeof config.project_id === "string" ? config.project_id : "",
+    ops_events_path: typeof config.events_path === "string" ? config.events_path : emptyDraft.ops_events_path,
+    ops_health_path: typeof config.health_path === "string" ? config.health_path : emptyDraft.ops_health_path,
+    ops_api_key_header: typeof config.api_key_header === "string" ? config.api_key_header : emptyDraft.ops_api_key_header,
+    ops_api_key_prefix:
+      typeof config.api_key_prefix === "string"
+        ? config.api_key_prefix
+        : emptyDraft.ops_api_key_prefix,
+    ops_service_name: typeof config.service_name === "string" ? config.service_name : emptyDraft.ops_service_name,
+    ops_environment: typeof config.environment === "string" ? config.environment : emptyDraft.ops_environment,
+    ops_timeout_ms:
+      typeof config.timeout_ms === "number"
+        ? String(config.timeout_ms)
+        : typeof config.timeout_ms === "string"
+          ? config.timeout_ms
+          : emptyDraft.ops_timeout_ms,
+    ops_emit_step_events: typeof config.emit_step_events === "boolean" ? config.emit_step_events : emptyDraft.ops_emit_step_events,
+    ops_emit_case_events: typeof config.emit_case_events === "boolean" ? config.emit_case_events : emptyDraft.ops_emit_case_events,
+    ops_emit_suite_events: typeof config.emit_suite_events === "boolean" ? config.emit_suite_events : emptyDraft.ops_emit_suite_events,
+    ops_emit_run_events: typeof config.emit_run_events === "boolean" ? config.emit_run_events : emptyDraft.ops_emit_run_events
   }, definitions);
 }
 
@@ -339,6 +407,23 @@ function buildIntegrationConfig(draft: IntegrationDraft, definitions: Integratio
     };
   }
 
+  if (draft.type === "ops") {
+    return {
+      project_id: draft.ops_project_id || undefined,
+      events_path: draft.ops_events_path.trim() || "/api/v1/events",
+      health_path: draft.ops_health_path.trim() || "/health",
+      api_key_header: draft.ops_api_key_header.trim() || "Authorization",
+      api_key_prefix: draft.ops_api_key_prefix,
+      service_name: draft.ops_service_name.trim() || "qaira-testengine",
+      environment: draft.ops_environment.trim() || "production",
+      timeout_ms: Number.parseInt(draft.ops_timeout_ms, 10) || 4000,
+      emit_step_events: draft.ops_emit_step_events,
+      emit_case_events: draft.ops_emit_case_events,
+      emit_suite_events: draft.ops_emit_suite_events,
+      emit_run_events: draft.ops_emit_run_events
+    };
+  }
+
   return {};
 }
 
@@ -395,6 +480,13 @@ function getIntegrationSummary(integration: Integration, definitions: Integratio
     return {
       primary: integration.base_url || "Engine host not set",
       secondary: `${typeof config.project_id === "string" && config.project_id.trim() ? "project-specific" : "all projects"} · queue pull · ${String(activeWebEngine).toUpperCase()} web`
+    };
+  }
+
+  if (integration.type === "ops") {
+    return {
+      primary: integration.base_url || "OPS host not set",
+      secondary: `${typeof config.project_id === "string" && config.project_id.trim() ? "project-specific" : "all projects"} · ${typeof config.events_path === "string" ? config.events_path : "/api/v1/events"}`
     };
   }
 
@@ -459,6 +551,7 @@ export function IntegrationsPage() {
   const isGoogleDrive = draft.type === "google_drive";
   const isGithub = draft.type === "github";
   const isTestEngine = draft.type === "testengine";
+  const isOps = draft.type === "ops";
   const emailDefaults = getIntegrationTypeDefinition("email", integrationTypeDefinitions)?.defaults || {};
   const llmDefaults = getIntegrationTypeDefinition("llm", integrationTypeDefinitions)?.defaults || {};
   const defaultEmailSender = typeof emailDefaults.sender_email === "string" ? emailDefaults.sender_email : "";
@@ -512,7 +605,7 @@ export function IntegrationsPage() {
 
   useEffect(() => {
     setTestConnectionSummary("");
-  }, [draft.type, draft.base_url, draft.engine_project_id]);
+  }, [draft.type, draft.base_url, draft.engine_project_id, draft.ops_project_id, draft.ops_events_path, draft.ops_health_path]);
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["integrations"] });
@@ -587,24 +680,31 @@ export function IntegrationsPage() {
       const result = await testIntegrationConnection.mutateAsync({
         type: draft.type,
         base_url: draft.base_url.trim() || undefined,
+        api_key: draft.api_key.trim() || undefined,
         config: buildIntegrationConfig(draft, integrationTypeDefinitions)
       });
-      const supportedStepTypes = result.supported_step_types.length
-        ? result.supported_step_types.join(", ")
-        : "not reported";
-      const supportedWebEngines = result.supported_web_engines.length
-        ? result.supported_web_engines.join(", ")
-        : "not reported";
-      const compatibility = result.qaira_result_log_compatibility
-        ? ` Logs ${result.qaira_result_log_compatibility}.`
-        : "";
-      const summary = `${result.service} responded in ${result.latency_ms} ms from ${result.base_url}. Runner ${result.runner}, scope ${result.execution_scope}, supported steps ${supportedStepTypes}, web engines ${supportedWebEngines}.${compatibility}`;
+      if (result.type === "ops") {
+        const summary = `${result.service} responded in ${result.latency_ms} ms from ${result.base_url}. Health ${result.health_url}. Events ${result.events_path}.`;
+        setTestConnectionSummary(summary);
+        showSuccess(`OPS connection verified. ${result.service} · ${result.events_path}.`);
+      } else {
+        const supportedStepTypes = result.supported_step_types.length
+          ? result.supported_step_types.join(", ")
+          : "not reported";
+        const supportedWebEngines = result.supported_web_engines.length
+          ? result.supported_web_engines.join(", ")
+          : "not reported";
+        const compatibility = result.qaira_result_log_compatibility
+          ? ` Logs ${result.qaira_result_log_compatibility}.`
+          : "";
+        const summary = `${result.service} responded in ${result.latency_ms} ms from ${result.base_url}. Runner ${result.runner}, scope ${result.execution_scope}, supported steps ${supportedStepTypes}, web engines ${supportedWebEngines}.${compatibility}`;
 
-      setTestConnectionSummary(summary);
-      showSuccess(`Test Engine connection verified. ${result.runner} · ${supportedStepTypes} · ${supportedWebEngines}.`);
+        setTestConnectionSummary(summary);
+        showSuccess(`Test Engine connection verified. ${result.runner} · ${supportedStepTypes} · ${supportedWebEngines}.`);
+      }
     } catch (error) {
       setTestConnectionSummary("");
-      showError(error, "Unable to verify Test Engine connection");
+      showError(error, `Unable to verify ${isOps ? "OPS" : "Test Engine"} connection`);
     }
   };
 
@@ -615,7 +715,7 @@ export function IntegrationsPage() {
       <PageHeader
         eyebrow="Administration"
         title="Integrations"
-        description="Manage the external systems QAira uses for AI generation, Jira sync, Playwright run handoff, backup automation, Google sign-in, and email verification delivery."
+        description="Manage the external systems QAira uses for AI generation, Jira sync, Test Engine run handoff, OPS telemetry, backup automation, Google sign-in, and email verification delivery."
         meta={[
           { label: "Configured", value: integrations.length },
           { label: "Active", value: activeIntegrationCount },
@@ -637,7 +737,7 @@ export function IntegrationsPage() {
 
       {!isAdmin ? (
         <Panel title="Access required" subtitle="Only admins can manage integrations.">
-          <div className="empty-state compact">Ask an admin to manage LLM, Jira, Test Engine, Google Drive, GitHub, Email Sender, and Google Sign-In integrations.</div>
+          <div className="empty-state compact">Ask an admin to manage LLM, Jira, Test Engine, OPS telemetry, Google Drive, GitHub, Email Sender, and Google Sign-In integrations.</div>
         </Panel>
       ) : (
         <WorkspaceMasterDetail
@@ -1027,6 +1127,153 @@ export function IntegrationsPage() {
                   </>
                 ) : null}
 
+                {isOps ? (
+                  <>
+                    <div className="empty-state compact integration-helper">
+                      Configure a separate OPS or observability service that should receive execution telemetry as JSON events. QAira emits best-effort step, case, suite, and run updates without blocking the run if the OPS sink is temporarily unavailable.
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Project Scope">
+                        <select
+                          value={draft.ops_project_id}
+                          onChange={(event) => setDraft((current) => ({ ...current, ops_project_id: event.target.value }))}
+                        >
+                          <option value="">All projects (default)</option>
+                          {projects.map((project) => (
+                            <option key={project.id} value={project.id}>{project.name}</option>
+                          ))}
+                        </select>
+                      </FormField>
+
+                      <FormField label="OPS Host URL">
+                        <input
+                          placeholder="https://ops.company.internal"
+                          value={draft.base_url}
+                          onChange={(event) => setDraft((current) => ({ ...current, base_url: event.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Events Path">
+                        <input
+                          placeholder="/api/v1/events"
+                          value={draft.ops_events_path}
+                          onChange={(event) => setDraft((current) => ({ ...current, ops_events_path: event.target.value }))}
+                        />
+                      </FormField>
+
+                      <FormField label="Health Path">
+                        <input
+                          placeholder="/health"
+                          value={draft.ops_health_path}
+                          onChange={(event) => setDraft((current) => ({ ...current, ops_health_path: event.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="API Token">
+                        <input
+                          type="password"
+                          value={draft.api_key}
+                          onChange={(event) => setDraft((current) => ({ ...current, api_key: event.target.value }))}
+                        />
+                      </FormField>
+
+                      <FormField label="Timeout (ms)">
+                        <input
+                          inputMode="numeric"
+                          placeholder="4000"
+                          value={draft.ops_timeout_ms}
+                          onChange={(event) => setDraft((current) => ({ ...current, ops_timeout_ms: event.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Auth Header">
+                        <input
+                          placeholder="Authorization"
+                          value={draft.ops_api_key_header}
+                          onChange={(event) => setDraft((current) => ({ ...current, ops_api_key_header: event.target.value }))}
+                        />
+                      </FormField>
+
+                      <FormField label="Auth Prefix">
+                        <input
+                          placeholder="Bearer"
+                          value={draft.ops_api_key_prefix}
+                          onChange={(event) => setDraft((current) => ({ ...current, ops_api_key_prefix: event.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Service Name">
+                        <input
+                          placeholder="qaira-testengine"
+                          value={draft.ops_service_name}
+                          onChange={(event) => setDraft((current) => ({ ...current, ops_service_name: event.target.value }))}
+                        />
+                      </FormField>
+
+                      <FormField label="Environment">
+                        <input
+                          placeholder="production"
+                          value={draft.ops_environment}
+                          onChange={(event) => setDraft((current) => ({ ...current, ops_environment: event.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <label className="checkbox-field">
+                        <input
+                          checked={draft.ops_emit_step_events}
+                          onChange={(event) => setDraft((current) => ({ ...current, ops_emit_step_events: event.target.checked }))}
+                          type="checkbox"
+                        />
+                        <span>Emit step events</span>
+                      </label>
+
+                      <label className="checkbox-field">
+                        <input
+                          checked={draft.ops_emit_case_events}
+                          onChange={(event) => setDraft((current) => ({ ...current, ops_emit_case_events: event.target.checked }))}
+                          type="checkbox"
+                        />
+                        <span>Emit case events</span>
+                      </label>
+                    </div>
+
+                    <div className="record-grid">
+                      <label className="checkbox-field">
+                        <input
+                          checked={draft.ops_emit_suite_events}
+                          onChange={(event) => setDraft((current) => ({ ...current, ops_emit_suite_events: event.target.checked }))}
+                          type="checkbox"
+                        />
+                        <span>Emit suite events</span>
+                      </label>
+
+                      <label className="checkbox-field">
+                        <input
+                          checked={draft.ops_emit_run_events}
+                          onChange={(event) => setDraft((current) => ({ ...current, ops_emit_run_events: event.target.checked }))}
+                          type="checkbox"
+                        />
+                        <span>Emit run events</span>
+                      </label>
+                    </div>
+
+                    {testConnectionSummary ? (
+                      <div className="inline-message success-message">{testConnectionSummary}</div>
+                    ) : null}
+                  </>
+                ) : null}
+
                 <label className="checkbox-field">
                   <input
                     checked={draft.is_active}
@@ -1037,7 +1284,7 @@ export function IntegrationsPage() {
                 </label>
 
                 <div className="action-row">
-                  {isTestEngine ? (
+                  {(isTestEngine || isOps) ? (
                     <button
                       className="ghost-button"
                       disabled={testIntegrationConnection.isPending || !draft.base_url.trim()}
