@@ -2,7 +2,7 @@
 
 set -eu
 
-API_BASE_URL="${QAIRA_API_BASE_URL:-http://localhost:3000}"
+API_BASE_URL="${QAIRA_API_BASE_URL:-/api}"
 
 cat > /usr/share/nginx/html/runtime-config.js <<EOF
 window.__QAIRA_CONFIG__ = window.__QAIRA_CONFIG__ || {};

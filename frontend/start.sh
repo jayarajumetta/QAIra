@@ -3,7 +3,7 @@
 set -eu
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
-QAIRA_API_BASE_URL="${QAIRA_API_BASE_URL:-http://localhost:3000}"
+QAIRA_API_BASE_URL="${QAIRA_API_BASE_URL:-/api}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "Docker is required but was not found in PATH."

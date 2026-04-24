@@ -43,7 +43,7 @@ services:
     ports:
       - "8080:80"
     environment:
-      QAIRA_API_BASE_URL: ${QAIRA_API_BASE_URL:-http://localhost:3000}
+      QAIRA_API_BASE_URL: ${QAIRA_API_BASE_URL:-/api}
     depends_on:
       api:
         condition: service_healthy

@@ -217,6 +217,7 @@ The seed file creates these users:
 ### Frontend
 
 - `QAIRA_API_BASE_URL` for the container build/runtime config
+  Example: `http://localhost:3000` for `docker-compose.full.yml`, or `/api` when the frontend and API share the same public host behind HAProxy or a load balancer
 - `VITE_API_BASE_URL` for local Vite development
 - `QAIRA_BACKEND_IMAGE` to override the backend Docker Hub image
 - `QAIRA_FRONTEND_IMAGE` to override the frontend Docker Hub image
