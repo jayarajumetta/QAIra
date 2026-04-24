@@ -137,6 +137,22 @@ Or from the repo root:
 ./release-testengine.sh
 ```
 
+On Apple Silicon or other ARM64 hosts, QAira defaults the Selenium browser node to
+`selenium/node-chromium:4.22.0` because Selenium's official Chrome node images are
+AMD64-only. If you want to override the Grid images explicitly, set:
+
+```bash
+QAIRA_SELENIUM_HUB_IMAGE=selenium/hub:4.22.0 \
+QAIRA_SELENIUM_NODE_IMAGE=selenium/node-chromium:4.22.0 \
+./run-testengine.sh
+```
+
+On an AMD64 host, you can opt back into Chrome with:
+
+```bash
+QAIRA_SELENIUM_NODE_IMAGE=selenium/node-chrome:4.22.0 ./run-testengine.sh
+```
+
 ## See Also
 
 - [QAira background operations strategy](../QAIRA_BACKGROUND_OPERATIONS_STRATEGY.md)

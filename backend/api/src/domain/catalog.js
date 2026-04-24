@@ -68,10 +68,11 @@ const INTEGRATION_TYPE_OPTIONS = freezeOptions([
   {
     value: "testengine",
     label: "Test Engine",
-    description: "Playwright-based remote execution backend for QAira with artifact capture and controlled self-healing.",
+    description: "Provider-switchable remote execution backend for QAira with API automation, Playwright or Selenium web execution, and step-level evidence updates.",
     icon: "TE",
     defaults: {
-      runner: "playwright",
+      runner: "hybrid",
+      active_web_engine: "playwright",
       browser: "chromium",
       headless: true,
       healing_enabled: true,

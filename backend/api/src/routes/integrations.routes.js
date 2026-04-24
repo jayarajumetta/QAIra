@@ -45,9 +45,10 @@ const sanitizeIntegration = (integration) => {
       api_key: null,
       config: {
         project_id: config.project_id || null,
-        runner: config.runner || "playwright",
+        runner: config.runner || "hybrid",
         dispatch_mode: config.dispatch_mode || "qaira-pull",
-        execution_scope: config.execution_scope || "api-first",
+        execution_scope: config.execution_scope || "api+web",
+        active_web_engine: config.active_web_engine || "playwright",
         browser: config.browser || "chromium",
         headless: config.headless !== false,
         healing_enabled: config.healing_enabled !== false,

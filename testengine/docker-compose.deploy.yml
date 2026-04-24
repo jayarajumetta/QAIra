@@ -10,6 +10,7 @@ services:
       QAIRA_API_BASE_URL: ${QAIRA_API_BASE_URL:-http://host.docker.internal:3000}
       QAIRA_TESTENGINE_SECRET: ${QAIRA_TESTENGINE_SECRET:-qaira-testengine-dev-secret}
       ENGINE_PUBLIC_URL: ${ENGINE_PUBLIC_URL:-http://localhost:4301}
+      SELENIUM_GRID_URL: ${SELENIUM_GRID_URL:-http://selenium-hub:4444/wd/hub}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
     ports:
@@ -21,6 +22,29 @@ services:
       interval: 15s
       timeout: 10s
       retries: 10
+    restart: always
+    depends_on:
+      - selenium-hub
+      - selenium-node-chrome
+
+  selenium-hub:
+    image: ${QAIRA_SELENIUM_HUB_IMAGE:-selenium/hub:4.22.0}
+    container_name: qaira-selenium-hub
+    ports:
+      - "${SELENIUM_GRID_PORT:-4444}:4444"
+    restart: always
+
+  selenium-node-chrome:
+    image: ${QAIRA_SELENIUM_NODE_IMAGE:-selenium/node-chromium:4.22.0}
+    container_name: qaira-selenium-node-chrome
+    shm_size: 2gb
+    environment:
+      SE_EVENT_BUS_HOST: selenium-hub
+      SE_EVENT_BUS_PUBLISH_PORT: 4442
+      SE_EVENT_BUS_SUBSCRIBE_PORT: 4443
+      SE_NODE_MAX_SESSIONS: 1
+    depends_on:
+      - selenium-hub
     restart: always
 
 volumes:

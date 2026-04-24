@@ -41,6 +41,7 @@ type IntegrationDraft = {
   engine_project_id: string;
   engine_callback_url: string;
   engine_callback_secret: string;
+  engine_active_web_engine: "playwright" | "selenium";
   engine_browser: "chromium" | "firefox" | "webkit";
   engine_headless: boolean;
   engine_healing_enabled: boolean;
@@ -110,6 +111,7 @@ const buildEmptyDraft = (
     engine_project_id: "",
     engine_callback_url: "",
     engine_callback_secret: "",
+    engine_active_web_engine: (typeof testEngineDefaults.active_web_engine === "string" ? testEngineDefaults.active_web_engine : "playwright") as IntegrationDraft["engine_active_web_engine"],
     engine_browser: (typeof testEngineDefaults.browser === "string" ? testEngineDefaults.browser : "chromium") as IntegrationDraft["engine_browser"],
     engine_headless: testEngineDefaults.headless !== false,
     engine_healing_enabled: testEngineDefaults.healing_enabled !== false,
@@ -183,6 +185,7 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
       ...current,
       type,
       base_url: nextBaseUrl,
+      engine_active_web_engine: (current.engine_active_web_engine || String(testEngineDefaults.active_web_engine || "playwright")) as IntegrationDraft["engine_active_web_engine"],
       engine_browser: (current.engine_browser || String(testEngineDefaults.browser || "chromium")) as IntegrationDraft["engine_browser"],
       engine_headless: current.engine_headless,
       engine_healing_enabled: current.engine_healing_enabled,
@@ -244,6 +247,7 @@ function getDraftFromIntegration(
     engine_project_id: typeof config.project_id === "string" ? config.project_id : "",
     engine_callback_url: typeof config.callback_url === "string" ? config.callback_url : "",
     engine_callback_secret: typeof config.callback_secret === "string" ? config.callback_secret : "",
+    engine_active_web_engine: (typeof config.active_web_engine === "string" ? config.active_web_engine : emptyDraft.engine_active_web_engine) as IntegrationDraft["engine_active_web_engine"],
     engine_browser: (typeof config.browser === "string" ? config.browser : emptyDraft.engine_browser) as IntegrationDraft["engine_browser"],
     engine_headless: typeof config.headless === "boolean" ? config.headless : emptyDraft.engine_headless,
     engine_healing_enabled: typeof config.healing_enabled === "boolean" ? config.healing_enabled : emptyDraft.engine_healing_enabled,
@@ -317,19 +321,20 @@ function buildIntegrationConfig(draft: IntegrationDraft, definitions: Integratio
   if (draft.type === "testengine") {
     return {
       project_id: draft.engine_project_id || undefined,
-      runner: "playwright",
+      runner: "hybrid",
       dispatch_mode: "qaira-pull",
-      execution_scope: "api-first",
-      browser: "chromium",
-      headless: true,
-      healing_enabled: false,
-      max_repair_attempts: 0,
-      trace_mode: "off",
-      video_mode: "off",
-      capture_console: false,
-      capture_network: false,
-      artifact_retention_days: 7,
-      run_timeout_seconds: 1800,
+      execution_scope: "api+web",
+      active_web_engine: draft.engine_active_web_engine,
+      browser: draft.engine_browser,
+      headless: draft.engine_headless,
+      healing_enabled: draft.engine_healing_enabled,
+      max_repair_attempts: Number.parseInt(draft.engine_max_repair_attempts, 10) || 0,
+      trace_mode: draft.engine_trace_mode,
+      video_mode: draft.engine_video_mode,
+      capture_console: draft.engine_capture_console,
+      capture_network: draft.engine_capture_network,
+      artifact_retention_days: Number.parseInt(draft.engine_artifact_retention_days, 10) || 7,
+      run_timeout_seconds: Number.parseInt(draft.engine_run_timeout_seconds, 10) || 1800,
       promote_healed_patches: "review"
     };
   }
@@ -385,9 +390,11 @@ function getIntegrationSummary(integration: Integration, definitions: Integratio
   }
 
   if (integration.type === "testengine") {
+    const activeWebEngine = typeof config.active_web_engine === "string" ? config.active_web_engine : "playwright";
+
     return {
       primary: integration.base_url || "Engine host not set",
-      secondary: `${typeof config.project_id === "string" && config.project_id.trim() ? "project-specific" : "all projects"} · queue pull · API-first`
+      secondary: `${typeof config.project_id === "string" && config.project_id.trim() ? "project-specific" : "all projects"} · queue pull · ${String(activeWebEngine).toUpperCase()} web`
     };
   }
 
@@ -457,6 +464,22 @@ export function IntegrationsPage() {
   const defaultEmailSender = typeof emailDefaults.sender_email === "string" ? emailDefaults.sender_email : "";
   const defaultEmailSenderName = typeof emailDefaults.sender_name === "string" ? emailDefaults.sender_name : "";
   const defaultLlmBaseUrl = typeof llmDefaults.base_url === "string" ? llmDefaults.base_url : "";
+  const derivedSeleniumGridUrl = useMemo(() => {
+    if (!draft.base_url.trim()) {
+      return "";
+    }
+
+    try {
+      const parsed = new URL(draft.base_url.trim());
+      parsed.port = "4444";
+      parsed.pathname = "/wd/hub";
+      parsed.search = "";
+      parsed.hash = "";
+      return parsed.toString();
+    } catch {
+      return "";
+    }
+  }, [draft.base_url]);
 
   const showSuccess = (text: string) => {
     setMessageTone("success");
@@ -569,13 +592,16 @@ export function IntegrationsPage() {
       const supportedStepTypes = result.supported_step_types.length
         ? result.supported_step_types.join(", ")
         : "not reported";
+      const supportedWebEngines = result.supported_web_engines.length
+        ? result.supported_web_engines.join(", ")
+        : "not reported";
       const compatibility = result.qaira_result_log_compatibility
         ? ` Logs ${result.qaira_result_log_compatibility}.`
         : "";
-      const summary = `${result.service} responded in ${result.latency_ms} ms from ${result.base_url}. Runner ${result.runner}, control plane ${result.control_plane}, supported steps ${supportedStepTypes}.${compatibility}`;
+      const summary = `${result.service} responded in ${result.latency_ms} ms from ${result.base_url}. Runner ${result.runner}, scope ${result.execution_scope}, supported steps ${supportedStepTypes}, web engines ${supportedWebEngines}.${compatibility}`;
 
       setTestConnectionSummary(summary);
-      showSuccess(`Test Engine connection verified. ${result.runner} · ${supportedStepTypes}.`);
+      showSuccess(`Test Engine connection verified. ${result.runner} · ${supportedStepTypes} · ${supportedWebEngines}.`);
     } catch (error) {
       setTestConnectionSummary("");
       showError(error, "Unable to verify Test Engine connection");
@@ -931,7 +957,7 @@ export function IntegrationsPage() {
                 {isTestEngine ? (
                   <>
                     <div className="empty-state compact integration-helper">
-                      QAira remains the only run UI. Configure only the Test Engine host here. QAira now derives the queue, pull-based execution flow, and API-first runtime defaults automatically, so you no longer need to manage callback URLs, signing secrets, or engine tokens from this screen.
+                      QAira remains the only run UI. Configure the Test Engine host and active web engine here. QAira derives the queue, pull-based execution flow, and provider-aware runtime defaults automatically, so you no longer need to manage callback URLs, signing secrets, or engine tokens from this screen.
                     </div>
 
                     <div className="record-grid">
@@ -957,9 +983,41 @@ export function IntegrationsPage() {
                     </div>
 
                     <div className="record-grid">
+                      <FormField label="Active Web Engine">
+                        <select
+                          value={draft.engine_active_web_engine}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              engine_active_web_engine: event.target.value as IntegrationDraft["engine_active_web_engine"]
+                            }))
+                          }
+                        >
+                          <option value="playwright">Playwright</option>
+                          <option value="selenium">Selenium Grid</option>
+                        </select>
+                      </FormField>
+
+                      <div className="empty-state compact integration-helper">
+                        {draft.engine_active_web_engine === "selenium"
+                          ? (
+                            <>
+                              Selenium Grid target derives automatically inside the engine stack.
+                              <strong>{derivedSeleniumGridUrl || " Enter an engine host URL to preview the derived grid endpoint."}</strong>
+                            </>
+                          )
+                          : (
+                            <>
+                              Playwright runs inside the Test Engine service container with QAira-managed queue orchestration and result updates.
+                            </>
+                          )}
+                      </div>
+                    </div>
+
+                    <div className="record-grid">
                       <div className="empty-state compact integration-helper">
                         Derived automatically after save:
-                        <strong> queue pull mode</strong>, <strong>API-first execution</strong>, deterministic engine defaults, and QAira-managed queued, running, step, case, and run updates.
+                        <strong> queue pull mode</strong>, <strong>API + web execution scope</strong>, deterministic engine defaults, and QAira-managed queued, running, step, case, suite, and run updates.
                       </div>
                     </div>
 

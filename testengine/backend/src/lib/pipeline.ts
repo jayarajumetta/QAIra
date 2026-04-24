@@ -7,6 +7,7 @@ export function buildAcceptedRun(envelope: EngineRunEnvelope): EngineRunRecord {
   const timestamp = nowIso();
   const artifactRoot = `artifacts/${envelope.engine_run_id}`;
   const isApiOnlyRun = envelope.steps.every((step) => step.step_type === "api");
+  const activeWebEngine = envelope.web_engine?.active || "playwright";
   const generatedScriptPath =
     envelope.source_mode === "attached-script"
       ? envelope.attached_script?.path || null
@@ -37,8 +38,8 @@ export function buildAcceptedRun(envelope: EngineRunEnvelope): EngineRunRecord {
       isApiOnlyRun
         ? "Executing automated API steps deterministically in the Test Engine."
         : envelope.source_mode === "attached-script"
-        ? "Using the attached Playwright script for deterministic execution."
-        : "Generating a Playwright script from the current manual handover before deterministic execution.",
+        ? `Using the attached automation script with the ${activeWebEngine} web engine.`
+        : `Executing queued web steps with the ${activeWebEngine} web engine.`,
     generated_script_path: generatedScriptPath,
     locator_map_path: locatorMapPath,
     artifact_bundle: {
@@ -52,7 +53,7 @@ export function buildAcceptedRun(envelope: EngineRunEnvelope): EngineRunRecord {
       artifact_refs: [
         {
           kind: "script",
-          label: "Generated Playwright spec",
+          label: "Generated automation spec",
           path: generatedScriptPath
         },
         {
@@ -79,10 +80,12 @@ export function buildAcceptedRun(envelope: EngineRunEnvelope): EngineRunRecord {
 
 export function buildCapabilities() {
   return {
-    runner: "playwright",
+    runner: "hybrid",
     control_plane: "qaira",
     browsers: ["chromium", "firefox", "webkit"],
-    supported_step_types: ["web", "api"],
+    execution_scope: "api+web",
+    supported_step_types: ["api", "web"],
+    supported_web_engines: ["playwright", "selenium"],
     qaira_result_log_compatibility: "execution_results.logs.v1",
     qaira_inline_step_evidence: true,
     healing_scope: ["locator", "wait", "popup", "navigation"],

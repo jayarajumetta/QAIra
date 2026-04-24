@@ -1,4 +1,5 @@
 export type EngineStepType = "web" | "api";
+export type EngineWebEngineProvider = "playwright" | "selenium";
 export type EngineRunTrigger = "execution" | "test-run";
 export type EngineSourceMode = "attached-script" | "manual-handover";
 export type EngineTraceMode = "off" | "on" | "on-first-retry" | "retain-on-failure";
@@ -179,6 +180,9 @@ export type EngineRunEnvelope = {
   headless: boolean;
   max_repair_attempts: number;
   run_timeout_seconds: number;
+  web_engine?: {
+    active: EngineWebEngineProvider;
+  } | null;
   manual_spec: EngineManualSpec;
   attached_script?: EngineAttachedScript | null;
   steps: EngineRunStep[];
@@ -288,6 +292,12 @@ export type EngineCallbackPayload = {
 export type EngineQueueRuntimeState = {
   captured_values?: Record<string, string>;
   logs?: QairaExecutionLogsPayload;
+  deterministic_attempted?: boolean;
+  healing_attempted?: boolean;
+  healing_succeeded?: boolean;
+  final_summary?: string | null;
+  artifact_bundle?: EngineArtifactBundle;
+  patch_proposals?: EnginePatchProposal[];
 };
 
 export type EngineQueuedJob = {

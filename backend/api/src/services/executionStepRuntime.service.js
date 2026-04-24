@@ -105,6 +105,10 @@ exports.deriveCaseStatusFromStepStatuses = (stepIds, stepStatuses = {}) => {
     return Object.keys(stepStatuses).length ? "running" : "blocked";
   }
 
+  if (stepIds.some((id) => stepStatuses[id] === "blocked")) {
+    return "blocked";
+  }
+
   return "passed";
 };
 

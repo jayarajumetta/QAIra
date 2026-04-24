@@ -86,6 +86,36 @@ export async function executeQueuedApiStep(jobId: string, stepId: string) {
   });
 }
 
+export async function reportQueuedStep(
+  jobId: string,
+  stepId: string,
+  payload: {
+    status: "passed" | "failed" | "blocked";
+    note?: string;
+    evidence?: {
+      dataUrl: string;
+      fileName?: string;
+      mimeType?: string;
+    } | null;
+    api_detail?: Record<string, unknown> | null;
+    captures?: Record<string, string>;
+    recovery_attempted?: boolean;
+    recovery_succeeded?: boolean;
+  }
+) {
+  return request<{
+    job_id: string;
+    step_id: string;
+    status: "passed" | "failed" | "blocked";
+    case_status: "running" | "passed" | "failed" | "blocked";
+    execution_result_id?: string | null;
+    captures?: Record<string, string>;
+  }>(`/testengine/internal/jobs/${jobId}/steps/${stepId}/report`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function completeQueuedJob(jobId: string, status?: "passed" | "failed" | "blocked", error?: string) {
   return request<{ job_id: string; status: string }>(`/testengine/internal/jobs/${jobId}/complete`, {
     method: "POST",
@@ -93,6 +123,25 @@ export async function completeQueuedJob(jobId: string, status?: "passed" | "fail
       status,
       error
     })
+  });
+}
+
+export async function completeQueuedJobWithMetadata(
+  jobId: string,
+  payload: {
+    status?: "passed" | "failed" | "blocked";
+    error?: string;
+    summary?: string;
+    deterministic_attempted?: boolean;
+    healing_attempted?: boolean;
+    healing_succeeded?: boolean;
+    artifact_bundle?: Record<string, unknown> | null;
+    patch_proposals?: Array<Record<string, unknown>>;
+  }
+) {
+  return request<{ job_id: string; status: string }>(`/testengine/internal/jobs/${jobId}/complete`, {
+    method: "POST",
+    body: JSON.stringify(payload)
   });
 }
 

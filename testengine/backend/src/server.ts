@@ -15,8 +15,10 @@ const app = Fastify({
 app.get("/health", async () => ({
   ok: true,
   service: process.env.ENGINE_NAME || "QAira Test Engine",
-  runner: "playwright",
-  ui: "qaira"
+  runner: "hybrid",
+  ui: "qaira",
+  execution_scope: "api+web",
+  supported_web_engines: ["playwright", "selenium"]
 }));
 
 app.get("/api/v1/capabilities", async () => buildCapabilities());
@@ -86,7 +88,7 @@ app.post("/api/v1/runs/:id/retry", async (request, reply) => {
     state: "running",
     healing_attempted: false,
     healing_succeeded: false,
-    summary: "Retry requested. Deterministic Playwright execution will run before any healing attempt.",
+    summary: "Retry requested. Deterministic engine execution will run before any healing attempt.",
     updated_at: new Date().toISOString()
   }, envelope);
 

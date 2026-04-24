@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AddIcon, GithubIcon, GoogleDriveIcon } from "../components/AppIcons";
+import { AppTypeDropdown, AppTypeInlineValue } from "../components/AppTypeDropdown";
 import { api } from "../lib/api";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
 import { DisplayIdBadge } from "../components/DisplayIdBadge";
@@ -26,7 +27,7 @@ import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 import { useAuth } from "../auth/AuthContext";
 import { formatAuditTimestamp } from "../lib/auditDisplay";
-import type { AppType, WorkspaceTransaction } from "../types";
+import type { AppType, ExecutionResult, WorkspaceTransaction } from "../types";
 
 type ProjectSection = "members" | "appTypes";
 
@@ -53,6 +54,12 @@ type ProjectRequirementCoverage = {
 type ProjectAutomationCoverage = {
   totalCases: number;
   automatedCases: number;
+  coveragePercent: number;
+};
+
+type ProjectPassCoverage = {
+  totalCases: number;
+  passedCases: number;
   coveragePercent: number;
 };
 
@@ -85,6 +92,12 @@ const emptyAutomationCoverage: ProjectAutomationCoverage = {
   coveragePercent: 0
 };
 
+const emptyPassCoverage: ProjectPassCoverage = {
+  totalCases: 0,
+  passedCases: 0,
+  coveragePercent: 0
+};
+
 const getMetricTone = (covered: number, total: number) => {
   if (!total) {
     return "neutral" as const;
@@ -104,16 +117,18 @@ const getMetricTone = (covered: number, total: number) => {
 function ProjectProgressBar({
   label,
   value,
-  tone
+  tone,
+  detail
 }: {
   label: string;
   value: number;
   tone: "info" | "success" | "danger" | "neutral";
+  detail?: string;
 }) {
   const safeValue = Math.max(0, Math.min(100, Math.round(value)));
 
   return (
-    <div className="project-progress-meter" aria-label={`${label} ${safeValue}%`}>
+    <div className="project-progress-meter" aria-label={`${label} ${safeValue}%`} title={detail}>
       <div className="project-progress-meter-header">
         <span>{label}</span>
         <strong>{safeValue}%</strong>
@@ -128,7 +143,7 @@ export function ProjectsPage() {
   const { session } = useAuth();
   const isAdmin = session?.user.role === "admin";
   const domainMetadataQuery = useDomainMetadata();
-  const { projects, users, roles, projectMembers, appTypes, requirements, testCases } = useWorkspaceData();
+  const { projects, users, roles, projectMembers, appTypes, requirements, testCases, executionResults } = useWorkspaceData();
   const [selectedProjectId, setSelectedProjectId] = useCurrentProject();
   const [focusedProjectId, setFocusedProjectId] = useState("");
   const [section, setSection] = useState<ProjectSection>("members");
@@ -140,7 +155,18 @@ export function ProjectsPage() {
   const [projectMemberFilter, setProjectMemberFilter] = useState("all");
   const defaultAppTypeValue = domainMetadataQuery.data?.app_types.default_type || "web";
   const appTypeTypeOptions = domainMetadataQuery.data?.app_types.types || [];
+  const appTypeDropdownOptions = useMemo(
+    () =>
+      appTypeTypeOptions.map((option) => ({
+        value: option.value,
+        label: option.label,
+        type: option.value,
+        description: option.description
+      })),
+    [appTypeTypeOptions]
+  );
   const [projectDraft, setProjectDraft] = useState<ProjectCreateDraft>(() => createInitialProjectDraft(defaultAppTypeValue));
+  const [quickAddAppTypeType, setQuickAddAppTypeType] = useState(defaultAppTypeValue);
   const integrationsQuery = useQuery({
     queryKey: ["integrations"],
     queryFn: () => api.integrations.list(),
@@ -162,7 +188,23 @@ export function ProjectsPage() {
     projectMembers.isPending ||
     appTypes.isPending ||
     requirements.isPending ||
-    testCases.isPending;
+    testCases.isPending ||
+    executionResults.isPending;
+
+  useEffect(() => {
+    if (!appTypeDropdownOptions.length) {
+      if (!quickAddAppTypeType) {
+        setQuickAddAppTypeType(defaultAppTypeValue);
+      }
+      return;
+    }
+
+    if (!appTypeDropdownOptions.some((option) => option.value === quickAddAppTypeType)) {
+      const fallbackValue =
+        appTypeDropdownOptions.find((option) => option.value === defaultAppTypeValue)?.value || appTypeDropdownOptions[0].value;
+      setQuickAddAppTypeType(fallbackValue);
+    }
+  }, [appTypeDropdownOptions, defaultAppTypeValue, quickAddAppTypeType]);
 
   useEffect(() => {
     if (projects.isPending) {
@@ -292,6 +334,22 @@ export function ProjectsPage() {
     return counts;
   }, [projectIdByAppTypeId, testCases.data]);
 
+  const latestExecutionResultByCaseId = useMemo(() => {
+    const resultsByCaseId: Record<string, ExecutionResult> = {};
+
+    (executionResults.data || []).forEach((result) => {
+      const current = resultsByCaseId[result.test_case_id];
+      const currentTime = current?.created_at ? new Date(current.created_at).getTime() || 0 : 0;
+      const nextTime = result.created_at ? new Date(result.created_at).getTime() || 0 : 0;
+
+      if (!current || nextTime >= currentTime) {
+        resultsByCaseId[result.test_case_id] = result;
+      }
+    });
+
+    return resultsByCaseId;
+  }, [executionResults.data]);
+
   const requirementCoverageByProjectId = useMemo(() => {
     const requirementProjectById = new Map((requirements.data || []).map((requirement) => [requirement.id, requirement.project_id]));
     const coveredRequirementIdsByProjectId = new Map<string, Set<string>>();
@@ -343,25 +401,71 @@ export function ProjectsPage() {
     const coverageByProjectId: Record<string, ProjectAutomationCoverage> = {};
 
     projectItems.forEach((project) => {
-      const projectTestCases = (testCases.data || []).filter((testCase) => {
-        if (!testCase.app_type_id) {
-          return false;
-        }
-
-        return projectIdByAppTypeId.get(testCase.app_type_id) === project.id;
-      });
-      const totalCases = projectTestCases.length;
-      const automatedCases = projectTestCases.filter((testCase) => testCase.automated === "yes").length;
-
       coverageByProjectId[project.id] = {
-        totalCases,
-        automatedCases,
-        coveragePercent: totalCases ? Math.round((automatedCases / totalCases) * 100) : 0
+        totalCases: 0,
+        automatedCases: 0,
+        coveragePercent: 0
       };
+    });
+
+    (testCases.data || []).forEach((testCase) => {
+      if (!testCase.app_type_id) {
+        return;
+      }
+
+      const owningProjectId = projectIdByAppTypeId.get(testCase.app_type_id);
+      if (!owningProjectId || !coverageByProjectId[owningProjectId]) {
+        return;
+      }
+
+      coverageByProjectId[owningProjectId].totalCases += 1;
+
+      if (testCase.automated === "yes") {
+        coverageByProjectId[owningProjectId].automatedCases += 1;
+      }
+    });
+
+    Object.values(coverageByProjectId).forEach((metric) => {
+      metric.coveragePercent = metric.totalCases ? Math.round((metric.automatedCases / metric.totalCases) * 100) : 0;
     });
 
     return coverageByProjectId;
   }, [projectIdByAppTypeId, projectItems, testCases.data]);
+
+  const passCoverageByProjectId = useMemo(() => {
+    const coverageByProjectId: Record<string, ProjectPassCoverage> = {};
+
+    projectItems.forEach((project) => {
+      coverageByProjectId[project.id] = {
+        totalCases: 0,
+        passedCases: 0,
+        coveragePercent: 0
+      };
+    });
+
+    (testCases.data || []).forEach((testCase) => {
+      if (!testCase.app_type_id) {
+        return;
+      }
+
+      const owningProjectId = projectIdByAppTypeId.get(testCase.app_type_id);
+      if (!owningProjectId || !coverageByProjectId[owningProjectId]) {
+        return;
+      }
+
+      coverageByProjectId[owningProjectId].totalCases += 1;
+
+      if (latestExecutionResultByCaseId[testCase.id]?.status === "passed") {
+        coverageByProjectId[owningProjectId].passedCases += 1;
+      }
+    });
+
+    Object.values(coverageByProjectId).forEach((metric) => {
+      metric.coveragePercent = metric.totalCases ? Math.round((metric.passedCases / metric.totalCases) * 100) : 0;
+    });
+
+    return coverageByProjectId;
+  }, [latestExecutionResultByCaseId, projectIdByAppTypeId, projectItems, testCases.data]);
 
   const filteredProjectItems = useMemo(() => {
     const normalizedSearch = projectSearch.trim().toLowerCase();
@@ -470,6 +574,7 @@ export function ProjectsPage() {
   const selectedProjectRequirementCount = projectId ? requirementCountByProjectId[projectId] || 0 : 0;
   const selectedProjectTestCaseCount = projectId ? testCaseCountByProjectId[projectId] || 0 : 0;
   const selectedProjectAppTypeCount = projectId ? appTypeCountByProjectId[projectId] || 0 : 0;
+  const selectedProjectPassCoverage = projectId ? passCoverageByProjectId[projectId] || emptyPassCoverage : emptyPassCoverage;
   const focusedProjectSyncIntegrations = useMemo(
     () =>
       (integrationsQuery.data || []).filter(
@@ -828,6 +933,16 @@ export function ProjectsPage() {
                   const testCaseCount = testCaseCountByProjectId[project.id] || 0;
                   const coverage = requirementCoverageByProjectId[project.id] || emptyRequirementCoverage;
                   const automationCoverage = automationCoverageByProjectId[project.id] || emptyAutomationCoverage;
+                  const passCoverage = passCoverageByProjectId[project.id] || emptyPassCoverage;
+                  const requirementCoverageDetail = coverage.totalRequirements
+                    ? `${coverage.coveredRequirements}/${coverage.totalRequirements} requirements covered`
+                    : "No requirements available to measure coverage";
+                  const automationCoverageDetail = automationCoverage.totalCases
+                    ? `${automationCoverage.automatedCases}/${automationCoverage.totalCases} cases automated`
+                    : "No test cases available to measure automation coverage";
+                  const passCoverageDetail = passCoverage.totalCases
+                    ? `${passCoverage.passedCases}/${passCoverage.totalCases} cases are currently passing`
+                    : "No test cases available to measure pass rate";
 
                   return (
                     <button
@@ -854,14 +969,22 @@ export function ProjectsPage() {
                         </div>
                         <div className="project-card-progress-stack" aria-label={`${project.name} coverage summary`}>
                           <ProjectProgressBar
+                            detail={requirementCoverageDetail}
                             label="Requirement coverage"
                             tone={getMetricTone(coverage.coveredRequirements, coverage.totalRequirements)}
                             value={coverage.coveragePercent}
                           />
                           <ProjectProgressBar
+                            detail={automationCoverageDetail}
                             label="Automation coverage"
                             tone={getMetricTone(automationCoverage.automatedCases, automationCoverage.totalCases)}
                             value={automationCoverage.coveragePercent}
+                          />
+                          <ProjectProgressBar
+                            detail={passCoverageDetail}
+                            label="Pass rate"
+                            tone={getMetricTone(passCoverage.passedCases, passCoverage.totalCases)}
+                            value={passCoverage.coveragePercent}
                           />
                         </div>
                         <div className="tile-card-facts" aria-label={`${project.name} facts`}>
@@ -917,6 +1040,14 @@ export function ProjectsPage() {
                     <div className="mini-card">
                       <strong>{selectedProjectTestCaseCount}</strong>
                       <span>Test cases</span>
+                    </div>
+                    <div className="mini-card">
+                      <strong>{`${selectedProjectPassCoverage.coveragePercent}%`}</strong>
+                      <span>
+                        {selectedProjectPassCoverage.totalCases
+                          ? `Pass rate · ${selectedProjectPassCoverage.passedCases}/${selectedProjectPassCoverage.totalCases} passed`
+                          : "Pass rate"}
+                      </span>
                     </div>
                   </div>
                   <div className="action-row">
@@ -1052,18 +1183,22 @@ export function ProjectsPage() {
                   createAppType.mutate({
                     project_id: projectId,
                     name: String(formData.get("name") || ""),
-                    type: String(formData.get("type") || defaultAppTypeValue) as AppType["type"],
+                    type: String(formData.get("type") || quickAddAppTypeType || defaultAppTypeValue) as AppType["type"],
                     is_unified: String(formData.get("is_unified") || "") === "on"
                   });
                   event.currentTarget.reset();
+                  setQuickAddAppTypeType(defaultAppTypeValue);
                 }}
               >
                 <input name="name" required placeholder="Web app" />
-                <select name="type" defaultValue={defaultAppTypeValue}>
-                  {appTypeTypeOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
+                <AppTypeDropdown
+                  ariaLabel="Select an app type platform"
+                  name="type"
+                  onChange={setQuickAddAppTypeType}
+                  options={appTypeDropdownOptions}
+                  placeholder="Select platform type"
+                  value={quickAddAppTypeType}
+                />
                 <label className="checkbox-field">
                   <input name="is_unified" type="checkbox" />
                   Unified
@@ -1076,7 +1211,9 @@ export function ProjectsPage() {
               <div className="record-grid">
                 {scopedAppTypes.map((item) => (
                   <article className="mini-card" key={item.id}>
-                    <strong>{item.name}</strong>
+                    <strong className="project-app-type-card-title">
+                      <AppTypeInlineValue isUnified={item.is_unified} label={item.name} type={item.type} />
+                    </strong>
                     <span>{item.type}{item.is_unified ? " · unified" : ""}</span>
                     <button
                       className="ghost-button danger"
@@ -1185,15 +1322,13 @@ export function ProjectsPage() {
                             />
                           </FormField>
                           <FormField label="Platform type">
-                            <select
-                              onChange={(event) => updateProjectAppType(appType.id, { type: event.target.value as AppType["type"] })}
-                              required
+                            <AppTypeDropdown
+                              ariaLabel={`Select platform type for app type ${index + 1}`}
+                              onChange={(value) => updateProjectAppType(appType.id, { type: value as AppType["type"] })}
+                              options={appTypeDropdownOptions}
+                              placeholder="Select platform type"
                               value={appType.type}
-                            >
-                              {appTypeTypeOptions.map((option) => (
-                                <option key={option.value} value={option.value}>{option.label}</option>
-                              ))}
-                            </select>
+                            />
                           </FormField>
                           <label className="checkbox-field project-app-type-checkbox">
                             <input

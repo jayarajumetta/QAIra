@@ -12,6 +12,7 @@ import type {
   EngineStepOutcomeStatus
 } from "../contracts/qaira.js";
 import { saveRun, updateRun } from "./runStore.js";
+import { createWebRunSession } from "./webEngine.js";
 
 type Logger = {
   info: (message: unknown, ...args: unknown[]) => void;
@@ -42,6 +43,17 @@ type ApiStepExecutionResult = {
     captures: Record<string, string>;
     assertions: Array<{ kind: string; passed: boolean; target?: string | null; expected?: string | null; actual?: string | null }>;
   };
+  captures: Record<string, string>;
+  recovery_attempted: boolean;
+  recovery_succeeded: boolean;
+};
+
+type ExecutedEngineStepResult = {
+  outcome: EngineStepOutcome;
+  summary?: ApiStepExecutionResult["summary"];
+  captures: Record<string, string>;
+  recovery_attempted: boolean;
+  recovery_succeeded: boolean;
 };
 
 type EngineCaseLogsPayload = {
@@ -480,6 +492,12 @@ const buildLogsPayload = (
     }
   );
 
+const syncCapturedValues = (context: ExecutionContext | { values: Record<string, string> }, captures: Record<string, string>) => {
+  Object.entries(captures || {}).forEach(([key, value]) => {
+    registerContextValue(context, key, value);
+  });
+};
+
 const summarizeAssertionProgress = (
   assertions: Array<{ passed: boolean }>
 ) => `${assertions.filter((assertion) => assertion.passed).length}/${assertions.length} assertions passed`;
@@ -682,7 +700,41 @@ const executeApiStep = async ({
       },
       captures,
       assertions
-    }
+    },
+    captures,
+    recovery_attempted: false,
+    recovery_succeeded: false
+  };
+};
+
+const executeWebStep = async ({
+  step,
+  webRunSession
+}: {
+  step: EngineRunEnvelope["steps"][number];
+  webRunSession: ReturnType<typeof createWebRunSession>;
+}): Promise<ExecutedEngineStepResult> => {
+  const result = await webRunSession.runStep(step);
+
+  return {
+    outcome: {
+      step_id: step.id,
+      status: result.status,
+      started_at: null,
+      ended_at: nowIso(),
+      duration_ms: null,
+      note: result.note,
+      evidence_image: result.evidence
+        ? {
+            data_url: result.evidence.dataUrl,
+            file_name: result.evidence.fileName || undefined,
+            mime_type: result.evidence.mimeType || undefined
+          }
+        : null
+    },
+    captures: result.captures,
+    recovery_attempted: result.recovery_attempted,
+    recovery_succeeded: result.recovery_succeeded
   };
 };
 
@@ -707,7 +759,9 @@ const buildFinalCallback = ({
   stepSummaries,
   status,
   durationMs,
-  errorMessage
+  errorMessage,
+  healingAttempted,
+  healingSucceeded
 }: {
   envelope: EngineRunEnvelope;
   run: EngineRunRecord;
@@ -716,6 +770,8 @@ const buildFinalCallback = ({
   status: "passed" | "failed" | "blocked";
   durationMs: number;
   errorMessage?: string | null;
+  healingAttempted?: boolean;
+  healingSucceeded?: boolean;
 }): EngineCallbackPayload => ({
   event: status === "passed" ? "run.completed" : status === "failed" ? "run.failed" : "run.incident",
   engine_run_id: run.id,
@@ -728,8 +784,8 @@ const buildFinalCallback = ({
       ? `${envelope.qaira_test_case_title} completed successfully.`
       : errorMessage || `${envelope.qaira_test_case_title} failed during automated execution.`,
   deterministic_attempted: true,
-  healing_attempted: false,
-  healing_succeeded: false,
+  healing_attempted: Boolean(healingAttempted),
+  healing_succeeded: Boolean(healingSucceeded),
   step_outcomes: stepOutcomes,
   case_result: {
     status,
@@ -749,7 +805,9 @@ const buildProgressCallback = ({
   stepSummaries,
   latestOutcome,
   durationMs,
-  totalSteps
+  totalSteps,
+  healingAttempted,
+  healingSucceeded
 }: {
   envelope: EngineRunEnvelope;
   run: EngineRunRecord;
@@ -758,6 +816,8 @@ const buildProgressCallback = ({
   latestOutcome: EngineStepOutcome;
   durationMs: number;
   totalSteps: number;
+  healingAttempted?: boolean;
+  healingSucceeded?: boolean;
 }): EngineCallbackPayload => ({
   event: "run.step.completed",
   engine_run_id: run.id,
@@ -767,8 +827,8 @@ const buildProgressCallback = ({
   state: "running",
   summary: `${envelope.qaira_test_case_title}: completed step ${stepOutcomes.length} of ${totalSteps}.`,
   deterministic_attempted: true,
-  healing_attempted: false,
-  healing_succeeded: false,
+  healing_attempted: Boolean(healingAttempted),
+  healing_succeeded: Boolean(healingSucceeded),
   step_outcomes: [latestOutcome],
   case_result: {
     status: stepOutcomes.length === totalSteps && stepOutcomes.every((outcome) => outcome.status === "passed") ? "passed" : "blocked",
@@ -816,19 +876,26 @@ const executeUnsupportedRun = async ({
 };
 
 async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, logger: Logger) {
-  const hasUnsupportedStep = envelope.steps.some((step) => step.step_type !== "api");
+  const hasUnsupportedStep = envelope.steps.some((step) => step.step_type !== "api" && step.step_type !== "web");
 
   if (hasUnsupportedStep) {
     await executeUnsupportedRun({
       envelope,
       run,
       logger,
-      reason: "Local Test Engine currently executes automated API steps directly. Web Playwright execution is not implemented in this runtime yet."
+      reason: "Local Test Engine received an unsupported step type."
     });
     return;
   }
 
-  const running = markRunState(run.id, "running", "Executing automated API steps in order.");
+  const hasWebSteps = envelope.steps.some((step) => step.step_type === "web");
+  const running = markRunState(
+    run.id,
+    "running",
+    hasWebSteps
+      ? "Executing automated API and web steps in order."
+      : "Executing automated API steps in order."
+  );
 
   if (!running) {
     return;
@@ -839,20 +906,49 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
   const stepOutcomes: EngineStepOutcome[] = [];
   const stepSummaries: ApiStepExecutionResult["summary"][] = [];
   const orderedSteps = envelope.steps.slice().sort((left, right) => left.order - right.order);
+  const webRunSession = hasWebSteps ? createWebRunSession(envelope, context.values) : null;
+  let healingAttempted = false;
+  let healingSucceeded = false;
 
   try {
+    if (webRunSession) {
+      await webRunSession.start();
+    }
+
     for (const step of orderedSteps) {
-      const result = await executeApiStep({
-        envelope,
-        run: running,
-        step,
-        context
-      });
+      const result =
+        step.step_type === "api"
+          ? await executeApiStep({
+              envelope,
+              run: running,
+              step,
+              context
+            })
+          : webRunSession
+            ? await executeWebStep({
+                step,
+                webRunSession
+              })
+            : null;
+
+      if (!result) {
+        throw new Error(`Unable to execute step ${step.order}.`);
+      }
+
+      syncCapturedValues(context, result.captures);
+
+      if (webRunSession && step.step_type === "api") {
+        syncCapturedValues(webRunSession.context, result.captures);
+      }
 
       stepOutcomes.push(result.outcome);
-      stepSummaries.push(result.summary);
+      if (result.summary) {
+        stepSummaries.push(result.summary);
+      }
+      healingAttempted = healingAttempted || result.recovery_attempted;
+      healingSucceeded = healingSucceeded || result.recovery_succeeded;
 
-      const progressSummary = `${envelope.qaira_test_case_title}: ${stepOutcomes.length}/${orderedSteps.length} API step${orderedSteps.length === 1 ? "" : "s"} recorded.`;
+      const progressSummary = `${envelope.qaira_test_case_title}: completed step ${stepOutcomes.length} of ${orderedSteps.length}.`;
       const progressRun = markRunState(run.id, "running", progressSummary);
 
       if (progressRun) {
@@ -878,11 +974,13 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
                 stepSummaries,
                 latestOutcome: result.outcome,
                 durationMs: Date.now() - startedAt,
-                totalSteps: orderedSteps.length
+                totalSteps: orderedSteps.length,
+                healingAttempted,
+                healingSucceeded
               })
             );
           } catch (error) {
-            logger.error({ error, engineRunId: run.id, stepId: result.outcome.step_id }, "Unable to emit API step progress callback");
+            logger.error({ error, engineRunId: run.id, stepId: result.outcome.step_id }, "Unable to emit engine step progress callback");
           }
         }
       }
@@ -918,7 +1016,9 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
             stepSummaries,
             status: "failed",
             durationMs: Date.now() - startedAt,
-            errorMessage: result.outcome.note || `${envelope.qaira_test_case_title} failed on step ${step.order}.`
+            errorMessage: result.outcome.note || `${envelope.qaira_test_case_title} failed on step ${step.order}.`,
+            healingAttempted,
+            healingSucceeded
           })
         );
 
@@ -951,7 +1051,9 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
         stepOutcomes,
         stepSummaries,
         status: "passed",
-        durationMs: Date.now() - startedAt
+        durationMs: Date.now() - startedAt,
+        healingAttempted,
+        healingSucceeded
       })
     );
   } catch (error) {
@@ -986,11 +1088,21 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
           stepSummaries,
           status: "failed",
           durationMs: Date.now() - startedAt,
-          errorMessage: failedRun.summary
+          errorMessage: failedRun.summary,
+          healingAttempted,
+          healingSucceeded
         })
       );
     } catch (callbackError) {
       logger.error({ error: callbackError, engineRunId: run.id }, "Unable to emit QAira callback after execution failure");
+    }
+  } finally {
+    if (webRunSession) {
+      try {
+        await webRunSession.stop();
+      } catch (stopError) {
+        logger.error({ error: stopError, engineRunId: run.id }, "Unable to stop web automation session cleanly");
+      }
     }
   }
 }

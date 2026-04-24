@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { ActivityIcon, ArchiveIcon, CalendarIcon, GithubIcon, GoogleDriveIcon, ImportIcon, OpenIcon, PlayIcon, SparkIcon, TrashIcon, UsersIcon } from "../components/AppIcons";
+import { AppTypeDropdown } from "../components/AppTypeDropdown";
 import { CatalogActionMenu } from "../components/CatalogActionMenu";
 import { CatalogViewToggle } from "../components/CatalogViewToggle";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
@@ -182,6 +183,8 @@ const DEFAULT_RUN_LIBRARY_SEARCH_BY_VIEW: Record<TestRunsView, string> = {
   "scheduled-runs": "",
   "batch-process": ""
 };
+
+const EXECUTION_POLL_INTERVAL_MS = 20_000;
 
 const WORKSPACE_TRANSACTION_METADATA_LABELS: Record<string, string> = {
   current_phase: "Current phase",
@@ -866,6 +869,7 @@ export function ExecutionsPage() {
   const [isSuiteTreeMinimized, setIsSuiteTreeMinimized] = useState(false);
   const [isExecutionHealthExpanded, setIsExecutionHealthExpanded] = useState(true);
   const [isExecutionSupportExpanded, setIsExecutionSupportExpanded] = useState(true);
+  const [isSavedExecutionDataExpanded, setIsSavedExecutionDataExpanded] = useState(true);
   const [executionStatusFilter, setExecutionStatusFilter] = useState<ExecutionStatus | "all">("all");
   const [executionIssueFilter, setExecutionIssueFilter] = useState<ExecutionIssueFilter>("all");
   const [executionEvidenceFilter, setExecutionEvidenceFilter] = useState<ExecutionEvidenceFilter>("all");
@@ -908,7 +912,7 @@ export function ExecutionsPage() {
         const status = normalizeExecutionStatus(execution.status);
         return status === "queued" || status === "running";
       })
-        ? 2500
+        ? EXECUTION_POLL_INTERVAL_MS
         : false
   });
   const executionSchedulesQuery = useQuery({
@@ -925,7 +929,7 @@ export function ExecutionsPage() {
     enabled: Boolean(selectedExecutionId),
     refetchInterval: (query) => {
       const status = normalizeExecutionStatus((query.state.data as Execution | undefined)?.status);
-      return status === "queued" || status === "running" ? 2000 : false;
+      return status === "queued" || status === "running" ? EXECUTION_POLL_INTERVAL_MS : false;
     }
   });
   const appTypesQuery = useQuery({
@@ -954,7 +958,7 @@ export function ExecutionsPage() {
     enabled: Boolean(selectedExecutionId),
     refetchInterval: () => {
       const status = normalizeExecutionStatus(selectedExecutionQuery.data?.status);
-      return status === "queued" || status === "running" ? 2000 : false;
+      return status === "queued" || status === "running" ? EXECUTION_POLL_INTERVAL_MS : false;
     }
   });
   const allExecutionResultsQuery = useQuery({
@@ -965,7 +969,7 @@ export function ExecutionsPage() {
         const status = normalizeExecutionStatus(execution.status);
         return status === "queued" || status === "running";
       })
-        ? 2000
+        ? EXECUTION_POLL_INTERVAL_MS
         : false
   });
   const integrationsQuery = useQuery({
@@ -983,7 +987,7 @@ export function ExecutionsPage() {
     enabled: Boolean(projectId && session),
     refetchInterval: (query) =>
       Array.isArray(query.state.data) && query.state.data.some((transaction) => ["queued", "running"].includes(transaction.status))
-        ? 2500
+        ? EXECUTION_POLL_INTERVAL_MS
         : false
   });
   const selectedWorkspaceTransactionEventsQuery = useQuery({
@@ -992,7 +996,7 @@ export function ExecutionsPage() {
     enabled: Boolean(selectedOperationId && session),
     refetchInterval: () => {
       const selectedTransaction = (workspaceTransactionsQuery.data || []).find((transaction) => transaction.id === selectedOperationId);
-      return selectedTransaction && ["queued", "running"].includes(selectedTransaction.status) ? 2000 : false;
+      return selectedTransaction && ["queued", "running"].includes(selectedTransaction.status) ? EXECUTION_POLL_INTERVAL_MS : false;
     }
   });
 
@@ -1033,7 +1037,28 @@ export function ExecutionsPage() {
   const projects = projectsQuery.data || [];
   const users = usersQuery.data || [];
   const projectMembers = projectMembersQuery.data || [];
-  const executions = executionsQuery.data || [];
+  const executions = useMemo(
+    () =>
+      [...(executionsQuery.data || [])].sort((left, right) => {
+        const rightTimestamp =
+          toTimestamp(right.created_at) ??
+          toTimestamp(right.started_at) ??
+          toTimestamp(right.updated_at) ??
+          0;
+        const leftTimestamp =
+          toTimestamp(left.created_at) ??
+          toTimestamp(left.started_at) ??
+          toTimestamp(left.updated_at) ??
+          0;
+
+        if (rightTimestamp !== leftTimestamp) {
+          return rightTimestamp - leftTimestamp;
+        }
+
+        return String(right.id).localeCompare(String(left.id));
+      }),
+    [executionsQuery.data]
+  );
   const executionSchedules = executionSchedulesQuery.data || [];
   const appTypes = appTypesQuery.data || [];
   const requirements = requirementsQuery.data || [];
@@ -1436,7 +1461,13 @@ export function ExecutionsPage() {
     const requestedExecutionId = searchParams.get("execution");
 
     if (requestedExecutionId) {
-      const requestedExecution = executions.find((execution) => execution.id === requestedExecutionId);
+      const requestedExecution =
+        executions.find((execution) => execution.id === requestedExecutionId)
+        || (selectedExecutionQuery.data?.id === requestedExecutionId ? selectedExecutionQuery.data : null);
+
+      if (!isExecutionRunsView(testRunsView)) {
+        setTestRunsView(requestedExecution ? resolveExecutionRunBucket(requestedExecution) : "suite-runs");
+      }
 
       if (requestedExecution) {
         const requestedView = resolveExecutionRunBucket(requestedExecution);
@@ -1454,16 +1485,20 @@ export function ExecutionsPage() {
     if (selectedExecutionId && !executions.some((execution) => execution.id === selectedExecutionId)) {
       setSelectedExecutionId("");
     }
-  }, [executions, searchParams, selectedExecutionId, testRunsView]);
+  }, [executions, searchParams, selectedExecutionId, selectedExecutionQuery.data, testRunsView]);
 
   useEffect(() => {
     if (!isExecutionRunsView(testRunsView)) {
+      if (searchParams.get("execution")) {
+        return;
+      }
+
       setSelectedExecutionId("");
       setFocusedSuiteId("");
       setSelectedTestCaseId("");
       syncExecutionSearchParams("", null);
     }
-  }, [testRunsView]);
+  }, [searchParams, testRunsView]);
 
   const selectedExecution = selectedExecutionQuery.data || executions.find((execution) => execution.id === selectedExecutionId) || null;
   const selectedSchedule = executionSchedules.find((schedule) => schedule.id === selectedScheduleId) || null;
@@ -1546,6 +1581,10 @@ export function ExecutionsPage() {
 
   useEffect(() => {
     setExpandedExecutionStepGroupIds([]);
+  }, [selectedExecutionId, selectedTestCaseId]);
+
+  useEffect(() => {
+    setIsSavedExecutionDataExpanded(true);
   }, [selectedExecutionId, selectedTestCaseId]);
 
   const executionSuites = useMemo<ExecutionSuiteNode[]>(
@@ -2168,7 +2207,12 @@ export function ExecutionsPage() {
       .sort((left, right) => left.step_order - right.step_order)
       .map((step) => step.id);
     const aggregateStatus = deriveCaseStatusFromSteps(caseStepIds, mergedStatuses);
-    const logs = stringifyExecutionLogs({ stepStatuses: mergedStatuses, stepNotes: mergedNotes, stepEvidence: mergedEvidence });
+    const logs = stringifyExecutionLogs({
+      stepStatuses: mergedStatuses,
+      stepNotes: mergedNotes,
+      stepEvidence: mergedEvidence,
+      stepApiDetails: prev.stepApiDetails || {}
+    });
     const durationMs = resolvePersistedCaseDurationMs(testCaseId, existing);
 
     if (existing) {
@@ -2650,6 +2694,13 @@ export function ExecutionsPage() {
       setSelectedOperationId("");
     }
 
+    if (!isExecutionRunsView(nextValue)) {
+      setSelectedExecutionId("");
+      setFocusedSuiteId("");
+      setSelectedTestCaseId("");
+      syncExecutionSearchParams("", null);
+    }
+
     setTestRunsView(nextValue);
   };
 
@@ -2816,6 +2867,11 @@ export function ExecutionsPage() {
       key: "status",
       label: "Status",
       render: (execution) => executionStatusLabel(execution.status)
+    },
+    {
+      key: "created",
+      label: "Created",
+      render: (execution) => formatExecutionTimestamp(execution.created_at, "Not recorded")
     },
     {
       key: "assignee",
@@ -3112,7 +3168,8 @@ export function ExecutionsPage() {
     const logs = stringifyExecutionLogs({
       stepStatuses: prev.stepStatuses || {},
       stepNotes: prev.stepNotes || {},
-      stepEvidence: prev.stepEvidence || {}
+      stepEvidence: prev.stepEvidence || {},
+      stepApiDetails: prev.stepApiDetails || {}
     });
     const durationMs = resolvePersistedCaseDurationMs(testCaseId, existing);
 
@@ -3831,37 +3888,43 @@ export function ExecutionsPage() {
 
                         {!hasExecutionLevelTestData ? (
                           <div className="resource-table-shell execution-context-table-shell">
-                            <div className="resource-table-toolbar">
-                              <div>
+                            <button
+                              aria-expanded={isSavedExecutionDataExpanded}
+                              className="execution-saved-data-toggle"
+                              onClick={() => setIsSavedExecutionDataExpanded((current) => !current)}
+                              type="button"
+                            >
+                              <div className="execution-saved-data-toggle-copy">
                                 <strong>Saved case and suite data</strong>
                                 <span>Using saved @t and @s values because this execution has no attached test data set for @r tokens.</span>
                               </div>
-                              <span className="count-pill">
-                                {selectedExecutionCaseParameterEntries.length} item{selectedExecutionCaseParameterEntries.length === 1 ? "" : "s"}
-                              </span>
-                            </div>
-                            {!selectedExecutionCaseParameterEntries.length ? (
-                              <div className="empty-state compact resource-table-empty">No saved case or suite-scoped data is available for this case.</div>
-                            ) : null}
-                            {selectedExecutionCaseParameterEntries.length ? (
-                              <div className="table-wrap execution-context-table-wrap">
-                                <table className="data-table resource-data-table">
-                                  <thead>
-                                    <tr>
-                                      <th>Key</th>
-                                      <th>Value</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {selectedExecutionCaseParameterEntries.map(([key, value]) => (
-                                      <tr key={key}>
-                                        <td>{key}</td>
-                                        <td>{value || "—"}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
+                              <div className="execution-saved-data-toggle-meta">
+                                <span className="count-pill">
+                                  {selectedExecutionCaseParameterEntries.length} item{selectedExecutionCaseParameterEntries.length === 1 ? "" : "s"}
+                                </span>
+                                <span
+                                  aria-hidden="true"
+                                  className={isSavedExecutionDataExpanded ? "execution-saved-data-toggle-arrow is-expanded" : "execution-saved-data-toggle-arrow"}
+                                >
+                                  <ExecutionAccordionChevronIcon />
+                                </span>
                               </div>
+                            </button>
+                            {isSavedExecutionDataExpanded ? (
+                              !selectedExecutionCaseParameterEntries.length ? (
+                                <div className="empty-state compact resource-table-empty">No saved case or suite-scoped data is available for this case.</div>
+                              ) : (
+                                <div className="execution-saved-data-scroll" role="list" aria-label="Saved case and suite data values">
+                                  <div className="execution-saved-data-grid">
+                                    {selectedExecutionCaseParameterEntries.map(([key, value]) => (
+                                      <article className="execution-saved-data-card" key={key} role="listitem">
+                                        <span>{key}</span>
+                                        <strong title={value || "—"}>{value || "—"}</strong>
+                                      </article>
+                                    ))}
+                                  </div>
+                                </div>
+                              )
                             ) : null}
                           </div>
                         ) : null}
@@ -3998,7 +4061,6 @@ export function ExecutionsPage() {
                                               onInspectApi={() => openExecutionApiDetail(step)}
                                               onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
                                               onPass={() => void handleRecordStep(step.id, "passed")}
-                                              onRunApi={() => void handleRunExecutionApiStep(step)}
                                               onPreviewCode={() => openExecutionStepAutomationPreview(step)}
                                               onUploadEvidence={(file) => void handleUploadStepEvidence(step, file)}
                                               onToggleSelect={(checked) =>
@@ -4036,7 +4098,6 @@ export function ExecutionsPage() {
                                     onInspectApi={() => openExecutionApiDetail(step)}
                                     onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
                                     onPass={() => void handleRecordStep(step.id, "passed")}
-                                    onRunApi={() => void handleRunExecutionApiStep(step)}
                                     onPreviewCode={() => openExecutionStepAutomationPreview(step)}
                                     onUploadEvidence={(file) => void handleUploadStepEvidence(step, file)}
                                     onToggleSelect={(checked) =>
@@ -5035,6 +5096,7 @@ function ExecutionListCard({
   const executionStatus = normalizeExecutionStatus(execution.status);
   const isTestCaseRun = execution.suite_ids.length === 0;
   const issueCount = summary.failed + summary.blocked;
+  const createdLabel = formatExecutionTimestamp(execution.created_at, "Not recorded");
   const durationLabel = formatDuration(
     computeExecutionDurationMs(execution.started_at, execution.ended_at, liveNow),
     DEFAULT_DURATION_LABEL
@@ -5069,6 +5131,7 @@ function ExecutionListCard({
           <div className="tile-card-title-group">
             <strong>{execution.name || "Unnamed run"}</strong>
             <ExecutionAssigneeChip user={execution.assigned_user} />
+            <span className="tile-card-kicker">Created {createdLabel}</span>
           </div>
           <ExecutionStatusIndicator status={executionStatus} />
         </div>
@@ -5792,7 +5855,6 @@ function ExecutionCompactStepRow({
   onToggleSelect,
   onPass,
   onFail,
-  onRunApi,
   onDeleteEvidence,
   onInspectApi,
   onNoteBlur,
@@ -5813,7 +5875,6 @@ function ExecutionCompactStepRow({
   onToggleSelect: (checked: boolean) => void;
   onPass: () => void;
   onFail: () => void;
-  onRunApi: () => void;
   onDeleteEvidence: () => void;
   onInspectApi: () => void;
   onNoteBlur: (value: string) => void;
@@ -5894,18 +5955,6 @@ function ExecutionCompactStepRow({
       </span>
       <span className="execution-step-col-actions" role="cell">
         <div className="execution-step-mark-buttons">
-          {canInspectApi ? (
-            <button
-              aria-label={`Run API step ${step.step_order}`}
-              className="execution-step-action-button execution-step-run"
-              disabled={isLocked || isRunningApi}
-              onClick={onRunApi}
-              title="Run API step through QAira backend"
-              type="button"
-            >
-              <PlayIcon />
-            </button>
-          ) : null}
           <button
             aria-label={`Mark step ${step.step_order} as passed`}
             className="execution-step-action-button execution-step-pass"
@@ -6269,14 +6318,20 @@ function ExecutionCreateModal({
               </FormField>
 
               <FormField label="App type" required>
-                <select disabled={!projectId} value={appTypeId} onChange={(event) => onAppTypeChange(event.target.value)}>
-                  {appTypes.length ? null : <option value="">No app types</option>}
-                  {appTypes.map((appType) => (
-                    <option key={appType.id} value={appType.id}>
-                      {appType.name}
-                    </option>
-                  ))}
-                </select>
+                <AppTypeDropdown
+                  ariaLabel="Select an app type"
+                  disabled={!projectId}
+                  emptyLabel={!projectId ? "Select a project first" : "No app types available"}
+                  onChange={onAppTypeChange}
+                  options={appTypes.map((appType) => ({
+                    value: appType.id,
+                    label: appType.name,
+                    type: appType.type,
+                    isUnified: appType.is_unified
+                  }))}
+                  placeholder="Select app type"
+                  value={appTypeId}
+                />
               </FormField>
             </div>
 

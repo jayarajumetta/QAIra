@@ -16,12 +16,15 @@ tags:
   - name: Projects
   - name: Project Members
   - name: App Types
+  - name: Integrations
   - name: Requirements
   - name: Test Suites
   - name: Test Cases
   - name: Test Steps
   - name: Executions
+  - name: Execution Schedules
   - name: Execution Results
+  - name: Test Engine
 paths:
   /auth/signup:
     post:
@@ -749,12 +752,119 @@ paths:
               schema:
                 $ref: "#/components/schemas/DeletedResponse"
 
+  /integrations:
+    get:
+      tags: [Integrations]
+      summary: List integrations
+      parameters:
+        - $ref: "#/components/parameters/IntegrationTypeQuery"
+        - $ref: "#/components/parameters/IsActiveQuery"
+      responses:
+        "200":
+          description: List of integrations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Integration"
+    post:
+      tags: [Integrations]
+      summary: Create integration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIntegrationRequest"
+      responses:
+        "200":
+          description: Integration created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdResponse"
+  /integrations/test-connection:
+    post:
+      tags: [Integrations]
+      summary: Test a Test Engine integration connection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestIntegrationConnectionRequest"
+      responses:
+        "200":
+          description: Connection capability summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestEngineConnectionResponse"
+  /integrations/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      tags: [Integrations]
+      summary: Get integration by ID
+      responses:
+        "200":
+          description: Integration record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Integration"
+    put:
+      tags: [Integrations]
+      summary: Update integration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateIntegrationRequest"
+      responses:
+        "200":
+          description: Updated integration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Integration"
+    delete:
+      tags: [Integrations]
+      summary: Delete integration
+      responses:
+        "200":
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedResponse"
+
+  /executions/smart-plan-preview:
+    post:
+      tags: [Executions]
+      summary: Preview an AI-assisted smart execution plan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SmartExecutionPreviewRequest"
+      responses:
+        "200":
+          description: Smart execution recommendation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SmartExecutionPreviewResponse"
   /executions:
     get:
       tags: [Executions]
       summary: List executions
       parameters:
         - $ref: "#/components/parameters/ProjectIdQuery"
+        - $ref: "#/components/parameters/AppTypeIdQuery"
         - $ref: "#/components/parameters/ExecutionStatusQuery"
       responses:
         "200":
@@ -794,6 +904,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Execution"
+    put:
+      tags: [Executions]
+      summary: Update execution assignment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateExecutionAssignmentRequest"
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdatedResponse"
     delete:
       tags: [Executions]
       summary: Delete execution
@@ -804,23 +930,73 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DeletedResponse"
+  /executions/{id}/cases/{testCaseId}/assignment:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+      - $ref: "#/components/parameters/TestCaseIdPathParam"
+    put:
+      tags: [Executions]
+      summary: Update execution case assignment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateExecutionAssignmentRequest"
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdatedResponse"
+  /executions/{id}/rerun:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    post:
+      tags: [Executions]
+      summary: Create a rerun from an existing execution
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RerunExecutionRequest"
+      responses:
+        "200":
+          description: New execution identifier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdResponse"
   /executions/{id}/start:
     parameters:
       - $ref: "#/components/parameters/IdParam"
     post:
       tags: [Executions]
-      summary: Start execution
+      summary: Start execution and queue automated cases to Test Engine when eligible
       responses:
         "200":
           description: Start result
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  started:
-                    type: boolean
-                    example: true
+                $ref: "#/components/schemas/ExecutionStartResponse"
+  /executions/{id}/cases/{testCaseId}/steps/{stepId}/run:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+      - $ref: "#/components/parameters/TestCaseIdPathParam"
+      - $ref: "#/components/parameters/StepIdPathParam"
+    post:
+      tags: [Executions]
+      summary: Run a single API step from the execution console
+      responses:
+        "200":
+          description: Step execution result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionStepRunResponse"
   /executions/{id}/complete:
     parameters:
       - $ref: "#/components/parameters/IdParam"
@@ -839,11 +1015,93 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  completed:
-                    type: boolean
-                    example: true
+                $ref: "#/components/schemas/CompletionResponse"
+
+  /execution-schedules:
+    get:
+      tags: [Execution Schedules]
+      summary: List execution schedules
+      parameters:
+        - $ref: "#/components/parameters/ProjectIdQuery"
+        - $ref: "#/components/parameters/AppTypeIdQuery"
+        - $ref: "#/components/parameters/IsActiveQuery"
+      responses:
+        "200":
+          description: List of execution schedules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ExecutionSchedule"
+    post:
+      tags: [Execution Schedules]
+      summary: Create execution schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateExecutionScheduleRequest"
+      responses:
+        "200":
+          description: Schedule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdResponse"
+  /execution-schedules/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      tags: [Execution Schedules]
+      summary: Get execution schedule by ID
+      responses:
+        "200":
+          description: Execution schedule record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionSchedule"
+    put:
+      tags: [Execution Schedules]
+      summary: Update execution schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateExecutionScheduleRequest"
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdatedResponse"
+    delete:
+      tags: [Execution Schedules]
+      summary: Delete execution schedule
+      responses:
+        "200":
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedResponse"
+  /execution-schedules/{id}/run:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    post:
+      tags: [Execution Schedules]
+      summary: Run an execution schedule immediately
+      responses:
+        "200":
+          description: New execution identifier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdResponse"
 
   /execution-results:
     get:
@@ -917,6 +1175,144 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DeletedResponse"
+
+  /api/testengine/callbacks/runs:
+    post:
+      tags: [Test Engine]
+      summary: Receive signed Test Engine execution callbacks
+      parameters:
+        - $ref: "#/components/parameters/TestEngineSignatureHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestEngineCallbackRequest"
+      responses:
+        "200":
+          description: Callback accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestEngineCallbackAcceptedResponse"
+
+  /testengine/internal/jobs/lease:
+    post:
+      tags: [Test Engine]
+      summary: "Internal: lease the next queued Test Engine job"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestEngineLeaseRequest"
+      responses:
+        "200":
+          description: Leased job or null when no work is available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestEngineLeaseResponse"
+  /testengine/internal/jobs/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      tags: [Test Engine]
+      summary: "Internal: get a queued Test Engine job by ID"
+      responses:
+        "200":
+          description: Queued job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestEngineQueuedJob"
+  /testengine/internal/jobs/{id}/start:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    post:
+      tags: [Test Engine]
+      summary: "Internal: mark a queued job as running"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestEngineJobStartRequest"
+      responses:
+        "200":
+          description: Job started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestEngineJobStartedResponse"
+  /testengine/internal/jobs/{id}/steps/{stepId}/execute:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+      - $ref: "#/components/parameters/StepIdPathParam"
+    post:
+      tags: [Test Engine]
+      summary: "Internal: execute an API step for a queued job"
+      responses:
+        "200":
+          description: Step execution result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestEngineApiStepExecutionResponse"
+  /testengine/internal/jobs/{id}/steps/{stepId}/report:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+      - $ref: "#/components/parameters/StepIdPathParam"
+    post:
+      tags: [Test Engine]
+      summary: "Internal: report a queued step result back to QAira"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestEngineStepReportRequest"
+      responses:
+        "200":
+          description: Step report accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestEngineStepReportResponse"
+  /testengine/internal/jobs/{id}/complete:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    post:
+      tags: [Test Engine]
+      summary: "Internal: complete a queued Test Engine job"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestEngineJobCompletionRequest"
+      responses:
+        "200":
+          description: Job completion result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestEngineJobCompletionResponse"
+  /testengine/internal/jobs/{id}/fail:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    post:
+      tags: [Test Engine]
+      summary: "Internal: fail a queued Test Engine job"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestEngineJobFailRequest"
+      responses:
+        "200":
+          description: Job completion result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestEngineJobCompletionResponse"
 components:
   parameters:
     IdParam:
@@ -945,6 +1341,16 @@ components:
       in: query
       schema:
         type: string
+    IntegrationTypeQuery:
+      name: type
+      in: query
+      schema:
+        $ref: "#/components/schemas/IntegrationType"
+    IsActiveQuery:
+      name: is_active
+      in: query
+      schema:
+        type: boolean
     ParentIdQuery:
       name: parent_id
       in: query
@@ -966,11 +1372,30 @@ components:
       in: query
       schema:
         type: string
+    TestCaseIdPathParam:
+      name: testCaseId
+      in: path
+      required: true
+      schema:
+        type: string
     ExecutionIdQuery:
       name: execution_id
       in: query
       schema:
         type: string
+    StepIdPathParam:
+      name: stepId
+      in: path
+      required: true
+      schema:
+        type: string
+    TestEngineSignatureHeader:
+      name: x-testengine-signature
+      in: header
+      required: true
+      schema:
+        type: string
+      description: HMAC SHA-256 signature of the raw callback payload.
     StatusQuery:
       name: status
       in: query
@@ -986,7 +1411,7 @@ components:
       in: query
       schema:
         type: string
-        enum: [queued, running, completed, failed]
+        enum: [queued, running, completed, failed, aborted]
   responses:
     ErrorResponse:
       description: Error response
@@ -1281,11 +1706,363 @@ components:
         step_order: { type: integer }
         action: { type: string }
         expected_result: { type: string }
+    AnyObject:
+      type: object
+      additionalProperties: true
+    StringMap:
+      type: object
+      additionalProperties:
+        type: string
+    IntegrationType:
+      type: string
+      enum: [llm, jira, email, google_auth, google_drive, github, testengine]
+    EmailIntegrationConfig:
+      type: object
+      properties:
+        host: { type: string }
+        port: { type: integer }
+        secure: { type: boolean }
+        password: { type: string }
+        sender_email: { type: string, format: email }
+        sender_name: { type: string }
+    GoogleAuthIntegrationConfig:
+      type: object
+      properties:
+        client_id: { type: string }
+    GoogleDriveIntegrationConfig:
+      type: object
+      properties:
+        project_id: { type: string }
+        folder_id: { type: string }
+        schedule_mode: { type: string, enum: [manual, daily, weekly, monthly] }
+        include_requirements_csv: { type: boolean }
+        include_test_cases_csv: { type: boolean }
+        next_sync_at: { type: string, format: date-time, nullable: true }
+        last_synced_at: { type: string, format: date-time, nullable: true }
+        last_sync_status: { type: string, nullable: true }
+        last_sync_transaction_id: { type: string, nullable: true }
+        last_sync_summary: { type: string, nullable: true }
+    GithubIntegrationConfig:
+      type: object
+      properties:
+        project_id: { type: string }
+        owner: { type: string }
+        repo: { type: string }
+        branch: { type: string }
+        directory: { type: string }
+        file_extension: { type: string }
+        schedule_mode: { type: string, enum: [manual, daily, weekly, monthly] }
+        next_sync_at: { type: string, format: date-time, nullable: true }
+        last_synced_at: { type: string, format: date-time, nullable: true }
+        last_sync_status: { type: string, nullable: true }
+        last_sync_transaction_id: { type: string, nullable: true }
+        last_sync_summary: { type: string, nullable: true }
+    TestEngineIntegrationConfig:
+      type: object
+      properties:
+        project_id: { type: string, nullable: true }
+        runner: { type: string, example: hybrid }
+        dispatch_mode: { type: string, example: qaira-pull }
+        execution_scope: { type: string, example: api+web }
+        active_web_engine: { type: string, enum: [playwright, selenium] }
+        browser: { type: string, enum: [chromium, firefox, webkit] }
+        headless: { type: boolean }
+        healing_enabled: { type: boolean }
+        max_repair_attempts: { type: integer }
+        trace_mode: { type: string, enum: [off, on, on-first-retry, retain-on-failure] }
+        video_mode: { type: string, enum: [off, on, retain-on-failure] }
+        capture_console: { type: boolean }
+        capture_network: { type: boolean }
+        artifact_retention_days: { type: integer }
+        run_timeout_seconds: { type: integer }
+        promote_healed_patches: { type: string, example: review }
+    Integration:
+      type: object
+      properties:
+        id: { type: string }
+        type:
+          $ref: "#/components/schemas/IntegrationType"
+        name: { type: string }
+        base_url: { type: string, nullable: true }
+        api_key: { type: string, nullable: true }
+        model: { type: string, nullable: true }
+        project_key: { type: string, nullable: true }
+        username: { type: string, nullable: true }
+        config:
+          nullable: true
+          oneOf:
+            - $ref: "#/components/schemas/EmailIntegrationConfig"
+            - $ref: "#/components/schemas/GoogleAuthIntegrationConfig"
+            - $ref: "#/components/schemas/GoogleDriveIntegrationConfig"
+            - $ref: "#/components/schemas/GithubIntegrationConfig"
+            - $ref: "#/components/schemas/TestEngineIntegrationConfig"
+            - $ref: "#/components/schemas/AnyObject"
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time, nullable: true }
+    CreateIntegrationRequest:
+      type: object
+      required: [type, name]
+      properties:
+        type:
+          $ref: "#/components/schemas/IntegrationType"
+        name: { type: string }
+        base_url: { type: string }
+        api_key: { type: string }
+        model: { type: string }
+        project_key: { type: string }
+        username: { type: string }
+        config:
+          oneOf:
+            - $ref: "#/components/schemas/EmailIntegrationConfig"
+            - $ref: "#/components/schemas/GoogleAuthIntegrationConfig"
+            - $ref: "#/components/schemas/GoogleDriveIntegrationConfig"
+            - $ref: "#/components/schemas/GithubIntegrationConfig"
+            - $ref: "#/components/schemas/TestEngineIntegrationConfig"
+            - $ref: "#/components/schemas/AnyObject"
+        is_active: { type: boolean }
+    UpdateIntegrationRequest:
+      type: object
+      properties:
+        type:
+          $ref: "#/components/schemas/IntegrationType"
+        name: { type: string }
+        base_url: { type: string }
+        api_key: { type: string }
+        model: { type: string }
+        project_key: { type: string }
+        username: { type: string }
+        config:
+          oneOf:
+            - $ref: "#/components/schemas/EmailIntegrationConfig"
+            - $ref: "#/components/schemas/GoogleAuthIntegrationConfig"
+            - $ref: "#/components/schemas/GoogleDriveIntegrationConfig"
+            - $ref: "#/components/schemas/GithubIntegrationConfig"
+            - $ref: "#/components/schemas/TestEngineIntegrationConfig"
+            - $ref: "#/components/schemas/AnyObject"
+        is_active: { type: boolean }
+    TestIntegrationConnectionRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          $ref: "#/components/schemas/IntegrationType"
+        base_url: { type: string }
+        config:
+          oneOf:
+            - $ref: "#/components/schemas/TestEngineIntegrationConfig"
+            - $ref: "#/components/schemas/AnyObject"
+    TestEngineConnectionResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        base_url: { type: string }
+        health_url: { type: string }
+        capabilities_url: { type: string }
+        latency_ms: { type: integer }
+        service: { type: string }
+        runner: { type: string }
+        ui: { type: string }
+        control_plane: { type: string }
+        execution_scope: { type: string }
+        supported_step_types:
+          type: array
+          items:
+            type: string
+        supported_web_engines:
+          type: array
+          items:
+            type: string
+        qaira_result_log_compatibility: { type: string, nullable: true }
+    AssignedUserSummary:
+      type: object
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        name: { type: string, nullable: true }
+        avatar_data_url: { type: string, nullable: true }
+    KeyValueEntry:
+      type: object
+      properties:
+        key: { type: string }
+        value: { type: string }
+        is_secret: { type: boolean, nullable: true }
+    TestDataSetRow:
+      type: object
+      additionalProperties:
+        type: string
+    ExecutionEnvironmentSnapshot:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        base_url: { type: string, nullable: true }
+        browser: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        variables:
+          type: array
+          items:
+            $ref: "#/components/schemas/KeyValueEntry"
+    ExecutionConfigurationSnapshot:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        browser: { type: string, nullable: true }
+        mobile_os: { type: string, nullable: true }
+        platform_version: { type: string, nullable: true }
+        variables:
+          type: array
+          items:
+            $ref: "#/components/schemas/KeyValueEntry"
+    ExecutionDataSetSnapshot:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        mode: { type: string, enum: [key_value, table] }
+        columns:
+          type: array
+          items:
+            type: string
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestDataSetRow"
+    ExecutionScopedEnvironment:
+      type: object
+      properties:
+        id: { type: string, nullable: true }
+        name: { type: string }
+        snapshot:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ExecutionEnvironmentSnapshot"
+    ExecutionScopedConfiguration:
+      type: object
+      properties:
+        id: { type: string, nullable: true }
+        name: { type: string }
+        snapshot:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ExecutionConfigurationSnapshot"
+    ExecutionScopedDataSet:
+      type: object
+      properties:
+        id: { type: string, nullable: true }
+        name: { type: string }
+        snapshot:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ExecutionDataSetSnapshot"
+    ApiRequestHeader:
+      type: object
+      properties:
+        key: { type: string }
+        value: { type: string }
+    ApiValidation:
+      type: object
+      properties:
+        kind: { type: string, enum: [status, header, body_contains, json_path] }
+        target: { type: string, nullable: true }
+        expected: { type: string, nullable: true }
+    ApiCapture:
+      type: object
+      properties:
+        path: { type: string, nullable: true }
+        parameter: { type: string, nullable: true }
+    StepApiRequest:
+      type: object
+      properties:
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        url: { type: string, nullable: true }
+        headers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiRequestHeader"
+        body_mode: { type: string, enum: [none, json, text, xml, form] }
+        body: { type: string, nullable: true }
+        validations:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiValidation"
+        captures:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiCapture"
+    ExecutionScopeSuiteSnapshot:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        parameter_values:
+          $ref: "#/components/schemas/StringMap"
+    ExecutionCaseSnapshot:
+      type: object
+      properties:
+        execution_id: { type: string }
+        test_case_id: { type: string }
+        test_case_title: { type: string }
+        test_case_description: { type: string, nullable: true }
+        suite_id: { type: string, nullable: true }
+        suite_name: { type: string, nullable: true }
+        priority: { type: integer, nullable: true }
+        status: { type: string, nullable: true }
+        parameter_values:
+          $ref: "#/components/schemas/StringMap"
+        suite_parameter_values:
+          $ref: "#/components/schemas/StringMap"
+        sort_order: { type: integer }
+        assigned_to: { type: string, nullable: true }
+        assigned_user:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/AssignedUserSummary"
+    ExecutionStepSnapshot:
+      type: object
+      properties:
+        execution_id: { type: string }
+        test_case_id: { type: string }
+        snapshot_step_id: { type: string }
+        step_order: { type: integer }
+        action: { type: string, nullable: true }
+        expected_result: { type: string, nullable: true }
+        step_type: { type: string, nullable: true, enum: [web, api, android, ios] }
+        automation_code: { type: string, nullable: true }
+        api_request:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/StepApiRequest"
+        group_id: { type: string, nullable: true }
+        group_name: { type: string, nullable: true }
+        group_kind: { type: string, nullable: true, enum: [local, reusable] }
+        reusable_group_id: { type: string, nullable: true }
     Execution:
       type: object
       properties:
         id: { type: string }
         project_id: { type: string }
+        app_type_id: { type: string, nullable: true }
+        suite_ids:
+          type: array
+          items:
+            type: string
+        suite_snapshots:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExecutionScopeSuiteSnapshot"
+        case_snapshots:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExecutionCaseSnapshot"
+        step_snapshots:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExecutionStepSnapshot"
         name: { type: string, nullable: true }
         trigger:
           type: string
@@ -1294,39 +2071,291 @@ components:
         status:
           type: string
           nullable: true
-          enum: [queued, running, completed, failed]
+          enum: [queued, running, completed, failed, aborted]
+        test_environment:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ExecutionScopedEnvironment"
+        test_configuration:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ExecutionScopedConfiguration"
+        test_data_set:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ExecutionScopedDataSet"
+        assigned_to: { type: string, nullable: true }
+        assigned_user:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/AssignedUserSummary"
         created_by: { type: string, nullable: true }
-        started_at: { type: string, nullable: true }
-        ended_at: { type: string, nullable: true }
+        created_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time, nullable: true }
+        started_at: { type: string, format: date-time, nullable: true }
+        ended_at: { type: string, format: date-time, nullable: true }
     CreateExecutionRequest:
       type: object
       required: [project_id, created_by]
       properties:
         project_id: { type: string }
+        app_type_id: { type: string, nullable: true }
+        suite_ids:
+          type: array
+          items:
+            type: string
+        test_case_ids:
+          type: array
+          items:
+            type: string
+        test_environment_id: { type: string }
+        test_configuration_id: { type: string }
+        test_data_set_id: { type: string }
+        assigned_to: { type: string }
         name: { type: string }
         created_by: { type: string }
+    UpdateExecutionAssignmentRequest:
+      type: object
+      properties:
+        assigned_to: { type: string, nullable: true }
+      required: [assigned_to]
+    RerunExecutionRequest:
+      type: object
+      required: [created_by]
+      properties:
+        failed_only: { type: boolean }
+        created_by: { type: string }
+        name: { type: string }
+    ExecutionStartResponse:
+      type: object
+      properties:
+        started: { type: boolean }
+        automated_case_count: { type: integer }
+        queued_for_engine_count: { type: integer }
+        manual_case_count: { type: integer }
+        unsupported_automated_case_count: { type: integer }
+        warnings:
+          type: array
+          items:
+            type: string
+      required: [started]
+    CompletionResponse:
+      type: object
+      properties:
+        completed: { type: boolean, example: true }
+      required: [completed]
+    ApiAssertion:
+      type: object
+      properties:
+        kind: { type: string }
+        passed: { type: boolean }
+        target: { type: string, nullable: true }
+        expected: { type: string, nullable: true }
+        actual: { type: string, nullable: true }
+    ExecutionApiDetail:
+      type: object
+      properties:
+        step_id: { type: string, nullable: true }
+        request:
+          type: object
+          properties:
+            method: { type: string }
+            url: { type: string }
+            headers:
+              type: object
+              additionalProperties:
+                type: string
+            body: { type: string, nullable: true }
+        response:
+          type: object
+          properties:
+            status: { type: integer }
+            status_text: { type: string }
+            headers:
+              type: object
+              additionalProperties:
+                type: string
+            body: { type: string }
+            json: {}
+        captures:
+          $ref: "#/components/schemas/StringMap"
+        assertions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiAssertion"
+    ExecutionStepRunResponse:
+      type: object
+      properties:
+        execution_id: { type: string }
+        test_case_id: { type: string }
+        step_id: { type: string }
+        step_status: { type: string, enum: [passed, failed] }
+        case_status: { type: string, enum: [running, passed, failed, blocked] }
+        execution_status: { type: string, enum: [queued, running, completed, failed, aborted] }
+        note: { type: string }
+        detail:
+          $ref: "#/components/schemas/ExecutionApiDetail"
+        execution_result_id: { type: string }
     CompleteExecutionRequest:
       type: object
       required: [status]
       properties:
         status:
           type: string
-          enum: [completed, failed]
+          enum: [completed, failed, aborted]
+    ExecutionSchedule:
+      type: object
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        app_type_id: { type: string, nullable: true }
+        name: { type: string }
+        cadence: { type: string, enum: [once, daily, weekly, monthly] }
+        next_run_at: { type: string, format: date-time, nullable: true }
+        last_run_at: { type: string, format: date-time, nullable: true }
+        suite_ids:
+          type: array
+          items:
+            type: string
+        test_case_ids:
+          type: array
+          items:
+            type: string
+        test_environment_id: { type: string, nullable: true }
+        test_configuration_id: { type: string, nullable: true }
+        test_data_set_id: { type: string, nullable: true }
+        assigned_to: { type: string, nullable: true }
+        assigned_user:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/AssignedUserSummary"
+        created_by: { type: string }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time, nullable: true }
+    CreateExecutionScheduleRequest:
+      type: object
+      required: [project_id, created_by]
+      properties:
+        project_id: { type: string }
+        app_type_id: { type: string, nullable: true }
+        name: { type: string }
+        cadence: { type: string, enum: [once, daily, weekly, monthly] }
+        next_run_at: { type: string, format: date-time, nullable: true }
+        suite_ids:
+          type: array
+          items:
+            type: string
+        test_case_ids:
+          type: array
+          items:
+            type: string
+        test_environment_id: { type: string }
+        test_configuration_id: { type: string }
+        test_data_set_id: { type: string }
+        assigned_to: { type: string, nullable: true }
+        created_by: { type: string }
+    UpdateExecutionScheduleRequest:
+      type: object
+      properties:
+        project_id: { type: string }
+        app_type_id: { type: string, nullable: true }
+        name: { type: string }
+        cadence: { type: string, enum: [once, daily, weekly, monthly] }
+        next_run_at: { type: string, format: date-time, nullable: true }
+        suite_ids:
+          type: array
+          items:
+            type: string
+        test_case_ids:
+          type: array
+          items:
+            type: string
+        test_environment_id: { type: string, nullable: true }
+        test_configuration_id: { type: string, nullable: true }
+        test_data_set_id: { type: string, nullable: true }
+        assigned_to: { type: string, nullable: true }
+    SmartExecutionImpactCase:
+      type: object
+      properties:
+        test_case_id: { type: string }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        priority: { type: integer, nullable: true }
+        status: { type: string, nullable: true }
+        suite_names:
+          type: array
+          items:
+            type: string
+        requirement_titles:
+          type: array
+          items:
+            type: string
+        step_count: { type: integer }
+        reason: { type: string }
+        impact_level: { type: string, enum: [critical, high, medium, low] }
+    SmartExecutionPreviewRequest:
+      type: object
+      required: [project_id, app_type_id]
+      properties:
+        project_id: { type: string }
+        app_type_id: { type: string }
+        integration_id: { type: string }
+        release_scope: { type: string }
+        additional_context: { type: string }
+        impacted_requirement_ids:
+          type: array
+          items:
+            type: string
+        test_environment_id: { type: string }
+        test_configuration_id: { type: string }
+        test_data_set_id: { type: string }
+    SmartExecutionPreviewResponse:
+      type: object
+      properties:
+        integration:
+          type: object
+          properties:
+            id: { type: string }
+            name: { type: string }
+            type: { type: string }
+            model: { type: string, nullable: true }
+        app_type:
+          type: object
+          properties:
+            id: { type: string }
+            name: { type: string }
+        default_suite:
+          type: object
+          properties:
+            id: { type: string }
+            name: { type: string }
+        source_case_count: { type: integer }
+        matched_case_count: { type: integer }
+        execution_name: { type: string }
+        summary: { type: string }
+        cases:
+          type: array
+          items:
+            $ref: "#/components/schemas/SmartExecutionImpactCase"
     ExecutionResult:
       type: object
       properties:
         id: { type: string }
         execution_id: { type: string }
         test_case_id: { type: string }
+        test_case_title: { type: string, nullable: true }
+        suite_id: { type: string, nullable: true }
+        suite_name: { type: string, nullable: true }
         app_type_id: { type: string }
         status:
           type: string
-          enum: [passed, failed, blocked]
-        duration_ms: { type: integer, nullable: true }
+          enum: [running, passed, failed, blocked]
+        duration_ms: { type: number, nullable: true }
         error: { type: string, nullable: true }
         logs: { type: string, nullable: true }
         executed_by: { type: string, nullable: true }
-        created_at: { type: string }
+        created_at: { type: string, format: date-time, nullable: true }
     CreateExecutionResultRequest:
       type: object
       required: [execution_id, test_case_id, app_type_id, status]
@@ -1336,8 +2365,8 @@ components:
         app_type_id: { type: string }
         status:
           type: string
-          enum: [passed, failed, blocked]
-        duration_ms: { type: integer }
+          enum: [running, passed, failed, blocked]
+        duration_ms: { type: number }
         error: { type: string }
         logs: { type: string }
         executed_by: { type: string }
@@ -1346,7 +2375,412 @@ components:
       properties:
         status:
           type: string
-          enum: [passed, failed, blocked]
-        duration_ms: { type: integer }
+          enum: [running, passed, failed, blocked]
+        duration_ms: { type: number }
         error: { type: string }
         logs: { type: string }
+    TestEngineInlineEvidence:
+      type: object
+      properties:
+        data_url: { type: string, nullable: true }
+        file_name: { type: string, nullable: true }
+        mime_type: { type: string, nullable: true }
+        artifact_path: { type: string, nullable: true }
+    TestEngineArtifactRef:
+      type: object
+      properties:
+        kind: { type: string }
+        label: { type: string }
+        path: { type: string, nullable: true }
+        url: { type: string, nullable: true }
+        content_type: { type: string, nullable: true }
+    TestEngineArtifactBundle:
+      type: object
+      properties:
+        trace_path: { type: string, nullable: true }
+        video_path: { type: string, nullable: true }
+        screenshot_paths:
+          type: array
+          items:
+            type: string
+        console_log_path: { type: string, nullable: true }
+        network_har_path: { type: string, nullable: true }
+        dom_snapshot_path: { type: string, nullable: true }
+        summary_path: { type: string, nullable: true }
+        artifact_refs:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestEngineArtifactRef"
+    TestEnginePatchProposal:
+      type: object
+      properties:
+        kind: { type: string, enum: [locator-map, script] }
+        status: { type: string, enum: [review, applied] }
+        summary: { type: string }
+        target_path: { type: string }
+    TestEngineExecutionLogsPayload:
+      type: object
+      properties:
+        stepStatuses:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [passed, failed, blocked]
+        stepNotes:
+          type: object
+          additionalProperties:
+            type: string
+        stepEvidence:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/TestEngineInlineEvidence"
+        stepApiDetails:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ExecutionApiDetail"
+    TestEngineStepOutcome:
+      type: object
+      properties:
+        step_id: { type: string }
+        status: { type: string, enum: [passed, failed, blocked, skipped] }
+        started_at: { type: string, format: date-time, nullable: true }
+        ended_at: { type: string, format: date-time, nullable: true }
+        duration_ms: { type: number, nullable: true }
+        note: { type: string, nullable: true }
+        evidence_image:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TestEngineInlineEvidence"
+        artifacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestEngineArtifactRef"
+    TestEngineCaseResult:
+      type: object
+      properties:
+        qaira_execution_result_id: { type: string, nullable: true }
+        status: { type: string, enum: [passed, failed, blocked] }
+        duration_ms: { type: number, nullable: true }
+        error: { type: string, nullable: true }
+        logs:
+          $ref: "#/components/schemas/TestEngineExecutionLogsPayload"
+    TestEngineRunProject:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+    TestEngineRunAppType:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind: { type: string }
+    TestEngineManualSpec:
+      type: object
+      properties:
+        title: { type: string }
+        intent: { type: string }
+        preconditions:
+          type: array
+          items:
+            type: string
+        steps:
+          type: array
+          items:
+            type: string
+        assertions:
+          type: array
+          items:
+            type: string
+        test_data:
+          $ref: "#/components/schemas/StringMap"
+        environment_notes: { type: string, nullable: true }
+    TestEngineAttachedScript:
+      type: object
+      properties:
+        language: { type: string, enum: [typescript] }
+        framework: { type: string, enum: [playwright] }
+        path: { type: string }
+        locator_map_path: { type: string, nullable: true }
+        content_hash: { type: string, nullable: true }
+    TestEngineRunStep:
+      type: object
+      properties:
+        id: { type: string }
+        order: { type: integer }
+        step_type: { type: string, enum: [web, api] }
+        action: { type: string, nullable: true }
+        expected_result: { type: string, nullable: true }
+        automation_code: { type: string, nullable: true }
+        api_request:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/StepApiRequest"
+        group_name: { type: string, nullable: true }
+        group_kind: { type: string, nullable: true, enum: [local, reusable] }
+    TestEngineRunArtifactPolicy:
+      type: object
+      properties:
+        trace_mode: { type: string, enum: [off, on, on-first-retry, retain-on-failure] }
+        video_mode: { type: string, enum: [off, on, retain-on-failure] }
+        screenshot_on_failure: { type: boolean }
+        capture_console: { type: boolean }
+        capture_network: { type: boolean }
+        artifact_retention_days: { type: integer }
+    TestEngineRunEnvironment:
+      type: object
+      properties:
+        name: { type: string }
+        base_url: { type: string, nullable: true }
+        browser: { type: string, nullable: true }
+        variables:
+          type: array
+          items:
+            $ref: "#/components/schemas/KeyValueEntry"
+    TestEngineRunConfiguration:
+      type: object
+      properties:
+        name: { type: string }
+        browser: { type: string, nullable: true }
+        mobile_os: { type: string, nullable: true }
+        platform_version: { type: string, nullable: true }
+        variables:
+          type: array
+          items:
+            $ref: "#/components/schemas/KeyValueEntry"
+    TestEngineRunDataSet:
+      type: object
+      properties:
+        name: { type: string }
+        mode: { type: string, enum: [key_value, table] }
+        columns:
+          type: array
+          items:
+            type: string
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestDataSetRow"
+    TestEngineCallbackTarget:
+      type: object
+      properties:
+        url: { type: string }
+        signing_secret: { type: string }
+    TestEngineRunEnvelope:
+      type: object
+      properties:
+        engine_run_id: { type: string }
+        qaira_run_id: { type: string }
+        qaira_execution_id: { type: string, nullable: true }
+        qaira_test_case_id: { type: string }
+        qaira_test_case_title: { type: string }
+        project:
+          $ref: "#/components/schemas/TestEngineRunProject"
+        app_type:
+          $ref: "#/components/schemas/TestEngineRunAppType"
+        trigger: { type: string, enum: [execution, test-run] }
+        source_mode: { type: string, enum: [attached-script, manual-handover] }
+        automated: { type: boolean }
+        browser: { type: string, enum: [chromium, firefox, webkit] }
+        headless: { type: boolean }
+        max_repair_attempts: { type: integer }
+        run_timeout_seconds: { type: integer }
+        web_engine:
+          type: object
+          nullable: true
+          properties:
+            active: { type: string, enum: [playwright, selenium] }
+        manual_spec:
+          $ref: "#/components/schemas/TestEngineManualSpec"
+        attached_script:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TestEngineAttachedScript"
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestEngineRunStep"
+        suite_parameters:
+          $ref: "#/components/schemas/StringMap"
+        case_parameters:
+          $ref: "#/components/schemas/StringMap"
+        environment:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TestEngineRunEnvironment"
+        configuration:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TestEngineRunConfiguration"
+        data_set:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TestEngineRunDataSet"
+        artifact_policy:
+          $ref: "#/components/schemas/TestEngineRunArtifactPolicy"
+        callback:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TestEngineCallbackTarget"
+    TestEngineQueueRuntimeState:
+      type: object
+      properties:
+        captured_values:
+          $ref: "#/components/schemas/StringMap"
+        logs:
+          $ref: "#/components/schemas/TestEngineExecutionLogsPayload"
+        deterministic_attempted: { type: boolean }
+        healing_attempted: { type: boolean }
+        healing_succeeded: { type: boolean }
+        final_summary: { type: string, nullable: true }
+        artifact_bundle:
+          $ref: "#/components/schemas/TestEngineArtifactBundle"
+        patch_proposals:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestEnginePatchProposal"
+    TestEngineQueuedJob:
+      type: object
+      properties:
+        id: { type: string }
+        engine_run_id: { type: string }
+        execution_id: { type: string }
+        test_case_id: { type: string }
+        test_case_title: { type: string }
+        engine_host: { type: string, nullable: true }
+        status: { type: string }
+        payload:
+          $ref: "#/components/schemas/TestEngineRunEnvelope"
+        runtime_state:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TestEngineQueueRuntimeState"
+        lease_expires_at: { type: string, format: date-time, nullable: true }
+    TestEngineCallbackRequest:
+      type: object
+      required: [engine_run_id, qaira_test_case_id]
+      properties:
+        engine_run_id: { type: string }
+        qaira_run_id: { type: string, nullable: true }
+        qaira_execution_id: { type: string, nullable: true }
+        qaira_test_case_id: { type: string }
+        event:
+          type: string
+          enum: [run.accepted, run.progress, run.step.completed, run.completed, run.failed, run.incident, run.patch.proposed]
+        summary: { type: string, nullable: true }
+        state: { type: string, nullable: true }
+        deterministic_attempted: { type: boolean }
+        healing_attempted: { type: boolean }
+        healing_succeeded: { type: boolean }
+        step_outcomes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestEngineStepOutcome"
+        case_result:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TestEngineCaseResult"
+        artifact_bundle:
+          $ref: "#/components/schemas/TestEngineArtifactBundle"
+        patch_proposals:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestEnginePatchProposal"
+        emitted_at: { type: string, format: date-time, nullable: true }
+    TestEngineCallbackAcceptedResponse:
+      type: object
+      properties:
+        accepted: { type: boolean }
+        execution_id: { type: string }
+        execution_result_id: { type: string }
+        transaction_id: { type: string }
+      required: [accepted, execution_id, execution_result_id, transaction_id]
+    TestEngineLeaseRequest:
+      type: object
+      properties:
+        worker_id: { type: string }
+        engine_host: { type: string }
+        lease_seconds: { type: number }
+    TestEngineLeaseResponse:
+      type: object
+      properties:
+        job:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TestEngineQueuedJob"
+    TestEngineJobStartRequest:
+      type: object
+      properties:
+        worker_id: { type: string }
+    TestEngineJobStartedResponse:
+      type: object
+      properties:
+        job_id: { type: string }
+        execution_result_id: { type: string }
+        status: { type: string, enum: [running] }
+    TestEngineApiStepExecutionResponse:
+      type: object
+      properties:
+        job_id: { type: string }
+        step_id: { type: string }
+        status: { type: string, enum: [passed, failed] }
+        note: { type: string }
+        detail:
+          $ref: "#/components/schemas/ExecutionApiDetail"
+        captures:
+          $ref: "#/components/schemas/StringMap"
+        case_status: { type: string, enum: [running, failed] }
+        execution_result_id: { type: string }
+    TestEngineStepReportRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [passed, failed, blocked] }
+        note: { type: string }
+        evidence:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TestEngineInlineEvidence"
+        api_detail:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ExecutionApiDetail"
+        captures:
+          $ref: "#/components/schemas/StringMap"
+        recovery_attempted: { type: boolean }
+        recovery_succeeded: { type: boolean }
+    TestEngineStepReportResponse:
+      type: object
+      properties:
+        job_id: { type: string }
+        step_id: { type: string }
+        status: { type: string, enum: [passed, failed, blocked] }
+        case_status: { type: string, enum: [running, passed, failed, blocked] }
+        execution_result_id: { type: string }
+        captures:
+          $ref: "#/components/schemas/StringMap"
+    TestEngineJobCompletionRequest:
+      type: object
+      properties:
+        status: { type: string, enum: [passed, failed, blocked] }
+        error: { type: string }
+        summary: { type: string }
+        deterministic_attempted: { type: boolean }
+        healing_attempted: { type: boolean }
+        healing_succeeded: { type: boolean }
+        artifact_bundle:
+          $ref: "#/components/schemas/TestEngineArtifactBundle"
+        patch_proposals:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestEnginePatchProposal"
+    TestEngineJobCompletionResponse:
+      type: object
+      properties:
+        job_id: { type: string }
+        execution_result_id: { type: string }
+        status: { type: string, enum: [passed, failed, blocked] }
+    TestEngineJobFailRequest:
+      type: object
+      properties:
+        message: { type: string }

@@ -47,6 +47,11 @@ const normalizeTestEngineBrowser = (value, fallback = "chromium") => {
   return ["chromium", "firefox", "webkit"].includes(normalized) ? normalized : fallback;
 };
 
+const normalizeTestEngineWebEngine = (value, fallback = "playwright") => {
+  const normalized = normalizeText(value);
+  return ["playwright", "selenium"].includes(normalized) ? normalized : fallback;
+};
+
 const normalizeTestEngineTraceMode = (value, fallback = "on-first-retry") => {
   const normalized = normalizeText(value);
   return ["off", "on", "on-first-retry", "retain-on-failure"].includes(normalized) ? normalized : fallback;
@@ -185,6 +190,9 @@ const testTestEngineConnection = async ({ base_url }) => {
   const supportedStepTypes = Array.isArray(capabilitiesPayload.supported_step_types)
     ? capabilitiesPayload.supported_step_types.filter((item) => typeof item === "string")
     : [];
+  const supportedWebEngines = Array.isArray(capabilitiesPayload.supported_web_engines)
+    ? capabilitiesPayload.supported_web_engines.filter((item) => typeof item === "string")
+    : [];
 
   return {
     ok: true,
@@ -197,7 +205,9 @@ const testTestEngineConnection = async ({ base_url }) => {
     runner: normalizeText(capabilitiesPayload.runner) || normalizeText(healthPayload.runner) || "unknown",
     ui: normalizeText(healthPayload.ui) || normalizeText(capabilitiesPayload.control_plane) || "unknown",
     control_plane: normalizeText(capabilitiesPayload.control_plane) || "unknown",
+    execution_scope: normalizeText(capabilitiesPayload.execution_scope) || normalizeText(healthPayload.execution_scope) || "unknown",
     supported_step_types: supportedStepTypes,
+    supported_web_engines: supportedWebEngines,
     qaira_result_log_compatibility: normalizeText(capabilitiesPayload.qaira_result_log_compatibility) || null
   };
 };
@@ -309,12 +319,14 @@ const normalizeConfig = (type, input, username) => {
 
   if (type === "testengine") {
     const project_id = normalizeText(raw.project_id);
+    const active_web_engine = normalizeTestEngineWebEngine(raw.active_web_engine, String(integrationTypeConfig.active_web_engine || "playwright"));
 
     return {
       project_id,
-      runner: "playwright",
+      runner: "hybrid",
       dispatch_mode: "qaira-pull",
-      execution_scope: "api-first",
+      execution_scope: "api+web",
+      active_web_engine,
       browser: normalizeTestEngineBrowser(raw.browser, String(integrationTypeConfig.browser || "chromium")),
       headless: raw.headless !== false,
       healing_enabled: raw.healing_enabled !== false,

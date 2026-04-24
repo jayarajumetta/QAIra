@@ -10,8 +10,18 @@ const {
   normalizeTestStepType
 } = require("../utils/testStepAutomation");
 
-const SUPPORTED_ENGINE_STEP_TYPES = new Set(["api"]);
+const SUPPORTED_ENGINE_STEP_TYPES = new Set(["api", "web"]);
 const DEFAULT_LEASE_SECONDS = Math.max(30, Number(process.env.TESTENGINE_JOB_LEASE_SECONDS || 90));
+const TESTENGINE_WEB_ENGINE_VALUES = new Set(["playwright", "selenium"]);
+const TESTENGINE_BROWSER_ALIASES = new Map([
+  ["chrome", "chromium"],
+  ["chromium", "chromium"],
+  ["edge", "chromium"],
+  ["firefox", "firefox"],
+  ["ff", "firefox"],
+  ["safari", "webkit"],
+  ["webkit", "webkit"]
+]);
 
 const selectProject = db.prepare(`
   SELECT id, name, display_id
@@ -125,6 +135,71 @@ const normalizeText = (value) => {
 
 const nowIso = () => new Date().toISOString();
 
+const normalizeInteger = (value, fallback = null) => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  return fallback;
+};
+
+const normalizeTestEngineWebEngine = (value, fallback = "playwright") => {
+  const normalized = normalizeText(value)?.toLowerCase();
+  return normalized && TESTENGINE_WEB_ENGINE_VALUES.has(normalized) ? normalized : fallback;
+};
+
+const normalizeEngineBrowser = (value, fallback = "chromium") => {
+  const normalized = normalizeText(value)?.toLowerCase();
+  return normalized ? TESTENGINE_BROWSER_ALIASES.get(normalized) || fallback : fallback;
+};
+
+const normalizeInlineEvidence = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const dataUrl = normalizeText(value.dataUrl || value.data_url);
+
+  if (!dataUrl || !/^data:image\/[a-z0-9.+-]+;base64,/i.test(dataUrl)) {
+    return null;
+  }
+
+  return {
+    dataUrl,
+    fileName: normalizeText(value.fileName || value.file_name) || undefined,
+    mimeType: normalizeText(value.mimeType || value.mime_type) || undefined
+  };
+};
+
+const normalizeApiDetail = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value;
+};
+
+const normalizeArtifactBundle = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return value;
+};
+
+const normalizePatchProposals = (value) => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry));
+};
+
 const normalizeJsonValue = (value, fallback) => {
   if (value === null || value === undefined || value === "") {
     return fallback;
@@ -221,6 +296,10 @@ const resolveEngineStepType = (stepType, appTypeKind) => {
     return "api";
   }
 
+  if ((appTypeKind === "web" || appTypeKind === "unified") && !normalized) {
+    return "web";
+  }
+
   return null;
 };
 
@@ -262,70 +341,90 @@ const buildEngineEnvelope = ({
   project,
   appType,
   caseSnapshot,
-  steps
-}) => ({
-  engine_run_id: engineRunId,
-  qaira_run_id: execution.id,
-  qaira_execution_id: execution.id,
-  qaira_test_case_id: caseSnapshot.test_case_id,
-  qaira_test_case_title: caseSnapshot.test_case_title,
-  project: {
-    id: project.id,
-    name: project.name
-  },
-  app_type: {
-    id: appType?.id || execution.app_type_id || "unknown",
-    name: appType?.name || "Unknown App Type",
-    kind: appType?.type || "web"
-  },
-  trigger: "execution",
-  source_mode: "manual-handover",
-  automated: true,
-  browser: "chromium",
-  headless: true,
-  max_repair_attempts: 0,
-  run_timeout_seconds: 1800,
-  manual_spec: buildManualSpec({ caseSnapshot, steps, execution }),
   steps,
-  suite_parameters: normalizeStringRecord(caseSnapshot.suite_parameter_values),
-  case_parameters: normalizeStringRecord(caseSnapshot.parameter_values),
-  environment: execution.test_environment
-    ? {
-        name: execution.test_environment.name,
-        base_url: execution.test_environment.snapshot?.base_url || null,
-        browser: execution.test_environment.snapshot?.browser || null,
-        variables: toEngineKeyValueEntries(execution.test_environment.snapshot?.variables)
-      }
-    : null,
-  configuration: execution.test_configuration
-    ? {
-        name: execution.test_configuration.name,
-        browser: execution.test_configuration.snapshot?.browser || null,
-        mobile_os: execution.test_configuration.snapshot?.mobile_os || null,
-        platform_version: execution.test_configuration.snapshot?.platform_version || null,
-        variables: toEngineKeyValueEntries(execution.test_configuration.snapshot?.variables)
-      }
-    : null,
-  data_set: execution.test_data_set
-    ? {
-        name: execution.test_data_set.name,
-        mode: execution.test_data_set.snapshot?.mode === "key_value" ? "key_value" : "table",
-        columns: Array.isArray(execution.test_data_set.snapshot?.columns)
-          ? execution.test_data_set.snapshot.columns.map((entry) => String(entry))
-          : [],
-        rows: toEngineDataSetRows(execution.test_data_set.snapshot?.rows)
-      }
-    : null,
-  artifact_policy: {
-    trace_mode: "off",
-    video_mode: "off",
-    screenshot_on_failure: false,
-    capture_console: false,
-    capture_network: false,
-    artifact_retention_days: 7
-  },
-  callback: null
-});
+  integration
+}) => {
+  const integrationConfig = integration?.config && typeof integration.config === "object" && !Array.isArray(integration.config)
+    ? integration.config
+    : {};
+  const resolvedBrowser = normalizeEngineBrowser(
+    execution.test_configuration?.snapshot?.browser
+    || execution.test_environment?.snapshot?.browser
+    || integrationConfig.browser
+    || "chromium",
+    "chromium"
+  );
+
+  return {
+    engine_run_id: engineRunId,
+    qaira_run_id: execution.id,
+    qaira_execution_id: execution.id,
+    qaira_test_case_id: caseSnapshot.test_case_id,
+    qaira_test_case_title: caseSnapshot.test_case_title,
+    project: {
+      id: project.id,
+      name: project.name
+    },
+    app_type: {
+      id: appType?.id || execution.app_type_id || "unknown",
+      name: appType?.name || "Unknown App Type",
+      kind: appType?.type || "web"
+    },
+    trigger: "execution",
+    source_mode: "manual-handover",
+    automated: true,
+    browser: resolvedBrowser,
+    headless: integrationConfig.headless !== false,
+    max_repair_attempts:
+      integrationConfig.healing_enabled === false
+        ? 0
+        : Math.max(0, normalizeInteger(integrationConfig.max_repair_attempts, 1) ?? 1),
+    run_timeout_seconds: Math.max(60, normalizeInteger(integrationConfig.run_timeout_seconds, 1800) ?? 1800),
+    web_engine: {
+      active: normalizeTestEngineWebEngine(integrationConfig.active_web_engine, "playwright")
+    },
+    manual_spec: buildManualSpec({ caseSnapshot, steps, execution }),
+    steps,
+    suite_parameters: normalizeStringRecord(caseSnapshot.suite_parameter_values),
+    case_parameters: normalizeStringRecord(caseSnapshot.parameter_values),
+    environment: execution.test_environment
+      ? {
+          name: execution.test_environment.name,
+          base_url: execution.test_environment.snapshot?.base_url || null,
+          browser: execution.test_environment.snapshot?.browser || null,
+          variables: toEngineKeyValueEntries(execution.test_environment.snapshot?.variables)
+        }
+      : null,
+    configuration: execution.test_configuration
+      ? {
+          name: execution.test_configuration.name,
+          browser: execution.test_configuration.snapshot?.browser || null,
+          mobile_os: execution.test_configuration.snapshot?.mobile_os || null,
+          platform_version: execution.test_configuration.snapshot?.platform_version || null,
+          variables: toEngineKeyValueEntries(execution.test_configuration.snapshot?.variables)
+        }
+      : null,
+    data_set: execution.test_data_set
+      ? {
+          name: execution.test_data_set.name,
+          mode: execution.test_data_set.snapshot?.mode === "key_value" ? "key_value" : "table",
+          columns: Array.isArray(execution.test_data_set.snapshot?.columns)
+            ? execution.test_data_set.snapshot.columns.map((entry) => String(entry))
+            : [],
+          rows: toEngineDataSetRows(execution.test_data_set.snapshot?.rows)
+        }
+      : null,
+    artifact_policy: {
+      trace_mode: normalizeText(integrationConfig.trace_mode) || "off",
+      video_mode: normalizeText(integrationConfig.video_mode) || "off",
+      screenshot_on_failure: true,
+      capture_console: integrationConfig.capture_console !== false,
+      capture_network: integrationConfig.capture_network !== false,
+      artifact_retention_days: Math.max(1, normalizeInteger(integrationConfig.artifact_retention_days, 7) ?? 7)
+    },
+    callback: null
+  };
+};
 
 const summarizeWarnings = (warnings) => {
   if (!Array.isArray(warnings) || !warnings.length) {
@@ -375,7 +474,13 @@ const parseRuntimeState = (value) => {
 
   return {
     captured_values: normalizeCapturedValuesRecord(parsed.captured_values),
-    logs: parseStructuredLogs(parsed.logs)
+    logs: parseStructuredLogs(parsed.logs),
+    deterministic_attempted: parsed.deterministic_attempted === true,
+    healing_attempted: parsed.healing_attempted === true,
+    healing_succeeded: parsed.healing_succeeded === true,
+    final_summary: normalizeText(parsed.final_summary),
+    artifact_bundle: normalizeArtifactBundle(parsed.artifact_bundle),
+    patch_proposals: normalizePatchProposals(parsed.patch_proposals)
   };
 };
 
@@ -522,7 +627,7 @@ async function planExecutionDispatch(execution) {
 
       if (!stepType) {
         stepWarnings.push(
-          `${caseSnapshot.test_case_title}: step ${stepSnapshot.step_order} is not part of the API-first engine path yet.`
+          `${caseSnapshot.test_case_title}: step ${stepSnapshot.step_order} is not part of the current engine-supported API/web path.`
         );
         return null;
       }
@@ -621,7 +726,8 @@ async function queueExecutionDispatch({ plan, integration, initiatedBy }) {
       project: plan.project,
       appType: plan.appType,
       caseSnapshot: item.case_snapshot,
-      steps: item.steps
+      steps: item.steps,
+      integration
     });
 
     const transaction = await workspaceTransactionService.createTransaction({
@@ -638,7 +744,8 @@ async function queueExecutionDispatch({ plan, integration, initiatedBy }) {
         execution_id: plan.execution.id,
         test_case_id: item.case_snapshot.test_case_id,
         engine_host: integration.base_url || null,
-        queue_mode: "qaira-pull"
+        queue_mode: "qaira-pull",
+        active_web_engine: envelope.web_engine?.active || "playwright"
       },
       related_kind: "testengine_run",
       related_id: item.engine_run_id,
@@ -712,8 +819,7 @@ exports.leaseNextQueuedJob = db.transaction(async ({ worker_id, engine_host, lea
   let query = `
     SELECT *
     FROM test_engine_jobs
-    WHERE app_type_kind = 'api'
-      AND (
+    WHERE (
         status = 'queued'
         OR (
           status IN ('leased', 'running')
@@ -861,11 +967,13 @@ exports.executeQueuedApiStep = async ({ job_id, step_id } = {}) => {
     }
   };
   const nextRuntimeState = {
+    ...runtimeState,
     captured_values: {
       ...runtimeState.captured_values,
       ...normalizeCapturedValuesRecord(stepResult.captures)
     },
-    logs: mergedLogs
+    logs: mergedLogs,
+    deterministic_attempted: true
   };
   const startedAt = job.started_at ? new Date(job.started_at).getTime() : Date.now();
   const durationMs = Math.max(Date.now() - startedAt, stepResult.duration_ms || 0);
@@ -923,7 +1031,154 @@ exports.executeQueuedApiStep = async ({ job_id, step_id } = {}) => {
   };
 };
 
-exports.completeQueuedJob = async ({ job_id, status, error } = {}) => {
+exports.reportQueuedStep = async ({
+  job_id,
+  step_id,
+  status,
+  note,
+  evidence,
+  api_detail,
+  captures,
+  recovery_attempted,
+  recovery_succeeded
+} = {}) => {
+  const job = await getQueuedJob(job_id);
+
+  if (!job.payload?.steps?.length) {
+    throw new Error("Queued job payload is missing step data");
+  }
+
+  const step = job.payload.steps.find((entry) => entry.id === step_id);
+
+  if (!step) {
+    throw new Error("Queued job step not found");
+  }
+
+  const normalizedStatus = normalizeText(status);
+
+  if (!["passed", "failed", "blocked"].includes(normalizedStatus)) {
+    throw new Error("Queued step status must be passed, failed, or blocked");
+  }
+
+  const runtimeState = parseRuntimeState(job.runtime_state);
+  const existingLogs = parseStructuredLogs(runtimeState.logs);
+  const normalizedEvidence = normalizeInlineEvidence(evidence);
+  const normalizedApiDetail = normalizeApiDetail(api_detail);
+  const normalizedCaptures = normalizeCapturedValuesRecord(captures);
+  const recoveryAttempted = Boolean(recovery_attempted);
+  const recoverySucceeded = Boolean(recovery_succeeded);
+  const mergedLogs = {
+    ...existingLogs,
+    stepStatuses: {
+      ...existingLogs.stepStatuses,
+      [step.id]: normalizedStatus
+    },
+    stepNotes: note === undefined
+      ? { ...existingLogs.stepNotes }
+      : {
+          ...existingLogs.stepNotes,
+          [step.id]: String(note || "")
+        },
+    stepEvidence: normalizedEvidence
+      ? {
+          ...existingLogs.stepEvidence,
+          [step.id]: normalizedEvidence
+        }
+      : {
+          ...existingLogs.stepEvidence
+        },
+    stepApiDetails: normalizedApiDetail
+      ? {
+          ...existingLogs.stepApiDetails,
+          [step.id]: normalizedApiDetail
+        }
+      : {
+          ...existingLogs.stepApiDetails
+        }
+  };
+  const nextRuntimeState = {
+    ...runtimeState,
+    captured_values: {
+      ...runtimeState.captured_values,
+      ...normalizedCaptures
+    },
+    logs: mergedLogs,
+    deterministic_attempted: true,
+    healing_attempted: runtimeState.healing_attempted || recoveryAttempted,
+    healing_succeeded: runtimeState.healing_succeeded || recoverySucceeded
+  };
+  const startedAt = job.started_at ? new Date(job.started_at).getTime() : Date.now();
+  const durationMs = Math.max(Date.now() - startedAt, 0);
+  const stepIds = Array.isArray(job.payload?.steps) ? job.payload.steps.map((entry) => entry.id) : [];
+  const caseStatus = executionStepRuntimeService.deriveCaseStatusFromStepStatuses(stepIds, mergedLogs.stepStatuses);
+  const persistedCaseStatus = caseStatus === "running" || caseStatus === "blocked" ? caseStatus : caseStatus;
+  const errorMessage = normalizedStatus === "failed" ? normalizeText(note) || `${job.test_case_title} failed on step ${step.order}.` : null;
+
+  await updateJobRuntimeState.run(
+    "running",
+    nextRuntimeState,
+    new Date(Date.now() + DEFAULT_LEASE_SECONDS * 1000).toISOString(),
+    errorMessage,
+    job.id
+  );
+
+  const result = await executionResultService.upsertExecutionResult({
+    execution_id: job.execution_id,
+    test_case_id: job.test_case_id,
+    app_type_id: job.app_type_id,
+    status: persistedCaseStatus,
+    duration_ms: durationMs,
+    error: caseStatus === "failed" ? errorMessage : null,
+    logs: JSON.stringify(mergedLogs),
+    executed_by: job.created_by || null
+  });
+
+  if (job.transaction_id) {
+    await workspaceTransactionService.appendTransactionEvent(job.transaction_id, {
+      level: normalizedStatus === "failed" ? "error" : normalizedStatus === "blocked" ? "warning" : "info",
+      phase: normalizedStatus === "failed" ? "step.failed" : normalizedStatus === "blocked" ? "step.blocked" : "step.completed",
+      message: normalizeText(note) || `${job.test_case_title}: step ${step.order} ${normalizedStatus}.`,
+      details: {
+        job_id: job.id,
+        step_id: step.id,
+        step_order: step.order,
+        execution_result_id: result.id,
+        captures: normalizedCaptures,
+        recovery_attempted: recoveryAttempted,
+        recovery_succeeded: recoverySucceeded
+      },
+      status: caseStatus === "failed" ? "failed" : "running",
+      metadata: {
+        execution_result_id: result.id,
+        current_phase: normalizedStatus === "failed" ? "step-failed" : normalizedStatus === "blocked" ? "step-blocked" : "step-completed",
+        last_step_id: step.id,
+        healing_attempted: runtimeState.healing_attempted || recoveryAttempted,
+        healing_succeeded: runtimeState.healing_succeeded || recoverySucceeded
+      }
+    });
+  }
+
+  return {
+    job_id: job.id,
+    step_id: step.id,
+    status: normalizedStatus,
+    case_status: caseStatus,
+    execution_result_id: result.id,
+    captures: normalizedCaptures
+  };
+};
+
+exports.completeQueuedJob = async ({
+  job_id,
+  status,
+  error,
+  summary,
+  deterministic_attempted,
+  healing_attempted,
+  healing_succeeded,
+  artifact_bundle,
+  patch_proposals
+} = {}) => {
   const job = await getQueuedJob(job_id);
   const runtimeState = parseRuntimeState(job.runtime_state);
   const logs = parseStructuredLogs(runtimeState.logs);
@@ -944,11 +1199,35 @@ exports.completeQueuedJob = async ({ job_id, status, error } = {}) => {
   const startedAt = job.started_at ? new Date(job.started_at).getTime() : Date.now();
   const durationMs = Math.max(Date.now() - startedAt, 0);
   const errorMessage = normalizeText(error) || (finalStatus === "failed" ? "API execution failed." : null);
+  const normalizedSummary =
+    normalizeText(summary)
+    || runtimeState.final_summary
+    || (finalStatus === "passed"
+      ? `${job.test_case_title} completed successfully.`
+      : errorMessage || `${job.test_case_title} finished with ${finalStatus}.`);
+  const normalizedArtifactBundle = normalizeArtifactBundle(artifact_bundle);
+  const normalizedPatchProposals = normalizePatchProposals(patch_proposals);
+  const nextRuntimeState = {
+    ...runtimeState,
+    logs,
+    deterministic_attempted:
+      deterministic_attempted === undefined
+        ? runtimeState.deterministic_attempted || true
+        : Boolean(deterministic_attempted),
+    healing_attempted: runtimeState.healing_attempted || Boolean(healing_attempted),
+    healing_succeeded: runtimeState.healing_succeeded || Boolean(healing_succeeded),
+    final_summary: normalizedSummary,
+    artifact_bundle:
+      Object.keys(normalizedArtifactBundle).length
+        ? normalizedArtifactBundle
+        : runtimeState.artifact_bundle || {},
+    patch_proposals: normalizedPatchProposals.length ? normalizedPatchProposals : runtimeState.patch_proposals || []
+  };
   const completedAt = nowIso();
 
   await finalizeJobState.run(
     resultStatusToJobStatus(finalStatus),
-    runtimeState,
+    nextRuntimeState,
     completedAt,
     errorMessage,
     job.id
@@ -969,33 +1248,44 @@ exports.completeQueuedJob = async ({ job_id, status, error } = {}) => {
     await workspaceTransactionService.appendTransactionEvent(job.transaction_id, {
       level: finalStatus === "passed" ? "success" : finalStatus === "failed" ? "error" : "warning",
       phase: finalStatus === "passed" ? "run.completed" : finalStatus === "failed" ? "run.failed" : "run.blocked",
-      message:
-        finalStatus === "passed"
-          ? `${job.test_case_title} completed successfully.`
-          : errorMessage || `${job.test_case_title} finished with ${finalStatus}.`,
+      message: normalizedSummary,
       details: {
         job_id: job.id,
         execution_result_id: result.id,
-        status: finalStatus
+        status: finalStatus,
+        deterministic_attempted: nextRuntimeState.deterministic_attempted,
+        healing_attempted: nextRuntimeState.healing_attempted,
+        healing_succeeded: nextRuntimeState.healing_succeeded,
+        artifact_bundle: nextRuntimeState.artifact_bundle,
+        patch_proposals: nextRuntimeState.patch_proposals
       },
       status: finalStatus === "passed" ? "completed" : "failed",
-      description:
-        finalStatus === "passed"
-          ? "Engine execution completed."
-          : errorMessage || "Engine execution failed.",
+      description: normalizedSummary,
       metadata: {
         execution_result_id: result.id,
-        current_phase: finalStatus === "passed" ? "completed" : "failed"
+        current_phase: finalStatus === "passed" ? "completed" : "failed",
+        deterministic_attempted: nextRuntimeState.deterministic_attempted,
+        healing_attempted: nextRuntimeState.healing_attempted,
+        healing_succeeded: nextRuntimeState.healing_succeeded,
+        artifact_bundle: nextRuntimeState.artifact_bundle,
+        patch_proposals: nextRuntimeState.patch_proposals,
+        final_summary: normalizedSummary
       }
     });
 
     await workspaceTransactionService.updateTransaction(job.transaction_id, {
       status: finalStatus === "passed" ? "completed" : "failed",
       completed_at: completedAt,
-      description:
-        finalStatus === "passed"
-          ? "Engine execution completed."
-          : errorMessage || "Engine execution failed."
+      description: normalizedSummary,
+      metadata: {
+        execution_result_id: result.id,
+        deterministic_attempted: nextRuntimeState.deterministic_attempted,
+        healing_attempted: nextRuntimeState.healing_attempted,
+        healing_succeeded: nextRuntimeState.healing_succeeded,
+        artifact_bundle: nextRuntimeState.artifact_bundle,
+        patch_proposals: nextRuntimeState.patch_proposals,
+        final_summary: normalizedSummary
+      }
     });
   }
 

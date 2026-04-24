@@ -446,7 +446,9 @@ export const api = {
         runner: string;
         ui: string;
         control_plane: string;
+        execution_scope: string;
         supported_step_types: string[];
+        supported_web_engines: string[];
         qaira_result_log_compatibility?: string | null;
       }>("/integrations/test-connection", { method: "POST", body: JSON.stringify(input) }),
     update: (id: string, input: Partial<{ type: Integration["type"]; name: string; base_url: string; api_key: string; model: string; project_key: string; username: string; config: Record<string, unknown>; is_active: boolean }>) =>

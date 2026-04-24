@@ -62,6 +62,12 @@ export async function executeQueuedApiStep(jobId, stepId) {
         body: JSON.stringify({})
     });
 }
+export async function reportQueuedStep(jobId, stepId, payload) {
+    return request(`/testengine/internal/jobs/${jobId}/steps/${stepId}/report`, {
+        method: "POST",
+        body: JSON.stringify(payload)
+    });
+}
 export async function completeQueuedJob(jobId, status, error) {
     return request(`/testengine/internal/jobs/${jobId}/complete`, {
         method: "POST",
@@ -69,6 +75,12 @@ export async function completeQueuedJob(jobId, status, error) {
             status,
             error
         })
+    });
+}
+export async function completeQueuedJobWithMetadata(jobId, payload) {
+    return request(`/testengine/internal/jobs/${jobId}/complete`, {
+        method: "POST",
+        body: JSON.stringify(payload)
     });
 }
 export async function failQueuedJob(jobId, message) {

@@ -1,4 +1,5 @@
 import type { AppType, Project } from "../types";
+import { AppTypeDropdown, AppTypeInlineValue } from "./AppTypeDropdown";
 import { ProjectDropdown } from "./ProjectDropdown";
 
 export function WorkspaceScopeBar({
@@ -28,8 +29,9 @@ export function WorkspaceScopeBar({
 }) {
   const resolvedProjectLabel =
     projectValueLabel || projects.find((project) => project.id === projectId)?.name || "No project selected";
+  const resolvedAppType = appTypes.find((appType) => appType.id === appTypeId) || null;
   const resolvedAppTypeLabel =
-    appTypeValueLabel || appTypes.find((appType) => appType.id === appTypeId)?.name || "No app type selected";
+    appTypeValueLabel || resolvedAppType?.name || "No app type selected";
 
   return (
     <div className={disabled ? "design-context-bar is-sticky is-read-only" : "design-context-bar is-sticky"}>
@@ -53,17 +55,27 @@ export function WorkspaceScopeBar({
         <span>{appTypeLabel}</span>
         {disabled ? (
           <div aria-label={`${appTypeLabel} snapshot`} className="context-value" role="textbox">
-            {resolvedAppTypeLabel}
+            <AppTypeInlineValue
+              isUnified={resolvedAppType?.is_unified}
+              label={resolvedAppTypeLabel}
+              type={resolvedAppType?.type}
+            />
           </div>
         ) : (
-          <select disabled={!projectId} value={appTypeId} onChange={(event) => onAppTypeChange(event.target.value)}>
-            <option value="">
-              {!projectId ? `Select ${projectLabel.toLowerCase()} first` : appTypes.length ? `Select ${appTypeLabel.toLowerCase()}` : "No app types available"}
-            </option>
-            {appTypes.map((appType) => (
-              <option key={appType.id} value={appType.id}>{appType.name}</option>
-            ))}
-          </select>
+          <AppTypeDropdown
+            ariaLabel={`Select ${appTypeLabel.toLowerCase()}`}
+            disabled={!projectId}
+            emptyLabel={!projectId ? `Select ${projectLabel.toLowerCase()} first` : "No app types available"}
+            onChange={onAppTypeChange}
+            options={appTypes.map((appType) => ({
+              value: appType.id,
+              label: appType.name,
+              type: appType.type,
+              isUnified: appType.is_unified
+            }))}
+            placeholder={`Select ${appTypeLabel.toLowerCase()}`}
+            value={appTypeId}
+          />
         )}
       </label>
     </div>

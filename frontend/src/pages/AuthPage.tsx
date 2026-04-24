@@ -79,54 +79,50 @@ const AUTH_CAPABILITY_SLIDES: Array<{
   description: string;
   theme: CapabilityTheme;
   visual: CapabilityVisual;
-  metrics: Array<{ value: string; label: string }>;
-  capabilities: string[];
-  footer: string;
+  proof: {
+    quote: string;
+    caption: string;
+  };
+  support: string;
 }> = [
   {
     id: "marketplace",
-    eyebrow: "Connected Tooling",
-    title: "Bring planning, access, alerts, and defect handoff into one QA workspace.",
-    description: "QAira keeps AI design, login controls, integrations, and release workflows connected so the team works from one operating surface instead of stitching together separate tools.",
+    eyebrow: "AI Workspace",
+    title: "Fast, AI-powered testing for custom applications.",
+    description: "QAira brings design, coverage thinking, secure access, and execution orchestration into one focused workspace so teams move with less friction and fewer tabs.",
     theme: "blue",
     visual: "marketplace",
-    metrics: [
-      { value: "12", label: "tool surfaces" },
-      { value: "4", label: "ready flows" },
-      { value: "1", label: "team hub" }
-    ],
-    capabilities: ["AI-powered design", "Google and email access", "Integration-ready handoff"],
-    footer: "One workspace for the tooling that usually gets split across tabs and teams."
+    proof: {
+      quote: "One calmer surface for planning, authoring, and controlled execution.",
+      caption: "Built to feel premium before the first test even starts."
+    },
+    support: "Designed for teams that want depth without a noisy first impression."
   },
   {
     id: "playbooks",
-    eyebrow: "Reusable Coverage",
-    title: "Link requirements, reusable cases, suites, and shared steps into one test flow.",
-    description: "Move from requirement coverage to suite planning without rebuilding the same scope. Shared steps, linked cases, and grouped flows stay connected across authoring and runs.",
+    eyebrow: "Reusable Playbooks",
+    title: "Shape reusable coverage before the first run begins.",
+    description: "Carry requirements into linked cases, shared steps, and suite-ready flows without rebuilding the same scenario map every time the product changes.",
     theme: "amber",
     visual: "playbooks",
-    metrics: [
-      { value: "18", label: "reqs mapped" },
-      { value: "42", label: "cases linked" },
-      { value: "9", label: "shared groups" }
-    ],
-    capabilities: ["Requirement traceability", "Shared step groups", "Suite-ready case reuse"],
-    footer: "Coverage stays deliberate, reusable, and ready to move into runs."
+    proof: {
+      quote: "Reusable structure keeps large QA programs from drifting into clutter.",
+      caption: "Coverage stays intentional, traceable, and ready for execution."
+    },
+    support: "A cleaner way to scale test design across modules, suites, and releases."
   },
   {
     id: "evidence",
-    eyebrow: "Run Evidence",
-    title: "Capture runs, failures, and proof in a format product and engineering can act on.",
-    description: "Run history, notes, failure signals, and linked evidence stay attached to reusable coverage so audits, bug triage, and release reviews stay grounded in the same source.",
+    eyebrow: "Readable Evidence",
+    title: "Keep run proof clean enough for QA, product, and engineering.",
+    description: "Execution history, failures, and supporting evidence stay attached to the exact flow that produced them so reviews and handoffs stay grounded in one source.",
     theme: "teal",
     visual: "evidence",
-    metrics: [
-      { value: "100%", label: "proof linked" },
-      { value: "3", label: "handoff lanes" },
-      { value: "24h", label: "audit ready" }
-    ],
-    capabilities: ["Run history", "Defect-ready summaries", "Release signals"],
-    footer: "Evidence stays readable, linked, and ready for the next shipping decision."
+    proof: {
+      quote: "Readable evidence shortens the distance from failure to action.",
+      caption: "Release signals remain review-ready without extra reporting work."
+    },
+    support: "A landing story centered on clarity, trust, and execution confidence."
   }
 ];
 
@@ -800,7 +796,7 @@ export function AuthPage() {
                     <p>Secure workspace intelligence</p>
                   </div>
                 </div>
-                <span className="auth-carousel-status">Autoplay</span>
+                <span className="auth-carousel-status">Preview</span>
               </div>
 
               <div className="auth-carousel-slide" key={`${activeCapability.id}-${capabilityLayout}`}>
@@ -809,19 +805,12 @@ export function AuthPage() {
                   <h1>{activeCapability.title}</h1>
                   <p className="auth-aside-copy">{activeCapability.description}</p>
 
-                  <div className="auth-carousel-stat-grid" aria-label="Capability highlights">
-                    {activeCapability.metrics.map((metric) => (
-                      <div className="auth-carousel-stat-card" key={metric.label}>
-                        <strong>{metric.value}</strong>
-                        <span>{metric.label}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="auth-trust-list" aria-label="Core capabilities">
-                    {activeCapability.capabilities.map((capability) => (
-                      <span className="auth-trust-pill" key={capability}>{capability}</span>
-                    ))}
+                  <div className="auth-carousel-proof" aria-label="Capability proof point">
+                    <span className="auth-carousel-proof-mark" aria-hidden="true">"</span>
+                    <div className="auth-carousel-proof-copy">
+                      <strong>{activeCapability.proof.quote}</strong>
+                      <span>{activeCapability.proof.caption}</span>
+                    </div>
                   </div>
                 </div>
 
@@ -842,7 +831,7 @@ export function AuthPage() {
                     />
                   ))}
                 </div>
-                <p className="auth-aside-footer">{activeCapability.footer}</p>
+                <p className="auth-aside-footer">{activeCapability.support}</p>
               </div>
             </div>
           </div>
@@ -1173,85 +1162,139 @@ function AuthCapabilityGraphic({
   const board =
     visual === "marketplace"
       ? {
-          eyebrow: "Connected stack",
-          note: "Feature-first workspace setup",
-          items: [
-            {
-              title: "AI design and planning",
-              detail: "Preview test ideas, generate cases, and keep design work in one place."
-            },
-            {
-              title: "Secure access controls",
-              detail: "Google sign-in, email verification, and admin-managed workspace entry."
-            },
-            {
-              title: "Integration-ready delivery",
-              detail: "Keep sync, handoff, and release workflows connected to the same QA surface."
-            }
+          windowLabel: "Workspace preview",
+          windowStatus: "Live",
+          focusLabel: "AI design flow",
+          focusTitle: "From product intent to runnable coverage",
+          focusCopy: "A guided surface for planning, authoring, and controlled execution.",
+          panels: [
+            { eyebrow: "Design", title: "AI-assisted drafting" },
+            { eyebrow: "Access", title: "Admin-governed entry" },
+            { eyebrow: "Delivery", title: "Execution handoff" }
           ],
-          tags: ["AI-assisted design", "Admin access", "Integrations", "One workspace"]
+          overlay: {
+            label: "Landing note",
+            value: "Less dashboard, more atmosphere."
+          }
         }
       : visual === "playbooks"
         ? {
-            eyebrow: "Coverage workflow",
-            note: "Reusable traceability without clutter",
-            items: [
-              {
-                title: "Requirement-linked coverage",
-                detail: "Carry scope from requirements into reusable cases without rebuilding the same map."
-              },
-              {
-                title: "Shared and local step groups",
-                detail: "Reuse repeated setup while keeping case-specific branches close to the scenario."
-              },
-              {
-                title: "Suite-ready organization",
-                detail: "Move linked cases into suites and run flows with less manual reshaping."
-              }
+            windowLabel: "Coverage flow",
+            windowStatus: "Mapped",
+            focusLabel: "Reusable structure",
+            focusTitle: "Requirements, cases, suites, and shared steps",
+            focusCopy: "Coverage grows in one direction instead of being rebuilt at every layer.",
+            panels: [
+              { eyebrow: "Requirements", title: "Traceable scope" },
+              { eyebrow: "Shared steps", title: "Reusable setup" },
+              { eyebrow: "Suites", title: "Run-ready grouping" }
             ],
-            tags: ["Requirements", "Shared steps", "Reusable cases", "Suites"]
+            overlay: {
+              label: "Design note",
+              value: "Reusable playbooks reduce authoring drift."
+            }
           }
         : {
-            eyebrow: "Run evidence",
-            note: "Readable proof for every run",
-            items: [
-              {
-                title: "Result history stays attached",
-                detail: "Runs, failures, and notes remain tied to the underlying reusable coverage."
-              },
-              {
-                title: "Proof-first handoff",
-                detail: "Keep evidence, outcome, and impacted scope together for product and engineering."
-              },
-              {
-                title: "Release-ready summaries",
-                detail: "Turn run data into a clear signal for audits, bug triage, and release reviews."
-              }
+            windowLabel: "Run evidence",
+            windowStatus: "Linked",
+            focusLabel: "Execution proof",
+            focusTitle: "Signals, failures, and evidence in one readable layer",
+            focusCopy: "Run history stays attached to the exact flow that generated it.",
+            panels: [
+              { eyebrow: "Runs", title: "Case-level history" },
+              { eyebrow: "Failures", title: "Defect-ready context" },
+              { eyebrow: "Reviews", title: "Release confidence" }
             ],
-            tags: ["Test runs", "Linked evidence", "Defect handoff", "Release signal"]
+            overlay: {
+              label: "Evidence note",
+              value: "Clear proof speeds up product decisions."
+            }
           };
 
+  const sidePanels = [board.panels[0], board.panels[2]];
+  const mainCardItems = layout === "portrait" ? board.panels.slice(0, 2) : board.panels;
+
   return (
-    <div className={`auth-capability-visual auth-feature-board is-${layout}`} aria-hidden="true">
-      <div className="auth-feature-board-head">
-        <span className="auth-visual-command-label">{board.eyebrow}</span>
-        <span className="auth-feature-board-note">{board.note}</span>
-      </div>
+    <div className={`auth-capability-visual auth-stage-visual is-${visual} is-${layout}`} aria-hidden="true">
+      <span className="auth-stage-glow auth-stage-glow--one" />
+      <span className="auth-stage-glow auth-stage-glow--two" />
+      <span className="auth-stage-orb auth-stage-orb--left" />
+      <span className="auth-stage-orb auth-stage-orb--right" />
+      <span className="auth-stage-ring" />
 
-      <div className="auth-feature-list">
-        {board.items.map((item) => (
-          <div className="auth-feature-card" key={item.title}>
-            <strong>{item.title}</strong>
-            <p>{item.detail}</p>
+      <div className="auth-stage-window auth-stage-window--left">
+        <div className="auth-stage-window-bar">
+          <span className="auth-stage-window-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+        </div>
+        <div className="auth-stage-window-body is-side">
+          <span className="auth-stage-panel-eyebrow">{sidePanels[0].eyebrow}</span>
+          <strong>{sidePanels[0].title}</strong>
+          <div className="auth-stage-side-bars" aria-hidden="true">
+            <span />
+            <span />
+            <span />
           </div>
-        ))}
+        </div>
       </div>
 
-      <div className="auth-feature-tag-row">
-        {board.tags.map((tag) => (
-          <span className="auth-feature-tag" key={tag}>{tag}</span>
-        ))}
+      <div className="auth-stage-window auth-stage-window--main">
+        <div className="auth-stage-window-bar">
+          <span className="auth-stage-window-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+          <span className="auth-stage-window-title">{board.windowLabel}</span>
+          <span className="auth-stage-window-status">{board.windowStatus}</span>
+        </div>
+
+        <div className="auth-stage-window-body is-main">
+          <div className="auth-stage-focus-copy">
+            <span className="auth-stage-panel-eyebrow">{board.focusLabel}</span>
+            <strong>{board.focusTitle}</strong>
+            <p>{board.focusCopy}</p>
+          </div>
+
+          <div className="auth-stage-card-grid">
+            {mainCardItems.map((item) => (
+              <div className="auth-stage-card" key={item.title}>
+                <span>{item.eyebrow}</span>
+                <strong>{item.title}</strong>
+              </div>
+            ))}
+          </div>
+
+          <div className="auth-stage-overlay-card">
+            <span>{board.overlay.label}</span>
+            <strong>{board.overlay.value}</strong>
+          </div>
+        </div>
       </div>
+
+      <div className="auth-stage-window auth-stage-window--right">
+        <div className="auth-stage-window-bar">
+          <span className="auth-stage-window-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+        </div>
+        <div className="auth-stage-window-body is-side">
+          <span className="auth-stage-panel-eyebrow">{sidePanels[1].eyebrow}</span>
+          <strong>{sidePanels[1].title}</strong>
+          <div className="auth-stage-signal-list" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+        </div>
+      </div>
+
+      <div className="auth-stage-floor" />
     </div>
   );
 }

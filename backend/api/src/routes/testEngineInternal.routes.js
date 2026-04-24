@@ -41,18 +41,56 @@ module.exports = async function (fastify) {
     });
   });
 
+  fastify.post("/testengine/internal/jobs/:id/steps/:stepId/report", async (req) => {
+    await fastify.authenticateTestEngine(req);
+
+    fastify.validate({
+      status: { required: true, type: "string" },
+      note: { required: false, type: "string" },
+      evidence: { required: false, type: "object" },
+      api_detail: { required: false, type: "object" },
+      captures: { required: false, type: "object" },
+      recovery_attempted: { required: false, type: "boolean" },
+      recovery_succeeded: { required: false, type: "boolean" }
+    }, req.body || {});
+
+    return service.reportQueuedStep({
+      job_id: req.params.id,
+      step_id: req.params.stepId,
+      status: req.body?.status,
+      note: req.body?.note,
+      evidence: req.body?.evidence,
+      api_detail: req.body?.api_detail,
+      captures: req.body?.captures,
+      recovery_attempted: req.body?.recovery_attempted,
+      recovery_succeeded: req.body?.recovery_succeeded
+    });
+  });
+
   fastify.post("/testengine/internal/jobs/:id/complete", async (req) => {
     await fastify.authenticateTestEngine(req);
 
     fastify.validate({
       status: { required: false, type: "string" },
-      error: { required: false, type: "string" }
+      error: { required: false, type: "string" },
+      summary: { required: false, type: "string" },
+      deterministic_attempted: { required: false, type: "boolean" },
+      healing_attempted: { required: false, type: "boolean" },
+      healing_succeeded: { required: false, type: "boolean" },
+      artifact_bundle: { required: false, type: "object" },
+      patch_proposals: { required: false, type: "array" }
     }, req.body || {});
 
     return service.completeQueuedJob({
       job_id: req.params.id,
       status: req.body?.status,
-      error: req.body?.error
+      error: req.body?.error,
+      summary: req.body?.summary,
+      deterministic_attempted: req.body?.deterministic_attempted,
+      healing_attempted: req.body?.healing_attempted,
+      healing_succeeded: req.body?.healing_succeeded,
+      artifact_bundle: req.body?.artifact_bundle,
+      patch_proposals: req.body?.patch_proposals
     });
   });
 
