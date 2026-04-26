@@ -287,6 +287,7 @@ CREATE TABLE executions (
   test_data_set_name TEXT,
   test_data_set_snapshot JSONB,
   created_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   started_at TIMESTAMPTZ,
   ended_at TIMESTAMPTZ,
   FOREIGN KEY (project_id) REFERENCES projects(id),

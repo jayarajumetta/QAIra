@@ -33,7 +33,7 @@ const navigation = [
     items: [
       {
         id: "authoring",
-        to: "/requirements",
+        to: "/test-cases",
         label: "Test Authoring",
         shortLabel: "Authoring",
         icon: FlaskIcon,

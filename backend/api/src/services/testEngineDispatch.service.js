@@ -134,6 +134,28 @@ const normalizeText = (value) => {
   return normalized || null;
 };
 
+const normalizeEngineHostUrl = (value) => {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(normalized);
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return normalized.replace(/\/+$/, "");
+    }
+
+    parsed.hash = "";
+    parsed.search = "";
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return normalized.replace(/\/+$/, "");
+  }
+};
+
 const nowIso = () => new Date().toISOString();
 
 const normalizeInteger = (value, fallback = null) => {
@@ -247,6 +269,29 @@ const normalizeCapturedValuesRecord = (value) => {
     }
 
     accumulator[normalizedKey] = entry === undefined || entry === null ? "" : String(entry);
+    return accumulator;
+  }, {});
+};
+
+const normalizeStepCapturesRecord = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.entries(value).reduce((accumulator, [stepId, captures]) => {
+    const normalizedStepId = normalizeText(stepId);
+
+    if (!normalizedStepId) {
+      return accumulator;
+    }
+
+    const normalizedCaptures = normalizeCapturedValuesRecord(captures);
+
+    if (!Object.keys(normalizedCaptures).length) {
+      return accumulator;
+    }
+
+    accumulator[normalizedStepId] = normalizedCaptures;
     return accumulator;
   }, {});
 };
@@ -443,9 +488,12 @@ const parseStructuredLogs = (value) => {
       stepStatuses: {},
       stepNotes: {},
       stepEvidence: {},
-      stepApiDetails: {}
+      stepApiDetails: {},
+      stepCaptures: {}
     };
   }
+
+  const normalizedStepCaptures = normalizeStepCapturesRecord(parsed.stepCaptures);
 
   return {
     stepStatuses: parsed.stepStatuses && typeof parsed.stepStatuses === "object" && !Array.isArray(parsed.stepStatuses)
@@ -459,7 +507,8 @@ const parseStructuredLogs = (value) => {
       : {},
     stepApiDetails: parsed.stepApiDetails && typeof parsed.stepApiDetails === "object" && !Array.isArray(parsed.stepApiDetails)
       ? { ...parsed.stepApiDetails }
-      : {}
+      : {},
+    stepCaptures: normalizedStepCaptures
   };
 };
 
@@ -744,7 +793,7 @@ async function queueExecutionDispatch({ plan, integration, initiatedBy }) {
         engine_run_id: item.engine_run_id,
         execution_id: plan.execution.id,
         test_case_id: item.case_snapshot.test_case_id,
-        engine_host: integration.base_url || null,
+        engine_host: normalizeEngineHostUrl(integration.base_url),
         queue_mode: "qaira-pull",
         active_web_engine: envelope.web_engine?.active || "playwright"
       },
@@ -776,7 +825,7 @@ async function queueExecutionDispatch({ plan, integration, initiatedBy }) {
       item.case_snapshot.test_case_id,
       item.case_snapshot.test_case_title,
       transaction.id,
-      integration.base_url || null,
+      normalizeEngineHostUrl(integration.base_url),
       envelope,
       {
         captured_values: {},
@@ -814,32 +863,40 @@ async function getQueuedJob(id) {
 
 exports.leaseNextQueuedJob = db.transaction(async ({ worker_id, engine_host, lease_seconds } = {}) => {
   const normalizedWorkerId = normalizeText(worker_id) || "testengine-worker";
-  const normalizedEngineHost = normalizeText(engine_host);
+  const normalizedEngineHost = normalizeEngineHostUrl(engine_host);
   const safeLeaseSeconds = Math.max(30, Number(lease_seconds) || DEFAULT_LEASE_SECONDS);
-  const params = [];
-  let query = `
-    SELECT *
-    FROM test_engine_jobs
-    WHERE (
-        status = 'queued'
-        OR (
-          status IN ('leased', 'running')
-          AND lease_expires_at IS NOT NULL
-          AND lease_expires_at < CURRENT_TIMESTAMP
-          AND completed_at IS NULL
+  const findCandidate = async (scopedEngineHost = null) => {
+    const params = [];
+    let query = `
+      SELECT *
+      FROM test_engine_jobs
+      WHERE (
+          status = 'queued'
+          OR (
+            status IN ('leased', 'running')
+            AND lease_expires_at IS NOT NULL
+            AND lease_expires_at < CURRENT_TIMESTAMP
+            AND completed_at IS NULL
+          )
         )
-      )
-  `;
+    `;
 
-  if (normalizedEngineHost) {
-    query += ` AND (engine_host IS NULL OR engine_host = ?)`;
-    params.push(normalizedEngineHost);
+    if (scopedEngineHost) {
+      query += ` AND (engine_host IS NULL OR engine_host = ?)`;
+      params.push(scopedEngineHost);
+    }
+
+    query += ` ORDER BY created_at ASC, id ASC LIMIT 1 FOR UPDATE SKIP LOCKED`;
+
+    const result = await db.query(query, params);
+    return result.rows[0] || null;
+  };
+
+  let row = await findCandidate(normalizedEngineHost);
+
+  if (!row && normalizedEngineHost) {
+    row = await findCandidate(null);
   }
-
-  query += ` ORDER BY created_at ASC, id ASC LIMIT 1 FOR UPDATE SKIP LOCKED`;
-
-  const result = await db.query(query, params);
-  const row = result.rows[0];
 
   if (!row) {
     return null;
@@ -960,6 +1017,7 @@ exports.executeQueuedApiStep = async ({ job_id, step_id } = {}) => {
     api_request: step.api_request,
     parameter_values: parameterValues
   });
+  const normalizedStepCaptures = normalizeCapturedValuesRecord(stepResult.captures);
   const formattedStepNote = executionStepRuntimeService.formatApiStepEvidenceNote(stepResult);
   const mergedLogs = {
     ...existingLogs,
@@ -978,13 +1036,24 @@ exports.executeQueuedApiStep = async ({ job_id, step_id } = {}) => {
     stepApiDetails: {
       ...existingLogs.stepApiDetails,
       [step.id]: stepResult.detail
-    }
+    },
+    stepCaptures: Object.keys(normalizedStepCaptures).length
+      ? {
+          ...existingLogs.stepCaptures,
+          [step.id]: {
+            ...(existingLogs.stepCaptures?.[step.id] || {}),
+            ...normalizedStepCaptures
+          }
+        }
+      : {
+          ...existingLogs.stepCaptures
+        }
   };
   const nextRuntimeState = {
     ...runtimeState,
     captured_values: {
       ...runtimeState.captured_values,
-      ...normalizeCapturedValuesRecord(stepResult.captures)
+      ...normalizedStepCaptures
     },
     logs: mergedLogs,
     deterministic_attempted: true
@@ -1127,6 +1196,17 @@ exports.reportQueuedStep = async ({
         }
       : {
           ...existingLogs.stepApiDetails
+        },
+    stepCaptures: Object.keys(normalizedCaptures).length
+      ? {
+          ...existingLogs.stepCaptures,
+          [step.id]: {
+            ...(existingLogs.stepCaptures?.[step.id] || {}),
+            ...normalizedCaptures
+          }
+        }
+      : {
+          ...existingLogs.stepCaptures
         }
   };
   const nextRuntimeState = {

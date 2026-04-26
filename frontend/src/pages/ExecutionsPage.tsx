@@ -23,7 +23,6 @@ import {
 } from "../components/StepAutomationEditor";
 import { ProjectDropdown } from "../components/ProjectDropdown";
 import { ProgressMeter } from "../components/ProgressMeter";
-import { StepParameterizedText } from "../components/StepParameterizedText";
 import { StatusBadge } from "../components/StatusBadge";
 import { SubnavTabs } from "../components/SubnavTabs";
 import { SuiteScopePicker } from "../components/SuiteCasePicker";
@@ -41,10 +40,11 @@ import {
   parseExecutionLogs,
   stringifyExecutionLogs,
   type ExecutionStepApiDetail,
+  type ExecutionStepCaptureMap,
   type ExecutionStepEvidence,
   type ExecutionStepStatus
 } from "../lib/executionLogs";
-import { buildDataSetParameterValues, combineStepParameterValues, normalizeStepParameterValues, resolveStepParameterText } from "../lib/stepParameters";
+import { buildDataSetParameterValues, combineStepParameterValues, normalizeStepParameterValues, parseStepParameterName, resolveStepParameterText } from "../lib/stepParameters";
 import { type AssigneeOption, buildAssigneeOptions, resolveUserInitials, resolveUserPrimaryLabel, resolveUserSecondaryLabel } from "../lib/userDisplay";
 import type {
   AppType,
@@ -125,6 +125,7 @@ type ExecutionEvidencePreviewState = {
 type ExecutionApiDetailState = {
   step: TestStep;
   detail: ExecutionStepApiDetail | null;
+  captures: Record<string, string>;
   note: string;
   status: ExecutionResult["status"] | "queued";
 };
@@ -132,6 +133,7 @@ type ExecutionApiDetailState = {
 type ExecutionApiStepDialogProps = {
   step: TestStep;
   detail: ExecutionStepApiDetail | null;
+  captures: Record<string, string>;
   note: string;
   status: ExecutionResult["status"] | "queued";
   canRun: boolean;
@@ -148,6 +150,14 @@ type SmartExecutionRequirementOption = {
 };
 
 type ExecutionScheduleCadence = "once" | "daily" | "weekly" | "monthly";
+
+type ExecutionParameterDisplayEntry = {
+  key: string;
+  token: string;
+  value: string;
+  flowLabel: string;
+  sourceLabel?: string;
+};
 
 const BATCH_PROCESS_CATEGORIES = new Set([
   "bulk_import",
@@ -816,6 +826,123 @@ function resolveExecutionRunBucket(execution: Execution): Extract<TestRunsView, 
   return execution.suite_ids.length ? "suite-runs" : "test-case-runs";
 }
 
+function buildExecutionRunScopedValues(entries: KeyValueEntry[] = []) {
+  return entries.reduce<Record<string, string>>((accumulator, entry) => {
+    const key = String(entry?.key || "").trim();
+
+    if (!key) {
+      return accumulator;
+    }
+
+    const normalized = normalizeStepParameterValues(
+      {
+        [key]: entry?.value === undefined || entry?.value === null ? "" : String(entry.value)
+      },
+      "r"
+    );
+
+    return combineStepParameterValues(accumulator, normalized);
+  }, {});
+}
+
+function buildExecutionInputParameterValues(
+  execution: Execution | null,
+  caseSnapshot: ExecutionCaseSnapshot | null
+) {
+  return combineStepParameterValues(
+    normalizeStepParameterValues(caseSnapshot?.parameter_values || {}, "t"),
+    normalizeStepParameterValues(caseSnapshot?.suite_parameter_values || {}, "s"),
+    buildExecutionRunScopedValues(execution?.test_environment?.snapshot?.variables || []),
+    buildExecutionRunScopedValues(execution?.test_configuration?.snapshot?.variables || []),
+    execution?.test_data_set ? buildDataSetParameterValues(execution.test_data_set.snapshot || null) : {}
+  );
+}
+
+function formatExecutionParameterToken(key: string, fallbackScope: "t" | "s" | "r" = "t") {
+  return parseStepParameterName(key, fallbackScope)?.token || `@${String(key || "").trim()}`;
+}
+
+function buildExecutionParameterDisplayEntries(
+  values: Record<string, string>,
+  flow: "input" | "output"
+): ExecutionParameterDisplayEntry[] {
+  return Object.entries(values)
+    .map(([key, value]) => {
+      const parsed = parseStepParameterName(key, "t");
+      const scopeLabel = parsed?.scopeLabel || "Test case";
+
+      return {
+        key,
+        token: parsed?.token || formatExecutionParameterToken(key),
+        value,
+        flowLabel: `${scopeLabel} ${flow}`
+      };
+    })
+    .sort((left, right) => left.token.localeCompare(right.token));
+}
+
+function collectExecutionOutputParameterValues(
+  stepCaptures: Record<string, ExecutionStepCaptureMap>,
+  steps: TestStep[]
+) {
+  return steps
+    .slice()
+    .sort((left, right) => left.step_order - right.step_order)
+    .reduce<Record<string, string>>((accumulator, step) => {
+      Object.assign(accumulator, stepCaptures[step.id] || {});
+      return accumulator;
+    }, {});
+}
+
+function buildExecutionOutputParameterEntries(
+  stepCaptures: Record<string, ExecutionStepCaptureMap>,
+  steps: TestStep[]
+): ExecutionParameterDisplayEntry[] {
+  const latestByKey = new Map<string, ExecutionParameterDisplayEntry>();
+
+  steps
+    .slice()
+    .sort((left, right) => left.step_order - right.step_order)
+    .forEach((step) => {
+      Object.entries(stepCaptures[step.id] || {}).forEach(([key, value]) => {
+        const parsed = parseStepParameterName(key, "t");
+        const stepTypeLabel = String(step.step_type || "web").toUpperCase();
+
+        latestByKey.set(key, {
+          key,
+          token: parsed?.token || formatExecutionParameterToken(key),
+          value,
+          flowLabel: `${parsed?.scopeLabel || "Test case"} output`,
+          sourceLabel: `Step ${step.step_order} · ${stepTypeLabel}`
+        });
+      });
+    });
+
+  return [...latestByKey.values()].sort((left, right) => left.token.localeCompare(right.token));
+}
+
+function mergeExecutionStepCaptures(
+  stepCaptures: Record<string, ExecutionStepCaptureMap>,
+  stepApiDetails: Record<string, ExecutionStepApiDetail>
+) {
+  const merged: Record<string, ExecutionStepCaptureMap> = { ...stepCaptures };
+
+  Object.entries(stepApiDetails || {}).forEach(([stepId, detail]) => {
+    const apiCaptures = detail?.captures || {};
+
+    if (!Object.keys(apiCaptures).length) {
+      return;
+    }
+
+    merged[stepId] = {
+      ...(merged[stepId] || {}),
+      ...apiCaptures
+    };
+  });
+
+  return merged;
+}
+
 function isBatchProcessTransaction(transaction: WorkspaceTransaction) {
   return BATCH_PROCESS_CATEGORIES.has(transaction.category)
     || transaction.action === "testengine_run"
@@ -843,6 +970,7 @@ export function ExecutionsPage() {
   const [expandedExecutionSuiteIds, setExpandedExecutionSuiteIds] = useState<string[]>([]);
   const [selectedTestCaseId, setSelectedTestCaseId] = useState("");
   const [expandedExecutionStepGroupIds, setExpandedExecutionStepGroupIds] = useState<string[]>([]);
+  const [expandedExecutionStepIds, setExpandedExecutionStepIds] = useState<string[]>([]);
   const [bulkSelectedStepIds, setBulkSelectedStepIds] = useState<string[]>([]);
   const [executionName, setExecutionName] = useState("");
   const [selectedExecutionEnvironmentId, setSelectedExecutionEnvironmentId] = useState("");
@@ -869,7 +997,8 @@ export function ExecutionsPage() {
   const [isSuiteTreeMinimized, setIsSuiteTreeMinimized] = useState(false);
   const [isExecutionHealthExpanded, setIsExecutionHealthExpanded] = useState(true);
   const [isExecutionSupportExpanded, setIsExecutionSupportExpanded] = useState(true);
-  const [isSavedExecutionDataExpanded, setIsSavedExecutionDataExpanded] = useState(true);
+  const [isExecutionInputParamsExpanded, setIsExecutionInputParamsExpanded] = useState(true);
+  const [isExecutionOutputParamsExpanded, setIsExecutionOutputParamsExpanded] = useState(true);
   const [executionStatusFilter, setExecutionStatusFilter] = useState<ExecutionStatus | "all">("all");
   const [executionIssueFilter, setExecutionIssueFilter] = useState<ExecutionIssueFilter>("all");
   const [executionEvidenceFilter, setExecutionEvidenceFilter] = useState<ExecutionEvidenceFilter>("all");
@@ -1459,14 +1588,21 @@ export function ExecutionsPage() {
 
   useEffect(() => {
     const requestedExecutionId = searchParams.get("execution");
+    const requestedViewParam = searchParams.get("view");
+    const requestedView =
+      requestedViewParam === "test-case-runs" || requestedViewParam === "suite-runs"
+        ? requestedViewParam
+        : null;
+    const requestedTestCaseId = searchParams.get("testCase");
 
     if (requestedExecutionId) {
       const requestedExecution =
         executions.find((execution) => execution.id === requestedExecutionId)
         || (selectedExecutionQuery.data?.id === requestedExecutionId ? selectedExecutionQuery.data : null);
+      const fallbackView = requestedView || (requestedTestCaseId ? "test-case-runs" : "suite-runs");
 
       if (!isExecutionRunsView(testRunsView)) {
-        setTestRunsView(requestedExecution ? resolveExecutionRunBucket(requestedExecution) : "suite-runs");
+        setTestRunsView(requestedExecution ? resolveExecutionRunBucket(requestedExecution) : fallbackView);
       }
 
       if (requestedExecution) {
@@ -1474,6 +1610,8 @@ export function ExecutionsPage() {
         if (testRunsView !== requestedView) {
           setTestRunsView(requestedView);
         }
+      } else if (requestedView && testRunsView !== requestedView) {
+        setTestRunsView(requestedView);
       }
 
       if (selectedExecutionId !== requestedExecutionId) {
@@ -1519,28 +1657,13 @@ export function ExecutionsPage() {
     () => snapshotCases.find((snapshot) => snapshot.test_case_id === selectedTestCaseId) || null,
     [selectedTestCaseId, snapshotCases]
   );
-  const executionStepParameterValues = useMemo(
-    () => combineStepParameterValues(
-      normalizeStepParameterValues(selectedExecutionCaseSnapshot?.parameter_values || {}, "t"),
-      normalizeStepParameterValues(selectedExecutionCaseSnapshot?.suite_parameter_values || {}, "s"),
-      hasExecutionLevelTestData ? buildDataSetParameterValues(selectedExecution?.test_data_set?.snapshot || null) : {}
-    ),
-    [
-      hasExecutionLevelTestData,
-      selectedExecution?.test_data_set?.snapshot,
-      selectedExecutionCaseSnapshot?.parameter_values,
-      selectedExecutionCaseSnapshot?.suite_parameter_values
-    ]
+  const executionInputParameterValues = useMemo(
+    () => buildExecutionInputParameterValues(selectedExecution, selectedExecutionCaseSnapshot),
+    [selectedExecution, selectedExecutionCaseSnapshot]
   );
-  const selectedExecutionCaseParameterEntries = useMemo(
-    () =>
-      Object.entries(
-        combineStepParameterValues(
-          normalizeStepParameterValues(selectedExecutionCaseSnapshot?.parameter_values || {}, "t"),
-          normalizeStepParameterValues(selectedExecutionCaseSnapshot?.suite_parameter_values || {}, "s")
-        )
-      ).sort(([left], [right]) => left.localeCompare(right)),
-    [selectedExecutionCaseSnapshot?.parameter_values, selectedExecutionCaseSnapshot?.suite_parameter_values]
+  const selectedExecutionInputParameterEntries = useMemo(
+    () => buildExecutionParameterDisplayEntries(executionInputParameterValues, "input"),
+    [executionInputParameterValues]
   );
 
   useEffect(() => {
@@ -1584,7 +1707,12 @@ export function ExecutionsPage() {
   }, [selectedExecutionId, selectedTestCaseId]);
 
   useEffect(() => {
-    setIsSavedExecutionDataExpanded(true);
+    setExpandedExecutionStepIds([]);
+  }, [selectedExecutionId, selectedTestCaseId]);
+
+  useEffect(() => {
+    setIsExecutionInputParamsExpanded(true);
+    setIsExecutionOutputParamsExpanded(true);
   }, [selectedExecutionId, selectedTestCaseId]);
 
   const executionSuites = useMemo<ExecutionSuiteNode[]>(
@@ -1734,6 +1862,22 @@ export function ExecutionsPage() {
   const stepNotes = selectedCaseLogs.stepNotes || {};
   const stepEvidence = selectedCaseLogs.stepEvidence || {};
   const stepApiDetails = selectedCaseLogs.stepApiDetails || {};
+  const stepCaptures = useMemo(
+    () => mergeExecutionStepCaptures(selectedCaseLogs.stepCaptures || {}, stepApiDetails),
+    [selectedCaseLogs.stepCaptures, stepApiDetails]
+  );
+  const executionOutputParameterValues = useMemo(
+    () => collectExecutionOutputParameterValues(stepCaptures, selectedSteps),
+    [selectedSteps, stepCaptures]
+  );
+  const selectedExecutionOutputParameterEntries = useMemo(
+    () => buildExecutionOutputParameterEntries(stepCaptures, selectedSteps),
+    [selectedSteps, stepCaptures]
+  );
+  const executionStepParameterValues = useMemo(
+    () => combineStepParameterValues(executionInputParameterValues, executionOutputParameterValues),
+    [executionInputParameterValues, executionOutputParameterValues]
+  );
 
   const caseDerivedStatus = (testCase: ExecutionCaseView): ExecutionResult["status"] | "queued" => {
     const result = resultByCaseId[testCase.id];
@@ -2211,7 +2355,8 @@ export function ExecutionsPage() {
       stepStatuses: mergedStatuses,
       stepNotes: mergedNotes,
       stepEvidence: mergedEvidence,
-      stepApiDetails: prev.stepApiDetails || {}
+      stepApiDetails: prev.stepApiDetails || {},
+      stepCaptures: prev.stepCaptures || {}
     });
     const durationMs = resolvePersistedCaseDurationMs(testCaseId, existing);
 
@@ -2392,6 +2537,12 @@ export function ExecutionsPage() {
   const selectedExecutionResult = selectedExecutionCase ? resultByCaseId[selectedExecutionCase.id] : null;
   const selectedExecutionCaseEffectiveUser = selectedExecutionCase?.assigned_user || selectedExecution?.assigned_user || null;
   const selectedExecutionCaseExplicitAssigneeId = selectedExecutionCase?.assigned_to || "";
+  const selectedExecutionCaseReadableTitle = selectedExecutionCase
+    ? resolveStepParameterText(selectedExecutionCase.title, executionStepParameterValues) || selectedExecutionCase.title
+    : "";
+  const selectedExecutionCaseReadableDescription = selectedExecutionCase
+    ? resolveStepParameterText(selectedExecutionCase.description, executionStepParameterValues) || selectedExecutionCase.description || ""
+    : "";
 
   const openExecutionCaseAutomationPreview = () => {
     if (!selectedSteps.length) {
@@ -2439,6 +2590,7 @@ export function ExecutionsPage() {
       setExecutionApiDetailState({
         step,
         detail: response.detail,
+        captures: response.detail?.captures || {},
         note: response.note,
         status: response.step_status
       });
@@ -2454,6 +2606,7 @@ export function ExecutionsPage() {
     setExecutionApiDetailState({
       step,
       detail: stepApiDetails[step.id] || null,
+      captures: stepCaptures[step.id] || stepApiDetails[step.id]?.captures || {},
       note: stepNotes[step.id] || "",
       status: stepStatuses[step.id] || "queued"
     });
@@ -3169,7 +3322,8 @@ export function ExecutionsPage() {
       stepStatuses: prev.stepStatuses || {},
       stepNotes: prev.stepNotes || {},
       stepEvidence: prev.stepEvidence || {},
-      stepApiDetails: prev.stepApiDetails || {}
+      stepApiDetails: prev.stepApiDetails || {},
+      stepCaptures: prev.stepCaptures || {}
     });
     const durationMs = resolvePersistedCaseDurationMs(testCaseId, existing);
 
@@ -3790,8 +3944,8 @@ export function ExecutionsPage() {
                           <ExecutionAssigneeChip className="execution-card-assignee--compact" user={selectedExecutionCaseEffectiveUser} />
                           <span className="execution-health-trigger">{selectedExecution?.name || "Selected run"}</span>
                         </div>
-                        <strong>{selectedExecutionCase.title}</strong>
-                        <span>{selectedExecutionCase.description || "Execute this case step by step and capture evidence as you go."}</span>
+                        <strong>{selectedExecutionCaseReadableTitle || selectedExecutionCase.title}</strong>
+                        <span>{selectedExecutionCaseReadableDescription || "Execute this case step by step and capture evidence as you go."}</span>
                       </div>
 
                       <div className="execution-detail-glance">
@@ -3886,48 +4040,28 @@ export function ExecutionsPage() {
                           />
                         </div>
 
-                        {!hasExecutionLevelTestData ? (
-                          <div className="resource-table-shell execution-context-table-shell">
-                            <button
-                              aria-expanded={isSavedExecutionDataExpanded}
-                              className="execution-saved-data-toggle"
-                              onClick={() => setIsSavedExecutionDataExpanded((current) => !current)}
-                              type="button"
-                            >
-                              <div className="execution-saved-data-toggle-copy">
-                                <strong>Saved case and suite data</strong>
-                                <span>Using saved @t and @s values because this execution has no attached test data set for @r tokens.</span>
-                              </div>
-                              <div className="execution-saved-data-toggle-meta">
-                                <span className="count-pill">
-                                  {selectedExecutionCaseParameterEntries.length} item{selectedExecutionCaseParameterEntries.length === 1 ? "" : "s"}
-                                </span>
-                                <span
-                                  aria-hidden="true"
-                                  className={isSavedExecutionDataExpanded ? "execution-saved-data-toggle-arrow is-expanded" : "execution-saved-data-toggle-arrow"}
-                                >
-                                  <ExecutionAccordionChevronIcon />
-                                </span>
-                              </div>
-                            </button>
-                            {isSavedExecutionDataExpanded ? (
-                              !selectedExecutionCaseParameterEntries.length ? (
-                                <div className="empty-state compact resource-table-empty">No saved case or suite-scoped data is available for this case.</div>
-                              ) : (
-                                <div className="execution-saved-data-scroll" role="list" aria-label="Saved case and suite data values">
-                                  <div className="execution-saved-data-grid">
-                                    {selectedExecutionCaseParameterEntries.map(([key, value]) => (
-                                      <article className="execution-saved-data-card" key={key} role="listitem">
-                                        <span>{key}</span>
-                                        <strong title={value || "—"}>{value || "—"}</strong>
-                                      </article>
-                                    ))}
-                                  </div>
-                                </div>
-                              )
-                            ) : null}
-                          </div>
-                        ) : null}
+                        <div className="execution-parameter-stack">
+                          <ExecutionParameterPanel
+                            description={
+                              hasExecutionLevelTestData
+                                ? "Snapped before execution started from saved @t and @s values plus the selected run context and test data."
+                                : "Snapped before execution started from saved @t and @s values plus the selected run context."
+                            }
+                            emptyMessage="No snapped input params are available for this case yet."
+                            entries={selectedExecutionInputParameterEntries}
+                            isExpanded={isExecutionInputParamsExpanded}
+                            onToggle={() => setIsExecutionInputParamsExpanded((current) => !current)}
+                            title="Input params"
+                          />
+                          <ExecutionParameterPanel
+                            description="Extracted while this execution ran. Later steps in the case resolve against these output params when available."
+                            emptyMessage="No output params have been extracted from this case yet."
+                            entries={selectedExecutionOutputParameterEntries}
+                            isExpanded={isExecutionOutputParamsExpanded}
+                            onToggle={() => setIsExecutionOutputParamsExpanded((current) => !current)}
+                            title="Output params"
+                          />
+                        </div>
 
                         {!selectedSteps.length ? <div className="empty-state compact">No snapshot steps are available for this case.</div> : null}
 
@@ -4010,109 +4144,118 @@ export function ExecutionsPage() {
                           </div>
                         ) : null}
 
-                        <div className="execution-step-table" role="table" aria-label="Test steps for this case">
-                          <div className="execution-step-table-head" role="row">
-                            <span className="execution-step-col-check" role="columnheader" />
-                            <span className="execution-step-col-order" role="columnheader">#</span>
-                            <span className="execution-step-col-action" role="columnheader">Action</span>
-                            <span className="execution-step-col-expected" role="columnheader">Expected</span>
-                            <span className="execution-step-col-status" role="columnheader">Result</span>
-                            <span className="execution-step-col-actions" role="columnheader">Mark</span>
-                            <span className="execution-step-col-note" role="columnheader">Evidence</span>
-                          </div>
-                          <div className="execution-step-table-body">
-                            {executionStepBlocks.map((block) => {
-                              if (block.groupId) {
-                                const isExpanded = expandedExecutionStepGroupIds.includes(block.groupId);
+                        <div className="execution-step-card-list" role="list" aria-label="Test steps for this case">
+                          {executionStepBlocks.map((block) => {
+                            if (block.groupId) {
+                              const isExpanded = expandedExecutionStepGroupIds.includes(block.groupId);
 
-                                return (
-                                  <Fragment key={block.key}>
-                                    <ExecutionStepGroupRow
-                                      isExpanded={isExpanded}
-                                      kind={block.groupKind}
-                                      name={block.groupName || "Step group"}
-                                      onPreviewCode={() => openExecutionGroupAutomationPreview(block.groupName || "Step group", block.steps)}
-                                      onToggle={() =>
-                                        setExpandedExecutionStepGroupIds((current) =>
-                                          current.includes(block.groupId as string)
-                                            ? current.filter((groupId) => groupId !== block.groupId)
-                                            : [...current, block.groupId as string]
-                                        )
-                                      }
-                                      stepCount={block.steps.length}
-                                    />
-                                    {isExpanded
-                                      ? block.steps.map((step) => {
-                                          const rowStatus = stepStatuses[step.id];
-
-                                          return (
-                                            <ExecutionCompactStepRow
-                                              evidence={stepEvidence[step.id] || null}
-                                              canInspectApi={step.step_type === "api" || (!step.step_type && selectedExecutionAppTypeKind === "api")}
-                                              isRunningApi={runningExecutionApiStepId === step.id}
-                                              isLocked={!isExecutionStarted || isExecutionLocked}
-                                              isSelected={bulkSelectedStepIds.includes(step.id)}
-                                              isUploadingEvidence={uploadingEvidenceStepId === step.id}
-                                              key={step.id}
-                                              note={stepNotes[step.id] || ""}
-                                              parameterValues={executionStepParameterValues}
-                                              onFail={() => void handleRecordStep(step.id, "failed")}
-                                              onDeleteEvidence={() => void handleDeleteStepEvidence(step)}
-                                              onInspectApi={() => openExecutionApiDetail(step)}
-                                              onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
-                                              onPass={() => void handleRecordStep(step.id, "passed")}
-                                              onPreviewCode={() => openExecutionStepAutomationPreview(step)}
-                                              onUploadEvidence={(file) => void handleUploadStepEvidence(step, file)}
-                                              onToggleSelect={(checked) =>
-                                                setBulkSelectedStepIds((current) =>
-                                                  checked ? [...new Set([...current, step.id])] : current.filter((id) => id !== step.id)
-                                                )
-                                              }
-                                              onViewEvidence={() => openExecutionEvidence(step, stepEvidence[step.id] as ExecutionStepEvidence)}
-                                              status={rowStatus || "queued"}
-                                              step={step}
-                                            />
-                                          );
-                                        })
-                                      : null}
-                                  </Fragment>
-                                );
-                              }
-
-                              return block.steps.map((step) => {
-                                const rowStatus = stepStatuses[step.id];
-
-                                return (
-                                  <ExecutionCompactStepRow
-                                    evidence={stepEvidence[step.id] || null}
-                                    canInspectApi={step.step_type === "api" || (!step.step_type && selectedExecutionAppTypeKind === "api")}
-                                    isRunningApi={runningExecutionApiStepId === step.id}
-                                    isLocked={!isExecutionStarted || isExecutionLocked}
-                                    isSelected={bulkSelectedStepIds.includes(step.id)}
-                                    isUploadingEvidence={uploadingEvidenceStepId === step.id}
-                                    key={step.id}
-                                    note={stepNotes[step.id] || ""}
-                                    parameterValues={executionStepParameterValues}
-                                    onFail={() => void handleRecordStep(step.id, "failed")}
-                                    onDeleteEvidence={() => void handleDeleteStepEvidence(step)}
-                                    onInspectApi={() => openExecutionApiDetail(step)}
-                                    onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
-                                    onPass={() => void handleRecordStep(step.id, "passed")}
-                                    onPreviewCode={() => openExecutionStepAutomationPreview(step)}
-                                    onUploadEvidence={(file) => void handleUploadStepEvidence(step, file)}
-                                    onToggleSelect={(checked) =>
-                                      setBulkSelectedStepIds((current) =>
-                                        checked ? [...new Set([...current, step.id])] : current.filter((id) => id !== step.id)
+                              return (
+                                <Fragment key={block.key}>
+                                  <ExecutionStepGroupRow
+                                    isExpanded={isExpanded}
+                                    kind={block.groupKind}
+                                    name={block.groupName || "Step group"}
+                                    onPreviewCode={() => openExecutionGroupAutomationPreview(block.groupName || "Step group", block.steps)}
+                                    onToggle={() =>
+                                      setExpandedExecutionStepGroupIds((current) =>
+                                        current.includes(block.groupId as string)
+                                          ? current.filter((groupId) => groupId !== block.groupId)
+                                          : [...current, block.groupId as string]
                                       )
                                     }
-                                    onViewEvidence={() => openExecutionEvidence(step, stepEvidence[step.id] as ExecutionStepEvidence)}
-                                    status={rowStatus || "queued"}
-                                    step={step}
+                                    stepCount={block.steps.length}
                                   />
-                                );
-                              });
-                            })}
-                          </div>
+                                  {isExpanded
+                                    ? block.steps.map((step) => {
+                                        const rowStatus = stepStatuses[step.id];
+
+                                        return (
+                                          <ExecutionStepCard
+                                            apiDetail={stepApiDetails[step.id] || null}
+                                            captures={stepCaptures[step.id] || stepApiDetails[step.id]?.captures || {}}
+                                            evidence={stepEvidence[step.id] || null}
+                                            canInspectApi={step.step_type === "api" || (!step.step_type && selectedExecutionAppTypeKind === "api")}
+                                            isExpanded={expandedExecutionStepIds.includes(step.id)}
+                                            isRunningApi={runningExecutionApiStepId === step.id}
+                                            isLocked={!isExecutionStarted || isExecutionLocked}
+                                            isSelected={bulkSelectedStepIds.includes(step.id)}
+                                            isUploadingEvidence={uploadingEvidenceStepId === step.id}
+                                            key={step.id}
+                                            note={stepNotes[step.id] || ""}
+                                            parameterValues={executionStepParameterValues}
+                                            onFail={() => void handleRecordStep(step.id, "failed")}
+                                            onDeleteEvidence={() => void handleDeleteStepEvidence(step)}
+                                            onInspectApi={() => openExecutionApiDetail(step)}
+                                            onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
+                                            onPass={() => void handleRecordStep(step.id, "passed")}
+                                            onPreviewCode={() => openExecutionStepAutomationPreview(step)}
+                                            onToggle={() =>
+                                              setExpandedExecutionStepIds((current) =>
+                                                current.includes(step.id)
+                                                  ? current.filter((id) => id !== step.id)
+                                                  : [...current, step.id]
+                                              )
+                                            }
+                                            onToggleSelect={(checked) =>
+                                              setBulkSelectedStepIds((current) =>
+                                                checked ? [...new Set([...current, step.id])] : current.filter((id) => id !== step.id)
+                                              )
+                                            }
+                                            onUploadEvidence={(file) => void handleUploadStepEvidence(step, file)}
+                                            onViewEvidence={() => openExecutionEvidence(step, stepEvidence[step.id] as ExecutionStepEvidence)}
+                                            status={rowStatus || "queued"}
+                                            step={step}
+                                          />
+                                        );
+                                      })
+                                    : null}
+                                </Fragment>
+                              );
+                            }
+
+                            return block.steps.map((step) => {
+                              const rowStatus = stepStatuses[step.id];
+
+                              return (
+                                <ExecutionStepCard
+                                  apiDetail={stepApiDetails[step.id] || null}
+                                  captures={stepCaptures[step.id] || stepApiDetails[step.id]?.captures || {}}
+                                  evidence={stepEvidence[step.id] || null}
+                                  canInspectApi={step.step_type === "api" || (!step.step_type && selectedExecutionAppTypeKind === "api")}
+                                  isExpanded={expandedExecutionStepIds.includes(step.id)}
+                                  isRunningApi={runningExecutionApiStepId === step.id}
+                                  isLocked={!isExecutionStarted || isExecutionLocked}
+                                  isSelected={bulkSelectedStepIds.includes(step.id)}
+                                  isUploadingEvidence={uploadingEvidenceStepId === step.id}
+                                  key={step.id}
+                                  note={stepNotes[step.id] || ""}
+                                  parameterValues={executionStepParameterValues}
+                                  onFail={() => void handleRecordStep(step.id, "failed")}
+                                  onDeleteEvidence={() => void handleDeleteStepEvidence(step)}
+                                  onInspectApi={() => openExecutionApiDetail(step)}
+                                  onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
+                                  onPass={() => void handleRecordStep(step.id, "passed")}
+                                  onPreviewCode={() => openExecutionStepAutomationPreview(step)}
+                                  onToggle={() =>
+                                    setExpandedExecutionStepIds((current) =>
+                                      current.includes(step.id)
+                                        ? current.filter((id) => id !== step.id)
+                                        : [...current, step.id]
+                                    )
+                                  }
+                                  onToggleSelect={(checked) =>
+                                    setBulkSelectedStepIds((current) =>
+                                      checked ? [...new Set([...current, step.id])] : current.filter((id) => id !== step.id)
+                                    )
+                                  }
+                                  onUploadEvidence={(file) => void handleUploadStepEvidence(step, file)}
+                                  onViewEvidence={() => openExecutionEvidence(step, stepEvidence[step.id] as ExecutionStepEvidence)}
+                                  status={rowStatus || "queued"}
+                                  step={step}
+                                />
+                              );
+                            });
+                          })}
                         </div>
 
                         {!isExecutionStarted && !isExecutionLocked ? <div className="empty-state compact">Start the execution to enable step actions.</div> : null}
@@ -4125,7 +4268,7 @@ export function ExecutionsPage() {
                         {selectedExecutionResult ? (
                           <div className="execution-log-focus">
                             <div className="execution-section-head">
-                              <strong>{selectedExecutionResult.test_case_title || selectedExecutionCase.title || "Selected case logs"}</strong>
+                              <strong>{selectedExecutionCaseReadableTitle || selectedExecutionResult.test_case_title || selectedExecutionCase.title || "Selected case logs"}</strong>
                               <span>{selectedExecutionResult.error || "Structured evidence and notes for the focused case."}</span>
                             </div>
                             <ExecutionStructuredLogView
@@ -4571,6 +4714,7 @@ export function ExecutionsPage() {
       {executionApiDetailState ? (
         <ExecutionApiStepDialog
           canRun={!isExecutionLocked && Boolean(selectedExecution && selectedTestCaseId) && Boolean(executionApiDetailState.step.api_request)}
+          captures={executionApiDetailState.captures}
           detail={executionApiDetailState.detail}
           isRunning={runningExecutionApiStepId === executionApiDetailState.step.id}
           note={executionApiDetailState.note}
@@ -4773,6 +4917,7 @@ function ExecutionAccordionSection({
 function ExecutionApiStepDialog({
   step,
   detail,
+  captures: capturedParams,
   note,
   status,
   canRun,
@@ -4795,8 +4940,8 @@ function ExecutionApiStepDialog({
     [detail?.response?.headers]
   );
   const captures = useMemo(
-    () => Object.entries(detail?.captures || {}).sort(([left], [right]) => left.localeCompare(right)),
-    [detail?.captures]
+    () => Object.entries(capturedParams || detail?.captures || {}).sort(([left], [right]) => left.localeCompare(right)),
+    [capturedParams, detail?.captures]
   );
   const assertions = detail?.assertions || (step.api_request?.validations || []).map((validation) => ({
     kind: validation.kind || "status",
@@ -5841,17 +5986,21 @@ function ExecutionStepGroupRow({
   );
 }
 
-function ExecutionCompactStepRow({
+function ExecutionStepCard({
   step,
   status,
   note,
   evidence,
+  apiDetail,
+  captures,
   canInspectApi,
   isRunningApi,
   parameterValues,
   isLocked,
   isSelected,
+  isExpanded,
   isUploadingEvidence,
+  onToggle,
   onToggleSelect,
   onPass,
   onFail,
@@ -5866,12 +6015,16 @@ function ExecutionCompactStepRow({
   status: ExecutionResult["status"] | "queued";
   note: string;
   evidence: ExecutionStepEvidence | null;
+  apiDetail: ExecutionStepApiDetail | null;
+  captures: Record<string, string>;
   canInspectApi: boolean;
   isRunningApi: boolean;
   parameterValues: Record<string, string>;
   isLocked: boolean;
   isSelected: boolean;
+  isExpanded: boolean;
   isUploadingEvidence: boolean;
+  onToggle: () => void;
   onToggleSelect: (checked: boolean) => void;
   onPass: () => void;
   onFail: () => void;
@@ -5885,32 +6038,72 @@ function ExecutionCompactStepRow({
   const evidenceInputRef = useRef<HTMLInputElement | null>(null);
   const resolvedKind = step.group_name ? step.group_kind || "local" : step.group_kind;
   const stepKind = getExecutionStepKindMeta(resolvedKind);
-  const resolvedExpectedResult = resolveStepParameterText(step.expected_result, parameterValues);
+  const resolvedAction = resolveStepParameterText(step.action, parameterValues) || step.action || "";
+  const resolvedExpectedResult = resolveStepParameterText(step.expected_result, parameterValues) || step.expected_result || "";
+  const trimmedNote = note.trim();
+  const hasEvidence = Boolean(evidence?.dataUrl);
+  const captureEntries = useMemo(
+    () => Object.entries(captures || {}).sort(([left], [right]) => left.localeCompare(right)),
+    [captures]
+  );
+  const stepTypeLabel = String(step.step_type || (canInspectApi ? "api" : "web")).toUpperCase();
   const toneClass = [
-    "execution-step-row",
-    status === "passed" ? "is-passed" : "",
-    status === "failed" ? "is-failed" : "",
+    "step-card execution-step-card",
+    isExpanded ? "is-expanded" : "",
+    status === "passed" ? "step-status-passed" : "",
+    status === "failed" ? "step-status-failed" : "",
+    status === "blocked" ? "step-status-blocked" : "",
     stepKind.tone === "shared" ? "is-shared-step" : "",
     stepKind.tone === "local" ? "is-local-step" : ""
   ].filter(Boolean).join(" ");
 
   return (
-    <div className={toneClass} role="row">
-      <span className="execution-step-col-check" role="cell">
-        <input
-          aria-label={`Select step ${step.step_order}`}
-          checked={isSelected}
-          disabled={isLocked}
-          onChange={(event) => onToggleSelect(event.target.checked)}
-          type="checkbox"
-        />
-      </span>
-      <span className="execution-step-col-order" role="cell">
-        {step.step_order}
-      </span>
-      <div className="execution-step-col-action execution-step-copy" role="cell">
-        <div className="execution-step-badges">
-          <StepKindIconBadge label="Standard step" tone={stepKind.tone} />
+    <article className={toneClass}>
+      <div className="step-card-top">
+        <label className="checkbox-field step-card-select">
+          <input
+            aria-label={`Select step ${step.step_order}`}
+            checked={isSelected}
+            disabled={isLocked}
+            onChange={(event) => onToggleSelect(event.target.checked)}
+            type="checkbox"
+          />
+        </label>
+        <button
+          aria-label={isExpanded ? `Hide step ${step.step_order} details` : `Show step ${step.step_order} details`}
+          className="step-card-toggle execution-step-card-toggle"
+          onClick={onToggle}
+          type="button"
+        >
+          <div className="step-card-summary execution-step-card-summary">
+            <div className="execution-step-card-summary-head">
+              <div className="step-card-summary-top">
+                <span className="execution-step-type-chip" title={`Step type: ${stepTypeLabel}`}>
+                  <StepTypeIcon size={14} type={step.step_type || (canInspectApi ? "api" : "web")} />
+                </span>
+                <strong>Step {step.step_order}</strong>
+                {resolvedKind ? (
+                  <span className={resolvedKind === "reusable" ? "execution-step-group-chip is-shared" : "execution-step-group-chip is-local"}>
+                    {resolvedKind === "reusable" ? "Shared group" : "Local group"}
+                  </span>
+                ) : null}
+                <StatusBadge value={status} />
+              </div>
+            </div>
+            <p className="execution-step-card-primary" title={resolvedAction || step.action || ""}>
+              {resolvedAction || "No action recorded yet"}
+            </p>
+            <div className="execution-step-card-summary-meta">
+              <span title={resolvedExpectedResult || step.expected_result || ""}>
+                {resolvedExpectedResult ? `Expected: ${resolvedExpectedResult}` : "No expected result recorded yet"}
+              </span>
+              <span>
+                {trimmedNote ? "Note captured" : "No note yet"} · {hasEvidence ? evidence?.fileName || "Image attached" : "No image attached"}
+              </span>
+            </div>
+          </div>
+        </button>
+        <div className="execution-step-card-summary-tools">
           {canInspectApi ? (
             <button
               aria-label={`Inspect API details for step ${step.step_order}`}
@@ -5921,11 +6114,7 @@ function ExecutionCompactStepRow({
             >
               <StepTypeIcon size={14} type={step.step_type || "api"} />
             </button>
-          ) : (
-            <span className="execution-step-type-chip" title={`Step type: ${String(step.step_type || "web").toUpperCase()}`}>
-              <StepTypeIcon size={14} type={step.step_type} />
-            </span>
-          )}
+          ) : null}
           <InlineStepToolButton
             ariaLabel={`Preview automation for step ${step.step_order}`}
             className="is-active"
@@ -5935,26 +6124,7 @@ function ExecutionCompactStepRow({
             <AutomationCodeIcon />
           </InlineStepToolButton>
         </div>
-        <StepParameterizedText
-          className="execution-step-clamp"
-          fallback="—"
-          text={step.action}
-          values={parameterValues}
-        />
-      </div>
-      <span className="execution-step-col-expected execution-step-clamp" role="cell" title={resolvedExpectedResult || step.expected_result || ""}>
-        <StepParameterizedText
-          className="execution-step-clamp"
-          fallback="—"
-          text={step.expected_result}
-          values={parameterValues}
-        />
-      </span>
-      <span className="execution-step-col-status" role="cell">
-        <StatusBadge value={status} />
-      </span>
-      <span className="execution-step-col-actions" role="cell">
-        <div className="execution-step-mark-buttons">
+        <div className="execution-step-card-top-actions">
           <button
             aria-label={`Mark step ${step.step_order} as passed`}
             className="execution-step-action-button execution-step-pass"
@@ -5976,77 +6146,188 @@ function ExecutionCompactStepRow({
             <ExecutionStepFailIcon />
           </button>
         </div>
-      </span>
-      <div className="execution-step-col-note" role="cell">
-        <div className="execution-step-evidence-cell">
-          <textarea
-            className="execution-step-note-input"
-            defaultValue={note}
-            disabled={isLocked}
-            key={`${step.id}:${note}`}
-            onBlur={(event) => {
-              const raw = event.target.value;
-              if (raw.trim() !== (note || "").trim()) {
-                onNoteBlur(raw);
-              }
-            }}
-            placeholder="Evidence, defect ID, observations…"
-            rows={2}
-          />
-          <input
-            accept="image/*"
-            hidden
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.currentTarget.value = "";
+      </div>
 
-              if (file) {
-                onUploadEvidence(file);
-              }
-            }}
-            ref={evidenceInputRef}
-            type="file"
-          />
-          <div className="execution-step-evidence-actions">
-            <button
-              className="execution-step-evidence-button"
-              disabled={isLocked || isUploadingEvidence}
-              onClick={() => evidenceInputRef.current?.click()}
-              title={evidence ? "Replace evidence image" : "Upload evidence image"}
-              type="button"
-            >
-              <ExecutionEvidenceImageIcon />
-              <span>{isUploadingEvidence ? "Uploading…" : evidence ? "Replace image" : "Upload image"}</span>
-            </button>
-            {evidence ? (
-              <>
-                <button
-                  className="execution-step-evidence-link"
-                  disabled={isUploadingEvidence}
-                  onClick={onViewEvidence}
-                  title={evidence.fileName || "View saved evidence image"}
-                  type="button"
-                >
-                  <ExecutionEvidencePreviewIcon />
-                  <span>{evidence.fileName || "View image"}</span>
-                </button>
-                <button
-                  className="execution-step-evidence-delete"
-                  disabled={isLocked || isUploadingEvidence}
-                  onClick={onDeleteEvidence}
-                  title="Delete saved evidence image"
-                  type="button"
-                >
-                  <ExecutionEvidenceDeleteIcon />
-                  <span>Delete image</span>
-                </button>
-              </>
+      {isExpanded ? (
+        <div className="step-card-body execution-step-card-body">
+          <div className="execution-step-card-grid">
+            <div className="execution-step-card-block">
+              <span className="execution-step-card-label">Action</span>
+              <p className="execution-step-card-copy">{resolvedAction || "No action recorded yet"}</p>
+            </div>
+            <div className="execution-step-card-block">
+              <span className="execution-step-card-label">Expected result</span>
+              <p className="execution-step-card-copy">{resolvedExpectedResult || "No expected result recorded yet"}</p>
+            </div>
+          </div>
+
+          {captureEntries.length ? (
+            <div className="execution-step-card-block">
+              <div className="execution-step-card-block-head">
+                <span>Output params</span>
+                <span>{captureEntries.length} captured in this step</span>
+              </div>
+              <div className="execution-step-param-chip-list">
+                {captureEntries.map(([key, value]) => (
+                  <span className="execution-step-param-chip" key={key}>
+                    <strong>{formatExecutionParameterToken(key)}</strong>
+                    <span>{value || "—"}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="execution-step-card-block execution-step-card-block--notes">
+            <div className="execution-step-card-block-head">
+              <span className="execution-step-card-label">Evidence log</span>
+              <span>{trimmedNote ? "Saved on blur" : "Write observations, defect IDs, or runtime notes"}</span>
+            </div>
+            <textarea
+              className="execution-step-note-input"
+              defaultValue={note}
+              disabled={isLocked}
+              key={`${step.id}:${note}`}
+              onBlur={(event) => {
+                const raw = event.target.value;
+                if (raw.trim() !== (note || "").trim()) {
+                  onNoteBlur(raw);
+                }
+              }}
+              placeholder="Evidence, defect ID, observations…"
+              rows={4}
+            />
+          </div>
+
+          <div className="execution-step-evidence-cell">
+            <input
+              accept="image/*"
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.currentTarget.value = "";
+
+                if (file) {
+                  onUploadEvidence(file);
+                }
+              }}
+              ref={evidenceInputRef}
+              type="file"
+            />
+            <div className="execution-step-evidence-actions">
+              <button
+                className="execution-step-evidence-button"
+                disabled={isLocked || isUploadingEvidence}
+                onClick={() => evidenceInputRef.current?.click()}
+                title={evidence ? "Replace evidence image" : "Upload evidence image"}
+                type="button"
+              >
+                <ExecutionEvidenceImageIcon />
+                <span>{isUploadingEvidence ? "Uploading…" : evidence ? "Replace image" : "Upload image"}</span>
+              </button>
+              {evidence ? (
+                <>
+                  <button
+                    className="execution-step-evidence-link"
+                    disabled={isUploadingEvidence}
+                    onClick={onViewEvidence}
+                    title={evidence.fileName || "View saved evidence image"}
+                    type="button"
+                  >
+                    <ExecutionEvidencePreviewIcon />
+                    <span>{evidence.fileName || "View image"}</span>
+                  </button>
+                  <button
+                    className="execution-step-evidence-delete"
+                    disabled={isLocked || isUploadingEvidence}
+                    onClick={onDeleteEvidence}
+                    title="Delete saved evidence image"
+                    type="button"
+                  >
+                    <ExecutionEvidenceDeleteIcon />
+                    <span>Delete image</span>
+                  </button>
+                </>
+              ) : (
+                <span className="execution-step-evidence-empty">No image uploaded</span>
+              )}
+            </div>
+          </div>
+
+          <div className="execution-step-card-footer">
+            {canInspectApi ? (
+              <button className="ghost-button" onClick={onInspectApi} type="button">
+                <StepTypeIcon size={14} type={step.step_type || "api"} />
+                <span>{apiDetail ? "Inspect API detail" : "Open API panel"}</span>
+              </button>
             ) : (
-              <span className="execution-step-evidence-empty">No image uploaded</span>
+              <span className="execution-step-card-footer-note">{stepKind.detail}</span>
             )}
+            {isRunningApi ? <span className="execution-step-card-footer-note">API execution in progress…</span> : null}
           </div>
         </div>
-      </div>
+      ) : null}
+    </article>
+  );
+}
+
+function ExecutionParameterPanel({
+  title,
+  description,
+  entries,
+  emptyMessage,
+  isExpanded,
+  onToggle
+}: {
+  title: string;
+  description: string;
+  entries: ExecutionParameterDisplayEntry[];
+  emptyMessage: string;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="resource-table-shell execution-context-table-shell">
+      <button
+        aria-expanded={isExpanded}
+        className="execution-saved-data-toggle"
+        onClick={onToggle}
+        type="button"
+      >
+        <div className="execution-saved-data-toggle-copy">
+          <strong>{title}</strong>
+          <span>{description}</span>
+        </div>
+        <div className="execution-saved-data-toggle-meta">
+          <span className="count-pill">
+            {entries.length} item{entries.length === 1 ? "" : "s"}
+          </span>
+          <span
+            aria-hidden="true"
+            className={isExpanded ? "execution-saved-data-toggle-arrow is-expanded" : "execution-saved-data-toggle-arrow"}
+          >
+            <ExecutionAccordionChevronIcon />
+          </span>
+        </div>
+      </button>
+      {isExpanded ? (
+        !entries.length ? (
+          <div className="empty-state compact resource-table-empty">{emptyMessage}</div>
+        ) : (
+          <div className="execution-saved-data-scroll" role="list" aria-label={`${title} values`}>
+            <div className="execution-saved-data-grid">
+              {entries.map((entry) => (
+                <article className="execution-saved-data-card execution-parameter-card" key={`${title}-${entry.key}`} role="listitem">
+                  <span>{entry.flowLabel}</span>
+                  <code className="execution-saved-data-token">{entry.token}</code>
+                  <strong title={entry.value || "—"}>{entry.value || "—"}</strong>
+                  {entry.sourceLabel ? <small className="execution-saved-data-source">{entry.sourceLabel}</small> : null}
+                </article>
+              ))}
+            </div>
+          </div>
+        )
+      ) : null}
     </div>
   );
 }
@@ -6061,11 +6342,13 @@ function ExecutionStructuredLogView({
   onOpenEvidence?: (step: TestStep, evidence: ExecutionStepEvidence) => void;
 }) {
   const parsed = parseExecutionLogs(logsJson);
+  const stepCaptures = mergeExecutionStepCaptures(parsed.stepCaptures || {}, parsed.stepApiDetails || {});
   const hasNotes = parsed.stepNotes && Object.keys(parsed.stepNotes).length > 0;
   const hasStatuses = parsed.stepStatuses && Object.keys(parsed.stepStatuses).length > 0;
   const hasEvidence = parsed.stepEvidence && Object.keys(parsed.stepEvidence).length > 0;
+  const hasCaptures = Object.keys(stepCaptures).length > 0;
 
-  if (!hasNotes && !hasStatuses && !hasEvidence && !logsJson?.trim()) {
+  if (!hasNotes && !hasStatuses && !hasEvidence && !hasCaptures && !logsJson?.trim()) {
     return <span className="execution-log-empty">No structured step data recorded yet.</span>;
   }
 
@@ -6074,8 +6357,9 @@ function ExecutionStructuredLogView({
       const st = parsed.stepStatuses?.[step.id];
       const nt = parsed.stepNotes?.[step.id];
       const evidence = parsed.stepEvidence?.[step.id];
+      const captures = Object.entries(stepCaptures[step.id] || {}).sort(([left], [right]) => left.localeCompare(right));
 
-      if (!st && !nt && !evidence) {
+      if (!st && !nt && !evidence && !captures.length) {
         if (!isStepGroupStart(steps, index)) {
           return null;
         }
@@ -6093,7 +6377,7 @@ function ExecutionStructuredLogView({
               </span>
             </div>
           ) : null}
-          {st || nt || evidence ? (
+          {st || nt || evidence || captures.length ? (
             <div className="execution-structured-log-row">
               <strong>Step {step.step_order}</strong>
               {st ? <StatusBadge value={st} /> : null}
@@ -6108,6 +6392,16 @@ function ExecutionStructuredLogView({
                 </button>
               ) : null}
               {nt ? <span className="execution-structured-note">{nt}</span> : null}
+              {captures.length ? (
+                <div className="execution-structured-capture-list">
+                  {captures.map(([key, value]) => (
+                    <span className="execution-structured-capture-chip" key={key}>
+                      <strong>{formatExecutionParameterToken(key)}</strong>
+                      <span>{value || "—"}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </Fragment>
@@ -6125,19 +6419,23 @@ function ExecutionStructuredLogView({
 
 function ExecutionStructuredLogSummary({ logsJson }: { logsJson: string | null }) {
   const parsed = parseExecutionLogs(logsJson);
+  const stepCaptures = mergeExecutionStepCaptures(parsed.stepCaptures || {}, parsed.stepApiDetails || {});
   const noteCount = parsed.stepNotes ? Object.values(parsed.stepNotes).filter(Boolean).length : 0;
   const statusCount = parsed.stepStatuses ? Object.keys(parsed.stepStatuses).length : 0;
   const evidenceCount = parsed.stepEvidence ? Object.keys(parsed.stepEvidence).length : 0;
-  if (!noteCount && !statusCount && !evidenceCount) {
+  const captureCount = Object.values(stepCaptures).reduce((count, captures) => count + Object.keys(captures || {}).length, 0);
+  if (!noteCount && !statusCount && !evidenceCount && !captureCount) {
     return <span className="execution-log-summary-muted">No step details</span>;
   }
   return (
     <span className="execution-log-summary">
       {statusCount ? `${statusCount} step result${statusCount === 1 ? "" : "s"}` : null}
-      {statusCount && (noteCount || evidenceCount) ? " · " : null}
+      {statusCount && (noteCount || evidenceCount || captureCount) ? " · " : null}
       {noteCount ? `${noteCount} note${noteCount === 1 ? "" : "s"}` : null}
-      {noteCount && evidenceCount ? " · " : null}
+      {noteCount && (evidenceCount || captureCount) ? " · " : null}
       {evidenceCount ? `${evidenceCount} image${evidenceCount === 1 ? "" : "s"}` : null}
+      {(noteCount || evidenceCount) && captureCount ? " · " : null}
+      {captureCount ? `${captureCount} captured value${captureCount === 1 ? "" : "s"}` : null}
     </span>
   );
 }

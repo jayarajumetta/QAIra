@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { buildAcceptedRun, buildCapabilities } from "./lib/pipeline.js";
 import { queueRunExecution, saveAcceptedRun } from "./lib/executor.js";
+import { createOpsTelemetry } from "./lib/opsTelemetry.js";
 import { startQueueWorker } from "./lib/queueWorker.js";
 import { getRun, getRunEnvelope, listRuns, saveRun } from "./lib/runStore.js";
 import type { EngineRunEnvelope } from "./contracts/qaira.js";
@@ -11,6 +12,9 @@ const app = Fastify({
     level: process.env.LOG_LEVEL || "info"
   }
 });
+const opsTelemetry = await createOpsTelemetry(app.log);
+
+await opsTelemetry.register(app);
 
 app.get("/health", async () => ({
   ok: true,
@@ -18,7 +22,8 @@ app.get("/health", async () => ({
   runner: "hybrid",
   ui: "qaira",
   execution_scope: "api+web",
-  supported_web_engines: ["playwright", "selenium"]
+  supported_web_engines: ["playwright", "selenium"],
+  ops_telemetry: opsTelemetry.getHealthSnapshot()
 }));
 
 app.get("/api/v1/capabilities", async () => buildCapabilities());

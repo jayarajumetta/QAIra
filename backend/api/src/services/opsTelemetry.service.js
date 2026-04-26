@@ -79,6 +79,24 @@ const buildEventUrl = (baseUrl, eventsPath) => {
   return new URL(normalizeText(eventsPath) || "/api/v1/events", base).toString();
 };
 
+const resolveOpsBaseUrl = async (integration, projectId) => {
+  const configuredBaseUrl = normalizeText(integration?.base_url);
+
+  if (configuredBaseUrl) {
+    return configuredBaseUrl;
+  }
+
+  const scopedProjectId = normalizeText(projectId) || normalizeText(integration?.config?.project_id);
+  const testEngineIntegration = await integrationService.getActiveIntegrationByTypeForProject("testengine", scopedProjectId);
+  const testEngineBaseUrl = normalizeText(testEngineIntegration?.base_url);
+
+  if (!testEngineBaseUrl) {
+    throw new Error("OPS telemetry requires an active Test Engine integration with a host URL");
+  }
+
+  return testEngineBaseUrl;
+};
+
 const buildAuthHeaderValue = (headerPrefix, apiKey) => {
   const normalizedApiKey = normalizeText(apiKey);
 
@@ -234,6 +252,7 @@ const buildHierarchySnapshot = async (executionId) => {
 
 const postEvent = async (integration, payload) => {
   const config = isPlainObject(integration?.config) ? integration.config : {};
+  const resolvedBaseUrl = await resolveOpsBaseUrl(integration, payload?.project_id);
   const timeoutMs = Math.max(500, normalizeInteger(config.timeout_ms, 4000) || 4000);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -249,7 +268,7 @@ const postEvent = async (integration, payload) => {
   }
 
   try {
-    const response = await fetch(buildEventUrl(integration.base_url, config.events_path), {
+    const response = await fetch(buildEventUrl(resolvedBaseUrl, config.events_path), {
       method: "POST",
       headers,
       body: JSON.stringify(payload),
@@ -368,7 +387,9 @@ exports.emitExecutionHierarchyEvents = async ({
           has_evidence: Boolean(step_evidence?.dataUrl || testCase?.logs?.stepEvidence?.[step.snapshot_step_id]?.dataUrl),
           captures: isPlainObject(captures)
             ? captures
-            : testCase?.logs?.stepApiDetails?.[step.snapshot_step_id]?.captures || {},
+            : testCase?.logs?.stepCaptures?.[step.snapshot_step_id]
+              || testCase?.logs?.stepApiDetails?.[step.snapshot_step_id]?.captures
+              || {},
           api_detail: isPlainObject(step_detail)
             ? step_detail
             : testCase?.logs?.stepApiDetails?.[step.snapshot_step_id] || null

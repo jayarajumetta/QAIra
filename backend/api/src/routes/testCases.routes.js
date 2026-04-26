@@ -4,6 +4,7 @@ const projectService = require("../services/project.service");
 const requirementService = require("../services/requirement.service");
 const requirementDesignService = require("../services/requirementDesign.service");
 const aiTestCaseGenerationService = require("../services/aiTestCaseGeneration.service");
+const aiCaseAuthoringService = require("../services/aiCaseAuthoring.service");
 const { TEST_CASE_AUTOMATED_VALUES, TEST_CASE_STATUS_VALUES } = require("../domain/catalog");
 
 const resolveScopedRequirements = async (requirementIds = [], projectId) => {
@@ -150,6 +151,30 @@ module.exports = async function (fastify) {
       additional_context: req.body.additional_context,
       external_links: req.body.external_links,
       images: req.body.images
+    });
+  });
+
+  fastify.post("/test-cases/ai-authoring-preview", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      app_type_id: { required: true, type: "string" },
+      requirement_id: { required: true, type: "string" },
+      integration_id: { required: false, type: "string" },
+      additional_context: { required: false, type: "string" },
+      test_case: { required: false, type: "object" }
+    }, req.body);
+
+    const appType = await appTypeService.getAppType(req.body.app_type_id);
+    await projectService.getProject(appType.project_id, req.user.id);
+    const [requirement] = await resolveScopedRequirements([req.body.requirement_id], appType.project_id);
+
+    return aiCaseAuthoringService.previewCaseAuthoring({
+      requirement,
+      appType,
+      integration_id: req.body.integration_id,
+      additional_context: req.body.additional_context,
+      test_case: req.body.test_case
     });
   });
 

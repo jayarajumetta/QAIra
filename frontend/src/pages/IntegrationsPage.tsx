@@ -1,7 +1,15 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../auth/AuthContext";
-import { PlugIcon } from "../components/AppIcons";
+import {
+  ActivityIcon,
+  GithubIcon,
+  GoogleDriveIcon,
+  MailIcon,
+  PlugIcon,
+  SparkIcon,
+  UsersIcon
+} from "../components/AppIcons";
 import { FormField } from "../components/FormField";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
@@ -154,8 +162,97 @@ function getIntegrationTypeLabel(type: Integration["type"], definitions: Integra
   return getIntegrationTypeDefinition(type, definitions)?.label || type;
 }
 
-function getIntegrationTypeIcon(type: Integration["type"], definitions: IntegrationTypeDefinition[]) {
-  return getIntegrationTypeDefinition(type, definitions)?.icon || type.slice(0, 2).toUpperCase();
+function IntegrationBadgeSvg({
+  children
+}: {
+  children: ReactNode;
+}) {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="18"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.9"
+      viewBox="0 0 24 24"
+      width="18"
+    >
+      {children}
+    </svg>
+  );
+}
+
+function JiraIntegrationIcon() {
+  return (
+    <IntegrationBadgeSvg>
+      <rect height="6" rx="1.4" width="6" x="4" y="4" />
+      <rect height="6" rx="1.4" width="6" x="14" y="4" />
+      <rect height="6" rx="1.4" width="6" x="9" y="14" />
+      <path d="M10 7h4" />
+      <path d="M7 10v4" />
+      <path d="M17 10v4" />
+    </IntegrationBadgeSvg>
+  );
+}
+
+function TestEngineIntegrationIcon() {
+  return (
+    <IntegrationBadgeSvg>
+      <rect height="8" rx="2" width="14" x="5" y="4" />
+      <path d="M8 20h8" />
+      <path d="M12 12v8" />
+      <path d="m10 8 4 2-4 2Z" />
+    </IntegrationBadgeSvg>
+  );
+}
+
+function GoogleAuthIntegrationIcon() {
+  return (
+    <IntegrationBadgeSvg>
+      <path d="M12 4.5 6.5 7v4.2c0 3.4 2.2 6.5 5.5 7.8 3.3-1.3 5.5-4.4 5.5-7.8V7Z" />
+      <path d="m9.5 11.8 1.7 1.7 3.3-3.3" />
+    </IntegrationBadgeSvg>
+  );
+}
+
+function getIntegrationBadgeIcon(type: Integration["type"]) {
+  switch (type) {
+    case "llm":
+      return <SparkIcon size={18} />;
+    case "jira":
+      return <JiraIntegrationIcon />;
+    case "email":
+      return <MailIcon size={18} />;
+    case "google_auth":
+      return <GoogleAuthIntegrationIcon />;
+    case "google_drive":
+      return <GoogleDriveIcon size={18} />;
+    case "github":
+      return <GithubIcon size={18} />;
+    case "testengine":
+      return <TestEngineIntegrationIcon />;
+    case "ops":
+      return <ActivityIcon size={18} />;
+    default:
+      return <UsersIcon size={18} />;
+  }
+}
+
+function buildReadableIntegrationUrl(baseUrl?: string | null, path?: string | null) {
+  const normalizedBaseUrl = String(baseUrl || "").trim();
+
+  if (!normalizedBaseUrl) {
+    return "";
+  }
+
+  try {
+    const base = new URL(normalizedBaseUrl);
+    return new URL(String(path || "/health").trim() || "/", base).toString();
+  } catch {
+    return "";
+  }
 }
 
 function applyDraftDefaultsForType(type: Integration["type"], current: IntegrationDraft, definitions: IntegrationTypeDefinition[]): IntegrationDraft {
@@ -229,7 +326,7 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
     return {
       ...current,
       type,
-      base_url: nextBaseUrl,
+      base_url: "",
       ops_events_path: current.ops_events_path || String(opsDefaults.events_path || "/api/v1/events"),
       ops_health_path: current.ops_health_path || String(opsDefaults.health_path || "/health"),
       ops_api_key_header: current.ops_api_key_header || String(opsDefaults.api_key_header || "Authorization"),
@@ -485,7 +582,7 @@ function getIntegrationSummary(integration: Integration, definitions: Integratio
 
   if (integration.type === "ops") {
     return {
-      primary: integration.base_url || "OPS host not set",
+      primary: integration.base_url || "Uses active Test Engine host",
       secondary: `${typeof config.project_id === "string" && config.project_id.trim() ? "project-specific" : "all projects"} · ${typeof config.events_path === "string" ? config.events_path : "/api/v1/events"}`
     };
   }
@@ -573,6 +670,65 @@ export function IntegrationsPage() {
       return "";
     }
   }, [draft.base_url]);
+  const testEngineHealthUrl = useMemo(
+    () => buildReadableIntegrationUrl(draft.base_url, "/health"),
+    [draft.base_url]
+  );
+  const testEngineCapabilitiesUrl = useMemo(
+    () => buildReadableIntegrationUrl(draft.base_url, "/api/v1/capabilities"),
+    [draft.base_url]
+  );
+  const availableTestEngineIntegrations = useMemo(
+    () => integrations.filter((integration) => integration.type === "testengine" && integration.is_active),
+    [integrations]
+  );
+  const resolvedOpsEngineIntegration = useMemo(() => {
+    if (draft.type !== "ops") {
+      return null;
+    }
+
+    const scopedProjectId = draft.ops_project_id.trim();
+
+    if (scopedProjectId) {
+      const projectScoped = availableTestEngineIntegrations.find(
+        (integration) => integration.config?.project_id === scopedProjectId
+      );
+
+      if (projectScoped) {
+        return projectScoped;
+      }
+    }
+
+    return availableTestEngineIntegrations.find((integration) => !String(integration.config?.project_id || "").trim()) || null;
+  }, [availableTestEngineIntegrations, draft.ops_project_id, draft.type]);
+  const resolvedOpsEngineHost = resolvedOpsEngineIntegration?.base_url || "";
+  const opsHealthUrl = useMemo(
+    () => buildReadableIntegrationUrl(resolvedOpsEngineHost, draft.ops_health_path),
+    [draft.ops_health_path, resolvedOpsEngineHost]
+  );
+  const opsEventsUrl = useMemo(
+    () => buildReadableIntegrationUrl(resolvedOpsEngineHost, draft.ops_events_path),
+    [draft.ops_events_path, resolvedOpsEngineHost]
+  );
+  const opsBoardUrl = useMemo(
+    () => buildReadableIntegrationUrl(resolvedOpsEngineHost, "/ops-telemetry"),
+    [resolvedOpsEngineHost]
+  );
+  const opsEmitSummary = useMemo(
+    () =>
+      [
+        draft.ops_emit_step_events ? "steps" : null,
+        draft.ops_emit_case_events ? "cases" : null,
+        draft.ops_emit_suite_events ? "suites" : null,
+        draft.ops_emit_run_events ? "runs" : null
+      ].filter(Boolean).join(", ") || "No execution events enabled",
+    [
+      draft.ops_emit_case_events,
+      draft.ops_emit_run_events,
+      draft.ops_emit_step_events,
+      draft.ops_emit_suite_events
+    ]
+  );
 
   const showSuccess = (text: string) => {
     setMessageTone("success");
@@ -684,9 +840,9 @@ export function IntegrationsPage() {
         config: buildIntegrationConfig(draft, integrationTypeDefinitions)
       });
       if (result.type === "ops") {
-        const summary = `${result.service} responded in ${result.latency_ms} ms from ${result.base_url}. Health ${result.health_url}. Events ${result.events_path}.`;
+        const summary = `${result.service} responded in ${result.latency_ms} ms from ${result.base_url}. Health ${result.health_url}. Events ${result.events_url}. Board ${result.board_url}.`;
         setTestConnectionSummary(summary);
-        showSuccess(`OPS connection verified. ${result.service} · ${result.events_path}.`);
+        showSuccess(`OPS connection verified. ${result.service} · ${result.events_path} · board ready.`);
       } else {
         const supportedStepTypes = result.supported_step_types.length
           ? result.supported_step_types.join(", ")
@@ -761,7 +917,7 @@ export function IntegrationsPage() {
                       >
                         <div className="tile-card-main">
                           <div className="tile-card-header">
-                            <span className="integration-type-badge">{getIntegrationTypeIcon(integration.type, integrationTypeDefinitions)}</span>
+                            <span className="integration-type-badge">{getIntegrationBadgeIcon(integration.type)}</span>
                             <div className="tile-card-title-group">
                               <strong>{integration.name}</strong>
                               <span className="tile-card-kicker">{getIntegrationTypeLabel(integration.type, integrationTypeDefinitions)}</span>
@@ -1121,6 +1277,27 @@ export function IntegrationsPage() {
                       </div>
                     </div>
 
+                    <div className="integration-readable-grid">
+                      <article className="integration-readable-card">
+                        <span className="integration-readable-label">Hosted at</span>
+                        <strong className="integration-readable-value">{draft.base_url.trim() || "Set an engine host URL"}</strong>
+                      </article>
+                      <article className="integration-readable-card">
+                        <span className="integration-readable-label">Health endpoint</span>
+                        <strong className="integration-readable-value">{testEngineHealthUrl || "Available after a valid host URL is entered"}</strong>
+                      </article>
+                      <article className="integration-readable-card">
+                        <span className="integration-readable-label">Capabilities endpoint</span>
+                        <strong className="integration-readable-value">{testEngineCapabilitiesUrl || "Available after a valid host URL is entered"}</strong>
+                      </article>
+                      <article className="integration-readable-card">
+                        <span className="integration-readable-label">Runtime profile</span>
+                        <strong className="integration-readable-value">
+                          {`${draft.engine_project_id ? "Project-specific" : "All projects"} · ${String(draft.engine_active_web_engine).toUpperCase()} · ${draft.engine_browser}`}
+                        </strong>
+                      </article>
+                    </div>
+
                     {testConnectionSummary ? (
                       <div className="inline-message success-message">{testConnectionSummary}</div>
                     ) : null}
@@ -1130,7 +1307,7 @@ export function IntegrationsPage() {
                 {isOps ? (
                   <>
                     <div className="empty-state compact integration-helper">
-                      Configure a separate OPS or observability service that should receive execution telemetry as JSON events. QAira emits best-effort step, case, suite, and run updates without blocking the run if the OPS sink is temporarily unavailable.
+                      OPS Telemetry now rides on the active Test Engine host for the selected scope. Configure only the event paths, labels, and which execution events QAira should emit. QAira still sends telemetry best-effort, so a temporary OPS issue will not block the run, and the hosted engine exposes a board at <strong>/ops-telemetry</strong> where operators can filter captured logs by service.
                     </div>
 
                     <div className="record-grid">
@@ -1146,13 +1323,14 @@ export function IntegrationsPage() {
                         </select>
                       </FormField>
 
-                      <FormField label="OPS Host URL">
-                        <input
-                          placeholder="https://ops.company.internal"
-                          value={draft.base_url}
-                          onChange={(event) => setDraft((current) => ({ ...current, base_url: event.target.value }))}
-                        />
-                      </FormField>
+                      <div className="empty-state compact integration-helper">
+                        <strong>{resolvedOpsEngineHost || "No active Test Engine host available yet."}</strong>
+                        <span>
+                          {resolvedOpsEngineIntegration
+                            ? `Using "${resolvedOpsEngineIntegration.name}" as the transport host for OPS health and event delivery.`
+                            : "Create or activate a matching Test Engine integration first so QAira knows where to send OPS telemetry."}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="record-grid">
@@ -1174,39 +1352,13 @@ export function IntegrationsPage() {
                     </div>
 
                     <div className="record-grid">
-                      <FormField label="API Token">
-                        <input
-                          type="password"
-                          value={draft.api_key}
-                          onChange={(event) => setDraft((current) => ({ ...current, api_key: event.target.value }))}
-                        />
-                      </FormField>
-
                       <FormField label="Timeout (ms)">
                         <input
                           inputMode="numeric"
                           placeholder="4000"
                           value={draft.ops_timeout_ms}
                           onChange={(event) => setDraft((current) => ({ ...current, ops_timeout_ms: event.target.value }))}
-                        />
-                      </FormField>
-                    </div>
-
-                    <div className="record-grid">
-                      <FormField label="Auth Header">
-                        <input
-                          placeholder="Authorization"
-                          value={draft.ops_api_key_header}
-                          onChange={(event) => setDraft((current) => ({ ...current, ops_api_key_header: event.target.value }))}
-                        />
-                      </FormField>
-
-                      <FormField label="Auth Prefix">
-                        <input
-                          placeholder="Bearer"
-                          value={draft.ops_api_key_prefix}
-                          onChange={(event) => setDraft((current) => ({ ...current, ops_api_key_prefix: event.target.value }))}
-                        />
+                          />
                       </FormField>
                     </div>
 
@@ -1268,6 +1420,31 @@ export function IntegrationsPage() {
                       </label>
                     </div>
 
+                    <div className="integration-readable-grid">
+                      <article className="integration-readable-card">
+                        <span className="integration-readable-label">Transport host</span>
+                        <strong className="integration-readable-value">{resolvedOpsEngineHost || "Activate a matching Test Engine integration first"}</strong>
+                      </article>
+                      <article className="integration-readable-card">
+                        <span className="integration-readable-label">Health endpoint</span>
+                        <strong className="integration-readable-value">{opsHealthUrl || "Available after a host is resolved"}</strong>
+                      </article>
+                      <article className="integration-readable-card">
+                        <span className="integration-readable-label">Event endpoint</span>
+                        <strong className="integration-readable-value">{opsEventsUrl || "Available after a host is resolved"}</strong>
+                      </article>
+                      <article className="integration-readable-card">
+                        <span className="integration-readable-label">Telemetry board</span>
+                        <strong className="integration-readable-value">{opsBoardUrl || "Available after a host is resolved"}</strong>
+                      </article>
+                      <article className="integration-readable-card">
+                        <span className="integration-readable-label">Telemetry profile</span>
+                        <strong className="integration-readable-value">
+                          {`${draft.ops_service_name || "qaira-testengine"} · ${draft.ops_environment || "production"} · ${opsEmitSummary}`}
+                        </strong>
+                      </article>
+                    </div>
+
                     {testConnectionSummary ? (
                       <div className="inline-message success-message">{testConnectionSummary}</div>
                     ) : null}
@@ -1287,7 +1464,10 @@ export function IntegrationsPage() {
                   {(isTestEngine || isOps) ? (
                     <button
                       className="ghost-button"
-                      disabled={testIntegrationConnection.isPending || !draft.base_url.trim()}
+                      disabled={
+                        testIntegrationConnection.isPending
+                        || (isTestEngine ? !draft.base_url.trim() : !resolvedOpsEngineHost)
+                      }
                       onClick={() => void handleTestConnection()}
                       type="button"
                     >

@@ -89,6 +89,29 @@ const ensureAbsoluteHttpUrl = (value, label) => {
   return parsed;
 };
 
+function normalizeAbsoluteBaseUrl(value, label) {
+  return ensureAbsoluteHttpUrl(value, label)
+    .toString()
+    .replace(/\/+$/, "");
+}
+
+const resolveOpsBaseUrl = async ({ base_url, project_id } = {}) => {
+  const normalizedBaseUrl = normalizeText(base_url);
+
+  if (normalizedBaseUrl) {
+    return normalizeAbsoluteBaseUrl(normalizedBaseUrl, "OPS host URL");
+  }
+
+  const testEngineIntegration = await exports.getActiveIntegrationByTypeForProject("testengine", project_id);
+  const engineBaseUrl = normalizeText(testEngineIntegration?.base_url);
+
+  if (!engineBaseUrl) {
+    throw new Error("OPS telemetry uses the active Test Engine host. Configure an active Test Engine integration first.");
+  }
+
+  return normalizeAbsoluteBaseUrl(engineBaseUrl, "Test Engine host URL");
+};
+
 const fetchWithTimeout = async (url, init = {}, timeoutMs = TESTENGINE_CONNECTION_TIMEOUT_MS) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -130,7 +153,7 @@ const readResponsePayload = async (response) => {
 
 const testTestEngineConnection = async ({ base_url }) => {
   const engineBaseUrl = ensureAbsoluteHttpUrl(base_url, "Engine host URL");
-  const normalizedBaseUrl = engineBaseUrl.toString().replace(/\/+$/, "");
+  const normalizedBaseUrl = normalizeAbsoluteBaseUrl(base_url, "Engine host URL");
   const healthUrl = new URL("/health", engineBaseUrl).toString();
   const capabilitiesUrl = new URL("/api/v1/capabilities", engineBaseUrl).toString();
   const startedAt = Date.now();
@@ -213,10 +236,16 @@ const testTestEngineConnection = async ({ base_url }) => {
 };
 
 const testOpsConnection = async ({ base_url, config = {}, api_key } = {}) => {
-  const opsBaseUrl = ensureAbsoluteHttpUrl(base_url, "OPS host URL");
-  const normalizedBaseUrl = opsBaseUrl.toString().replace(/\/+$/, "");
   const normalizedConfig = normalizeObject(config);
+  const normalizedBaseUrl = await resolveOpsBaseUrl({
+    base_url,
+    project_id: normalizeText(normalizedConfig.project_id)
+  });
+  const opsBaseUrl = ensureAbsoluteHttpUrl(normalizedBaseUrl, "OPS host URL");
   const healthUrl = new URL(normalizeText(normalizedConfig.health_path) || "/health", opsBaseUrl).toString();
+  const eventsPath = normalizeText(normalizedConfig.events_path) || "/api/v1/events";
+  const eventsUrl = new URL(eventsPath, opsBaseUrl).toString();
+  const boardUrl = new URL("/ops-telemetry", opsBaseUrl).toString();
   const startedAt = Date.now();
   const authHeaderName = normalizeText(normalizedConfig.api_key_header) || "Authorization";
   const authHeaderPrefix = Object.prototype.hasOwnProperty.call(normalizedConfig, "api_key_prefix")
@@ -249,14 +278,32 @@ const testOpsConnection = async ({ base_url, config = {}, api_key } = {}) => {
     );
   }
 
+  let eventsResponse;
+
+  try {
+    eventsResponse = await fetchWithTimeout(eventsUrl, { headers });
+  } catch (error) {
+    throw new Error(
+      `Reached the OPS host, but the events endpoint could not be read from ${eventsUrl}: ${error instanceof Error ? error.message : "request failed"}`
+    );
+  }
+
+  if (!eventsResponse.ok) {
+    throw new Error(
+      `OPS events endpoint check failed with status ${eventsResponse.status}${eventsResponse.statusText ? ` ${eventsResponse.statusText}` : ""}`
+    );
+  }
+
   return {
     ok: true,
     type: "ops",
     base_url: normalizedBaseUrl,
     health_url: healthUrl,
+    events_url: eventsUrl,
+    board_url: normalizeText(healthPayload?.ops_telemetry?.board_url) || boardUrl,
     latency_ms: Math.max(Date.now() - startedAt, 1),
-    service: normalizeText(healthPayload?.service) || "OPS service",
-    events_path: normalizeText(normalizedConfig.events_path) || "/api/v1/events"
+    service: normalizeText(healthPayload?.ops_telemetry?.service_name) || normalizeText(healthPayload?.service) || "OPS service",
+    events_path: eventsPath
   };
 };
 
@@ -394,11 +441,6 @@ const normalizeConfig = (type, input, username) => {
       project_id: normalizeText(raw.project_id),
       events_path: normalizeText(raw.events_path) || String(integrationTypeConfig.events_path || "/api/v1/events"),
       health_path: normalizeText(raw.health_path) || String(integrationTypeConfig.health_path || "/health"),
-      api_key_header: normalizeText(raw.api_key_header) || String(integrationTypeConfig.api_key_header || "Authorization"),
-      api_key_prefix:
-        raw.api_key_prefix === ""
-          ? ""
-          : normalizeText(raw.api_key_prefix) || String(integrationTypeConfig.api_key_prefix || "Bearer"),
       service_name: normalizeText(raw.service_name) || String(integrationTypeConfig.service_name || "qaira-testengine"),
       environment: normalizeText(raw.environment) || String(integrationTypeConfig.environment || "production"),
       timeout_ms: Math.max(500, normalizeInteger(raw.timeout_ms) ?? Number(integrationTypeConfig.timeout_ms ?? 4000)),
@@ -479,9 +521,7 @@ const validatePayload = (payload) => {
   }
 
   if (type === "ops") {
-    if (!base_url) {
-      throw new Error("OPS integrations require a host URL");
-    }
+    // OPS telemetry resolves its host from the active Test Engine integration unless an override URL is provided.
   }
 
   const config = normalizeConfig(type, payload.config, username);

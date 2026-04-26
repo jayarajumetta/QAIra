@@ -177,7 +177,7 @@ export function ExecutionContextSelector({
         <span>{selectedEnvironment ? `${selectedEnvironment.name} · ${toScopeLabel(selectedEnvironment)}` : "No test environment selected."}</span>
         <span>{selectedConfiguration ? `${selectedConfiguration.name} · ${toScopeLabel(selectedConfiguration)}` : "No test configuration selected."}</span>
         <span>{selectedDataSet ? `${selectedDataSet.name} · ${selectedDataSet.mode === "table" ? "Table data" : "Key/value data"}` : "No test data selected."}</span>
-        <span>These resources are snapshotted when the run is created, so later edits do not change that run.</span>
+        <span>These selections become the snapped input params for the run, and anything extracted during execution shows up later as output params for downstream steps.</span>
       </div>
 
       {projectId && !isLoading && !hasAnyContext ? (

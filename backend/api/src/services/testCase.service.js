@@ -1154,6 +1154,7 @@ exports.updateTestCase = async (id, data) => {
     automated: data.automated !== undefined ? normalizeAutomated(data.automated, existing.automated || DEFAULT_AUTOMATED) : existing.automated || DEFAULT_AUTOMATED,
     priority: data.priority !== undefined ? normalizePriority(data.priority) : existing.priority ?? DEFAULT_PRIORITY,
     status: data.status !== undefined ? normalizeStatus(data.status) : existing.status || DEFAULT_STATUS,
+    steps: data.steps !== undefined ? normalizeSteps(data.steps) : null,
     updated_by: normalizeText(data.updated_by) || existing.updated_by || existing.created_by || null
   };
 
@@ -1179,9 +1180,57 @@ exports.updateTestCase = async (id, data) => {
     if (data.requirement_ids !== undefined || data.requirement_id !== undefined) {
       await syncRequirementMappings(id, payload.requirement_ids);
     }
+
+    if (data.steps !== undefined) {
+      await deleteStepsForTestCase.run(id);
+
+      for (const step of payload.steps || []) {
+        await insertStep.run(
+          uuid(),
+          id,
+          step.step_order,
+          step.action,
+          step.expected_result,
+          step.step_type || "web",
+          step.automation_code,
+          step.api_request,
+          step.group_id,
+          step.group_name,
+          step.group_kind,
+          step.reusable_group_id
+        );
+      }
+    }
   });
 
   await executeUpdate();
+
+  if (data.steps !== undefined) {
+    const sharedGroupTargets = (payload.steps || [])
+      .filter((step) => step.reusable_group_id && step.group_id)
+      .reduce((targets, step) => {
+        const key = `${step.reusable_group_id}::${step.group_id}`;
+
+        if (targets.some((target) => target.key === key)) {
+          return targets;
+        }
+
+        targets.push({
+          key,
+          reusable_group_id: step.reusable_group_id,
+          group_id: step.group_id
+        });
+        return targets;
+      }, []);
+
+    for (const target of sharedGroupTargets) {
+      await sharedStepSyncService.syncSharedGroupFromReference(
+        target.reusable_group_id,
+        id,
+        target.group_id
+      );
+    }
+  }
 
   return { updated: true };
 };

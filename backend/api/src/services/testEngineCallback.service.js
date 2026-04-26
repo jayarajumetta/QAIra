@@ -53,13 +53,54 @@ const isPlainObject = (value) => {
   return prototype === Object.prototype || prototype === null;
 };
 
+const normalizeCaptureRecord = (value) => {
+  if (!isPlainObject(value)) {
+    return {};
+  }
+
+  return Object.entries(value).reduce((accumulator, [key, entry]) => {
+    const normalizedKey = normalizeText(String(key || "").replace(/^@+/, ""))?.toLowerCase();
+
+    if (!normalizedKey) {
+      return accumulator;
+    }
+
+    accumulator[normalizedKey] = entry === undefined || entry === null ? "" : String(entry);
+    return accumulator;
+  }, {});
+};
+
+const normalizeStepCaptures = (value) => {
+  if (!isPlainObject(value)) {
+    return {};
+  }
+
+  return Object.entries(value).reduce((accumulator, [stepId, captures]) => {
+    const normalizedStepId = normalizeText(stepId);
+
+    if (!normalizedStepId) {
+      return accumulator;
+    }
+
+    const normalizedCaptures = normalizeCaptureRecord(captures);
+
+    if (!Object.keys(normalizedCaptures).length) {
+      return accumulator;
+    }
+
+    accumulator[normalizedStepId] = normalizedCaptures;
+    return accumulator;
+  }, {});
+};
+
 const parseStructuredLogs = (value) => {
   if (!value) {
     return {
       stepStatuses: {},
       stepNotes: {},
       stepEvidence: {},
-      stepApiDetails: {}
+      stepApiDetails: {},
+      stepCaptures: {}
     };
   }
 
@@ -71,7 +112,8 @@ const parseStructuredLogs = (value) => {
         stepStatuses: {},
         stepNotes: {},
         stepEvidence: {},
-        stepApiDetails: {}
+        stepApiDetails: {},
+        stepCaptures: {}
       };
     }
   }
@@ -81,7 +123,8 @@ const parseStructuredLogs = (value) => {
       stepStatuses: {},
       stepNotes: {},
       stepEvidence: {},
-      stepApiDetails: {}
+      stepApiDetails: {},
+      stepCaptures: {}
     };
   }
 
@@ -89,7 +132,8 @@ const parseStructuredLogs = (value) => {
     stepStatuses: isPlainObject(value.stepStatuses) ? { ...value.stepStatuses } : {},
     stepNotes: isPlainObject(value.stepNotes) ? { ...value.stepNotes } : {},
     stepEvidence: isPlainObject(value.stepEvidence) ? { ...value.stepEvidence } : {},
-    stepApiDetails: isPlainObject(value.stepApiDetails) ? { ...value.stepApiDetails } : {}
+    stepApiDetails: isPlainObject(value.stepApiDetails) ? { ...value.stepApiDetails } : {},
+    stepCaptures: normalizeStepCaptures(value.stepCaptures)
   };
 };
 
@@ -99,6 +143,14 @@ const isInlineImageDataUrl = (value) =>
 const mergeLogsPayload = (current, patch) => {
   const base = parseStructuredLogs(current);
   const next = parseStructuredLogs(patch);
+  const mergedStepCaptures = { ...base.stepCaptures };
+
+  Object.entries(next.stepCaptures || {}).forEach(([stepId, captures]) => {
+    mergedStepCaptures[stepId] = {
+      ...(mergedStepCaptures[stepId] || {}),
+      ...(isPlainObject(captures) ? captures : {})
+    };
+  });
 
   return {
     stepStatuses: {
@@ -116,7 +168,8 @@ const mergeLogsPayload = (current, patch) => {
     stepApiDetails: {
       ...base.stepApiDetails,
       ...next.stepApiDetails
-    }
+    },
+    stepCaptures: mergedStepCaptures
   };
 };
 
@@ -154,13 +207,20 @@ const buildLogsPayloadFromStepOutcomes = (stepOutcomes = []) =>
         };
       }
 
+      const captures = normalizeCaptureRecord(outcome.captures);
+
+      if (Object.keys(captures).length) {
+        accumulator.stepCaptures[stepId] = captures;
+      }
+
       return accumulator;
     },
     {
       stepStatuses: {},
       stepNotes: {},
       stepEvidence: {},
-      stepApiDetails: {}
+      stepApiDetails: {},
+      stepCaptures: {}
     }
   );
 
@@ -430,6 +490,7 @@ exports.handleRunCallback = async ({ headers, payload, rawPayload }) => {
   const latestStepOutcome = Array.isArray(payload.step_outcomes) && payload.step_outcomes.length
     ? payload.step_outcomes[payload.step_outcomes.length - 1]
     : null;
+  const latestStepCaptures = normalizeCaptureRecord(latestStepOutcome?.captures);
   const latestStepEvidence =
     latestStepOutcome?.evidence_image && typeof latestStepOutcome.evidence_image === "object" && !Array.isArray(latestStepOutcome.evidence_image)
       ? {
@@ -449,7 +510,8 @@ exports.handleRunCallback = async ({ headers, payload, rawPayload }) => {
       execution_result_id: result.id,
       step_status: normalizeText(latestStepOutcome?.status),
       step_note: normalizeText(latestStepOutcome?.note),
-      step_evidence: latestStepEvidence?.dataUrl ? latestStepEvidence : null
+      step_evidence: latestStepEvidence?.dataUrl ? latestStepEvidence : null,
+      captures: latestStepCaptures
     });
   } catch {
     // OPS telemetry is best-effort and must not block callback handling.
@@ -494,6 +556,10 @@ exports.handleRunCallback = async ({ headers, payload, rawPayload }) => {
       step_status_count: countEntries(mergedLogs.stepStatuses),
       step_note_count: countEntries(mergedLogs.stepNotes),
       step_evidence_count: countEntries(mergedLogs.stepEvidence),
+      step_capture_count: Object.values(mergedLogs.stepCaptures || {}).reduce(
+        (count, captures) => count + countEntries(captures),
+        0
+      ),
       artifact_bundle: isPlainObject(payload.artifact_bundle) ? payload.artifact_bundle : {},
       patch_proposals: Array.isArray(payload.patch_proposals) ? payload.patch_proposals : []
     },

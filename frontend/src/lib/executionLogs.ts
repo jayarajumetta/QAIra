@@ -33,11 +33,14 @@ export type ExecutionStepApiDetail = {
   assertions?: ExecutionApiAssertion[];
 };
 
+export type ExecutionStepCaptureMap = Record<string, string>;
+
 export type ExecutionLogsPayload = {
   stepStatuses?: Record<string, ExecutionStepStatus>;
   stepNotes?: Record<string, string>;
   stepEvidence?: Record<string, ExecutionStepEvidence>;
   stepApiDetails?: Record<string, ExecutionStepApiDetail>;
+  stepCaptures?: Record<string, ExecutionStepCaptureMap>;
 };
 
 const isExecutionEvidenceDataUrl = (value: string) =>
@@ -75,6 +78,36 @@ const normalizeStepEvidence = (value: unknown): Record<string, ExecutionStepEvid
   }, {});
 };
 
+const normalizeStepCaptures = (value: unknown): Record<string, ExecutionStepCaptureMap> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, ExecutionStepCaptureMap>>((accumulator, [stepId, captures]) => {
+    if (!captures || typeof captures !== "object" || Array.isArray(captures)) {
+      return accumulator;
+    }
+
+    const normalizedCaptures = Object.entries(captures as Record<string, unknown>).reduce<ExecutionStepCaptureMap>((entryMap, [key, captureValue]) => {
+      const normalizedKey = String(key || "").trim().replace(/^@+/, "").toLowerCase();
+
+      if (!normalizedKey) {
+        return entryMap;
+      }
+
+      entryMap[normalizedKey] = captureValue === undefined || captureValue === null ? "" : String(captureValue);
+      return entryMap;
+    }, {});
+
+    if (!Object.keys(normalizedCaptures).length) {
+      return accumulator;
+    }
+
+    accumulator[stepId] = normalizedCaptures;
+    return accumulator;
+  }, {});
+};
+
 export function parseExecutionLogs(logs: string | null): ExecutionLogsPayload {
   if (!logs?.trim()) {
     return {};
@@ -93,7 +126,8 @@ export function parseExecutionLogs(logs: string | null): ExecutionLogsPayload {
       stepEvidence: normalizeStepEvidence(payload.stepEvidence),
       stepApiDetails: typeof payload.stepApiDetails === "object" && payload.stepApiDetails && !Array.isArray(payload.stepApiDetails)
         ? payload.stepApiDetails
-        : {}
+        : {},
+      stepCaptures: normalizeStepCaptures(payload.stepCaptures)
     };
   } catch {
     return {};
@@ -105,7 +139,8 @@ export function stringifyExecutionLogs(payload: ExecutionLogsPayload): string {
     stepStatuses: payload.stepStatuses || {},
     stepNotes: payload.stepNotes || {},
     stepEvidence: payload.stepEvidence || {},
-    stepApiDetails: payload.stepApiDetails || {}
+    stepApiDetails: payload.stepApiDetails || {},
+    stepCaptures: payload.stepCaptures || {}
   });
 }
 

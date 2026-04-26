@@ -6,7 +6,9 @@ const QAIRA_TESTENGINE_SECRET = String(
   || process.env.TESTENGINE_SHARED_SECRET
   || "qaira-testengine-dev-secret"
 ).trim();
-const ENGINE_PUBLIC_URL = String(process.env.ENGINE_PUBLIC_URL || process.env.ENGINE_HOST_URL || "").trim();
+const ENGINE_PUBLIC_URL = String(process.env.ENGINE_PUBLIC_URL || process.env.ENGINE_HOST_URL || "")
+  .trim()
+  .replace(/\/+$/, "");
 
 function ensureConfigured() {
   if (!QAIRA_API_BASE_URL) {

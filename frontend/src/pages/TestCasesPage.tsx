@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, Fragment, useDeferredValue, useEffect, useMemo,
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { AiCaseAuthoringModal } from "../components/AiCaseAuthoringModal";
 import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
 import { AddIcon, CopyIcon, ExportIcon, MoveIcon, OpenIcon, TrashIcon } from "../components/AppIcons";
 import { CatalogActionMenu } from "../components/CatalogActionMenu";
@@ -81,11 +82,13 @@ import {
   filterStepParameterValuesByScope,
   normalizeStepParameterValues,
   parseStepParameterName,
+  resolveStepParameterText,
   type StepParameterDefinition,
   type StepParameterScope
 } from "../lib/stepParameters";
 import { TEST_AUTHORING_SECTION_ITEMS } from "../lib/workspaceSections";
 import type {
+  AiAuthoredTestCasePreview,
   AiDesignImageInput,
   AiDesignedTestCaseCandidate,
   AiTestCaseGenerationJob,
@@ -441,6 +444,28 @@ const normalizeDraftSteps = (steps: DraftTestStep[]) =>
     }))
     .filter((step) => step.action || step.expected_result);
 
+const buildDraftStepsFromAiAuthoringPreview = (preview: AiAuthoredTestCasePreview): DraftTestStep[] =>
+  preview.steps.map((step) => ({
+    id: createDraftStepId(),
+    action: step.action || "",
+    expected_result: step.expected_result || "",
+    step_type: normalizeStepType(step.step_type),
+    automation_code: "",
+    api_request: null,
+    group_id: null,
+    group_name: null,
+    group_kind: null,
+    reusable_group_id: null
+  }));
+
+const buildPersistedStepsFromAiAuthoringPreview = (preview: AiAuthoredTestCasePreview) =>
+  preview.steps.map((step) => ({
+    step_order: step.step_order,
+    step_type: normalizeStepType(step.step_type),
+    action: step.action || undefined,
+    expected_result: step.expected_result || undefined
+  }));
+
 const normalizeCopiedSteps = (
   steps: Array<Pick<TestStep, "action" | "expected_result" | "step_type" | "automation_code" | "api_request" | "group_id" | "group_name" | "group_kind" | "reusable_group_id">>,
   mode: "copy" | "cut"
@@ -735,6 +760,12 @@ export function TestCasesPage() {
   const [importFileWarnings, setImportFileWarnings] = useState<string[]>([]);
   const [importRequirementId, setImportRequirementId] = useState("");
   const [importSourceSelection, setImportSourceSelection] = useState<TestCaseImportSourceSelection>("auto");
+  const [isAiCaseAuthoringOpen, setIsAiCaseAuthoringOpen] = useState(false);
+  const [aiCaseAuthoringRequirementId, setAiCaseAuthoringRequirementId] = useState("");
+  const [aiCaseAuthoringAdditionalContext, setAiCaseAuthoringAdditionalContext] = useState("");
+  const [aiCaseAuthoringPreview, setAiCaseAuthoringPreview] = useState<AiAuthoredTestCasePreview | null>(null);
+  const [aiCaseAuthoringMessage, setAiCaseAuthoringMessage] = useState("");
+  const [aiCaseAuthoringTone, setAiCaseAuthoringTone] = useState<"success" | "error">("success");
   const [isAiStudioOpen, setIsAiStudioOpen] = useState(false);
   const [aiRequirementIds, setAiRequirementIds] = useState<string[]>([]);
   const [integrationId, setIntegrationId] = useState("");
@@ -843,6 +874,7 @@ export function TestCasesPage() {
   });
   const deleteTestCase = useMutation({ mutationFn: api.testCases.delete });
   const importTestCases = useMutation({ mutationFn: api.testCases.bulkImport });
+  const previewCaseAuthoring = useMutation({ mutationFn: api.testCases.previewCaseAuthoring });
   const previewDesignedCases = useMutation({ mutationFn: api.testCases.previewDesignedCases });
   const acceptDesignedCases = useMutation({ mutationFn: api.testCases.acceptDesignedCases });
   const createStep = useMutation({ mutationFn: api.testSteps.create });
@@ -1053,6 +1085,11 @@ export function TestCasesPage() {
     setImportBatches([]);
     setImportFileWarnings([]);
     setImportSourceSelection("auto");
+    setIsAiCaseAuthoringOpen(false);
+    setAiCaseAuthoringRequirementId("");
+    setAiCaseAuthoringAdditionalContext("");
+    setAiCaseAuthoringPreview(null);
+    setAiCaseAuthoringMessage("");
     setIsCreateSuiteModalOpen(false);
     setIsCreateExecutionModalOpen(false);
     setExecutionName("");
@@ -1311,6 +1348,33 @@ export function TestCasesPage() {
   const mergedScopedParameterValues = useMemo(
     () => combineStepParameterValues(testCaseParameterValues, suiteParameterValues, runPreviewParameterValues),
     [runPreviewParameterValues, suiteParameterValues, testCaseParameterValues]
+  );
+  const aiCaseAuthoringSourceDraft = useMemo(
+    () => ({
+      title: caseDraft.title,
+      description: caseDraft.description,
+      parameter_values: testCaseParameterValues,
+      steps: displaySteps.map((step) => ({
+        step_order: step.step_order,
+        step_type: stepDrafts[step.id]?.step_type ?? step.step_type,
+        action: stepDrafts[step.id]?.action ?? step.action,
+        expected_result: stepDrafts[step.id]?.expected_result ?? step.expected_result
+      }))
+    }),
+    [caseDraft.description, caseDraft.title, displaySteps, stepDrafts, testCaseParameterValues]
+  );
+  const aiCaseAuthoringAutomationStepCount = useMemo(
+    () =>
+      displaySteps.filter((step) =>
+        stepHasAutomation({
+          action: stepDrafts[step.id]?.action ?? step.action,
+          expected_result: stepDrafts[step.id]?.expected_result ?? step.expected_result,
+          step_type: stepDrafts[step.id]?.step_type ?? step.step_type,
+          automation_code: stepDrafts[step.id]?.automation_code ?? step.automation_code,
+          api_request: stepDrafts[step.id]?.api_request ?? step.api_request
+        })
+      ).length,
+    [displaySteps, stepDrafts]
   );
   const resolveScopedParameterInputState = (scope: StepParameterScope) => {
     if (scope === "s") {
@@ -1761,6 +1825,21 @@ export function TestCasesPage() {
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [isImportModalOpen]);
+
+  useEffect(() => {
+    if (!isAiCaseAuthoringOpen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !previewCaseAuthoring.isPending && !updateTestCase.isPending) {
+        setIsAiCaseAuthoringOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [isAiCaseAuthoringOpen, previewCaseAuthoring.isPending, updateTestCase.isPending]);
 
   useEffect(() => {
     if (!isAiStudioOpen) {
@@ -3409,6 +3488,21 @@ export function TestCasesPage() {
     }
   };
 
+  const openAiCaseAuthoring = () => {
+    const seededRequirementId =
+      caseDraft.requirement_id
+      || selectedTestCase?.requirement_ids?.[0]
+      || selectedTestCase?.requirement_id
+      || requirements[0]?.id
+      || "";
+
+    setAiCaseAuthoringRequirementId(seededRequirementId);
+    setAiCaseAuthoringPreview(null);
+    setAiCaseAuthoringMessage("");
+    setAiCaseAuthoringTone("success");
+    setIsAiCaseAuthoringOpen(true);
+  };
+
   const openAiStudio = () => {
     const seededRequirementIds = [
       ...(selectedTestCase?.requirement_ids || []),
@@ -3482,6 +3576,105 @@ export function TestCasesPage() {
     }
 
     return message;
+  };
+
+  const handlePreviewAiCaseAuthoring = async () => {
+    if (!appTypeId || !aiCaseAuthoringRequirementId) {
+      setAiCaseAuthoringTone("error");
+      setAiCaseAuthoringMessage("Choose the linked requirement before generating an AI authoring preview.");
+      return;
+    }
+
+    try {
+      const response = await previewCaseAuthoring.mutateAsync({
+        app_type_id: appTypeId,
+        requirement_id: aiCaseAuthoringRequirementId,
+        integration_id: integrationId || undefined,
+        additional_context: aiCaseAuthoringAdditionalContext || undefined,
+        test_case: aiCaseAuthoringSourceDraft
+      });
+
+      setAiCaseAuthoringPreview(response.case);
+      setAiCaseAuthoringTone("success");
+      setAiCaseAuthoringMessage(
+        `Prepared ${response.case.step_count} AI-authored step${response.case.step_count === 1 ? "" : "s"} using ${response.integration.name}.`
+      );
+    } catch (error) {
+      setAiCaseAuthoringTone("error");
+      setAiCaseAuthoringMessage(formatAiStudioErrorMessage(error, "Unable to preview AI authoring right now."));
+    }
+  };
+
+  const handleApplyAiCaseAuthoring = async () => {
+    if (!aiCaseAuthoringPreview) {
+      return;
+    }
+
+    const normalizedPreviewParameterValues = normalizeTestCaseParameterValues(aiCaseAuthoringPreview.parameter_values);
+
+    if (isCreating) {
+      const nextDraftSteps = buildDraftStepsFromAiAuthoringPreview(aiCaseAuthoringPreview);
+
+      setCaseDraft((current) => ({
+        ...current,
+        title: aiCaseAuthoringPreview.title,
+        description: aiCaseAuthoringPreview.description || "",
+        requirement_id: aiCaseAuthoringRequirementId || current.requirement_id
+      }));
+      setTestCaseParameterValues(normalizedPreviewParameterValues);
+      setDraftSteps(nextDraftSteps);
+      setSelectedStepIds([]);
+      setExpandedStepIds(nextDraftSteps.map((step) => step.id));
+      setExpandedStepGroupIds([]);
+      setIsAiCaseAuthoringOpen(false);
+      setAiCaseAuthoringPreview(null);
+      setAiCaseAuthoringMessage("");
+      showSuccess("AI-authored content applied to the new test case draft.");
+      return;
+    }
+
+    if (!selectedTestCase) {
+      return;
+    }
+
+    const stepReplacementMessage = aiCaseAuthoringAutomationStepCount
+      ? `Replace "${selectedTestCase.title}" with the AI-authored draft? This will overwrite ${displaySteps.length} saved step${displaySteps.length === 1 ? "" : "s"} and remove automation code or API request setup from ${aiCaseAuthoringAutomationStepCount} step${aiCaseAuthoringAutomationStepCount === 1 ? "" : "s"}.`
+      : `Replace "${selectedTestCase.title}" with the AI-authored draft and overwrite its ${displaySteps.length} saved step${displaySteps.length === 1 ? "" : "s"}?`;
+
+    if (!window.confirm(stepReplacementMessage)) {
+      return;
+    }
+
+    try {
+      await updateTestCase.mutateAsync({
+        id: selectedTestCase.id,
+        input: {
+          title: aiCaseAuthoringPreview.title,
+          description: aiCaseAuthoringPreview.description || "",
+          parameter_values: normalizedPreviewParameterValues,
+          requirement_ids: aiCaseAuthoringRequirementId ? [aiCaseAuthoringRequirementId] : [],
+          steps: buildPersistedStepsFromAiAuthoringPreview(aiCaseAuthoringPreview)
+        }
+      });
+
+      setCaseDraft((current) => ({
+        ...current,
+        title: aiCaseAuthoringPreview.title,
+        description: aiCaseAuthoringPreview.description || "",
+        requirement_id: aiCaseAuthoringRequirementId || current.requirement_id
+      }));
+      setTestCaseParameterValues(normalizedPreviewParameterValues);
+      syncCachedTestCaseParameterValues(selectedTestCase.id, normalizedPreviewParameterValues);
+      clearStoredTestCaseParameterDraft(selectedCaseParameterDraftScopeKey);
+      setIsAiCaseAuthoringOpen(false);
+      setAiCaseAuthoringPreview(null);
+      setAiCaseAuthoringMessage("");
+      showSuccess("AI-authored content replaced the saved test case steps and test data.");
+      await refreshCases();
+    } catch (error) {
+      setAiCaseAuthoringTone("error");
+      setAiCaseAuthoringMessage(formatAiStudioErrorMessage(error, "Unable to apply AI authoring right now."));
+    }
   };
 
   const handleAcceptDesignedCases = async () => {
@@ -3593,7 +3786,7 @@ export function TestCasesPage() {
           queryClient.invalidateQueries({ queryKey: ["executions"] }),
           queryClient.invalidateQueries({ queryKey: ["executions", projectId] })
         ]);
-        navigate(`/executions?execution=${response.id}&testCase=${testCaseId}`);
+        navigate(`/executions?view=test-case-runs&execution=${response.id}&testCase=${testCaseId}`);
         showError(error, "Run created, but QAira could not start it");
         return;
       }
@@ -3603,7 +3796,7 @@ export function TestCasesPage() {
         queryClient.invalidateQueries({ queryKey: ["executions", projectId] })
       ]);
 
-      navigate(`/executions?execution=${response.id}&testCase=${testCaseId}`);
+      navigate(`/executions?view=test-case-runs&execution=${response.id}&testCase=${testCaseId}`);
     } catch (error) {
       showError(error, "Unable to run test case");
     } finally {
@@ -4012,10 +4205,21 @@ export function TestCasesPage() {
       disabled: !selectedEditorSteps.length
     }
   ];
-  const firstStepPreview = displaySteps[0]?.action || displaySteps[0]?.expected_result || "";
+  const readableCaseTitle = resolveStepParameterText(caseDraft.title, mergedScopedParameterValues);
+  const readableCaseDescription = resolveStepParameterText(caseDraft.description, mergedScopedParameterValues);
+  const hasReadableCasePreview = Boolean(
+    detectedStepParameters.length
+    || Object.keys(mergedScopedParameterValues).length
+    || readableCaseTitle !== caseDraft.title
+    || readableCaseDescription !== caseDraft.description
+  );
+  const firstStepPreview = resolveStepParameterText(
+    displaySteps[0]?.action || displaySteps[0]?.expected_result || "",
+    mergedScopedParameterValues
+  );
   const caseSectionSummary = isCreating
-    ? caseDraft.title.trim() || "Start defining the reusable case before saving it."
-    : selectedTestCase?.title || "Select a test case from the library to edit it here.";
+    ? readableCaseTitle.trim() || "Start defining the reusable case before saving it."
+    : readableCaseTitle || selectedTestCase?.title || "Select a test case from the library to edit it here.";
   const stepSectionSummary = firstStepPreview
     ? `Starts with: ${firstStepPreview}`
     : isCreating
@@ -4140,6 +4344,10 @@ export function TestCasesPage() {
     setSuiteLinkDraftIds([]);
     setTestCaseParameterValues({});
     setIsCaseParameterDialogOpen(false);
+    setIsAiCaseAuthoringOpen(false);
+    setAiCaseAuthoringRequirementId("");
+    setAiCaseAuthoringPreview(null);
+    setAiCaseAuthoringMessage("");
   };
 
   const handleWorkspaceBack = () => {
@@ -4167,6 +4375,17 @@ export function TestCasesPage() {
         >
           <TestCaseRunIcon />
           <span>{isSelectedCaseRunning ? "Starting…" : "Run test"}</span>
+        </button>
+      ) : null}
+      {isCaseWorkspaceOpen ? (
+        <button
+          className="ghost-button"
+          disabled={!appTypeId || !integrations.length || !requirements.length}
+          onClick={openAiCaseAuthoring}
+          type="button"
+        >
+          <TestCaseSparkIcon />
+          <span>AI author</span>
         </button>
       ) : null}
       {isCaseWorkspaceOpen ? (
@@ -5118,6 +5337,14 @@ export function TestCasesPage() {
                       title={isCreating ? "New test case" : "Selected test case"}
                     >
                       <form className="form-grid" onSubmit={(event) => void handleSaveCase(event)}>
+                        {hasReadableCasePreview ? (
+                          <div className="step-parameter-preview">
+                            <span className="step-parameter-preview-label">Readable preview on this screen</span>
+                            <strong>{readableCaseTitle || "No title written yet"}</strong>
+                            <span>{readableCaseDescription || "Description, step cards, and section summaries will resolve saved values here without changing the stored authoring text."}</span>
+                          </div>
+                        ) : null}
+
                         <div className="record-grid">
                           <FormField label="Title" required>
                             <input
@@ -5791,6 +6018,39 @@ export function TestCasesPage() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {isAiCaseAuthoringOpen ? (
+        <AiCaseAuthoringModal
+          additionalContext={aiCaseAuthoringAdditionalContext}
+          applyLabel={isCreating ? "Apply To Draft" : "Replace Saved Case"}
+          closeDisabled={previewCaseAuthoring.isPending || updateTestCase.isPending}
+          disableApply={!aiCaseAuthoringPreview || updateTestCase.isPending}
+          disableGenerate={!appTypeId || !aiCaseAuthoringRequirementId || previewCaseAuthoring.isPending || !integrations.length}
+          hasAutomationWarning={aiCaseAuthoringAutomationStepCount > 0}
+          integrationId={integrationId}
+          integrations={integrations}
+          isApplying={updateTestCase.isPending}
+          isCreating={isCreating}
+          isPreviewing={previewCaseAuthoring.isPending}
+          onAdditionalContextChange={setAiCaseAuthoringAdditionalContext}
+          onApply={() => void handleApplyAiCaseAuthoring()}
+          onClose={() => {
+            setIsAiCaseAuthoringOpen(false);
+            setAiCaseAuthoringPreview(null);
+            setAiCaseAuthoringMessage("");
+          }}
+          onGenerate={() => void handlePreviewAiCaseAuthoring()}
+          onIntegrationIdChange={setIntegrationId}
+          onPreviewMessageDismiss={() => setAiCaseAuthoringMessage("")}
+          onRequirementChange={setAiCaseAuthoringRequirementId}
+          preview={aiCaseAuthoringPreview}
+          previewMessage={aiCaseAuthoringMessage}
+          previewTone={aiCaseAuthoringTone}
+          requirementId={aiCaseAuthoringRequirementId}
+          requirements={requirements}
+          sourceDraft={aiCaseAuthoringSourceDraft}
+        />
       ) : null}
 
       {isAiStudioOpen ? (

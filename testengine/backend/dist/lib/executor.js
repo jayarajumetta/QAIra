@@ -293,7 +293,7 @@ const buildStepApiDetailMap = (stepSummaries = []) => stepSummaries.reduce((accu
     accumulator[summary.step_id] = summary;
     return accumulator;
 }, {});
-const buildLogsPayload = (stepOutcomes, stepSummaries = []) => stepOutcomes.reduce((accumulator, outcome) => {
+const buildLogsPayload = (stepOutcomes, stepSummaries = [], stepCaptures = {}) => stepOutcomes.reduce((accumulator, outcome) => {
     if (outcome.status === "passed" || outcome.status === "failed" || outcome.status === "blocked") {
         accumulator.stepStatuses[outcome.step_id] = outcome.status;
     }
@@ -312,7 +312,11 @@ const buildLogsPayload = (stepOutcomes, stepSummaries = []) => stepOutcomes.redu
     stepStatuses: {},
     stepNotes: {},
     stepEvidence: {},
-    stepApiDetails: buildStepApiDetailMap(stepSummaries)
+    stepApiDetails: buildStepApiDetailMap(stepSummaries),
+    stepCaptures: Object.entries(stepCaptures).reduce((accumulator, [stepId, captures]) => {
+        accumulator[stepId] = { ...captures };
+        return accumulator;
+    }, {})
 });
 const syncCapturedValues = (context, captures) => {
     Object.entries(captures || {}).forEach(([key, value]) => {
@@ -514,7 +518,7 @@ const markRunState = (runId, nextState, summary, extra) => updateRun(runId, (cur
     summary,
     updated_at: nowIso()
 }));
-const buildFinalCallback = ({ envelope, run, stepOutcomes, stepSummaries, status, durationMs, errorMessage, healingAttempted, healingSucceeded }) => ({
+const buildFinalCallback = ({ envelope, run, stepOutcomes, stepSummaries, stepCaptures, status, durationMs, errorMessage, healingAttempted, healingSucceeded }) => ({
     event: status === "passed" ? "run.completed" : status === "failed" ? "run.failed" : "run.incident",
     engine_run_id: run.id,
     qaira_run_id: envelope.qaira_run_id,
@@ -532,13 +536,13 @@ const buildFinalCallback = ({ envelope, run, stepOutcomes, stepSummaries, status
         status,
         duration_ms: durationMs,
         error: errorMessage || null,
-        logs: buildLogsPayload(stepOutcomes, stepSummaries)
+        logs: buildLogsPayload(stepOutcomes, stepSummaries, stepCaptures)
     },
     artifact_bundle: run.artifact_bundle,
     patch_proposals: run.patch_proposals,
     emitted_at: nowIso()
 });
-const buildProgressCallback = ({ envelope, run, stepOutcomes, stepSummaries, latestOutcome, durationMs, totalSteps, healingAttempted, healingSucceeded }) => ({
+const buildProgressCallback = ({ envelope, run, stepOutcomes, stepSummaries, stepCaptures, latestOutcome, durationMs, totalSteps, healingAttempted, healingSucceeded }) => ({
     event: "run.step.completed",
     engine_run_id: run.id,
     qaira_run_id: envelope.qaira_run_id,
@@ -554,7 +558,7 @@ const buildProgressCallback = ({ envelope, run, stepOutcomes, stepSummaries, lat
         status: stepOutcomes.length === totalSteps && stepOutcomes.every((outcome) => outcome.status === "passed") ? "passed" : "blocked",
         duration_ms: durationMs,
         error: null,
-        logs: buildLogsPayload(stepOutcomes, stepSummaries)
+        logs: buildLogsPayload(stepOutcomes, stepSummaries, stepCaptures)
     },
     artifact_bundle: run.artifact_bundle,
     patch_proposals: run.patch_proposals,
@@ -570,6 +574,7 @@ const executeUnsupportedRun = async ({ envelope, run, logger, reason }) => {
         run: next,
         stepOutcomes: [],
         stepSummaries: [],
+        stepCaptures: {},
         status: "failed",
         durationMs: 0,
         errorMessage: reason
@@ -603,6 +608,7 @@ async function executeRun(envelope, run, logger) {
     const context = buildInitialContext(envelope);
     const stepOutcomes = [];
     const stepSummaries = [];
+    const stepCaptures = {};
     const orderedSteps = envelope.steps.slice().sort((left, right) => left.order - right.order);
     const webRunSession = hasWebSteps ? createWebRunSession(envelope, context.values) : null;
     let healingAttempted = false;
@@ -633,6 +639,12 @@ async function executeRun(envelope, run, logger) {
                 syncCapturedValues(webRunSession.context, result.captures);
             }
             stepOutcomes.push(result.outcome);
+            if (Object.keys(result.captures || {}).length) {
+                stepCaptures[result.outcome.step_id] = {
+                    ...(stepCaptures[result.outcome.step_id] || {}),
+                    ...result.captures
+                };
+            }
             if (result.summary) {
                 stepSummaries.push(result.summary);
             }
@@ -658,6 +670,7 @@ async function executeRun(envelope, run, logger) {
                             run: progressRun,
                             stepOutcomes,
                             stepSummaries,
+                            stepCaptures,
                             latestOutcome: result.outcome,
                             durationMs: Date.now() - startedAt,
                             totalSteps: orderedSteps.length,
@@ -690,6 +703,7 @@ async function executeRun(envelope, run, logger) {
                     run: failedRun,
                     stepOutcomes,
                     stepSummaries,
+                    stepCaptures,
                     status: "failed",
                     durationMs: Date.now() - startedAt,
                     errorMessage: result.outcome.note || `${envelope.qaira_test_case_title} failed on step ${step.order}.`,
@@ -718,6 +732,7 @@ async function executeRun(envelope, run, logger) {
             run: completedRun,
             stepOutcomes,
             stepSummaries,
+            stepCaptures,
             status: "passed",
             durationMs: Date.now() - startedAt,
             healingAttempted,
@@ -745,6 +760,7 @@ async function executeRun(envelope, run, logger) {
                 run: failedRun,
                 stepOutcomes,
                 stepSummaries,
+                stepCaptures,
                 status: "failed",
                 durationMs: Date.now() - startedAt,
                 errorMessage: failedRun.summary,

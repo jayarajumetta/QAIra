@@ -944,10 +944,20 @@ exports.getExecutions = async ({ project_id, app_type_id, status }) => {
     params.push(status);
   }
 
-  query += ` ORDER BY started_at DESC, ended_at DESC, id DESC`;
+  const createdAtOrderedQuery = `${query} ORDER BY created_at DESC NULLS LAST, started_at DESC NULLS LAST, ended_at DESC NULLS LAST, id DESC`;
+  const legacyOrderedQuery = `${query} ORDER BY started_at DESC NULLS LAST, ended_at DESC NULLS LAST, id DESC`;
 
-  const rows = await db.prepare(query).all(...params);
-  return Promise.all(rows.map(attachScope));
+  try {
+    const rows = await db.prepare(createdAtOrderedQuery).all(...params);
+    return Promise.all(rows.map(attachScope));
+  } catch (error) {
+    if (error?.code !== "42703") {
+      throw error;
+    }
+
+    const rows = await db.prepare(legacyOrderedQuery).all(...params);
+    return Promise.all(rows.map(attachScope));
+  }
 };
 
 exports.getExecution = async (id) => {
@@ -1248,6 +1258,11 @@ exports.runExecutionApiStep = async (executionId, testCaseId, stepId, { executed
     api_request: apiRequest,
     parameter_values: parameterValues
   });
+  const normalizedStepCaptures = executionStepRuntimeService.extractCapturedValuesFromLogs({
+    stepCaptures: {
+      [stepId]: stepResult.captures || {}
+    }
+  });
   const formattedStepNote = executionStepRuntimeService.formatApiStepEvidenceNote(stepResult);
   const mergedLogs = {
     ...existingLogs,
@@ -1266,7 +1281,18 @@ exports.runExecutionApiStep = async (executionId, testCaseId, stepId, { executed
     stepApiDetails: {
       ...existingLogs.stepApiDetails,
       [stepId]: stepResult.detail
-    }
+    },
+    stepCaptures: Object.keys(normalizedStepCaptures).length
+      ? {
+          ...existingLogs.stepCaptures,
+          [stepId]: {
+            ...(existingLogs.stepCaptures?.[stepId] || {}),
+            ...normalizedStepCaptures
+          }
+        }
+      : {
+          ...existingLogs.stepCaptures
+        }
   };
   const caseStepIds = (execution.step_snapshots || [])
     .filter((snapshot) => snapshot.test_case_id === testCaseId)
@@ -1318,6 +1344,7 @@ exports.runExecutionApiStep = async (executionId, testCaseId, stepId, { executed
     execution_status: refreshedExecution?.status || execution.status,
     note: formattedStepNote,
     detail: stepResult.detail,
+    captures: normalizedStepCaptures,
     execution_result_id: result.id
   };
 };

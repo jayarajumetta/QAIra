@@ -171,6 +171,39 @@ export type AiDesignPreviewResponse = {
   };
 };
 
+export type AiAuthoredTestCasePreview = {
+  summary?: string | null;
+  title: string;
+  description: string | null;
+  parameter_values: Record<string, string>;
+  steps: Array<{
+    step_order: number;
+    step_type?: "web" | "api" | "android" | "ios" | null;
+    action: string | null;
+    expected_result: string | null;
+  }>;
+  step_count: number;
+  parameter_count: number;
+};
+
+export type AiCaseAuthoringPreviewResponse = {
+  integration: {
+    id: string;
+    name: string;
+    type: string;
+    model?: string | null;
+  };
+  requirement: {
+    id: string;
+    title: string;
+  };
+  app_type: {
+    id: string;
+    name: string;
+  };
+  case: AiAuthoredTestCasePreview;
+};
+
 export type AiTestCaseGenerationJob = {
   id: string;
   project_id: string;

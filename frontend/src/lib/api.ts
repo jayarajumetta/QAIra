@@ -1,5 +1,6 @@
 import type {
   ApiRequestPreview,
+  AiCaseAuthoringPreviewResponse,
   AiDesignImageInput,
   AiDesignPreviewResponse,
   AiTestCaseGenerationJob,
@@ -457,6 +458,8 @@ export const api = {
             type: "ops";
             base_url: string;
             health_url: string;
+            events_url: string;
+            board_url: string;
             latency_ms: number;
             service: string;
             events_path: string;
@@ -494,6 +497,27 @@ export const api = {
       request<TestCase[]>(`/test-cases${toQueryString(query)}`),
     create: (input: { app_type_id?: string; suite_id?: string; suite_ids?: string[]; title: string; description?: string; parameter_values?: Record<string, string>; automated?: "yes" | "no"; priority?: number; status?: string; requirement_id?: string; requirement_ids?: string[]; steps?: Array<{ step_order?: number; action?: string; expected_result?: string; step_type?: TestStep["step_type"]; automation_code?: string; api_request?: TestStep["api_request"]; group_id?: string; group_name?: string; group_kind?: "local" | "reusable"; reusable_group_id?: string }> }) =>
       request<{ id: string }>("/test-cases", { method: "POST", body: JSON.stringify(input) }),
+    previewCaseAuthoring: (input: {
+      app_type_id: string;
+      requirement_id: string;
+      integration_id?: string;
+      additional_context?: string;
+      test_case?: {
+        title?: string;
+        description?: string;
+        parameter_values?: Record<string, string>;
+        steps?: Array<{
+          step_order?: number;
+          step_type?: TestStep["step_type"];
+          action?: string | null;
+          expected_result?: string | null;
+        }>;
+      };
+    }) =>
+      request<AiCaseAuthoringPreviewResponse>("/test-cases/ai-authoring-preview", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
     previewDesignedCases: (input: { app_type_id: string; requirement_ids: string[]; integration_id?: string; max_cases?: number; additional_context?: string; external_links?: string[]; images?: AiDesignImageInput[] }) =>
       request<AiDesignPreviewResponse>("/test-cases/design-test-cases-preview", {
         method: "POST",

@@ -118,6 +118,7 @@ export type QairaExecutionLogsPayload = {
   stepNotes?: Record<string, string>;
   stepEvidence?: Record<string, QairaExecutionStepEvidence>;
   stepApiDetails?: Record<string, QairaExecutionStepApiDetail>;
+  stepCaptures?: Record<string, Record<string, string>>;
 };
 
 export type EngineArtifactKind =

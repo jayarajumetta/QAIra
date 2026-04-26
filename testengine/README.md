@@ -138,16 +138,29 @@ Or from the repo root:
 ./release-testengine.sh
 ```
 
-For a separate Test Engine host that should also forward OTEL/OPS settings into the
-container environment, prefer:
+For a separate Test Engine host that should also align its OPS settings with the
+active QAira integrations and expose the local telemetry board on the same host,
+prefer:
 
 ```bash
 QAIRA_API_BASE_URL=https://qaira.qualipal.in/api \
 QAIRA_TESTENGINE_SECRET=replace-with-your-shared-secret \
-ENGINE_PUBLIC_URL=https://engine.qualipal.in \
-OPS_OTLP_ENDPOINT=https://ops.company.internal:4318 \
+QAIRA_AUTH_TOKEN=replace-with-a-qaira-token \
+QAIRA_PROJECT_ID=replace-with-project-id \
 ./start-testengine-ops.sh
 ```
+
+If you do not want integration lookup, set `ENGINE_PUBLIC_URL` directly instead.
+When the stack is up, the Test Engine host serves:
+
+- `GET /health`
+- `GET /api/v1/capabilities`
+- `GET /api/v1/events`
+- `POST /api/v1/events`
+- `GET /ops-telemetry`
+
+The `/ops-telemetry` board lets operators filter captured execution hierarchy
+events by `service_name`, status, event type, and execution identifiers.
 
 On Apple Silicon or other ARM64 hosts, QAira defaults the Selenium browser node to
 `selenium/node-chromium:4.22.0` because Selenium's official Chrome node images are

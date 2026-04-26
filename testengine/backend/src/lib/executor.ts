@@ -61,6 +61,7 @@ type EngineCaseLogsPayload = {
   stepNotes: Record<string, string>;
   stepEvidence: Record<string, { dataUrl: string; fileName?: string; mimeType?: string }>;
   stepApiDetails: Record<string, ApiStepExecutionResult["summary"]>;
+  stepCaptures: Record<string, Record<string, string>>;
 };
 
 const STEP_PARAMETER_PATTERN = /(?<![A-Za-z0-9_])@(?:(t|s|r)\.)?([A-Za-z][A-Za-z0-9_-]*)/gi;
@@ -462,7 +463,8 @@ const buildStepApiDetailMap = (stepSummaries: ApiStepExecutionResult["summary"][
 
 const buildLogsPayload = (
   stepOutcomes: EngineStepOutcome[],
-  stepSummaries: ApiStepExecutionResult["summary"][] = []
+  stepSummaries: ApiStepExecutionResult["summary"][] = [],
+  stepCaptures: Record<string, Record<string, string>> = {}
 ) =>
   stepOutcomes.reduce<EngineCaseLogsPayload>(
     (accumulator, outcome) => {
@@ -488,7 +490,11 @@ const buildLogsPayload = (
       stepStatuses: {},
       stepNotes: {},
       stepEvidence: {},
-      stepApiDetails: buildStepApiDetailMap(stepSummaries)
+      stepApiDetails: buildStepApiDetailMap(stepSummaries),
+      stepCaptures: Object.entries(stepCaptures).reduce<Record<string, Record<string, string>>>((accumulator, [stepId, captures]) => {
+        accumulator[stepId] = { ...captures };
+        return accumulator;
+      }, {})
     }
   );
 
@@ -757,6 +763,7 @@ const buildFinalCallback = ({
   run,
   stepOutcomes,
   stepSummaries,
+  stepCaptures,
   status,
   durationMs,
   errorMessage,
@@ -767,6 +774,7 @@ const buildFinalCallback = ({
   run: EngineRunRecord;
   stepOutcomes: EngineStepOutcome[];
   stepSummaries: ApiStepExecutionResult["summary"][];
+  stepCaptures: Record<string, Record<string, string>>;
   status: "passed" | "failed" | "blocked";
   durationMs: number;
   errorMessage?: string | null;
@@ -791,7 +799,7 @@ const buildFinalCallback = ({
     status,
     duration_ms: durationMs,
     error: errorMessage || null,
-    logs: buildLogsPayload(stepOutcomes, stepSummaries)
+    logs: buildLogsPayload(stepOutcomes, stepSummaries, stepCaptures)
   },
   artifact_bundle: run.artifact_bundle,
   patch_proposals: run.patch_proposals,
@@ -803,6 +811,7 @@ const buildProgressCallback = ({
   run,
   stepOutcomes,
   stepSummaries,
+  stepCaptures,
   latestOutcome,
   durationMs,
   totalSteps,
@@ -813,6 +822,7 @@ const buildProgressCallback = ({
   run: EngineRunRecord;
   stepOutcomes: EngineStepOutcome[];
   stepSummaries: ApiStepExecutionResult["summary"][];
+  stepCaptures: Record<string, Record<string, string>>;
   latestOutcome: EngineStepOutcome;
   durationMs: number;
   totalSteps: number;
@@ -834,7 +844,7 @@ const buildProgressCallback = ({
     status: stepOutcomes.length === totalSteps && stepOutcomes.every((outcome) => outcome.status === "passed") ? "passed" : "blocked",
     duration_ms: durationMs,
     error: null,
-    logs: buildLogsPayload(stepOutcomes, stepSummaries)
+    logs: buildLogsPayload(stepOutcomes, stepSummaries, stepCaptures)
   },
   artifact_bundle: run.artifact_bundle,
   patch_proposals: run.patch_proposals,
@@ -863,6 +873,7 @@ const executeUnsupportedRun = async ({
     run: next,
     stepOutcomes: [],
     stepSummaries: [],
+    stepCaptures: {},
     status: "failed",
     durationMs: 0,
     errorMessage: reason
@@ -905,6 +916,7 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
   const context = buildInitialContext(envelope);
   const stepOutcomes: EngineStepOutcome[] = [];
   const stepSummaries: ApiStepExecutionResult["summary"][] = [];
+  const stepCaptures: Record<string, Record<string, string>> = {};
   const orderedSteps = envelope.steps.slice().sort((left, right) => left.order - right.order);
   const webRunSession = hasWebSteps ? createWebRunSession(envelope, context.values) : null;
   let healingAttempted = false;
@@ -942,6 +954,12 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
       }
 
       stepOutcomes.push(result.outcome);
+      if (Object.keys(result.captures || {}).length) {
+        stepCaptures[result.outcome.step_id] = {
+          ...(stepCaptures[result.outcome.step_id] || {}),
+          ...result.captures
+        };
+      }
       if (result.summary) {
         stepSummaries.push(result.summary);
       }
@@ -972,6 +990,7 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
                 run: progressRun,
                 stepOutcomes,
                 stepSummaries,
+                stepCaptures,
                 latestOutcome: result.outcome,
                 durationMs: Date.now() - startedAt,
                 totalSteps: orderedSteps.length,
@@ -1014,6 +1033,7 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
             run: failedRun,
             stepOutcomes,
             stepSummaries,
+            stepCaptures,
             status: "failed",
             durationMs: Date.now() - startedAt,
             errorMessage: result.outcome.note || `${envelope.qaira_test_case_title} failed on step ${step.order}.`,
@@ -1050,6 +1070,7 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
         run: completedRun,
         stepOutcomes,
         stepSummaries,
+        stepCaptures,
         status: "passed",
         durationMs: Date.now() - startedAt,
         healingAttempted,
@@ -1086,6 +1107,7 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
           run: failedRun,
           stepOutcomes,
           stepSummaries,
+          stepCaptures,
           status: "failed",
           durationMs: Date.now() - startedAt,
           errorMessage: failedRun.summary,

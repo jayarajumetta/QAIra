@@ -34,6 +34,54 @@ const stringifyValue = (value) => {
   }
 };
 
+const normalizeCaptureRecord = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.entries(value).reduce((accumulator, [key, entry]) => {
+    const normalizedKey = String(key || "").trim().replace(/^@+/, "").toLowerCase();
+
+    if (!normalizedKey) {
+      return accumulator;
+    }
+
+    accumulator[normalizedKey] = entry === undefined || entry === null ? "" : String(entry);
+    return accumulator;
+  }, {});
+};
+
+const normalizeStepCaptures = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.entries(value).reduce((accumulator, [stepId, captures]) => {
+    const normalizedStepId = String(stepId || "").trim();
+
+    if (!normalizedStepId) {
+      return accumulator;
+    }
+
+    const normalizedCaptures = normalizeCaptureRecord(captures);
+
+    if (!Object.keys(normalizedCaptures).length) {
+      return accumulator;
+    }
+
+    accumulator[normalizedStepId] = normalizedCaptures;
+    return accumulator;
+  }, {});
+};
+
+const mergeCaptureValues = (target, captures) => {
+  Object.entries(normalizeCaptureRecord(captures)).forEach(([key, value]) => {
+    target[key] = value;
+  });
+
+  return target;
+};
+
 exports.parseStructuredLogs = (value) => {
   const parsed = normalizeJsonValue(value, {});
 
@@ -42,9 +90,12 @@ exports.parseStructuredLogs = (value) => {
       stepStatuses: {},
       stepNotes: {},
       stepEvidence: {},
-      stepApiDetails: {}
+      stepApiDetails: {},
+      stepCaptures: {}
     };
   }
+
+  const normalizedStepCaptures = normalizeStepCaptures(parsed.stepCaptures);
 
   return {
     stepStatuses: parsed.stepStatuses && typeof parsed.stepStatuses === "object" && !Array.isArray(parsed.stepStatuses)
@@ -58,12 +109,17 @@ exports.parseStructuredLogs = (value) => {
       : {},
     stepApiDetails: parsed.stepApiDetails && typeof parsed.stepApiDetails === "object" && !Array.isArray(parsed.stepApiDetails)
       ? { ...parsed.stepApiDetails }
-      : {}
+      : {},
+    stepCaptures: normalizedStepCaptures
   };
 };
 
 exports.extractCapturedValuesFromLogs = (logs) => {
   const parsed = exports.parseStructuredLogs(logs);
+  const mergedCaptures = Object.values(parsed.stepCaptures || {}).reduce(
+    (accumulator, captures) => mergeCaptureValues(accumulator, captures),
+    {}
+  );
 
   return Object.values(parsed.stepApiDetails || {}).reduce((accumulator, detail) => {
     if (!detail || typeof detail !== "object" || Array.isArray(detail)) {
@@ -76,18 +132,10 @@ exports.extractCapturedValuesFromLogs = (logs) => {
       return accumulator;
     }
 
-    Object.entries(captures).forEach(([key, value]) => {
-      const normalizedKey = String(key || "").trim().replace(/^@+/, "").toLowerCase();
-
-      if (!normalizedKey) {
-        return;
-      }
-
-      accumulator[normalizedKey] = value === undefined || value === null ? "" : String(value);
-    });
+    mergeCaptureValues(accumulator, captures);
 
     return accumulator;
-  }, {});
+  }, mergedCaptures);
 };
 
 exports.deriveCaseStatusFromStepStatuses = (stepIds, stepStatuses = {}) => {
