@@ -851,6 +851,139 @@ async function queueExecutionDispatch({ plan, integration, initiatedBy }) {
   };
 }
 
+async function queueSingleStepDispatch({
+  execution,
+  caseSnapshot,
+  stepSnapshot,
+  integration,
+  initiatedBy,
+  capturedValues = {},
+  existingLogs = null
+} = {}) {
+  if (!execution || !caseSnapshot || !stepSnapshot) {
+    throw new Error("Execution, test case, and step snapshots are required for step handoff");
+  }
+
+  const [project, appType] = await Promise.all([
+    selectProject.get(execution.project_id),
+    execution.app_type_id ? selectAppType.get(execution.app_type_id) : Promise.resolve(null)
+  ]);
+
+  if (!project) {
+    throw new Error("Execution project not found");
+  }
+
+  if (!integration) {
+    throw new Error("Configure an active Test Engine integration for this project before running web automation steps.");
+  }
+
+  const stepType = resolveEngineStepType(stepSnapshot.step_type, appType?.type || null);
+
+  if (stepType !== "web") {
+    throw new Error("Only web execution steps can be handed off to Test Engine from the execution console");
+  }
+
+  const step = {
+    id: stepSnapshot.snapshot_step_id,
+    order: stepSnapshot.step_order,
+    step_type: stepType,
+    action: normalizeText(stepSnapshot.action),
+    expected_result: normalizeText(stepSnapshot.expected_result),
+    automation_code: normalizeRichText(stepSnapshot.automation_code),
+    api_request: null,
+    group_name: normalizeText(stepSnapshot.group_name),
+    group_kind: stepSnapshot.group_kind === "local" || stepSnapshot.group_kind === "reusable"
+      ? stepSnapshot.group_kind
+      : null
+  };
+  const engineRunId = uuid();
+  const envelope = buildEngineEnvelope({
+    engineRunId,
+    execution,
+    project,
+    appType,
+    caseSnapshot,
+    steps: [step],
+    integration
+  });
+  const transaction = await workspaceTransactionService.createTransaction({
+    project_id: execution.project_id,
+    app_type_id: execution.app_type_id || null,
+    category: "automation",
+    action: "testengine_run",
+    status: "queued",
+    title: `Live step handoff for ${caseSnapshot.test_case_title}`,
+    description: `Queued step ${step.order} for Test Engine execution.`,
+    metadata: {
+      source: "qaira.execution-console",
+      single_step: true,
+      engine_run_id: engineRunId,
+      execution_id: execution.id,
+      test_case_id: caseSnapshot.test_case_id,
+      step_id: step.id,
+      engine_host: normalizeEngineHostUrl(integration.base_url),
+      queue_mode: "qaira-pull",
+      active_web_engine: envelope.web_engine?.active || "playwright",
+      live_view_url: normalizeText(integration.config?.live_view_url)
+    },
+    related_kind: "testengine_run",
+    related_id: engineRunId,
+    created_by: initiatedBy || execution.created_by || null,
+    started_at: new Date().toISOString()
+  });
+  const jobId = uuid();
+  const runtimeLogs = parseStructuredLogs(existingLogs);
+  const runtimeCapturedValues = normalizeCapturedValuesRecord(capturedValues);
+  delete runtimeLogs.stepStatuses[step.id];
+
+  await workspaceTransactionService.appendTransactionEvent(transaction.id, {
+    level: "info",
+    phase: "dispatch.step-queued",
+    message: `Queued ${caseSnapshot.test_case_title} step ${step.order} for Test Engine execution.`,
+    details: {
+      execution_id: execution.id,
+      test_case_id: caseSnapshot.test_case_id,
+      step_id: step.id,
+      engine_run_id: engineRunId
+    }
+  });
+
+  await insertJob.run(
+    jobId,
+    engineRunId,
+    integration.id || null,
+    execution.project_id,
+    execution.app_type_id || null,
+    appType?.type || "web",
+    execution.id,
+    caseSnapshot.test_case_id,
+    caseSnapshot.test_case_title,
+    transaction.id,
+    normalizeEngineHostUrl(integration.base_url),
+    envelope,
+    {
+      captured_values: runtimeCapturedValues,
+      logs: runtimeLogs
+    },
+    "queued",
+    0,
+    null,
+    null,
+    null,
+    null,
+    null,
+    initiatedBy || execution.created_by || null
+  );
+
+  return {
+    job_id: jobId,
+    engine_run_id: engineRunId,
+    transaction_id: transaction.id,
+    active_web_engine: envelope.web_engine?.active || "playwright",
+    live_view_url: normalizeText(integration.config?.live_view_url)
+  };
+}
+
 async function getQueuedJob(id) {
   const job = hydrateJob(await selectJob.get(id));
 
@@ -1452,4 +1585,5 @@ exports.failQueuedJob = async ({ job_id, message } = {}) => {
 exports.getQueuedJob = getQueuedJob;
 exports.planExecutionDispatch = planExecutionDispatch;
 exports.queueExecutionDispatch = queueExecutionDispatch;
+exports.queueSingleStepDispatch = queueSingleStepDispatch;
 exports.settleExecutionIfComplete = settleExecutionIfComplete;

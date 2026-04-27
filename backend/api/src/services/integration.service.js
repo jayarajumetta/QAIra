@@ -66,6 +66,16 @@ const TESTENGINE_CONNECTION_TIMEOUT_MS = Math.max(
   1500,
   normalizeInteger(process.env.TESTENGINE_CONNECTION_TIMEOUT_MS) || 5000
 );
+const MASKED_SECRET_VALUE = "********";
+
+const isMaskedSecretValue = (value) => {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const normalized = value.trim();
+  return normalized === MASKED_SECRET_VALUE || /^\*{6,}$/.test(normalized) || /^[•●]{6,}$/.test(normalized);
+};
 
 const ensureAbsoluteHttpUrl = (value, label) => {
   const normalized = normalizeText(value);
@@ -432,7 +442,8 @@ const normalizeConfig = (type, input, username) => {
       capture_network: raw.capture_network !== false,
       artifact_retention_days: normalizeInteger(raw.artifact_retention_days) ?? Number(integrationTypeConfig.artifact_retention_days ?? 7),
       run_timeout_seconds: normalizeInteger(raw.run_timeout_seconds) ?? Number(integrationTypeConfig.run_timeout_seconds ?? 1800),
-      promote_healed_patches: normalizeText(raw.promote_healed_patches) || String(integrationTypeConfig.promote_healed_patches || "review")
+      promote_healed_patches: normalizeText(raw.promote_healed_patches) || String(integrationTypeConfig.promote_healed_patches || "review"),
+      live_view_url: normalizeText(raw.live_view_url)
     };
   }
 
@@ -655,15 +666,32 @@ exports.getActiveIntegrationByTypeForProject = async (type, projectId) => {
 
 exports.updateIntegration = async (id, input) => {
   const existing = await exports.getIntegration(id);
+  const nextType = input.type ?? existing.type;
+  const nextConfig =
+    input.config === undefined
+      ? existing.config
+      : nextType === existing.type
+        ? {
+            ...(existing.config || {}),
+            ...normalizeObject(input.config),
+            ...(isMaskedSecretValue(input.config?.password) ? { password: existing.config?.password || null } : {}),
+            ...(isMaskedSecretValue(input.config?.callback_secret) ? { callback_secret: existing.config?.callback_secret || null } : {})
+          }
+        : normalizeObject(input.config);
+  const nextApiKey = Object.prototype.hasOwnProperty.call(input, "api_key")
+    ? isMaskedSecretValue(input.api_key)
+      ? existing.api_key
+      : input.api_key
+    : existing.api_key;
   const payload = validatePayload({
-    type: input.type ?? existing.type,
+    type: nextType,
     name: input.name ?? existing.name,
     base_url: input.base_url ?? existing.base_url,
-    api_key: input.api_key ?? existing.api_key,
+    api_key: nextApiKey,
     model: input.model ?? existing.model,
     project_key: input.project_key ?? existing.project_key,
     username: input.username ?? existing.username,
-    config: input.config ?? existing.config,
+    config: nextConfig,
     is_active: input.is_active ?? existing.is_active
   });
 

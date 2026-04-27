@@ -35,6 +35,64 @@ type StepAutomationParameterScopeState = {
   hint?: string;
 };
 
+type WebKeywordOption = {
+  id: string;
+  label: string;
+  locatorLabel: string;
+  dataLabel: string;
+  locatorRequired?: boolean;
+  dataRequired?: boolean;
+};
+
+const WEB_KEYWORD_OPTIONS: WebKeywordOption[] = [
+  { id: "goto", label: "Open URL", locatorLabel: "URL or path", dataLabel: "Optional note", locatorRequired: true },
+  { id: "click", label: "Click", locatorLabel: "Locator", dataLabel: "Optional note", locatorRequired: true },
+  { id: "fill", label: "Fill", locatorLabel: "Locator", dataLabel: "Text or token", locatorRequired: true, dataRequired: true },
+  { id: "press", label: "Press Key", locatorLabel: "Locator optional", dataLabel: "Key", dataRequired: true },
+  { id: "wait", label: "Wait", locatorLabel: "Optional note", dataLabel: "Milliseconds", dataRequired: true },
+  { id: "expectVisible", label: "Assert Visible", locatorLabel: "Locator", dataLabel: "Optional note", locatorRequired: true },
+  { id: "expectText", label: "Assert Text", locatorLabel: "Locator optional", dataLabel: "Expected text", dataRequired: true },
+  { id: "expectUrl", label: "Assert URL", locatorLabel: "Optional note", dataLabel: "URL fragment", dataRequired: true },
+  { id: "captureText", label: "Capture Text", locatorLabel: "Locator", dataLabel: "Param token", locatorRequired: true, dataRequired: true },
+  { id: "captureValue", label: "Capture Value", locatorLabel: "Locator", dataLabel: "Param token", locatorRequired: true, dataRequired: true }
+];
+
+const quoteCodeString = (value: string) => JSON.stringify(value);
+
+function buildWebKeywordSnippet(option: WebKeywordOption, locator: string, data: string) {
+  const target = locator.trim();
+  const value = data.trim();
+
+  switch (option.id) {
+    case "goto":
+      return `await web.goto(${quoteCodeString(target)});`;
+    case "click":
+      return `await web.click(${quoteCodeString(target)});`;
+    case "fill":
+      return `await web.fill(${quoteCodeString(target)}, ${quoteCodeString(value)});`;
+    case "press":
+      return target
+        ? `await web.press(${quoteCodeString(target)}, ${quoteCodeString(value)});`
+        : `await page.press("body", ${quoteCodeString(value)});`;
+    case "wait":
+      return `await web.wait(${Math.max(0, Number.parseInt(value, 10) || 1000)});`;
+    case "expectVisible":
+      return `await web.expectVisible(${quoteCodeString(target)});`;
+    case "expectText":
+      return target
+        ? `await web.expectText(${quoteCodeString(target)}, ${quoteCodeString(value)});`
+        : `await web.expectText(${quoteCodeString(value)});`;
+    case "expectUrl":
+      return `await web.expectUrl(${quoteCodeString(value)});`;
+    case "captureText":
+      return `capture(${quoteCodeString(value || "@t.capturedText")}, await web.text(${quoteCodeString(target)}));`;
+    case "captureValue":
+      return `capture(${quoteCodeString(value || "@t.capturedValue")}, await web.value(${quoteCodeString(target)}));`;
+    default:
+      return "";
+  }
+}
+
 function IconFrame({
   children,
   size = 16,
@@ -1002,6 +1060,10 @@ export function StepAutomationDialog({
   const [isRunningApiRequest, setIsRunningApiRequest] = useState(false);
   const [selectedJsonPath, setSelectedJsonPath] = useState<JsonPathSelection | null>(null);
   const [responseParameterDraft, setResponseParameterDraft] = useState("");
+  const [webKeywordId, setWebKeywordId] = useState(WEB_KEYWORD_OPTIONS[0].id);
+  const [webKeywordLocator, setWebKeywordLocator] = useState("");
+  const [webKeywordData, setWebKeywordData] = useState("");
+  const [webKeywordMessage, setWebKeywordMessage] = useState("");
 
   useEffect(() => {
     setStepType(normalizeStepType(step.step_type));
@@ -1012,6 +1074,10 @@ export function StepAutomationDialog({
     setApiPreviewMessage("");
     setSelectedJsonPath(null);
     setResponseParameterDraft("");
+    setWebKeywordId(WEB_KEYWORD_OPTIONS[0].id);
+    setWebKeywordLocator("");
+    setWebKeywordData("");
+    setWebKeywordMessage("");
   }, [step]);
 
   useEffect(() => {
@@ -1054,6 +1120,7 @@ export function StepAutomationDialog({
     [apiPreview, apiRequest.validations, parameterValues]
   );
   const selectedJsonValue = selectedJsonPath ? formatJsonSelectionValue(selectedJsonPath.value) : "";
+  const selectedWebKeyword = WEB_KEYWORD_OPTIONS.find((option) => option.id === webKeywordId) || WEB_KEYWORD_OPTIONS[0];
   const groupedAvailableParameters = useMemo(
     () => [
       {
@@ -1118,6 +1185,24 @@ export function StepAutomationDialog({
     } finally {
       setIsRunningApiRequest(false);
     }
+  };
+
+  const handleAddWebKeyword = () => {
+    if (selectedWebKeyword.locatorRequired && !webKeywordLocator.trim()) {
+      setWebKeywordMessage(`${selectedWebKeyword.locatorLabel} is required for ${selectedWebKeyword.label}.`);
+      return;
+    }
+
+    if (selectedWebKeyword.dataRequired && !webKeywordData.trim()) {
+      setWebKeywordMessage(`${selectedWebKeyword.dataLabel} is required for ${selectedWebKeyword.label}.`);
+      return;
+    }
+
+    const snippet = buildWebKeywordSnippet(selectedWebKeyword, webKeywordLocator, webKeywordData);
+    setAutomationCode((current) => [normalizeAutomationCode(current), snippet].filter(Boolean).join("\n"));
+    setWebKeywordLocator("");
+    setWebKeywordData("");
+    setWebKeywordMessage(`${selectedWebKeyword.label} keyword added to the automation override.`);
   };
 
   const handleInsertJsonPathAssertion = () => {
@@ -1533,12 +1618,52 @@ export function StepAutomationDialog({
                 </FormField>
               </div>
             ) : (
-              <FormField
-                label="Step automation code"
-                hint="Use the same scoped tokens from the manual step text whenever automation needs case, suite, or run data."
-              >
-                <textarea rows={14} value={automationCode} onChange={(event) => setAutomationCode(event.target.value)} />
-              </FormField>
+              <>
+                {stepType === "web" ? (
+                  <div className="automation-response-shell">
+                    <div className="automation-response-header">
+                      <div>
+                        <strong>Web keyword builder</strong>
+                        <span>Select a reusable browser action, provide the locator and data it needs, then add it to the step automation.</span>
+                      </div>
+                      <button className="ghost-button inline-button" onClick={handleAddWebKeyword} type="button">
+                        Add
+                      </button>
+                    </div>
+                    <div className="automation-inline-grid">
+                      <FormField label="Keyword">
+                        <select value={webKeywordId} onChange={(event) => setWebKeywordId(event.target.value)}>
+                          {WEB_KEYWORD_OPTIONS.map((option) => (
+                            <option key={option.id} value={option.id}>{option.label}</option>
+                          ))}
+                        </select>
+                      </FormField>
+                      <FormField label={selectedWebKeyword.locatorLabel}>
+                        <input
+                          placeholder="css=[data-testid='submit']"
+                          value={webKeywordLocator}
+                          onChange={(event) => setWebKeywordLocator(event.target.value)}
+                        />
+                      </FormField>
+                      <FormField label={selectedWebKeyword.dataLabel}>
+                        <input
+                          list={groupedAvailableParameters.length ? responseParameterOptionListId : undefined}
+                          placeholder={selectedWebKeyword.id.startsWith("capture") ? "@t.value" : "@t.username"}
+                          value={webKeywordData}
+                          onChange={(event) => setWebKeywordData(event.target.value)}
+                        />
+                      </FormField>
+                    </div>
+                    {webKeywordMessage ? <div className="inline-message success-message">{webKeywordMessage}</div> : null}
+                  </div>
+                ) : null}
+                <FormField
+                  label="Step automation code"
+                  hint="Use the same scoped tokens from the manual step text whenever automation needs case, suite, or run data."
+                >
+                  <textarea rows={14} value={automationCode} onChange={(event) => setAutomationCode(event.target.value)} />
+                </FormField>
+              </>
             )}
 
             <div className="detail-summary automation-preview-shell">

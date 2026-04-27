@@ -12,6 +12,8 @@ services:
       QAIRA_TESTENGINE_SECRET: ${QAIRA_TESTENGINE_SECRET:-qaira-testengine-dev-secret}
       ENGINE_PUBLIC_URL: ${ENGINE_PUBLIC_URL:-http://localhost:4301}
       SELENIUM_GRID_URL: ${SELENIUM_GRID_URL:-http://selenium-hub:4444/wd/hub}
+      SELENIUM_VNC_PORT: ${SELENIUM_VNC_PORT:-7900}
+      SELENIUM_LIVE_VIEW_URL: ${SELENIUM_LIVE_VIEW_URL:-http://localhost:7900/?autoconnect=1&resize=scale}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-qaira-testengine}
@@ -56,6 +58,9 @@ services:
       SE_EVENT_BUS_PUBLISH_PORT: 4442
       SE_EVENT_BUS_SUBSCRIBE_PORT: 4443
       SE_NODE_MAX_SESSIONS: 1
+      SE_VNC_NO_PASSWORD: ${SE_VNC_NO_PASSWORD:-1}
+    ports:
+      - "${SELENIUM_VNC_PORT:-7900}:7900"
     depends_on:
       - selenium-hub
     restart: always

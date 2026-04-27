@@ -60,6 +60,7 @@ type IntegrationDraft = {
   engine_capture_network: boolean;
   engine_artifact_retention_days: string;
   engine_run_timeout_seconds: string;
+  engine_live_view_url: string;
   ops_project_id: string;
   ops_events_path: string;
   ops_health_path: string;
@@ -82,6 +83,8 @@ type IntegrationTypeDefinition = {
 };
 
 const DEFAULT_INTEGRATION_TYPE: Integration["type"] = "llm";
+const MASKED_SECRET_VALUE = "********";
+const isMaskedSecretValue = (value: string) => value.trim() === MASKED_SECRET_VALUE || /^[*•●]{6,}$/.test(value.trim());
 
 const getIntegrationTypeDefinition = (type: Integration["type"], definitions: IntegrationTypeDefinition[]) =>
   definitions.find((definition) => definition.value === type);
@@ -143,6 +146,7 @@ const buildEmptyDraft = (
     engine_capture_network: testEngineDefaults.capture_network !== false,
     engine_artifact_retention_days: String(testEngineDefaults.artifact_retention_days ?? "14"),
     engine_run_timeout_seconds: String(testEngineDefaults.run_timeout_seconds ?? "1800"),
+    engine_live_view_url: "",
     ops_project_id: "",
     ops_events_path: typeof opsDefaults.events_path === "string" ? opsDefaults.events_path : "/api/v1/events",
     ops_health_path: typeof opsDefaults.health_path === "string" ? opsDefaults.health_path : "/health",
@@ -418,6 +422,7 @@ function getDraftFromIntegration(
         : typeof config.run_timeout_seconds === "string"
           ? config.run_timeout_seconds
           : emptyDraft.engine_run_timeout_seconds,
+    engine_live_view_url: typeof config.live_view_url === "string" ? config.live_view_url : "",
     ops_project_id: typeof config.project_id === "string" ? config.project_id : "",
     ops_events_path: typeof config.events_path === "string" ? config.events_path : emptyDraft.ops_events_path,
     ops_health_path: typeof config.health_path === "string" ? config.health_path : emptyDraft.ops_health_path,
@@ -449,7 +454,7 @@ function buildIntegrationConfig(draft: IntegrationDraft, definitions: Integratio
       host: draft.smtp_host.trim(),
       port: Number.parseInt(draft.smtp_port, 10),
       secure: draft.smtp_secure,
-      password: draft.smtp_password,
+      ...(draft.smtp_password.trim() && !isMaskedSecretValue(draft.smtp_password) ? { password: draft.smtp_password } : {}),
       sender_email: draft.sender_email.trim() || String(emailDefaults.sender_email || ""),
       sender_name: draft.sender_name.trim() || String(emailDefaults.sender_name || "")
     };
@@ -500,6 +505,7 @@ function buildIntegrationConfig(draft: IntegrationDraft, definitions: Integratio
       capture_network: draft.engine_capture_network,
       artifact_retention_days: Number.parseInt(draft.engine_artifact_retention_days, 10) || 7,
       run_timeout_seconds: Number.parseInt(draft.engine_run_timeout_seconds, 10) || 1800,
+      live_view_url: draft.engine_live_view_url.trim() || null,
       promote_healed_patches: "review"
     };
   }
@@ -593,6 +599,53 @@ function getIntegrationSummary(integration: Integration, definitions: Integratio
   };
 }
 
+function IntegrationReadOnlyDetails({
+  integration,
+  definitions
+}: {
+  integration: Integration;
+  definitions: IntegrationTypeDefinition[];
+}) {
+  const summary = getIntegrationSummary(integration, definitions);
+  const configEntries = Object.entries(integration.config || {}).filter(([, value]) => value !== null && value !== undefined && value !== "");
+
+  return (
+    <div className="detail-stack">
+      <div className="empty-state compact integration-helper">
+        Members can use this active integration from QAira workflows. Secrets are masked and connection changes stay with admins.
+      </div>
+      <div className="integration-readable-grid">
+        <article className="integration-readable-card">
+          <span className="integration-readable-label">Name</span>
+          <strong className="integration-readable-value">{integration.name}</strong>
+        </article>
+        <article className="integration-readable-card">
+          <span className="integration-readable-label">Type</span>
+          <strong className="integration-readable-value">{getIntegrationTypeLabel(integration.type, definitions)}</strong>
+        </article>
+        <article className="integration-readable-card">
+          <span className="integration-readable-label">Status</span>
+          <strong className="integration-readable-value">{integration.is_active ? "Active" : "Inactive"}</strong>
+        </article>
+        <article className="integration-readable-card">
+          <span className="integration-readable-label">Summary</span>
+          <strong className="integration-readable-value">{summary.primary}</strong>
+        </article>
+      </div>
+      {configEntries.length ? (
+        <div className="integration-readable-grid">
+          {configEntries.map(([key, value]) => (
+            <article className="integration-readable-card" key={key}>
+              <span className="integration-readable-label">{key.replace(/_/g, " ")}</span>
+              <strong className="integration-readable-value">{String(value)}</strong>
+            </article>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function IntegrationsPage() {
   const queryClient = useQueryClient();
   const { session } = useAuth();
@@ -616,7 +669,7 @@ export function IntegrationsPage() {
   const integrationsQuery = useQuery({
     queryKey: ["integrations"],
     queryFn: () => api.integrations.list(),
-    enabled: session?.user.role === "admin"
+    enabled: Boolean(session)
   });
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -775,7 +828,7 @@ export function IntegrationsPage() {
         type: draft.type,
         name: draft.name.trim(),
         base_url: draft.base_url.trim() || undefined,
-        api_key: draft.api_key.trim() || undefined,
+        api_key: draft.api_key.trim() && !isMaskedSecretValue(draft.api_key) ? draft.api_key.trim() : undefined,
         model: draft.model.trim() || undefined,
         project_key: draft.project_key.trim() || undefined,
         username: draft.username.trim() || undefined,
@@ -836,7 +889,7 @@ export function IntegrationsPage() {
       const result = await testIntegrationConnection.mutateAsync({
         type: draft.type,
         base_url: draft.base_url.trim() || undefined,
-        api_key: draft.api_key.trim() || undefined,
+        api_key: draft.api_key.trim() && !isMaskedSecretValue(draft.api_key) ? draft.api_key.trim() : undefined,
         config: buildIntegrationConfig(draft, integrationTypeDefinitions)
       });
       if (result.type === "ops") {
@@ -891,12 +944,7 @@ export function IntegrationsPage() {
         }
       />
 
-      {!isAdmin ? (
-        <Panel title="Access required" subtitle="Only admins can manage integrations.">
-          <div className="empty-state compact">Ask an admin to manage LLM, Jira, Test Engine, OPS telemetry, Google Drive, GitHub, Email Sender, and Google Sign-In integrations.</div>
-        </Panel>
-      ) : (
-        <WorkspaceMasterDetail
+      <WorkspaceMasterDetail
           browseView={(
             <Panel title="Integration tiles" subtitle="Review configured connections as tiles first, then open one profile into a focused editor.">
               {isIntegrationCatalogLoading ? <TileCardSkeletonGrid /> : null}
@@ -944,7 +992,9 @@ export function IntegrationsPage() {
               title={isCreating ? "New integration" : selectedIntegration ? "Integration details" : "Integration editor"}
               subtitle="Store the credentials and provider settings QAira needs to call external systems and power secure authentication flows."
             >
-              {isCreating || selectedIntegration ? (
+              {!isAdmin && selectedIntegration ? (
+                <IntegrationReadOnlyDetails definitions={integrationTypeDefinitions} integration={selectedIntegration} />
+              ) : isCreating || selectedIntegration ? (
                 <form className="form-grid" onSubmit={(event) => void handleSave(event)}>
                 <div className="record-grid">
                   <FormField label="Type">
@@ -1271,6 +1321,20 @@ export function IntegrationsPage() {
                     </div>
 
                     <div className="record-grid">
+                      <FormField label="Live Viewer URL">
+                        <input
+                          placeholder="http://localhost:7900/?autoconnect=1&resize=scale"
+                          value={draft.engine_live_view_url}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_live_view_url: event.target.value }))}
+                        />
+                      </FormField>
+
+                      <div className="empty-state compact integration-helper">
+                        Selenium runs expose noVNC on port 7900 by default. Leave this blank when the engine can derive it from its public host, or set the hosted viewer URL here for remote stacks.
+                      </div>
+                    </div>
+
+                    <div className="record-grid">
                       <div className="empty-state compact integration-helper">
                         Derived automatically after save:
                         <strong> queue pull mode</strong>, <strong>API + web execution scope</strong>, deterministic engine defaults, and QAira-managed queued, running, step, case, suite, and run updates.
@@ -1489,7 +1553,6 @@ export function IntegrationsPage() {
           )}
           isDetailOpen={isCreating || Boolean(selectedIntegration)}
         />
-      )}
     </div>
   );
 }

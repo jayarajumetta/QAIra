@@ -5,6 +5,31 @@ import { createOpsTelemetry } from "./lib/opsTelemetry.js";
 import { startQueueWorker } from "./lib/queueWorker.js";
 import { getRun, getRunEnvelope, listRuns, saveRun } from "./lib/runStore.js";
 const port = Number.parseInt(process.env.PORT || "4301", 10);
+const normalizeText = (value) => {
+    const normalized = String(value || "").trim();
+    return normalized || "";
+};
+const buildSeleniumLiveViewUrl = () => {
+    const configured = normalizeText(process.env.SELENIUM_LIVE_VIEW_URL || process.env.SELENIUM_VNC_URL);
+    if (configured) {
+        return configured;
+    }
+    const publicBase = normalizeText(process.env.ENGINE_PUBLIC_URL);
+    if (!publicBase) {
+        return null;
+    }
+    try {
+        const parsed = new URL(publicBase);
+        parsed.port = normalizeText(process.env.SELENIUM_VNC_PORT) || "7900";
+        parsed.pathname = "/";
+        parsed.search = "?autoconnect=1&resize=scale";
+        parsed.hash = "";
+        return parsed.toString();
+    }
+    catch {
+        return null;
+    }
+};
 const app = Fastify({
     logger: {
         level: process.env.LOG_LEVEL || "info"
@@ -22,6 +47,14 @@ app.get("/health", async () => ({
     ops_telemetry: opsTelemetry.getHealthSnapshot()
 }));
 app.get("/api/v1/capabilities", async () => buildCapabilities());
+app.get("/api/v1/live-session", async () => ({
+    ok: true,
+    provider: "selenium",
+    available: Boolean(buildSeleniumLiveViewUrl()),
+    live_view_url: buildSeleniumLiveViewUrl(),
+    selenium_grid_url: process.env.SELENIUM_GRID_URL || "http://selenium-hub:4444/wd/hub",
+    note: "Use the live_view_url while a Selenium web run is active."
+}));
 app.get("/api/v1/runs", async () => ({
     items: listRuns()
 }));

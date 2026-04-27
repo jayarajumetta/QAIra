@@ -2,7 +2,7 @@ import { FormEvent, Fragment, useDeferredValue, useEffect, useMemo, useRef, useS
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { ActivityIcon, ArchiveIcon, CalendarIcon, GithubIcon, GoogleDriveIcon, ImportIcon, OpenIcon, PlayIcon, SparkIcon, TrashIcon, UsersIcon } from "../components/AppIcons";
+import { ActivityIcon, ArchiveIcon, CalendarIcon, ExportIcon, GithubIcon, GoogleDriveIcon, ImportIcon, MailIcon, OpenIcon, PlayIcon, SparkIcon, TrashIcon, UsersIcon } from "../components/AppIcons";
 import { AppTypeDropdown } from "../components/AppTypeDropdown";
 import { CatalogActionMenu } from "../components/CatalogActionMenu";
 import { CatalogViewToggle } from "../components/CatalogViewToggle";
@@ -943,6 +943,33 @@ function mergeExecutionStepCaptures(
   return merged;
 }
 
+function deriveSeleniumLiveViewUrl(integration?: Integration | null) {
+  if (!integration) {
+    return "";
+  }
+
+  const configured = String(integration.config?.live_view_url || integration.config?.vnc_url || "").trim();
+
+  if (configured) {
+    return configured;
+  }
+
+  if (!integration.base_url) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(integration.base_url);
+    parsed.port = "7900";
+    parsed.pathname = "/";
+    parsed.search = "?autoconnect=1&resize=scale";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
 function isBatchProcessTransaction(transaction: WorkspaceTransaction) {
   return BATCH_PROCESS_CATEGORIES.has(transaction.category)
     || transaction.action === "testengine_run"
@@ -1011,6 +1038,8 @@ export function ExecutionsPage() {
   const [executionEvidencePreview, setExecutionEvidencePreview] = useState<ExecutionEvidencePreviewState | null>(null);
   const [executionApiDetailState, setExecutionApiDetailState] = useState<ExecutionApiDetailState | null>(null);
   const [isExecutionContextModalOpen, setIsExecutionContextModalOpen] = useState(false);
+  const [isReportEmailModalOpen, setIsReportEmailModalOpen] = useState(false);
+  const [reportEmailDraft, setReportEmailDraft] = useState("");
   const [codePreviewState, setCodePreviewState] = useState<{ title: string; subtitle: string; code: string } | null>(null);
   const [executionAssignmentDraft, setExecutionAssignmentDraft] = useState("");
   const [caseAssignmentDraft, setCaseAssignmentDraft] = useState("");
@@ -1106,6 +1135,11 @@ export function ExecutionsPage() {
     queryFn: () => api.integrations.list({ type: "llm", is_active: true }),
     enabled: Boolean(session)
   });
+  const testEngineIntegrationsQuery = useQuery({
+    queryKey: ["integrations", "testengine"],
+    queryFn: () => api.integrations.list({ type: "testengine", is_active: true }),
+    enabled: Boolean(session)
+  });
   const workspaceTransactionsQuery = useQuery({
     queryKey: ["workspace-transactions", projectId, appTypeId],
     queryFn: () => api.workspaceTransactions.list({
@@ -1157,6 +1191,13 @@ export function ExecutionsPage() {
     mutationFn: ({ executionId, testCaseId, stepId }: { executionId: string; testCaseId: string; stepId: string }) =>
       api.executions.runApiStep(executionId, testCaseId, stepId)
   });
+  const downloadExecutionReport = useMutation({
+    mutationFn: (executionId: string) => api.executions.downloadReportPdf(executionId)
+  });
+  const shareExecutionReport = useMutation({
+    mutationFn: ({ executionId, recipients }: { executionId: string; recipients: string[] }) =>
+      api.executions.shareReport(executionId, { recipients })
+  });
   const createResult = useMutation({ mutationFn: api.executionResults.create });
   const updateResult = useMutation({
     mutationFn: ({ id, input }: { id: string; input: Partial<{ status: ExecutionResult["status"]; duration_ms: number; error: string; logs: string }> }) =>
@@ -1196,6 +1237,7 @@ export function ExecutionsPage() {
   const executionResults = executionResultsQuery.data || [];
   const allExecutionResults = allExecutionResultsQuery.data || [];
   const integrations = integrationsQuery.data || [];
+  const testEngineIntegrations = testEngineIntegrationsQuery.data || [];
   const selectedProject = projects.find((project) => project.id === projectId) || null;
   const selectedAppType = appTypes.find((appType) => appType.id === appTypeId) || null;
   const assigneeOptions = useMemo<ExecutionAssigneeOption[]>(
@@ -1643,6 +1685,21 @@ export function ExecutionsPage() {
   const selectedExecutionSuiteIds = selectedExecution?.suite_ids || [];
   const selectedExecutionSuites = selectedExecution?.suite_snapshots || [];
   const currentExecutionStatus = normalizeExecutionStatus(selectedExecution?.status);
+  const selectedTestEngineIntegration = useMemo(() => {
+    if (!selectedExecution) {
+      return null;
+    }
+
+    const projectScoped = testEngineIntegrations.find(
+      (integration) => String(integration.config?.project_id || "").trim() === selectedExecution.project_id
+    );
+
+    return projectScoped || testEngineIntegrations.find((integration) => !String(integration.config?.project_id || "").trim()) || null;
+  }, [selectedExecution, testEngineIntegrations]);
+  const seleniumLiveViewUrl =
+    selectedTestEngineIntegration?.config?.active_web_engine === "selenium"
+      ? deriveSeleniumLiveViewUrl(selectedTestEngineIntegration)
+      : "";
   const isExecutionScopeReadOnly = isExecutionRunsView(testRunsView) && Boolean(selectedExecution);
   const isExecutionStarted = currentExecutionStatus === "running";
   const isExecutionLocked =
@@ -2287,6 +2344,61 @@ export function ExecutionsPage() {
     }
   };
 
+  const handleDownloadExecutionReport = async () => {
+    if (!selectedExecution) {
+      return;
+    }
+
+    try {
+      const blob = await downloadExecutionReport.mutateAsync(selectedExecution.id);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${(selectedExecution.name || selectedExecution.id || "qaira-run-report").replace(/[^A-Za-z0-9._-]+/g, "-")}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      showSuccess("Run report PDF exported.");
+    } catch (error) {
+      showError(error, "Unable to export run report");
+    }
+  };
+
+  const handleOpenReportEmailModal = () => {
+    setReportEmailDraft(session?.user.email || "");
+    setIsReportEmailModalOpen(true);
+  };
+
+  const handleShareExecutionReport = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!selectedExecution) {
+      return;
+    }
+
+    const recipients = reportEmailDraft
+      .split(/[,\n;]/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    if (!recipients.length) {
+      showError(null, "Enter at least one report recipient.");
+      return;
+    }
+
+    try {
+      const response = await shareExecutionReport.mutateAsync({
+        executionId: selectedExecution.id,
+        recipients
+      });
+      setIsReportEmailModalOpen(false);
+      showSuccess(`Run report emailed to ${response.recipients} recipient${response.recipients === 1 ? "" : "s"}.`);
+    } catch (error) {
+      showError(error, "Unable to email run report");
+    }
+  };
+
   const handleRerunExecution = async (failedOnly: boolean) => {
     if (!selectedExecution) {
       return;
@@ -2587,16 +2699,22 @@ export function ExecutionsPage() {
       });
 
       await refreshExecutionScope(selectedExecution.id);
-      setExecutionApiDetailState({
-        step,
-        detail: response.detail,
-        captures: response.detail?.captures || {},
-        note: response.note,
-        status: response.step_status
-      });
-      showSuccess(`Step ${step.step_order} ${response.step_status}.`);
+      if (step.step_type === "api" || response.detail) {
+        setExecutionApiDetailState({
+          step,
+          detail: response.detail,
+          captures: response.detail?.captures || response.captures || {},
+          note: response.note,
+          status: response.step_status || "queued"
+        });
+      }
+      showSuccess(
+        response.queued_for_engine
+          ? `Step ${step.step_order} queued for Test Engine.`
+          : `Step ${step.step_order} ${response.step_status}.`
+      );
     } catch (error) {
-      showError(error, "Unable to run API step");
+      showError(error, "Unable to run step");
     } finally {
       setRunningExecutionApiStepId((current) => (current === step.id ? "" : current));
     }
@@ -4185,10 +4303,11 @@ export function ExecutionsPage() {
                                             parameterValues={executionStepParameterValues}
                                             onFail={() => void handleRecordStep(step.id, "failed")}
                                             onDeleteEvidence={() => void handleDeleteStepEvidence(step)}
-                                            onInspectApi={() => openExecutionApiDetail(step)}
-                                            onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
-                                            onPass={() => void handleRecordStep(step.id, "passed")}
-                                            onPreviewCode={() => openExecutionStepAutomationPreview(step)}
+  onInspectApi={() => openExecutionApiDetail(step)}
+  onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
+  onPass={() => void handleRecordStep(step.id, "passed")}
+  onPreviewCode={() => openExecutionStepAutomationPreview(step)}
+  onRunStep={() => void handleRunExecutionApiStep(step)}
                                             onToggle={() =>
                                               setExpandedExecutionStepIds((current) =>
                                                 current.includes(step.id)
@@ -4232,10 +4351,11 @@ export function ExecutionsPage() {
                                   parameterValues={executionStepParameterValues}
                                   onFail={() => void handleRecordStep(step.id, "failed")}
                                   onDeleteEvidence={() => void handleDeleteStepEvidence(step)}
-                                  onInspectApi={() => openExecutionApiDetail(step)}
-                                  onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
-                                  onPass={() => void handleRecordStep(step.id, "passed")}
-                                  onPreviewCode={() => openExecutionStepAutomationPreview(step)}
+  onInspectApi={() => openExecutionApiDetail(step)}
+  onNoteBlur={(value) => void handleSaveStepNote(step.id, value)}
+  onPass={() => void handleRecordStep(step.id, "passed")}
+  onPreviewCode={() => openExecutionStepAutomationPreview(step)}
+  onRunStep={() => void handleRunExecutionApiStep(step)}
                                   onToggle={() =>
                                     setExpandedExecutionStepIds((current) =>
                                       current.includes(step.id)
@@ -4475,6 +4595,35 @@ export function ExecutionsPage() {
                           <ExecutionStartIcon />
                           <span>{startExecution.isPending ? "Starting…" : "Start run"}</span>
                         </button>
+                        <button
+                          className="ghost-button"
+                          disabled={!selectedExecution || downloadExecutionReport.isPending}
+                          onClick={() => void handleDownloadExecutionReport()}
+                          type="button"
+                        >
+                          <ExportIcon />
+                          <span>{downloadExecutionReport.isPending ? "Exporting…" : "PDF report"}</span>
+                        </button>
+                        <button
+                          className="ghost-button"
+                          disabled={!selectedExecution || shareExecutionReport.isPending}
+                          onClick={handleOpenReportEmailModal}
+                          type="button"
+                        >
+                          <MailIcon />
+                          <span>Email report</span>
+                        </button>
+                        <a
+                          aria-disabled={!seleniumLiveViewUrl || currentExecutionStatus !== "running"}
+                          className={!seleniumLiveViewUrl || currentExecutionStatus !== "running" ? "ghost-button is-disabled" : "ghost-button"}
+                          href={seleniumLiveViewUrl || undefined}
+                          rel="noreferrer"
+                          target="_blank"
+                          title={seleniumLiveViewUrl ? "View live Selenium browser session" : "Configure a Test Engine live viewer URL to open the browser session"}
+                        >
+                          <LiveRunIcon />
+                          <span>View live run</span>
+                        </a>
                         <button
                           className="ghost-button warning"
                           disabled={currentExecutionStatus !== "running" || completeExecution.isPending || startExecution.isPending}
@@ -4738,6 +4887,17 @@ export function ExecutionsPage() {
         <ExecutionContextSnapshotModal execution={selectedExecution} onClose={() => setIsExecutionContextModalOpen(false)} />
       ) : null}
 
+      {selectedExecution && isReportEmailModalOpen ? (
+        <ReportEmailModal
+          isSubmitting={shareExecutionReport.isPending}
+          onClose={() => setIsReportEmailModalOpen(false)}
+          onRecipientsChange={setReportEmailDraft}
+          onSubmit={(event) => void handleShareExecutionReport(event)}
+          recipients={reportEmailDraft}
+          runName={selectedExecution.name || "Selected run"}
+        />
+      ) : null}
+
       {isCreateExecutionModalOpen ? (
         <ExecutionCreateModal
           appTypeId={appTypeId}
@@ -4911,6 +5071,68 @@ function ExecutionAccordionSection({
       </button>
       {isExpanded ? <div className="execution-accordion-body">{children}</div> : null}
     </section>
+  );
+}
+
+function ReportEmailModal({
+  runName,
+  recipients,
+  isSubmitting,
+  onRecipientsChange,
+  onClose,
+  onSubmit
+}: {
+  runName: string;
+  recipients: string;
+  isSubmitting: boolean;
+  onRecipientsChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div className="modal-backdrop" onClick={() => !isSubmitting && onClose()} role="presentation">
+      <form
+        aria-label="Email run report"
+        aria-modal="true"
+        className="modal-card resource-modal-card"
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={onSubmit}
+        role="dialog"
+      >
+        <div className="resource-modal-header">
+          <div className="resource-modal-title">
+            <p className="eyebrow">Run Report</p>
+            <h3>Email report</h3>
+            <p>{runName}</p>
+          </div>
+          <button className="ghost-button" disabled={isSubmitting} onClick={onClose} type="button">
+            Close
+          </button>
+        </div>
+        <div className="resource-form">
+          <div className="resource-form-body">
+            <FormField label="Recipients" hint="Separate multiple recipients with commas, semicolons, or new lines.">
+              <textarea
+                autoFocus
+                onChange={(event) => onRecipientsChange(event.target.value)}
+                placeholder="qa-lead@example.com, release-manager@example.com"
+                rows={4}
+                value={recipients}
+              />
+            </FormField>
+          </div>
+          <div className="resource-form-actions action-row">
+            <button className="primary-button" disabled={isSubmitting} type="submit">
+              <MailIcon />
+              <span>{isSubmitting ? "Sending…" : "Send HTML report"}</span>
+            </button>
+            <button className="ghost-button" disabled={isSubmitting} onClick={onClose} type="button">
+              Cancel
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -5582,6 +5804,17 @@ function ExecutionRunIcon() {
   );
 }
 
+function LiveRunIcon() {
+  return (
+    <ExecutionIconShell>
+      <rect height="10" rx="2" width="16" x="4" y="5" />
+      <path d="M8 19h8" />
+      <path d="M12 15v4" />
+      <path d="M10 9.5 13.5 12 10 14.5z" />
+    </ExecutionIconShell>
+  );
+}
+
 function ExecutionEditIcon() {
   return (
     <ExecutionIconShell>
@@ -6006,6 +6239,7 @@ function ExecutionStepCard({
   onFail,
   onDeleteEvidence,
   onInspectApi,
+  onRunStep,
   onNoteBlur,
   onUploadEvidence,
   onViewEvidence,
@@ -6030,6 +6264,7 @@ function ExecutionStepCard({
   onFail: () => void;
   onDeleteEvidence: () => void;
   onInspectApi: () => void;
+  onRunStep: () => void;
   onNoteBlur: (value: string) => void;
   onUploadEvidence: (file: File) => void;
   onViewEvidence: () => void;
@@ -6125,6 +6360,16 @@ function ExecutionStepCard({
           </InlineStepToolButton>
         </div>
         <div className="execution-step-card-top-actions">
+          <button
+            aria-label={`Run step ${step.step_order}`}
+            className="execution-step-action-button"
+            disabled={isLocked || isRunningApi}
+            onClick={onRunStep}
+            title="Run step"
+            type="button"
+          >
+            <ExecutionStartIcon />
+          </button>
           <button
             aria-label={`Mark step ${step.step_order} as passed`}
             className="execution-step-action-button execution-step-pass"
@@ -6263,7 +6508,7 @@ function ExecutionStepCard({
             ) : (
               <span className="execution-step-card-footer-note">{stepKind.detail}</span>
             )}
-            {isRunningApi ? <span className="execution-step-card-footer-note">API execution in progress…</span> : null}
+            {isRunningApi ? <span className="execution-step-card-footer-note">Step execution in progress…</span> : null}
           </div>
         </div>
       ) : null}

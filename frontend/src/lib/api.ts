@@ -135,6 +135,39 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const headers = new Headers(init?.headers);
+  const token = getStoredToken();
+
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers,
+      signal: AbortSignal.timeout(30000)
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Request timeout: ${path} took too long to respond`);
+    }
+    throw new Error(`Unable to reach API at ${API_BASE_URL}. Check your connection and try again.`);
+  }
+
+  if (!response.ok) {
+    const isJson = response.headers.get("content-type")?.includes("application/json");
+    const payload = isJson ? await response.json() : null;
+    const message = (payload as ApiError | null)?.message || `Request failed with status ${response.status}`;
+    throw new Error(message);
+  }
+
+  return response.blob();
+}
+
 type TestCaseImportSourceValue = "csv" | "junit_xml" | "testng_xml" | "postman_collection";
 
 type TestCaseImportBatchPayload = {
@@ -691,18 +724,31 @@ export const api = {
         execution_id: string;
         test_case_id: string;
         step_id: string;
-        step_status: "passed" | "failed";
+        step_status: "passed" | "failed" | null;
         case_status: ExecutionResult["status"];
         execution_status: Execution["status"];
         note: string;
         detail: import("../lib/executionLogs").ExecutionStepApiDetail | null;
+        captures?: Record<string, string>;
         execution_result_id: string;
+        queued_for_engine?: boolean;
+        job_id?: string;
+        engine_run_id?: string;
+        transaction_id?: string;
+        active_web_engine?: "playwright" | "selenium" | string;
+        live_view_url?: string | null;
       }>(`/executions/${executionId}/cases/${testCaseId}/steps/${stepId}/run`, { method: "POST" }),
     updateCaseAssignment: (executionId: string, testCaseId: string, input: { assigned_to?: string }) =>
       request<{ updated: boolean }>(`/executions/${executionId}/cases/${testCaseId}/assignment`, { method: "PUT", body: JSON.stringify(input) }),
     rerun: (id: string, input: { failed_only?: boolean; created_by: string; name?: string }) =>
       request<{ id: string }>(`/executions/${id}/rerun`, { method: "POST", body: JSON.stringify(input) }),
     start: (id: string) => request<ExecutionStartResponse>(`/executions/${id}/start`, { method: "POST" }),
+    downloadReportPdf: (id: string) => requestBlob(`/executions/${id}/report.pdf`),
+    shareReport: (id: string, input: { recipients: string[] }) =>
+      request<{ sent: boolean; recipients: number }>(`/executions/${id}/share-report`, {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
     complete: (id: string, input: { status: "completed" | "failed" | "aborted" }) =>
       request<{ completed: boolean }>(`/executions/${id}/complete`, { method: "POST", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/executions/${id}`, { method: "DELETE" })

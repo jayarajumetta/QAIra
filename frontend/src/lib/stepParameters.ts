@@ -258,7 +258,7 @@ export function buildDataSetParameterValues(dataSet?: ExecutionDataSetSnapshot |
 
   if (dataSet.mode === "key_value") {
     dataSet.rows.forEach((row) => {
-      const key = normalizeStepParameterName(String(row.key ?? ""), "r");
+      const key = normalizeStepParameterName(String(row.key ?? ""), "t");
 
       if (!key) {
         return;
@@ -277,7 +277,7 @@ export function buildDataSetParameterValues(dataSet?: ExecutionDataSetSnapshot |
   }
 
   Object.entries(firstRow).forEach(([column, value]) => {
-    const key = normalizeStepParameterName(column, "r");
+    const key = normalizeStepParameterName(column, "t");
 
     if (!key) {
       return;

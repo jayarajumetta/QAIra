@@ -1137,7 +1137,19 @@ exports.startExecution = async (id, options = {}) => {
       testEngineIntegration = await integrationService.getActiveIntegrationByTypeForProject("testengine", execution.project_id);
 
       if (!testEngineIntegration) {
-        throw new Error("Configure an active Test Engine integration for this project before starting automated runs.");
+        const canContinueManually = dispatchPlan.manual_case_count > 0 || dispatchPlan.unsupported_automated_case_count > 0;
+
+        if (!canContinueManually) {
+          throw new Error("Configure an active Test Engine integration for this project before starting automated runs.");
+        }
+
+        dispatchPlan.warnings = [
+          ...(dispatchPlan.warnings || []),
+          `${dispatchPlan.eligible_automated_case_count} automated case${dispatchPlan.eligible_automated_case_count === 1 ? "" : "s"} could not be handed off because no active Test Engine integration is configured. Manual step execution remains available.`
+        ];
+        dispatchPlan.unsupported_automated_case_count += dispatchPlan.eligible_automated_case_count;
+        dispatchPlan.eligible_automated_case_count = 0;
+        dispatchPlan.eligibleCases = [];
       }
 
       shouldMarkAsCi =
@@ -1217,6 +1229,16 @@ exports.completeExecution = async (id, status) => {
     WHERE id = ?
   `).run(status, id);
 
+  try {
+    await opsTelemetryService.emitExecutionHierarchyEvents({
+      execution_id: id,
+      source: "qaira.execution.complete",
+      summary: `Execution ${status}.`
+    });
+  } catch {
+    // OPS telemetry is best-effort and must not block execution completion.
+  }
+
   return { completed: true };
 };
 
@@ -1242,10 +1264,7 @@ exports.runExecutionApiStep = async (executionId, testCaseId, stepId, { executed
   }
 
   const apiRequest = parseJsonValue(stepSnapshot.api_request, null);
-
-  if ((stepSnapshot.step_type && stepSnapshot.step_type !== "api") || !apiRequest) {
-    throw new Error("Only API execution steps can be run through the execution console");
-  }
+  const resolvedStepType = stepSnapshot.step_type || (apiRequest ? "api" : "web");
 
   const existingResult = await executionResultService.findLatestExecutionResult({
     execution_id: executionId,
@@ -1253,6 +1272,76 @@ exports.runExecutionApiStep = async (executionId, testCaseId, stepId, { executed
   });
   const existingLogs = executionStepRuntimeService.parseStructuredLogs(existingResult?.logs || null);
   const capturedValues = executionStepRuntimeService.extractCapturedValuesFromLogs(existingLogs);
+
+  if (resolvedStepType === "web") {
+    const testEngineIntegration = await integrationService.getActiveIntegrationByTypeForProject("testengine", execution.project_id);
+    const queued = await testEngineDispatchService.queueSingleStepDispatch({
+      execution,
+      caseSnapshot,
+      stepSnapshot,
+      integration: testEngineIntegration,
+      initiatedBy: executed_by || null,
+      capturedValues,
+      existingLogs
+    });
+    const queuedNote = `Queued web step ${stepSnapshot.step_order} for Test Engine execution. Open the live viewer while Selenium runs, or keep working manually until the engine reports back.`;
+    const mergedLogs = {
+      ...existingLogs,
+      stepNotes: {
+        ...existingLogs.stepNotes,
+        [stepId]: queuedNote
+      }
+    };
+    const result = await executionResultService.upsertExecutionResult({
+      execution_id: executionId,
+      test_case_id: testCaseId,
+      app_type_id: execution.app_type_id,
+      status: "running",
+      duration_ms: resolveExecutionCaseDurationMs(execution, existingResult),
+      error: null,
+      logs: JSON.stringify(mergedLogs),
+      executed_by: normalizeText(executed_by) || execution.assigned_to || null
+    });
+
+    try {
+      await opsTelemetryService.emitExecutionHierarchyEvents({
+        execution_id: executionId,
+        test_case_id: testCaseId,
+        step_id: stepId,
+        source: "qaira.execution-console.web-step-queued",
+        summary: queuedNote,
+        execution_result_id: result.id,
+        step_note: queuedNote,
+        captures: capturedValues
+      });
+    } catch {
+      // OPS telemetry is best-effort and must not block web step handoff.
+    }
+
+    return {
+      execution_id: executionId,
+      test_case_id: testCaseId,
+      step_id: stepId,
+      step_status: null,
+      case_status: "running",
+      execution_status: execution.status,
+      note: queuedNote,
+      detail: null,
+      captures: capturedValues,
+      execution_result_id: result.id,
+      queued_for_engine: true,
+      job_id: queued.job_id,
+      engine_run_id: queued.engine_run_id,
+      transaction_id: queued.transaction_id,
+      active_web_engine: queued.active_web_engine,
+      live_view_url: queued.live_view_url
+    };
+  }
+
+  if (resolvedStepType !== "api" || !apiRequest) {
+    throw new Error("Only API and web execution steps can be run through the execution console");
+  }
+
   const parameterValues = buildExecutionRuntimeParameterValues(execution, caseSnapshot, capturedValues);
   const stepResult = await apiRequestExecutionService.executeApiRequestStep({
     api_request: apiRequest,

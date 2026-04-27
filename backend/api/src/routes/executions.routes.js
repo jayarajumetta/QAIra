@@ -1,5 +1,6 @@
 const service = require("../services/execution.service");
 const executionPlanningService = require("../services/executionPlanning.service");
+const executionReportService = require("../services/executionReport.service");
 const appTypeService = require("../services/appType.service");
 const projectService = require("../services/project.service");
 const { EXECUTION_FINAL_STATUS_VALUES } = require("../domain/catalog");
@@ -159,6 +160,52 @@ module.exports = async function (fastify) {
 
     return service.runExecutionApiStep(req.params.id, req.params.testCaseId, req.params.stepId, {
       executed_by: req.user.id
+    });
+  });
+
+  fastify.get("/executions/:id/report.pdf", async (req, reply) => {
+    await fastify.authenticate(req);
+
+    const execution = await service.getExecution(req.params.id);
+    await projectService.getProject(execution.project_id, req.user.id);
+
+    const pdf = await executionReportService.renderReportPdf(req.params.id);
+    const safeName = String(execution.name || execution.id || "qaira-run-report")
+      .replace(/[^A-Za-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      || "qaira-run-report";
+
+    reply
+      .header("Content-Type", "application/pdf")
+      .header("Content-Disposition", `attachment; filename="${safeName}.pdf"`);
+    return reply.send(pdf);
+  });
+
+  fastify.get("/executions/:id/report.html", async (req, reply) => {
+    await fastify.authenticate(req);
+
+    const execution = await service.getExecution(req.params.id);
+    await projectService.getProject(execution.project_id, req.user.id);
+
+    const html = await executionReportService.renderReportHtml(req.params.id);
+    reply.header("Content-Type", "text/html; charset=utf-8");
+    return reply.send(html);
+  });
+
+  fastify.post("/executions/:id/share-report", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      recipients: { required: true, type: "array", items: "string" }
+    }, req.body || {});
+
+    const execution = await service.getExecution(req.params.id);
+    await projectService.getProject(execution.project_id, req.user.id);
+
+    return executionReportService.emailReport({
+      execution_id: req.params.id,
+      recipients: req.body.recipients,
+      requested_by: req.user.id
     });
   });
 

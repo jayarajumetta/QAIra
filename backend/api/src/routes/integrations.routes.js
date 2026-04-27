@@ -1,13 +1,20 @@
 const service = require("../services/integration.service");
 const { INTEGRATION_TYPE_VALUES } = require("../domain/catalog");
 
+const MASKED_SECRET_VALUE = "********";
+
+const maskSecret = (value) => value ? MASKED_SECRET_VALUE : null;
+
 const sanitizeIntegration = (integration) => {
   const config = integration.config || {};
+  const baseIntegration = {
+    ...integration,
+    api_key: maskSecret(integration.api_key)
+  };
 
   if (integration.type === "google_drive") {
     return {
-      ...integration,
-      api_key: null,
+      ...baseIntegration,
       config: {
         project_id: config.project_id || null,
         folder_id: config.folder_id || null,
@@ -22,8 +29,7 @@ const sanitizeIntegration = (integration) => {
 
   if (integration.type === "github") {
     return {
-      ...integration,
-      api_key: null,
+      ...baseIntegration,
       config: {
         project_id: config.project_id || null,
         owner: config.owner || null,
@@ -41,8 +47,7 @@ const sanitizeIntegration = (integration) => {
 
   if (integration.type === "testengine") {
     return {
-      ...integration,
-      api_key: null,
+      ...baseIntegration,
       config: {
         project_id: config.project_id || null,
         runner: config.runner || "hybrid",
@@ -59,15 +64,15 @@ const sanitizeIntegration = (integration) => {
         capture_network: config.capture_network !== false,
         artifact_retention_days: config.artifact_retention_days ?? 7,
         run_timeout_seconds: config.run_timeout_seconds ?? 1800,
-        promote_healed_patches: config.promote_healed_patches || "review"
+        promote_healed_patches: config.promote_healed_patches || "review",
+        live_view_url: config.live_view_url || null
       }
     };
   }
 
   if (integration.type === "ops") {
     return {
-      ...integration,
-      api_key: null,
+      ...baseIntegration,
       config: {
         project_id: config.project_id || null,
         events_path: config.events_path || "/api/v1/events",
@@ -85,9 +90,31 @@ const sanitizeIntegration = (integration) => {
     };
   }
 
+  if (integration.type === "email") {
+    return {
+      ...baseIntegration,
+      config: {
+        host: config.host || null,
+        port: config.port || 587,
+        secure: Boolean(config.secure),
+        password: maskSecret(config.password),
+        sender_email: config.sender_email || null,
+        sender_name: config.sender_name || null
+      }
+    };
+  }
+
+  if (integration.type === "google_auth") {
+    return {
+      ...baseIntegration,
+      config: {
+        client_id: config.client_id || null
+      }
+    };
+  }
+
   return {
-    ...integration,
-    api_key: null,
+    ...baseIntegration,
     config: {}
   };
 };
@@ -120,13 +147,11 @@ module.exports = async function (fastify) {
       is_active: is_active !== undefined ? is_active === "true" : undefined
     });
 
-    if (req.user.role === "admin") {
-      return integrations;
-    }
+    const scopedIntegrations = req.user.role === "admin"
+      ? integrations
+      : integrations.filter((integration) => integration.is_active);
 
-    return integrations
-      .filter((integration) => ["llm", "google_drive", "github", "testengine", "ops"].includes(integration.type) && integration.is_active)
-      .map(sanitizeIntegration);
+    return scopedIntegrations.map(sanitizeIntegration);
   });
 
   fastify.post("/integrations/test-connection", async (req) => {
@@ -143,8 +168,16 @@ module.exports = async function (fastify) {
   });
 
   fastify.get("/integrations/:id", async (req) => {
-    await fastify.requireAdmin(req);
-    return service.getIntegration(req.params.id);
+    await fastify.authenticate(req);
+    const integration = await service.getIntegration(req.params.id);
+
+    if (req.user.role !== "admin" && !integration.is_active) {
+      const error = new Error("Integration not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    return sanitizeIntegration(integration);
   });
 
   fastify.put("/integrations/:id", async (req) => {
