@@ -30,6 +30,7 @@ import type {
   TestSuite,
   User,
   WorkspaceTransaction,
+  WorkspaceTransactionArtifact,
   WorkspaceTransactionEvent
 } from "../types";
 import type { ExecutionStartResponse } from "./executionStartSummary";
@@ -170,152 +171,13 @@ async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
 
 type TestCaseImportSourceValue = "csv" | "junit_xml" | "testng_xml" | "postman_collection";
 
-type TestCaseImportBatchPayload = {
-  file_name?: string;
-  import_source: TestCaseImportSourceValue;
-  row_offset?: number;
-  rows: Array<Record<string, unknown>>;
+type BatchQueueResponse = {
+  id: string;
+  transaction_id: string;
+  job_id?: string;
+  queued: boolean;
+  status: string;
 };
-
-type TestCaseBulkImportInput = {
-  app_type_id: string;
-  requirement_id?: string;
-  import_source?: TestCaseImportSourceValue;
-  rows?: Array<Record<string, unknown>>;
-  batches?: TestCaseImportBatchPayload[];
-};
-
-type TestCaseBulkImportResponse = {
-  imported: number;
-  failed: number;
-  created: Array<{ row: number; batch_index?: number; file_name?: string; import_source?: string; id: string; title: string }>;
-  errors: Array<{ row: number; batch_index?: number; file_name?: string; import_source?: string; title?: string | null; message: string }>;
-};
-
-const MAX_TEST_CASE_IMPORT_REQUEST_BYTES = 850_000;
-
-const estimateJsonBytes = (value: unknown) => {
-  const serialized = JSON.stringify(value);
-
-  if (typeof TextEncoder !== "undefined") {
-    return new TextEncoder().encode(serialized).length;
-  }
-
-  return serialized.length;
-};
-
-const createTestCaseImportPayload = (
-  input: TestCaseBulkImportInput,
-  batches: TestCaseImportBatchPayload[]
-): TestCaseBulkImportInput => ({
-  app_type_id: input.app_type_id,
-  requirement_id: input.requirement_id,
-  import_source: input.import_source,
-  batches
-});
-
-const splitOversizedTestCaseImportBatch = (
-  input: TestCaseBulkImportInput,
-  batch: TestCaseImportBatchPayload,
-  maxBytes = MAX_TEST_CASE_IMPORT_REQUEST_BYTES
-) => {
-  if (!batch.rows.length) {
-    return [];
-  }
-
-  const asSinglePayload = createTestCaseImportPayload(input, [batch]);
-
-  if (estimateJsonBytes(asSinglePayload) <= maxBytes || batch.rows.length === 1) {
-    return [batch];
-  }
-
-  const chunks: TestCaseImportBatchPayload[] = [];
-  let currentRows: Array<Record<string, unknown>> = [];
-  let currentRowOffset = Math.max(Number(batch.row_offset || 0) || 0, 0);
-
-  for (const row of batch.rows) {
-    const nextRows = [...currentRows, row];
-    const nextPayload = createTestCaseImportPayload(input, [{ ...batch, row_offset: currentRowOffset, rows: nextRows }]);
-
-    if (currentRows.length && estimateJsonBytes(nextPayload) > maxBytes) {
-      chunks.push({ ...batch, row_offset: currentRowOffset, rows: currentRows });
-      currentRowOffset += currentRows.length;
-      currentRows = [row];
-      continue;
-    }
-
-    currentRows = nextRows;
-  }
-
-  if (currentRows.length) {
-    chunks.push({ ...batch, row_offset: currentRowOffset, rows: currentRows });
-  }
-
-  return chunks;
-};
-
-const buildChunkedTestCaseImportRequests = (
-  input: TestCaseBulkImportInput,
-  maxBytes = MAX_TEST_CASE_IMPORT_REQUEST_BYTES
-) => {
-  const normalizedBatches = Array.isArray(input.batches) && input.batches.length
-    ? input.batches
-        .filter((batch) => Array.isArray(batch.rows) && batch.rows.length)
-        .flatMap((batch) => splitOversizedTestCaseImportBatch(input, batch, maxBytes))
-    : Array.isArray(input.rows) && input.rows.length
-      ? splitOversizedTestCaseImportBatch(
-          input,
-          {
-            file_name: undefined,
-            import_source: input.import_source || "csv",
-            row_offset: 0,
-            rows: input.rows
-          },
-          maxBytes
-        )
-      : [];
-
-  if (!normalizedBatches.length) {
-    return [input];
-  }
-
-  const requests: TestCaseBulkImportInput[] = [];
-  let currentBatches: TestCaseImportBatchPayload[] = [];
-
-  for (const batch of normalizedBatches) {
-    const candidatePayload = createTestCaseImportPayload(input, [...currentBatches, batch]);
-
-    if (currentBatches.length && estimateJsonBytes(candidatePayload) > maxBytes) {
-      requests.push(createTestCaseImportPayload(input, currentBatches));
-      currentBatches = [batch];
-      continue;
-    }
-
-    currentBatches = [...currentBatches, batch];
-  }
-
-  if (currentBatches.length) {
-    requests.push(createTestCaseImportPayload(input, currentBatches));
-  }
-
-  return requests.length ? requests : [input];
-};
-
-const mergeTestCaseImportResponses = (responses: TestCaseBulkImportResponse[]): TestCaseBulkImportResponse =>
-  responses.reduce<TestCaseBulkImportResponse>(
-    (aggregate, response) => ({
-      imported: aggregate.imported + response.imported,
-      failed: aggregate.failed + response.failed,
-      created: [...aggregate.created, ...response.created],
-      errors: [...aggregate.errors, ...response.errors]
-    }),
-    {
-      imported: 0,
-      failed: 0,
-      created: [],
-      errors: []
-    }
-  );
 
 export const api = {
   settings: {
@@ -377,12 +239,7 @@ export const api = {
       rows: Array<Record<string, string | number | null | undefined>>;
       default_role_id?: string;
     }) =>
-      request<{
-        imported: number;
-        failed: number;
-        created: Array<{ row: number; id: string; email: string }>;
-        errors: Array<{ row: number; email?: string | null; message: string }>;
-      }>("/users/import", {
+      request<BatchQueueResponse>("/users/import", {
         method: "POST",
         body: JSON.stringify(input)
       }),
@@ -431,7 +288,7 @@ export const api = {
     create: (input: { project_id: string; title: string; description?: string; priority?: number; status?: string }) =>
       request<{ id: string }>("/requirements", { method: "POST", body: JSON.stringify(input) }),
     bulkImport: (input: { project_id: string; rows: Array<Record<string, string | number | null | undefined>> }) =>
-      request<{ imported: number; failed: number; created: Array<{ row: number; id: string; title: string }>; errors: Array<{ row: number; title?: string | null; message: string }> }>("/requirements/import", {
+      request<BatchQueueResponse>("/requirements/import", {
         method: "POST",
         body: JSON.stringify(input)
       }),
@@ -596,28 +453,16 @@ export const api = {
         rows: Array<Record<string, unknown>>;
       }>;
     }) => {
-      const requests = buildChunkedTestCaseImportRequests(input);
-
-      if (requests.length === 1) {
-        return request<TestCaseBulkImportResponse>("/test-cases/import", {
-          method: "POST",
-          body: JSON.stringify(requests[0])
-        });
-      }
-
-      return (async () => {
-        const responses: TestCaseBulkImportResponse[] = [];
-
-        for (const chunk of requests) {
-          responses.push(await request<TestCaseBulkImportResponse>("/test-cases/import", {
-            method: "POST",
-            body: JSON.stringify(chunk)
-          }));
-        }
-
-        return mergeTestCaseImportResponses(responses);
-      })();
+      return request<BatchQueueResponse>("/test-cases/import", {
+        method: "POST",
+        body: JSON.stringify(input)
+      });
     },
+    exportCases: (input: { app_type_id: string; test_case_ids?: string[] }) =>
+      request<BatchQueueResponse>("/test-cases/export", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
     update: (id: string, input: Partial<{ app_type_id: string; suite_id: string; suite_ids: string[]; title: string; description: string; parameter_values: Record<string, string>; automated: "yes" | "no"; priority: number; status: string; requirement_id: string; requirement_ids: string[]; steps: Array<{ step_order?: number; action?: string; expected_result?: string; step_type?: TestStep["step_type"]; automation_code?: string; api_request?: TestStep["api_request"]; group_id?: string; group_name?: string; group_kind?: "local" | "reusable"; reusable_group_id?: string }> }>) =>
       request<{ updated: boolean }>(`/test-cases/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/test-cases/${id}`, { method: "DELETE" })
@@ -776,10 +621,14 @@ export const api = {
     delete: (id: string) => request<{ deleted: boolean }>(`/execution-results/${id}`, { method: "DELETE" })
   },
   workspaceTransactions: {
-    list: (query?: { project_id?: string; app_type_id?: string; category?: string; limit?: number }) =>
+    list: (query?: { project_id?: string; app_type_id?: string; category?: string; include_global?: boolean; limit?: number }) =>
       request<WorkspaceTransaction[]>(`/workspace-transactions${toQueryString(query)}`),
     events: (id: string) =>
-      request<WorkspaceTransactionEvent[]>(`/workspace-transactions/${id}/events`)
+      request<WorkspaceTransactionEvent[]>(`/workspace-transactions/${id}/events`),
+    artifacts: (id: string) =>
+      request<WorkspaceTransactionArtifact[]>(`/workspace-transactions/${id}/artifacts`),
+    downloadArtifact: (transactionId: string, artifactId: string) =>
+      requestBlob(`/workspace-transactions/${transactionId}/artifacts/${artifactId}/download`)
   }
 };
 

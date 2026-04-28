@@ -32,6 +32,7 @@ async function executeQueuedJob(job, workerId, logger) {
         : null;
     let healingAttempted = Boolean(job.runtime_state?.healing_attempted);
     let healingSucceeded = Boolean(job.runtime_state?.healing_succeeded);
+    const patchProposals = [];
     try {
         await startQueuedJob(job.id, workerId);
         updateRunState(accepted.id, "running", `Leased ${job.test_case_title} from QAira queue.`);
@@ -86,10 +87,19 @@ async function executeQueuedJob(job, workerId, logger) {
             const stepResult = await webRunSession.runStep(step);
             healingAttempted = healingAttempted || stepResult.recovery_attempted;
             healingSucceeded = healingSucceeded || stepResult.recovery_succeeded;
+            if (stepResult.recovery_succeeded) {
+                patchProposals.push({
+                    kind: "script",
+                    status: "review",
+                    summary: `Step ${step.order} recovered after a headed browser retry. Review this step for locator or wait hardening before promoting the fix.`,
+                    target_path: `qaira://test-cases/${envelope.qaira_test_case_id}/steps/${step.id}`
+                });
+            }
             const report = await reportQueuedStep(job.id, step.id, {
                 status: stepResult.status,
                 note: stepResult.note,
                 evidence: stepResult.evidence || null,
+                web_detail: stepResult.web_detail,
                 captures: stepResult.captures,
                 recovery_attempted: stepResult.recovery_attempted,
                 recovery_succeeded: stepResult.recovery_succeeded
@@ -104,7 +114,8 @@ async function executeQueuedJob(job, workerId, logger) {
                     summary: failureSummary,
                     deterministic_attempted: true,
                     healing_attempted: healingAttempted,
-                    healing_succeeded: healingSucceeded
+                    healing_succeeded: healingSucceeded,
+                    patch_proposals: patchProposals
                 });
                 return;
             }
@@ -115,7 +126,8 @@ async function executeQueuedJob(job, workerId, logger) {
             summary: completionSummary,
             deterministic_attempted: true,
             healing_attempted: healingAttempted,
-            healing_succeeded: healingSucceeded
+            healing_succeeded: healingSucceeded,
+            patch_proposals: patchProposals
         });
         updateRunState(accepted.id, "completed", completionSummary);
     }
@@ -129,7 +141,8 @@ async function executeQueuedJob(job, workerId, logger) {
                 summary: message,
                 deterministic_attempted: true,
                 healing_attempted: healingAttempted,
-                healing_succeeded: healingSucceeded
+                healing_succeeded: healingSucceeded,
+                patch_proposals: patchProposals
             });
         }
         catch (reportError) {

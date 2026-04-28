@@ -2,6 +2,7 @@ const service = require("../services/requirement.service");
 const appTypeService = require("../services/appType.service");
 const projectService = require("../services/project.service");
 const requirementDesignService = require("../services/requirementDesign.service");
+const batchProcessService = require("../services/batchProcess.service");
 
 module.exports = async function (fastify) {
   fastify.post("/requirements", async (req) => {
@@ -38,7 +39,7 @@ module.exports = async function (fastify) {
 
     await projectService.getProject(req.body.project_id, req.user.id);
 
-    return service.bulkImportRequirements({
+    return batchProcessService.queueRequirementImport({
       ...req.body,
       created_by: req.user.id
     });

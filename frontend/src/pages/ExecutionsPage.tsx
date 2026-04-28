@@ -42,7 +42,8 @@ import {
   type ExecutionStepApiDetail,
   type ExecutionStepCaptureMap,
   type ExecutionStepEvidence,
-  type ExecutionStepStatus
+  type ExecutionStepStatus,
+  type ExecutionStepWebDetail
 } from "../lib/executionLogs";
 import { buildDataSetParameterValues, combineStepParameterValues, normalizeStepParameterValues, parseStepParameterName, resolveStepParameterText } from "../lib/stepParameters";
 import { type AssigneeOption, buildAssigneeOptions, resolveUserInitials, resolveUserPrimaryLabel, resolveUserSecondaryLabel } from "../lib/userDisplay";
@@ -1696,10 +1697,7 @@ export function ExecutionsPage() {
 
     return projectScoped || testEngineIntegrations.find((integration) => !String(integration.config?.project_id || "").trim()) || null;
   }, [selectedExecution, testEngineIntegrations]);
-  const seleniumLiveViewUrl =
-    selectedTestEngineIntegration?.config?.active_web_engine === "selenium"
-      ? deriveSeleniumLiveViewUrl(selectedTestEngineIntegration)
-      : "";
+  const seleniumLiveViewUrl = selectedTestEngineIntegration ? deriveSeleniumLiveViewUrl(selectedTestEngineIntegration) : "";
   const isExecutionScopeReadOnly = isExecutionRunsView(testRunsView) && Boolean(selectedExecution);
   const isExecutionStarted = currentExecutionStatus === "running";
   const isExecutionLocked =
@@ -1919,6 +1917,7 @@ export function ExecutionsPage() {
   const stepNotes = selectedCaseLogs.stepNotes || {};
   const stepEvidence = selectedCaseLogs.stepEvidence || {};
   const stepApiDetails = selectedCaseLogs.stepApiDetails || {};
+  const stepWebDetails = selectedCaseLogs.stepWebDetails || {};
   const stepCaptures = useMemo(
     () => mergeExecutionStepCaptures(selectedCaseLogs.stepCaptures || {}, stepApiDetails),
     [selectedCaseLogs.stepCaptures, stepApiDetails]
@@ -2468,6 +2467,7 @@ export function ExecutionsPage() {
       stepNotes: mergedNotes,
       stepEvidence: mergedEvidence,
       stepApiDetails: prev.stepApiDetails || {},
+      stepWebDetails: prev.stepWebDetails || {},
       stepCaptures: prev.stepCaptures || {}
     });
     const durationMs = resolvePersistedCaseDurationMs(testCaseId, existing);
@@ -3441,6 +3441,7 @@ export function ExecutionsPage() {
       stepNotes: prev.stepNotes || {},
       stepEvidence: prev.stepEvidence || {},
       stepApiDetails: prev.stepApiDetails || {},
+      stepWebDetails: prev.stepWebDetails || {},
       stepCaptures: prev.stepCaptures || {}
     });
     const durationMs = resolvePersistedCaseDurationMs(testCaseId, existing);
@@ -3623,8 +3624,7 @@ export function ExecutionsPage() {
         items={[
           { value: "test-case-runs", label: "Test Case Runs", meta: `${executionRunCounts["test-case-runs"]}`, icon: <TestCaseBoardIcon /> },
           { value: "suite-runs", label: "Suite Runs", meta: `${executionRunCounts["suite-runs"]}`, icon: <ExecutionSuiteIcon /> },
-          { value: "scheduled-runs", label: "Scheduled Runs", meta: `${executionSchedules.length}`, icon: <ExecutionScheduleIcon /> },
-          { value: "batch-process", label: "Batch Process", meta: `${workspaceTransactions.length}`, icon: <ActivityIcon /> }
+          { value: "scheduled-runs", label: "Scheduled Runs", meta: `${executionSchedules.length}`, icon: <ExecutionScheduleIcon /> }
         ]}
         onChange={handleTestRunsViewChange}
         value={testRunsView}
@@ -4290,6 +4290,7 @@ export function ExecutionsPage() {
                                         return (
                                           <ExecutionStepCard
                                             apiDetail={stepApiDetails[step.id] || null}
+                                            webDetail={stepWebDetails[step.id] || null}
                                             captures={stepCaptures[step.id] || stepApiDetails[step.id]?.captures || {}}
                                             evidence={stepEvidence[step.id] || null}
                                             canInspectApi={step.step_type === "api" || (!step.step_type && selectedExecutionAppTypeKind === "api")}
@@ -4338,6 +4339,7 @@ export function ExecutionsPage() {
                               return (
                                 <ExecutionStepCard
                                   apiDetail={stepApiDetails[step.id] || null}
+                                  webDetail={stepWebDetails[step.id] || null}
                                   captures={stepCaptures[step.id] || stepApiDetails[step.id]?.captures || {}}
                                   evidence={stepEvidence[step.id] || null}
                                   canInspectApi={step.step_type === "api" || (!step.step_type && selectedExecutionAppTypeKind === "api")}
@@ -4570,24 +4572,6 @@ export function ExecutionsPage() {
                       <div className="action-row">
                         <button
                           className="ghost-button"
-                          disabled={!selectedExecution || rerunExecution.isPending || startExecution.isPending || completeExecution.isPending}
-                          onClick={() => void handleRerunExecution(false)}
-                          type="button"
-                        >
-                          <ExecutionRerunIcon />
-                          <span>{rerunExecution.isPending ? "Preparing…" : "Rerun all"}</span>
-                        </button>
-                        <button
-                          className="ghost-button"
-                          disabled={!selectedExecution || !executionStatusCounts.failed || rerunExecution.isPending || startExecution.isPending || completeExecution.isPending}
-                          onClick={() => void handleRerunExecution(true)}
-                          type="button"
-                        >
-                          <ExecutionRerunIcon />
-                          <span>{rerunExecution.isPending ? "Preparing…" : `Rerun failed (${executionStatusCounts.failed})`}</span>
-                        </button>
-                        <button
-                          className="ghost-button"
                           disabled={currentExecutionStatus !== "queued" || startExecution.isPending || completeExecution.isPending}
                           onClick={() => void handleStartSelectedExecution()}
                           type="button"
@@ -4619,20 +4603,11 @@ export function ExecutionsPage() {
                           href={seleniumLiveViewUrl || undefined}
                           rel="noreferrer"
                           target="_blank"
-                          title={seleniumLiveViewUrl ? "View live Selenium browser session" : "Configure a Test Engine live viewer URL to open the browser session"}
+                          title={seleniumLiveViewUrl ? "View live browser session" : "Configure a Test Engine live viewer URL to open the browser session"}
                         >
                           <LiveRunIcon />
                           <span>View live run</span>
                         </a>
-                        <button
-                          className="ghost-button warning"
-                          disabled={currentExecutionStatus !== "running" || completeExecution.isPending || startExecution.isPending}
-                          onClick={() => void handleFinalizeExecution("abort")}
-                          type="button"
-                        >
-                          <ExecutionAbortIcon />
-                          <span>{completeExecution.isPending && executionFinalizeAction === "abort" ? "Aborting…" : "Abort run"}</span>
-                        </button>
                         <button
                           className="ghost-button"
                           disabled={currentExecutionStatus !== "running" || completeExecution.isPending || startExecution.isPending}
@@ -4642,6 +4617,30 @@ export function ExecutionsPage() {
                           <ExecutionCompleteIcon />
                           <span>{completeExecution.isPending && executionFinalizeAction === "complete" ? "Completing…" : "Complete run"}</span>
                         </button>
+                        <CatalogActionMenu
+                          label="More run actions"
+                          actions={[
+                            {
+                              label: rerunExecution.isPending ? "Preparing rerun…" : "Rerun all",
+                              icon: <ExecutionRerunIcon />,
+                              onClick: () => void handleRerunExecution(false),
+                              disabled: !selectedExecution || rerunExecution.isPending || startExecution.isPending || completeExecution.isPending
+                            },
+                            {
+                              label: rerunExecution.isPending ? "Preparing failed rerun…" : `Rerun failed (${executionStatusCounts.failed})`,
+                              icon: <ExecutionRerunIcon />,
+                              onClick: () => void handleRerunExecution(true),
+                              disabled: !selectedExecution || !executionStatusCounts.failed || rerunExecution.isPending || startExecution.isPending || completeExecution.isPending
+                            },
+                            {
+                              label: completeExecution.isPending && executionFinalizeAction === "abort" ? "Aborting run…" : "Abort run",
+                              icon: <ExecutionAbortIcon />,
+                              onClick: () => void handleFinalizeExecution("abort"),
+                              disabled: currentExecutionStatus !== "running" || completeExecution.isPending || startExecution.isPending,
+                              tone: "danger"
+                            }
+                          ]}
+                        />
                       </div>
                     </div>
 
@@ -6225,6 +6224,7 @@ function ExecutionStepCard({
   note,
   evidence,
   apiDetail,
+  webDetail,
   captures,
   canInspectApi,
   isRunningApi,
@@ -6250,6 +6250,7 @@ function ExecutionStepCard({
   note: string;
   evidence: ExecutionStepEvidence | null;
   apiDetail: ExecutionStepApiDetail | null;
+  webDetail: ExecutionStepWebDetail | null;
   captures: Record<string, string>;
   canInspectApi: boolean;
   isRunningApi: boolean;
@@ -6281,6 +6282,8 @@ function ExecutionStepCard({
     () => Object.entries(captures || {}).sort(([left], [right]) => left.localeCompare(right)),
     [captures]
   );
+  const consoleCount = webDetail?.console?.length || 0;
+  const networkCount = webDetail?.network?.length || 0;
   const stepTypeLabel = String(step.step_type || (canInspectApi ? "api" : "web")).toUpperCase();
   const toneClass = [
     "step-card execution-step-card",
@@ -6334,6 +6337,7 @@ function ExecutionStepCard({
               </span>
               <span>
                 {trimmedNote ? "Note captured" : "No note yet"} · {hasEvidence ? evidence?.fileName || "Image attached" : "No image attached"}
+                {webDetail ? ` · ${consoleCount} console · ${networkCount} network` : ""}
               </span>
             </div>
           </div>
@@ -6419,6 +6423,41 @@ function ExecutionStepCard({
                     <span>{value || "—"}</span>
                   </span>
                 ))}
+              </div>
+            </div>
+          ) : null}
+
+          {webDetail ? (
+            <div className="execution-step-card-block">
+              <div className="execution-step-card-block-head">
+                <span>Runtime trace</span>
+                <span>{webDetail.provider || "web"} · {consoleCount} console · {networkCount} network</span>
+              </div>
+              <div className="execution-step-param-chip-list">
+                {webDetail.url ? (
+                  <span className="execution-step-param-chip">
+                    <strong>URL</strong>
+                    <span>{webDetail.url}</span>
+                  </span>
+                ) : null}
+                {typeof webDetail.duration_ms === "number" ? (
+                  <span className="execution-step-param-chip">
+                    <strong>Duration</strong>
+                    <span>{formatDuration(webDetail.duration_ms, DEFAULT_DURATION_LABEL)}</span>
+                  </span>
+                ) : null}
+                {consoleCount ? (
+                  <span className="execution-step-param-chip">
+                    <strong>Console</strong>
+                    <span>{webDetail.console?.slice(-1)[0]?.text || `${consoleCount} entries`}</span>
+                  </span>
+                ) : null}
+                {networkCount ? (
+                  <span className="execution-step-param-chip">
+                    <strong>Network</strong>
+                    <span>{webDetail.network?.slice(-1)[0]?.url || `${networkCount} entries`}</span>
+                  </span>
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -6592,8 +6631,9 @@ function ExecutionStructuredLogView({
   const hasStatuses = parsed.stepStatuses && Object.keys(parsed.stepStatuses).length > 0;
   const hasEvidence = parsed.stepEvidence && Object.keys(parsed.stepEvidence).length > 0;
   const hasCaptures = Object.keys(stepCaptures).length > 0;
+  const hasWebDetails = parsed.stepWebDetails && Object.keys(parsed.stepWebDetails).length > 0;
 
-  if (!hasNotes && !hasStatuses && !hasEvidence && !hasCaptures && !logsJson?.trim()) {
+  if (!hasNotes && !hasStatuses && !hasEvidence && !hasCaptures && !hasWebDetails && !logsJson?.trim()) {
     return <span className="execution-log-empty">No structured step data recorded yet.</span>;
   }
 
@@ -6602,9 +6642,10 @@ function ExecutionStructuredLogView({
       const st = parsed.stepStatuses?.[step.id];
       const nt = parsed.stepNotes?.[step.id];
       const evidence = parsed.stepEvidence?.[step.id];
+      const webDetail = parsed.stepWebDetails?.[step.id];
       const captures = Object.entries(stepCaptures[step.id] || {}).sort(([left], [right]) => left.localeCompare(right));
 
-      if (!st && !nt && !evidence && !captures.length) {
+      if (!st && !nt && !evidence && !captures.length && !webDetail) {
         if (!isStepGroupStart(steps, index)) {
           return null;
         }
@@ -6622,7 +6663,7 @@ function ExecutionStructuredLogView({
               </span>
             </div>
           ) : null}
-          {st || nt || evidence || captures.length ? (
+          {st || nt || evidence || captures.length || webDetail ? (
             <div className="execution-structured-log-row">
               <strong>Step {step.step_order}</strong>
               {st ? <StatusBadge value={st} /> : null}
@@ -6637,6 +6678,16 @@ function ExecutionStructuredLogView({
                 </button>
               ) : null}
               {nt ? <span className="execution-structured-note">{nt}</span> : null}
+              {webDetail ? (
+                <span className="execution-structured-note">
+                  {[
+                    webDetail.provider || "web",
+                    webDetail.url || null,
+                    `${webDetail.console?.length || 0} console`,
+                    `${webDetail.network?.length || 0} network`
+                  ].filter(Boolean).join(" · ")}
+                </span>
+              ) : null}
               {captures.length ? (
                 <div className="execution-structured-capture-list">
                   {captures.map(([key, value]) => (
@@ -6668,19 +6719,22 @@ function ExecutionStructuredLogSummary({ logsJson }: { logsJson: string | null }
   const noteCount = parsed.stepNotes ? Object.values(parsed.stepNotes).filter(Boolean).length : 0;
   const statusCount = parsed.stepStatuses ? Object.keys(parsed.stepStatuses).length : 0;
   const evidenceCount = parsed.stepEvidence ? Object.keys(parsed.stepEvidence).length : 0;
+  const webTraceCount = parsed.stepWebDetails ? Object.keys(parsed.stepWebDetails).length : 0;
   const captureCount = Object.values(stepCaptures).reduce((count, captures) => count + Object.keys(captures || {}).length, 0);
-  if (!noteCount && !statusCount && !evidenceCount && !captureCount) {
+  if (!noteCount && !statusCount && !evidenceCount && !captureCount && !webTraceCount) {
     return <span className="execution-log-summary-muted">No step details</span>;
   }
+  const parts = [
+    statusCount ? `${statusCount} step result${statusCount === 1 ? "" : "s"}` : null,
+    noteCount ? `${noteCount} note${noteCount === 1 ? "" : "s"}` : null,
+    evidenceCount ? `${evidenceCount} image${evidenceCount === 1 ? "" : "s"}` : null,
+    captureCount ? `${captureCount} captured value${captureCount === 1 ? "" : "s"}` : null,
+    webTraceCount ? `${webTraceCount} web trace${webTraceCount === 1 ? "" : "s"}` : null
+  ].filter(Boolean);
+
   return (
     <span className="execution-log-summary">
-      {statusCount ? `${statusCount} step result${statusCount === 1 ? "" : "s"}` : null}
-      {statusCount && (noteCount || evidenceCount || captureCount) ? " · " : null}
-      {noteCount ? `${noteCount} note${noteCount === 1 ? "" : "s"}` : null}
-      {noteCount && (evidenceCount || captureCount) ? " · " : null}
-      {evidenceCount ? `${evidenceCount} image${evidenceCount === 1 ? "" : "s"}` : null}
-      {(noteCount || evidenceCount) && captureCount ? " · " : null}
-      {captureCount ? `${captureCount} captured value${captureCount === 1 ? "" : "s"}` : null}
+      {parts.join(" · ")}
     </span>
   );
 }

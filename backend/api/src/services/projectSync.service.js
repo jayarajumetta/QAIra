@@ -640,7 +640,13 @@ async function runQueuedSync(transaction) {
   await workspaceTransactionService.updateTransaction(transaction.id, {
     status: "running",
     started_at: new Date().toISOString(),
-    description: `Running ${integrationSummary(integration)}.`
+    description: `Running ${integrationSummary(integration)}.`,
+    metadata: {
+      current_phase: "running",
+      total_items: 1,
+      processed_items: 0,
+      progress_percent: 25
+    }
   });
   await workspaceTransactionService.appendTransactionEvent(transaction.id, {
     phase: "run",
@@ -674,6 +680,10 @@ async function runQueuedSync(transaction) {
       provider,
       integration_id: integration.id,
       project_id: projectId,
+      total_items: 1,
+      processed_items: 1,
+      progress_percent: 100,
+      current_phase: "completed",
       ...result.metadata
     },
     completed_at: completedAt.toISOString()
@@ -731,7 +741,11 @@ exports.queueProjectSync = async ({ project_id, provider, created_by, trigger_mo
       integration_id: integration.id,
       provider: integration.type,
       project_id: normalizedProjectId,
-      trigger_mode
+      trigger_mode,
+      total_items: 1,
+      processed_items: 0,
+      progress_percent: 0,
+      current_phase: "queued"
     },
     created_by,
     related_kind: "integration",

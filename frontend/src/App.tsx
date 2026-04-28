@@ -24,6 +24,7 @@ import { NotificationsPage } from "./pages/NotificationsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SharedStepsPage } from "./pages/SharedStepsPage";
 import { TestEnvironmentPage } from "./pages/TestEnvironmentPage";
+import { TestOpsPage } from "./pages/TestOpsPage";
 
 const queryClient = new QueryClient();
 const THEME_KEY = "app_theme";
@@ -42,6 +43,7 @@ const PAGE_TITLES: Record<string, { key?: string; fallback: string }> = {
   "/test-cases": { key: "page.testCases", fallback: "Test Cases" },
   "/shared-steps": { key: "page.sharedSteps", fallback: "Shared Step Groups" },
   "/executions": { key: "page.executions", fallback: "Test Runs" },
+  "/testops": { fallback: "TestOps" },
   "/test-environments": { key: "page.testEnvironments", fallback: "Test Environments" },
   "/test-data": { key: "page.testData", fallback: "Test Data" },
   "/test-configurations": { key: "page.testConfigurations", fallback: "Test Configurations" },
@@ -135,6 +137,7 @@ const router = createBrowserRouter([
       { path: "test-cases", element: <TestCasesPage /> },
       { path: "shared-steps", element: <SharedStepsPage /> },
       { path: "executions", element: <ExecutionsPage /> },
+      { path: "testops", element: <TestOpsPage /> },
       { path: "test-environments", element: <TestEnvironmentPage view="environments" /> },
       { path: "test-data", element: <TestEnvironmentPage view="data" /> },
       { path: "test-configurations", element: <TestEnvironmentPage view="configurations" /> }

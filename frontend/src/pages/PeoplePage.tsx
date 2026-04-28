@@ -291,18 +291,10 @@ export function PeoplePage() {
     mutationFn: api.users.bulkImport,
     onSuccess: async (response) => {
       showFeedback(
-        response.failed
-          ? `${response.imported} users imported, ${response.failed} rows skipped.`
-          : `${response.imported} users imported successfully.`,
-        response.failed ? "error" : "success"
+        `User import queued. Track progress in TestOps batch process ${response.transaction_id.slice(0, 8)}.`,
+        "success"
       );
-      setImportUserWarnings(response.errors.map((item) => `Row ${item.row}: ${item.message}`));
-      if (!response.failed) {
-        closeImportUsersModal(true);
-      }
-      if (response.created[0]) {
-        openUserWorkspace(response.created[0].id);
-      }
+      closeImportUsersModal(true);
       await invalidate();
     },
     onError: (error) => showFeedback(error instanceof Error ? error.message : "Unable to import users", "error")
@@ -911,7 +903,7 @@ export function PeoplePage() {
 
             <div className="action-row people-modal-actions">
               <button className="primary-button" disabled={!importUserRows.length || importUsers.isPending} onClick={() => void handleBulkImportUsers()} type="button">
-                {importUsers.isPending ? "Importing…" : `Import ${importUserRows.length || ""} Users`}
+                {importUsers.isPending ? "Queuing…" : `Queue ${importUserRows.length || ""} Users`}
               </button>
               <button
                 className="ghost-button"

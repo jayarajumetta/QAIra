@@ -229,6 +229,8 @@ class PlaywrightWebSession {
     browser = null;
     browserContext = null;
     browserPage = null;
+    consoleEntries = [];
+    networkEntries = [];
     constructor(envelope) {
         this.envelope = envelope;
     }
@@ -250,6 +252,35 @@ class PlaywrightWebSession {
             ignoreHTTPSErrors: true
         });
         this.browserPage = await this.browserContext.newPage();
+        this.browserPage.on("console", (message) => {
+            const location = message.location();
+            this.consoleEntries.push({
+                type: message.type(),
+                text: message.text(),
+                timestamp: new Date().toISOString(),
+                location: location.url ? `${location.url}:${location.lineNumber}:${location.columnNumber}` : null
+            });
+        });
+        this.browserPage.on("response", (response) => {
+            const request = response.request();
+            this.networkEntries.push({
+                method: request.method(),
+                url: response.url(),
+                status: response.status(),
+                resource_type: request.resourceType(),
+                timestamp: new Date().toISOString()
+            });
+        });
+        this.browserPage.on("requestfailed", (request) => {
+            this.networkEntries.push({
+                method: request.method(),
+                url: request.url(),
+                status: null,
+                resource_type: request.resourceType(),
+                error: request.failure()?.errorText || "request failed",
+                timestamp: new Date().toISOString()
+            });
+        });
     }
     async stop() {
         await this.browserContext?.close();
@@ -358,6 +389,25 @@ class PlaywrightWebSession {
             mimeType: "image/png"
         };
     }
+    markDiagnostics() {
+        return {
+            started_at: new Date().toISOString(),
+            console_index: this.consoleEntries.length,
+            network_index: this.networkEntries.length
+        };
+    }
+    async collectDiagnostics(marker, captures, durationMs) {
+        return {
+            provider: this.provider,
+            started_at: marker.started_at,
+            ended_at: new Date().toISOString(),
+            duration_ms: durationMs,
+            url: this.browserPage ? this.browserPage.url() : "",
+            console: this.consoleEntries.slice(marker.console_index).slice(-80),
+            network: this.networkEntries.slice(marker.network_index).slice(-120),
+            captures
+        };
+    }
     bindings() {
         const pageFacade = {
             goto: (url) => this.goto(url),
@@ -407,6 +457,7 @@ class SeleniumWebSession {
     envelope;
     provider = "selenium";
     driverInstance = null;
+    networkEntries = [];
     constructor(envelope) {
         this.envelope = envelope;
     }
@@ -480,6 +531,13 @@ class SeleniumWebSession {
     }
     async goto(target) {
         await this.driverOrThrow.get(target);
+        this.networkEntries.push({
+            method: "GET",
+            url: target,
+            status: null,
+            resource_type: "document",
+            timestamp: new Date().toISOString()
+        });
     }
     async click(target) {
         const element = await this.resolveElement(target);
@@ -539,6 +597,38 @@ class SeleniumWebSession {
             dataUrl: `data:image/png;base64,${base64}`,
             fileName: `${label}.png`,
             mimeType: "image/png"
+        };
+    }
+    markDiagnostics() {
+        return {
+            started_at: new Date().toISOString(),
+            console_index: 0,
+            network_index: this.networkEntries.length
+        };
+    }
+    async collectDiagnostics(marker, captures, durationMs) {
+        let consoleEntries = [];
+        try {
+            const manager = this.driverOrThrow.manage();
+            const browserLogs = await manager.logs?.().get("browser");
+            consoleEntries = (browserLogs || []).slice(-80).map((entry) => ({
+                type: typeof entry.level === "string" ? entry.level : entry.level?.name || "browser",
+                text: String(entry.message || ""),
+                timestamp: entry.timestamp ? new Date(entry.timestamp).toISOString() : new Date().toISOString()
+            }));
+        }
+        catch {
+            consoleEntries = [];
+        }
+        return {
+            provider: this.provider,
+            started_at: marker.started_at,
+            ended_at: new Date().toISOString(),
+            duration_ms: durationMs,
+            url: await this.driverOrThrow.getCurrentUrl(),
+            console: consoleEntries,
+            network: this.networkEntries.slice(marker.network_index).slice(-120),
+            captures
         };
     }
     bindings() {
@@ -714,6 +804,9 @@ export const createWebRunSession = (envelope, capturedValues = {}) => {
             let recoveryAttempted = false;
             let recoverySucceeded = false;
             let finalError = null;
+            const diagnosticsMarker = session.markDiagnostics();
+            const startedAtMs = Date.now();
+            const collectWebDetail = () => session.collectDiagnostics(diagnosticsMarker, captures, Math.max(Date.now() - startedAtMs, 0));
             try {
                 await executeStepAttempt(session, { step, context, envelope }, captures);
                 return {
@@ -726,6 +819,7 @@ export const createWebRunSession = (envelope, capturedValues = {}) => {
                         recoverySucceeded
                     }),
                     captures,
+                    web_detail: await collectWebDetail(),
                     recovery_attempted: recoveryAttempted,
                     recovery_succeeded: recoverySucceeded
                 };
@@ -750,6 +844,7 @@ export const createWebRunSession = (envelope, capturedValues = {}) => {
                             recoverySucceeded
                         }),
                         captures,
+                        web_detail: await collectWebDetail(),
                         evidence: await session.screenshot(`step-${step.order}-recovered`),
                         recovery_attempted: recoveryAttempted,
                         recovery_succeeded: recoverySucceeded
@@ -770,6 +865,7 @@ export const createWebRunSession = (envelope, capturedValues = {}) => {
                     error: finalError
                 }),
                 captures,
+                web_detail: await collectWebDetail(),
                 evidence: await session.screenshot(`step-${step.order}-failed`),
                 recovery_attempted: recoveryAttempted,
                 recovery_succeeded: recoverySucceeded

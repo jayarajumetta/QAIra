@@ -861,23 +861,12 @@ export function RequirementsPage() {
         rows: importRows
       });
 
-      setMessageTone(response.failed ? "error" : "success");
-      setMessage(
-        response.failed
-          ? `${response.imported} requirements imported, ${response.failed} rows skipped.`
-          : `${response.imported} requirements imported successfully.`
-      );
-      setImportWarnings(response.errors.map((item) => `Row ${item.row}: ${item.message}`));
+      setMessageTone("success");
+      setMessage(`Requirement import queued. Track progress in TestOps batch process ${response.transaction_id.slice(0, 8)}.`);
+      setImportWarnings([]);
       setImportRows([]);
       setImportFileName("");
-      const lastCreated = response.created[response.created.length - 1];
-      if (lastCreated) {
-        setSelectedRequirementId(lastCreated.id);
-        setAiRequirementId(lastCreated.id);
-      }
-      if (!response.failed) {
-        setIsImportModalOpen(false);
-      }
+      setIsImportModalOpen(false);
       await refresh();
     } catch (error) {
       showError(error, "Unable to import requirements");
@@ -1625,7 +1614,7 @@ export function RequirementsPage() {
                 onClick={() => void handleBulkImportRequirements()}
                 type="button"
               >
-                {bulkImportRequirements.isPending ? "Importing…" : `Import ${importRows.length || ""} Requirements`}
+                {bulkImportRequirements.isPending ? "Queuing…" : `Queue ${importRows.length || ""} Requirements`}
               </button>
               <button
                 className="ghost-button"

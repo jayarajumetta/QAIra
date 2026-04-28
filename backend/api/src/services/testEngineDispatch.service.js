@@ -207,6 +207,14 @@ const normalizeApiDetail = (value) => {
   return value;
 };
 
+const normalizeWebDetail = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value;
+};
+
 const normalizeArtifactBundle = (value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -420,14 +428,14 @@ const buildEngineEnvelope = ({
     source_mode: "manual-handover",
     automated: true,
     browser: resolvedBrowser,
-    headless: integrationConfig.headless !== false,
+    headless: integrationConfig.headless === true,
     max_repair_attempts:
       integrationConfig.healing_enabled === false
         ? 0
         : Math.max(0, normalizeInteger(integrationConfig.max_repair_attempts, 1) ?? 1),
     run_timeout_seconds: Math.max(60, normalizeInteger(integrationConfig.run_timeout_seconds, 1800) ?? 1800),
     web_engine: {
-      active: normalizeTestEngineWebEngine(integrationConfig.active_web_engine, "playwright")
+      active: normalizeTestEngineWebEngine(integrationConfig.active_web_engine, "selenium")
     },
     manual_spec: buildManualSpec({ caseSnapshot, steps, execution }),
     steps,
@@ -489,6 +497,7 @@ const parseStructuredLogs = (value) => {
       stepNotes: {},
       stepEvidence: {},
       stepApiDetails: {},
+      stepWebDetails: {},
       stepCaptures: {}
     };
   }
@@ -507,6 +516,9 @@ const parseStructuredLogs = (value) => {
       : {},
     stepApiDetails: parsed.stepApiDetails && typeof parsed.stepApiDetails === "object" && !Array.isArray(parsed.stepApiDetails)
       ? { ...parsed.stepApiDetails }
+      : {},
+    stepWebDetails: parsed.stepWebDetails && typeof parsed.stepWebDetails === "object" && !Array.isArray(parsed.stepWebDetails)
+      ? { ...parsed.stepWebDetails }
       : {},
     stepCaptures: normalizedStepCaptures
   };
@@ -1273,6 +1285,7 @@ exports.reportQueuedStep = async ({
   note,
   evidence,
   api_detail,
+  web_detail,
   captures,
   recovery_attempted,
   recovery_succeeded
@@ -1299,6 +1312,7 @@ exports.reportQueuedStep = async ({
   const existingLogs = parseStructuredLogs(runtimeState.logs);
   const normalizedEvidence = normalizeInlineEvidence(evidence);
   const normalizedApiDetail = normalizeApiDetail(api_detail);
+  const normalizedWebDetail = normalizeWebDetail(web_detail);
   const normalizedCaptures = normalizeCapturedValuesRecord(captures);
   const recoveryAttempted = Boolean(recovery_attempted);
   const recoverySucceeded = Boolean(recovery_succeeded);
@@ -1329,6 +1343,14 @@ exports.reportQueuedStep = async ({
         }
       : {
           ...existingLogs.stepApiDetails
+        },
+    stepWebDetails: normalizedWebDetail
+      ? {
+          ...existingLogs.stepWebDetails,
+          [step.id]: normalizedWebDetail
+        }
+      : {
+          ...existingLogs.stepWebDetails
         },
     stepCaptures: Object.keys(normalizedCaptures).length
       ? {
@@ -1415,6 +1437,7 @@ exports.reportQueuedStep = async ({
       step_status: normalizedStatus,
       step_note: normalizeText(note) || "",
       step_detail: normalizedApiDetail,
+      web_detail: normalizedWebDetail,
       step_evidence: normalizedEvidence,
       captures: normalizedCaptures
     });
@@ -1448,16 +1471,19 @@ exports.completeQueuedJob = async ({
   const logs = parseStructuredLogs(runtimeState.logs);
   const stepIds = Array.isArray(job.payload?.steps) ? job.payload.steps.map((step) => step.id) : [];
   const resolvedStatuses = stepIds.map((stepId) => logs.stepStatuses[stepId]).filter(Boolean);
+  const derivedStatus = resolvedStatuses.includes("failed")
+    ? "failed"
+    : stepIds.length && resolvedStatuses.length === stepIds.length && resolvedStatuses.every((value) => value === "passed")
+      ? "passed"
+      : resolvedStatuses.includes("blocked")
+        ? "blocked"
+        : "blocked";
   let finalStatus = normalizeText(status);
 
   if (finalStatus !== "passed" && finalStatus !== "failed" && finalStatus !== "blocked") {
-    if (resolvedStatuses.includes("failed")) {
-      finalStatus = "failed";
-    } else if (stepIds.length && resolvedStatuses.length === stepIds.length && resolvedStatuses.every((value) => value === "passed")) {
-      finalStatus = "passed";
-    } else {
-      finalStatus = "blocked";
-    }
+    finalStatus = derivedStatus;
+  } else if (finalStatus === "passed" && derivedStatus !== "passed") {
+    finalStatus = derivedStatus;
   }
 
   const startedAt = job.started_at ? new Date(job.started_at).getTime() : Date.now();

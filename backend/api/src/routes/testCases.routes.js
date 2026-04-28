@@ -5,6 +5,7 @@ const requirementService = require("../services/requirement.service");
 const requirementDesignService = require("../services/requirementDesign.service");
 const aiTestCaseGenerationService = require("../services/aiTestCaseGeneration.service");
 const aiCaseAuthoringService = require("../services/aiCaseAuthoring.service");
+const batchProcessService = require("../services/batchProcess.service");
 const { TEST_CASE_AUTOMATED_VALUES, TEST_CASE_STATUS_VALUES } = require("../domain/catalog");
 
 const resolveScopedRequirements = async (requirementIds = [], projectId) => {
@@ -96,8 +97,26 @@ module.exports = async function (fastify) {
     const appType = await appTypeService.getAppType(req.body.app_type_id);
     await projectService.getProject(appType.project_id, req.user.id);
 
-    return service.bulkImportTestCases({
+    return batchProcessService.queueTestCaseImport({
       ...req.body,
+      created_by: req.user.id
+    });
+  });
+
+  fastify.post("/test-cases/export", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      app_type_id: { required: true, type: "string" },
+      test_case_ids: { required: false, type: "array", items: "string" }
+    }, req.body);
+
+    const appType = await appTypeService.getAppType(req.body.app_type_id);
+    await projectService.getProject(appType.project_id, req.user.id);
+
+    return batchProcessService.queueTestCaseExport({
+      app_type_id: req.body.app_type_id,
+      test_case_ids: req.body.test_case_ids,
       created_by: req.user.id
     });
   });

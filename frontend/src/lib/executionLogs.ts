@@ -33,6 +33,29 @@ export type ExecutionStepApiDetail = {
   assertions?: ExecutionApiAssertion[];
 };
 
+export type ExecutionStepWebDetail = {
+  provider?: string;
+  started_at?: string;
+  ended_at?: string;
+  duration_ms?: number;
+  url?: string;
+  console?: Array<{
+    type?: string;
+    text?: string;
+    timestamp?: string;
+    location?: string | null;
+  }>;
+  network?: Array<{
+    method?: string;
+    url?: string;
+    status?: number | null;
+    resource_type?: string | null;
+    error?: string | null;
+    timestamp?: string;
+  }>;
+  captures?: Record<string, string>;
+};
+
 export type ExecutionStepCaptureMap = Record<string, string>;
 
 export type ExecutionLogsPayload = {
@@ -40,6 +63,7 @@ export type ExecutionLogsPayload = {
   stepNotes?: Record<string, string>;
   stepEvidence?: Record<string, ExecutionStepEvidence>;
   stepApiDetails?: Record<string, ExecutionStepApiDetail>;
+  stepWebDetails?: Record<string, ExecutionStepWebDetail>;
   stepCaptures?: Record<string, ExecutionStepCaptureMap>;
 };
 
@@ -127,6 +151,9 @@ export function parseExecutionLogs(logs: string | null): ExecutionLogsPayload {
       stepApiDetails: typeof payload.stepApiDetails === "object" && payload.stepApiDetails && !Array.isArray(payload.stepApiDetails)
         ? payload.stepApiDetails
         : {},
+      stepWebDetails: typeof payload.stepWebDetails === "object" && payload.stepWebDetails && !Array.isArray(payload.stepWebDetails)
+        ? payload.stepWebDetails
+        : {},
       stepCaptures: normalizeStepCaptures(payload.stepCaptures)
     };
   } catch {
@@ -140,6 +167,7 @@ export function stringifyExecutionLogs(payload: ExecutionLogsPayload): string {
     stepNotes: payload.stepNotes || {},
     stepEvidence: payload.stepEvidence || {},
     stepApiDetails: payload.stepApiDetails || {},
+    stepWebDetails: payload.stepWebDetails || {},
     stepCaptures: payload.stepCaptures || {}
   });
 }

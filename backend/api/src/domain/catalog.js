@@ -72,9 +72,9 @@ const INTEGRATION_TYPE_OPTIONS = freezeOptions([
     icon: "TE",
     defaults: {
       runner: "hybrid",
-      active_web_engine: "playwright",
+      active_web_engine: "selenium",
       browser: "chromium",
-      headless: true,
+      headless: false,
       healing_enabled: true,
       max_repair_attempts: 2,
       trace_mode: "on-first-retry",

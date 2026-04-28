@@ -113,11 +113,35 @@ export type QairaExecutionStepApiDetail = {
   assertions: QairaExecutionApiAssertion[];
 };
 
+export type QairaExecutionStepWebDetail = {
+  provider: EngineWebEngineProvider;
+  started_at: string;
+  ended_at: string;
+  duration_ms: number;
+  url: string;
+  console: Array<{
+    type: string;
+    text: string;
+    timestamp: string;
+    location?: string | null;
+  }>;
+  network: Array<{
+    method: string;
+    url: string;
+    status?: number | null;
+    resource_type?: string | null;
+    error?: string | null;
+    timestamp: string;
+  }>;
+  captures: Record<string, string>;
+};
+
 export type QairaExecutionLogsPayload = {
   stepStatuses?: Record<string, QairaExecutionResultStatus>;
   stepNotes?: Record<string, string>;
   stepEvidence?: Record<string, QairaExecutionStepEvidence>;
   stepApiDetails?: Record<string, QairaExecutionStepApiDetail>;
+  stepWebDetails?: Record<string, QairaExecutionStepWebDetail>;
   stepCaptures?: Record<string, Record<string, string>>;
 };
 

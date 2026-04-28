@@ -832,7 +832,7 @@ exports.createTestCase = async (input) => {
   return response;
 };
 
-exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], created_by, import_source, batches = [] } = {}) => {
+exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], created_by, import_source, batches = [], transaction_id } = {}) => {
   const resolvedAppTypeId = normalizeText(app_type_id);
   const defaultRequirementId = normalizeText(requirement_id);
   const normalizedBatches = normalizeImportBatches({ batches, rows, import_source });
@@ -869,24 +869,43 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
   const suiteLookup = buildNameLookup(availableSuites, "name");
   const requirementLookup = buildNameLookup(availableRequirements, "title");
   const sharedGroupLookup = buildNameLookup(availableSharedGroups, "name");
-  const transaction = await workspaceTransactionService.createTransaction({
-    project_id: appType.project_id,
-    app_type_id: resolvedAppTypeId,
-    category: "bulk_import",
-    action: "test_case_import",
-    status: "running",
-    title: isSingleBatch ? `${transactionSourceLabel} test case import` : "Test case source import batch",
-    description: `Importing ${totalRowCount} test case${totalRowCount === 1 ? "" : "s"} from ${sourceSummary}.`,
-    metadata: {
-      import_source: isSingleSource ? uniqueSources[0] : "mixed",
-      import_sources: uniqueSources,
-      total_batches: normalizedBatches.length,
-      total_rows: totalRowCount,
-      requirement_id: defaultRequirementId
-    },
-    created_by,
-    started_at: new Date().toISOString()
-  });
+  const transactionMetadata = {
+    import_source: isSingleSource ? uniqueSources[0] : "mixed",
+    import_sources: uniqueSources,
+    total_batches: normalizedBatches.length,
+    total_rows: totalRowCount,
+    total_items: totalRowCount,
+    processed_items: 0,
+    imported: 0,
+    failed: 0,
+    progress_percent: 0,
+    current_phase: "prepare",
+    requirement_id: defaultRequirementId
+  };
+  const transaction = transaction_id
+    ? await workspaceTransactionService.updateTransaction(transaction_id, {
+        project_id: appType.project_id,
+        app_type_id: resolvedAppTypeId,
+        category: "bulk_import",
+        action: "test_case_import",
+        status: "running",
+        title: isSingleBatch ? `${transactionSourceLabel} test case import` : "Test case source import batch",
+        description: `Importing ${totalRowCount} test case${totalRowCount === 1 ? "" : "s"} from ${sourceSummary}.`,
+        metadata: transactionMetadata,
+        started_at: new Date().toISOString()
+      })
+    : await workspaceTransactionService.createTransaction({
+        project_id: appType.project_id,
+        app_type_id: resolvedAppTypeId,
+        category: "bulk_import",
+        action: "test_case_import",
+        status: "running",
+        title: isSingleBatch ? `${transactionSourceLabel} test case import` : "Test case source import batch",
+        description: `Importing ${totalRowCount} test case${totalRowCount === 1 ? "" : "s"} from ${sourceSummary}.`,
+        metadata: transactionMetadata,
+        created_by,
+        started_at: new Date().toISOString()
+      });
   await workspaceTransactionService.appendTransactionEvent(transaction.id, {
     phase: "prepare",
     message: `Started test case import for ${sourceSummary}.`,
@@ -901,6 +920,7 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
 
   const created = [];
   const errors = [];
+  let processedRows = 0;
 
   for (const batch of normalizedBatches) {
     await workspaceTransactionService.appendTransactionEvent(transaction.id, {
@@ -997,6 +1017,34 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
           message: error.message || "Unable to import test case"
         });
       }
+
+      processedRows += 1;
+
+      if (processedRows === 1 || processedRows === totalRowCount || processedRows % 10 === 0) {
+        await workspaceTransactionService.updateTransaction(transaction.id, {
+          description: `Imported ${created.length} of ${totalRowCount} test case${totalRowCount === 1 ? "" : "s"} so far.`,
+          metadata: {
+            processed_items: processedRows,
+            total_items: totalRowCount,
+            imported: created.length,
+            failed: errors.length,
+            progress_percent: totalRowCount ? Math.round((processedRows / totalRowCount) * 100) : 0,
+            current_phase: "import",
+            import_source: isSingleSource ? uniqueSources[0] : "mixed",
+            import_sources: uniqueSources
+          }
+        });
+        await workspaceTransactionService.appendTransactionEvent(transaction.id, {
+          phase: "import",
+          message: `Processed ${processedRows} of ${totalRowCount} test case row${totalRowCount === 1 ? "" : "s"}.`,
+          details: {
+            processed_items: processedRows,
+            total_items: totalRowCount,
+            imported: created.length,
+            failed: errors.length
+          }
+        });
+      }
     }
   }
 
@@ -1017,8 +1065,12 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
       import_sources: uniqueSources,
       total_batches: normalizedBatches.length,
       total_rows: totalRowCount,
+      total_items: totalRowCount,
+      processed_items: totalRowCount,
       imported: created.length,
       failed: errors.length,
+      progress_percent: 100,
+      current_phase: "completed",
       requirement_id: defaultRequirementId
     },
     completed_at: new Date().toISOString()

@@ -135,9 +135,9 @@ const buildEmptyDraft = (
     engine_project_id: "",
     engine_callback_url: "",
     engine_callback_secret: "",
-    engine_active_web_engine: (typeof testEngineDefaults.active_web_engine === "string" ? testEngineDefaults.active_web_engine : "playwright") as IntegrationDraft["engine_active_web_engine"],
+    engine_active_web_engine: (typeof testEngineDefaults.active_web_engine === "string" ? testEngineDefaults.active_web_engine : "selenium") as IntegrationDraft["engine_active_web_engine"],
     engine_browser: (typeof testEngineDefaults.browser === "string" ? testEngineDefaults.browser : "chromium") as IntegrationDraft["engine_browser"],
-    engine_headless: testEngineDefaults.headless !== false,
+    engine_headless: testEngineDefaults.headless === true,
     engine_healing_enabled: testEngineDefaults.healing_enabled !== false,
     engine_max_repair_attempts: String(testEngineDefaults.max_repair_attempts ?? "2"),
     engine_trace_mode: (typeof testEngineDefaults.trace_mode === "string" ? testEngineDefaults.trace_mode : "on-first-retry") as IntegrationDraft["engine_trace_mode"],
@@ -312,7 +312,7 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
       ...current,
       type,
       base_url: nextBaseUrl,
-      engine_active_web_engine: (current.engine_active_web_engine || String(testEngineDefaults.active_web_engine || "playwright")) as IntegrationDraft["engine_active_web_engine"],
+      engine_active_web_engine: (current.engine_active_web_engine || String(testEngineDefaults.active_web_engine || "selenium")) as IntegrationDraft["engine_active_web_engine"],
       engine_browser: (current.engine_browser || String(testEngineDefaults.browser || "chromium")) as IntegrationDraft["engine_browser"],
       engine_headless: current.engine_headless,
       engine_healing_enabled: current.engine_healing_enabled,
@@ -1331,6 +1331,21 @@ export function IntegrationsPage() {
 
                       <div className="empty-state compact integration-helper">
                         Selenium runs expose noVNC on port 7900 by default. Leave this blank when the engine can derive it from its public host, or set the hosted viewer URL here for remote stacks.
+                      </div>
+                    </div>
+
+                    <div className="record-grid">
+                      <label className="checkbox-field">
+                        <input
+                          checked={!draft.engine_headless}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_headless: !event.target.checked }))}
+                          type="checkbox"
+                        />
+                        <span>Show browser while web tests run</span>
+                      </label>
+
+                      <div className="empty-state compact integration-helper">
+                        Headed browser execution is the default so live runs can be watched while automated web cases are pulled from the queue.
                       </div>
                     </div>
 

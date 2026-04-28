@@ -16,6 +16,7 @@ const { ensureRuntimeSchema } = require("./db/bootstrap");
 const executionScheduleService = require("./services/executionSchedule.service");
 const aiTestCaseGenerationService = require("./services/aiTestCaseGeneration.service");
 const projectSyncService = require("./services/projectSync.service");
+const batchProcessService = require("./services/batchProcess.service");
 const { verifyToken, generateRequestId } = require("./utils/token");
 
 const createError = (message, statusCode) => {
@@ -207,6 +208,7 @@ fastify.addHook("onReady", async () => {
 let scheduleProcessorTimer = null;
 let aiGenerationProcessorTimer = null;
 let projectSyncTimer = null;
+let batchProcessTimer = null;
 
 fastify.addHook("onReady", async () => {
   const runDueSchedules = async () => {
@@ -248,6 +250,19 @@ fastify.addHook("onReady", async () => {
   projectSyncTimer = setInterval(runProjectSyncs, 60 * 1000);
 });
 
+fastify.addHook("onReady", async () => {
+  const runBatchProcesses = async () => {
+    try {
+      await batchProcessService.processQueuedJobs();
+    } catch (error) {
+      fastify.log.error(error, "Unable to process queued batch jobs");
+    }
+  };
+
+  await runBatchProcesses();
+  batchProcessTimer = setInterval(runBatchProcesses, 10 * 1000);
+});
+
 fastify.addHook("onClose", async () => {
   if (scheduleProcessorTimer) {
     clearInterval(scheduleProcessorTimer);
@@ -262,6 +277,11 @@ fastify.addHook("onClose", async () => {
   if (projectSyncTimer) {
     clearInterval(projectSyncTimer);
     projectSyncTimer = null;
+  }
+
+  if (batchProcessTimer) {
+    clearInterval(batchProcessTimer);
+    batchProcessTimer = null;
   }
 });
 

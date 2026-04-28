@@ -54,6 +54,7 @@ async function executeQueuedJob(job: EngineQueuedJob, workerId: string, logger: 
     : null;
   let healingAttempted = Boolean(job.runtime_state?.healing_attempted);
   let healingSucceeded = Boolean(job.runtime_state?.healing_succeeded);
+  const patchProposals: Array<Record<string, unknown>> = [];
 
   try {
     await startQueuedJob(job.id, workerId);
@@ -122,10 +123,19 @@ async function executeQueuedJob(job: EngineQueuedJob, workerId: string, logger: 
       const stepResult = await webRunSession.runStep(step);
       healingAttempted = healingAttempted || stepResult.recovery_attempted;
       healingSucceeded = healingSucceeded || stepResult.recovery_succeeded;
+      if (stepResult.recovery_succeeded) {
+        patchProposals.push({
+          kind: "script",
+          status: "review",
+          summary: `Step ${step.order} recovered after a headed browser retry. Review this step for locator or wait hardening before promoting the fix.`,
+          target_path: `qaira://test-cases/${envelope.qaira_test_case_id}/steps/${step.id}`
+        });
+      }
       const report = await reportQueuedStep(job.id, step.id, {
         status: stepResult.status,
         note: stepResult.note,
         evidence: stepResult.evidence || null,
+        web_detail: stepResult.web_detail,
         captures: stepResult.captures,
         recovery_attempted: stepResult.recovery_attempted,
         recovery_succeeded: stepResult.recovery_succeeded
@@ -139,12 +149,13 @@ async function executeQueuedJob(job: EngineQueuedJob, workerId: string, logger: 
           status: "failed",
           error: failureSummary,
           summary: failureSummary,
-          deterministic_attempted: true,
-          healing_attempted: healingAttempted,
-          healing_succeeded: healingSucceeded
-        });
-        return;
-      }
+            deterministic_attempted: true,
+            healing_attempted: healingAttempted,
+            healing_succeeded: healingSucceeded,
+            patch_proposals: patchProposals
+          });
+          return;
+        }
     }
 
     const completionSummary = `${job.test_case_title} completed successfully.`;
@@ -153,7 +164,8 @@ async function executeQueuedJob(job: EngineQueuedJob, workerId: string, logger: 
       summary: completionSummary,
       deterministic_attempted: true,
       healing_attempted: healingAttempted,
-      healing_succeeded: healingSucceeded
+      healing_succeeded: healingSucceeded,
+      patch_proposals: patchProposals
     });
     updateRunState(accepted.id, "completed", completionSummary);
   } catch (error) {
@@ -168,7 +180,8 @@ async function executeQueuedJob(job: EngineQueuedJob, workerId: string, logger: 
         summary: message,
         deterministic_attempted: true,
         healing_attempted: healingAttempted,
-        healing_succeeded: healingSucceeded
+        healing_succeeded: healingSucceeded,
+        patch_proposals: patchProposals
       });
     } catch (reportError) {
       logger.error({ error: reportError, jobId: job.id }, "Unable to report queued job failure back to QAira");

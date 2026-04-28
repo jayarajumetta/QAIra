@@ -15,7 +15,7 @@ const hydrateTestCaseIds = async (requirement) => {
   };
 };
 
-exports.bulkImportRequirements = async ({ project_id, rows = [], created_by } = {}) => {
+exports.bulkImportRequirements = async ({ project_id, rows = [], created_by, transaction_id } = {}) => {
   if (!project_id) {
     throw new Error("project_id is required");
   }
@@ -34,20 +34,42 @@ exports.bulkImportRequirements = async ({ project_id, rows = [], created_by } = 
 
   const created = [];
   const errors = [];
-  const transaction = await workspaceTransactionService.createTransaction({
-    project_id,
-    category: "bulk_import",
-    action: "requirement_import",
-    status: "running",
-    title: "Requirement import",
-    description: `Importing ${rows.length} requirement${rows.length === 1 ? "" : "s"} from CSV.`,
-    metadata: {
-      import_source: "csv",
-      total_rows: rows.length
-    },
-    created_by,
-    started_at: new Date().toISOString()
-  });
+  const transaction = transaction_id
+    ? await workspaceTransactionService.updateTransaction(transaction_id, {
+        project_id,
+        category: "bulk_import",
+        action: "requirement_import",
+        status: "running",
+        title: "Requirement import",
+        description: `Importing ${rows.length} requirement${rows.length === 1 ? "" : "s"} from CSV.`,
+        metadata: {
+          import_source: "csv",
+          total_rows: rows.length,
+          total_items: rows.length,
+          processed_items: 0,
+          progress_percent: 0,
+          current_phase: "prepare"
+        },
+        started_at: new Date().toISOString()
+      })
+    : await workspaceTransactionService.createTransaction({
+        project_id,
+        category: "bulk_import",
+        action: "requirement_import",
+        status: "running",
+        title: "Requirement import",
+        description: `Importing ${rows.length} requirement${rows.length === 1 ? "" : "s"} from CSV.`,
+        metadata: {
+          import_source: "csv",
+          total_rows: rows.length,
+          total_items: rows.length,
+          processed_items: 0,
+          progress_percent: 0,
+          current_phase: "prepare"
+        },
+        created_by,
+        started_at: new Date().toISOString()
+      });
   await workspaceTransactionService.appendTransactionEvent(transaction.id, {
     phase: "prepare",
     message: `Started requirement import for ${rows.length} CSV row${rows.length === 1 ? "" : "s"}.`,
@@ -86,6 +108,32 @@ exports.bulkImportRequirements = async ({ project_id, rows = [], created_by } = 
         message: error.message || "Unable to import requirement"
       });
     }
+
+    const processed = index + 1;
+
+    if (processed === 1 || processed === rows.length || processed % 10 === 0) {
+      await workspaceTransactionService.updateTransaction(transaction.id, {
+        description: `Imported ${created.length} of ${rows.length} requirement${rows.length === 1 ? "" : "s"} so far.`,
+        metadata: {
+          processed_items: processed,
+          total_items: rows.length,
+          imported: created.length,
+          failed: errors.length,
+          progress_percent: rows.length ? Math.round((processed / rows.length) * 100) : 0,
+          current_phase: "import"
+        }
+      });
+      await workspaceTransactionService.appendTransactionEvent(transaction.id, {
+        phase: "import",
+        message: `Processed ${processed} of ${rows.length} requirement row${rows.length === 1 ? "" : "s"}.`,
+        details: {
+          processed_items: processed,
+          total_items: rows.length,
+          imported: created.length,
+          failed: errors.length
+        }
+      });
+    }
   }
 
   const response = {
@@ -103,8 +151,12 @@ exports.bulkImportRequirements = async ({ project_id, rows = [], created_by } = 
     metadata: {
       import_source: "csv",
       total_rows: rows.length,
+      total_items: rows.length,
+      processed_items: rows.length,
       imported: created.length,
-      failed: errors.length
+      failed: errors.length,
+      progress_percent: 100,
+      current_phase: "completed"
     },
     completed_at: new Date().toISOString()
   });

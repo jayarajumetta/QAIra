@@ -25,10 +25,44 @@ type StepEvidence = {
   mimeType?: string;
 };
 
+type WebConsoleEntry = {
+  type: string;
+  text: string;
+  timestamp: string;
+  location?: string | null;
+};
+
+type WebNetworkEntry = {
+  method: string;
+  url: string;
+  status?: number | null;
+  resource_type?: string | null;
+  error?: string | null;
+  timestamp: string;
+};
+
+type WebDiagnosticsMarker = {
+  started_at: string;
+  console_index: number;
+  network_index: number;
+};
+
+type WebStepDetail = {
+  provider: EngineWebEngineProvider;
+  started_at: string;
+  ended_at: string;
+  duration_ms: number;
+  url: string;
+  console: WebConsoleEntry[];
+  network: WebNetworkEntry[];
+  captures: Record<string, string>;
+};
+
 type WebStepExecutionResult = {
   status: "passed" | "failed";
   note: string;
   captures: Record<string, string>;
+  web_detail: WebStepDetail;
   evidence?: StepEvidence | null;
   recovery_attempted: boolean;
   recovery_succeeded: boolean;
@@ -96,6 +130,8 @@ type WebSession = {
   text: (target: string) => Promise<string>;
   value: (target: string) => Promise<string>;
   screenshot: (label: string) => Promise<StepEvidence>;
+  markDiagnostics: () => WebDiagnosticsMarker;
+  collectDiagnostics: (marker: WebDiagnosticsMarker, captures: Record<string, string>, durationMs: number) => Promise<WebStepDetail>;
   bindings: () => Pick<WebExecutionBindings, "page" | "playwrightPage" | "driver">;
 };
 
@@ -389,6 +425,8 @@ class PlaywrightWebSession implements WebSession {
   private browser: Browser | null = null;
   private browserContext: BrowserContext | null = null;
   private browserPage: Page | null = null;
+  private consoleEntries: WebConsoleEntry[] = [];
+  private networkEntries: WebNetworkEntry[] = [];
 
   constructor(private readonly envelope: EngineRunEnvelope) {}
 
@@ -413,6 +451,35 @@ class PlaywrightWebSession implements WebSession {
       ignoreHTTPSErrors: true
     });
     this.browserPage = await this.browserContext.newPage();
+    this.browserPage.on("console", (message) => {
+      const location = message.location();
+      this.consoleEntries.push({
+        type: message.type(),
+        text: message.text(),
+        timestamp: new Date().toISOString(),
+        location: location.url ? `${location.url}:${location.lineNumber}:${location.columnNumber}` : null
+      });
+    });
+    this.browserPage.on("response", (response) => {
+      const request = response.request();
+      this.networkEntries.push({
+        method: request.method(),
+        url: response.url(),
+        status: response.status(),
+        resource_type: request.resourceType(),
+        timestamp: new Date().toISOString()
+      });
+    });
+    this.browserPage.on("requestfailed", (request) => {
+      this.networkEntries.push({
+        method: request.method(),
+        url: request.url(),
+        status: null,
+        resource_type: request.resourceType(),
+        error: request.failure()?.errorText || "request failed",
+        timestamp: new Date().toISOString()
+      });
+    });
   }
 
   async stop() {
@@ -545,6 +612,27 @@ class PlaywrightWebSession implements WebSession {
     };
   }
 
+  markDiagnostics() {
+    return {
+      started_at: new Date().toISOString(),
+      console_index: this.consoleEntries.length,
+      network_index: this.networkEntries.length
+    };
+  }
+
+  async collectDiagnostics(marker: WebDiagnosticsMarker, captures: Record<string, string>, durationMs: number) {
+    return {
+      provider: this.provider,
+      started_at: marker.started_at,
+      ended_at: new Date().toISOString(),
+      duration_ms: durationMs,
+      url: this.browserPage ? this.browserPage.url() : "",
+      console: this.consoleEntries.slice(marker.console_index).slice(-80),
+      network: this.networkEntries.slice(marker.network_index).slice(-120),
+      captures
+    };
+  }
+
   bindings() {
     const pageFacade: PageFacade = {
       goto: (url: string) => this.goto(url),
@@ -596,6 +684,7 @@ const createSeleniumLocatorFacade = (resolveElement: (target: string) => Promise
 class SeleniumWebSession implements WebSession {
   readonly provider: EngineWebEngineProvider = "selenium";
   private driverInstance: WebDriver | null = null;
+  private networkEntries: WebNetworkEntry[] = [];
 
   constructor(private readonly envelope: EngineRunEnvelope) {}
 
@@ -685,6 +774,13 @@ class SeleniumWebSession implements WebSession {
 
   async goto(target: string) {
     await this.driverOrThrow.get(target);
+    this.networkEntries.push({
+      method: "GET",
+      url: target,
+      status: null,
+      resource_type: "document",
+      timestamp: new Date().toISOString()
+    });
   }
 
   async click(target: string) {
@@ -759,6 +855,45 @@ class SeleniumWebSession implements WebSession {
       dataUrl: `data:image/png;base64,${base64}`,
       fileName: `${label}.png`,
       mimeType: "image/png"
+    };
+  }
+
+  markDiagnostics() {
+    return {
+      started_at: new Date().toISOString(),
+      console_index: 0,
+      network_index: this.networkEntries.length
+    };
+  }
+
+  async collectDiagnostics(marker: WebDiagnosticsMarker, captures: Record<string, string>, durationMs: number) {
+    let consoleEntries: WebConsoleEntry[] = [];
+
+    try {
+      const manager = this.driverOrThrow.manage() as unknown as {
+        logs?: () => {
+          get: (type: string) => Promise<Array<{ level?: { name?: string } | string; message?: string; timestamp?: number }>>;
+        };
+      };
+      const browserLogs = await manager.logs?.().get("browser");
+      consoleEntries = (browserLogs || []).slice(-80).map((entry) => ({
+        type: typeof entry.level === "string" ? entry.level : entry.level?.name || "browser",
+        text: String(entry.message || ""),
+        timestamp: entry.timestamp ? new Date(entry.timestamp).toISOString() : new Date().toISOString()
+      }));
+    } catch {
+      consoleEntries = [];
+    }
+
+    return {
+      provider: this.provider,
+      started_at: marker.started_at,
+      ended_at: new Date().toISOString(),
+      duration_ms: durationMs,
+      url: await this.driverOrThrow.getCurrentUrl(),
+      console: consoleEntries,
+      network: this.networkEntries.slice(marker.network_index).slice(-120),
+      captures
     };
   }
 
@@ -1024,6 +1159,9 @@ export const createWebRunSession = (envelope: EngineRunEnvelope, capturedValues:
       let recoveryAttempted = false;
       let recoverySucceeded = false;
       let finalError: Error | null = null;
+      const diagnosticsMarker = session.markDiagnostics();
+      const startedAtMs = Date.now();
+      const collectWebDetail = () => session.collectDiagnostics(diagnosticsMarker, captures, Math.max(Date.now() - startedAtMs, 0));
 
       try {
         await executeStepAttempt(session, { step, context, envelope }, captures);
@@ -1038,6 +1176,7 @@ export const createWebRunSession = (envelope: EngineRunEnvelope, capturedValues:
             recoverySucceeded
           }),
           captures,
+          web_detail: await collectWebDetail(),
           recovery_attempted: recoveryAttempted,
           recovery_succeeded: recoverySucceeded
         };
@@ -1065,6 +1204,7 @@ export const createWebRunSession = (envelope: EngineRunEnvelope, capturedValues:
               recoverySucceeded
             }),
             captures,
+            web_detail: await collectWebDetail(),
             evidence: await session.screenshot(`step-${step.order}-recovered`),
             recovery_attempted: recoveryAttempted,
             recovery_succeeded: recoverySucceeded
@@ -1085,6 +1225,7 @@ export const createWebRunSession = (envelope: EngineRunEnvelope, capturedValues:
           error: finalError
         }),
         captures,
+        web_detail: await collectWebDetail(),
         evidence: await session.screenshot(`step-${step.order}-failed`),
         recovery_attempted: recoveryAttempted,
         recovery_succeeded: recoverySucceeded

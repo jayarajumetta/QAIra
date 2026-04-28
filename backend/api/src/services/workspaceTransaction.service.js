@@ -107,6 +107,30 @@ const selectTransactionEvents = db.prepare(`
   ORDER BY created_at ASC, id ASC
 `);
 
+const insertTransactionArtifact = db.prepare(`
+  INSERT INTO workspace_transaction_artifacts (
+    id,
+    transaction_id,
+    file_name,
+    mime_type,
+    content
+  )
+  VALUES (?, ?, ?, ?, ?)
+`);
+
+const selectTransactionArtifacts = db.prepare(`
+  SELECT id, transaction_id, file_name, mime_type, created_at
+  FROM workspace_transaction_artifacts
+  WHERE transaction_id = ?
+  ORDER BY created_at DESC, id DESC
+`);
+
+const selectTransactionArtifact = db.prepare(`
+  SELECT *
+  FROM workspace_transaction_artifacts
+  WHERE id = ?
+`);
+
 const normalizeText = (value) => {
   if (value === undefined) {
     return undefined;
@@ -306,10 +330,38 @@ exports.listTransactionEvents = async (transactionId) => {
   return rows.map(hydrateTransactionEvent);
 };
 
+exports.createTransactionArtifact = async (transactionId, input = {}) => {
+  const transaction = await exports.getTransaction(transactionId);
+  const fileName = normalizeText(input.file_name || input.fileName) || "artifact.txt";
+  const mimeType = normalizeText(input.mime_type || input.mimeType) || "text/plain";
+  const content = input.content === undefined || input.content === null ? "" : String(input.content);
+  const id = uuid();
+
+  await insertTransactionArtifact.run(id, transaction.id, fileName, mimeType, content);
+
+  return { id, transaction_id: transaction.id, file_name: fileName, mime_type: mimeType };
+};
+
+exports.listTransactionArtifacts = async (transactionId) => {
+  await exports.getTransaction(transactionId);
+  return selectTransactionArtifacts.all(transactionId);
+};
+
+exports.getTransactionArtifact = async (artifactId) => {
+  const artifact = await selectTransactionArtifact.get(artifactId);
+
+  if (!artifact) {
+    throw new Error("Workspace transaction artifact not found");
+  }
+
+  return artifact;
+};
+
 exports.listTransactions = async ({
   project_id,
   app_type_id,
   category,
+  include_global = false,
   limit = 20
 } = {}) => {
   let query = `
@@ -335,7 +387,9 @@ exports.listTransactions = async ({
   const params = [];
 
   if (project_id) {
-    query += ` AND workspace_transactions.project_id = ?`;
+    query += include_global
+      ? ` AND (workspace_transactions.project_id = ? OR workspace_transactions.project_id IS NULL)`
+      : ` AND workspace_transactions.project_id = ?`;
     params.push(project_id);
   }
 

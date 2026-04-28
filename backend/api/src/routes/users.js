@@ -1,4 +1,5 @@
 const service = require("../services/user.service");
+const batchProcessService = require("../services/batchProcess.service");
 
 module.exports = async function (fastify) {
   const createError = (message, statusCode) => {
@@ -28,7 +29,7 @@ module.exports = async function (fastify) {
       throw new Error("rows must contain user objects");
     }
 
-    return service.bulkImportUsers({
+    return batchProcessService.queueUserImport({
       ...req.body,
       created_by: req.user.id
     });

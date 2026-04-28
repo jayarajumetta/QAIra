@@ -78,8 +78,6 @@ import { type AssigneeOption, buildAssigneeOptions } from "../lib/userDisplay";
 import {
   combineStepParameterValues,
   collectStepParameters,
-  filterStepParameterValues,
-  filterStepParameterValuesByScope,
   normalizeStepParameterValues,
   parseStepParameterName,
   resolveStepParameterText,
@@ -252,16 +250,6 @@ const areSuiteParameterValuesEqual = (
   left?: Record<string, unknown> | null,
   right?: Record<string, unknown> | null
 ) => serializeScopedParameterValues(left, "s") === serializeScopedParameterValues(right, "s");
-
-const pruneStepParameterValuesForScope = (
-  values: Record<string, string>,
-  parameters: StepParameterDefinition[],
-  scope: StepParameterScope
-) =>
-  filterStepParameterValuesByScope(
-    filterStepParameterValues(normalizeScopedParameterValues(values, scope), parameters),
-    scope
-  );
 
 const readStoredParameterDrafts = (storageKey: string, scope: StepParameterScope = "t") => {
   if (typeof window === "undefined") {
@@ -515,11 +503,6 @@ const materializeCopiedSteps = (steps: CopiedTestStep[]) => {
       group_id: nextGroupId
     };
   });
-};
-
-const toCsvCell = (value: string | number | null | undefined) => {
-  const normalized = String(value ?? "");
-  return /[",\n]/.test(normalized) ? `"${normalized.replace(/"/g, "\"\"")}"` : normalized;
 };
 
 const formatBulkStepActionLabel = (
@@ -2424,7 +2407,7 @@ export function TestCasesPage() {
         queryClient.invalidateQueries({ queryKey: ["executions"] }),
         queryClient.invalidateQueries({ queryKey: ["executions", projectId] })
       ]);
-      navigate(`/executions?execution=${response.id}`);
+      navigate(`/executions?view=test-case-runs&execution=${response.id}`);
     } catch (error) {
       showError(error, "Unable to create run");
     }
@@ -3305,26 +3288,12 @@ export function TestCasesPage() {
           }))
       });
 
-      setMessageTone(response.failed ? "error" : "success");
-      setMessage(
-        response.failed
-          ? `${response.imported} test cases imported, ${response.failed} rows skipped.`
-          : `${response.imported} test cases imported successfully.`
-      );
+      setMessageTone("success");
+      setMessage(`Test case import queued. Track progress in TestOps batch process ${response.transaction_id.slice(0, 8)}.`);
       setImportBatches([]);
-      setImportFileWarnings(
-        response.errors.map((item) =>
-          `${item.file_name || `Batch ${item.batch_index || 1}`}: Row ${item.row}: ${item.message}`
-        )
-      );
+      setImportFileWarnings([]);
       setImportSourceSelection("auto");
-      if (response.created[0]) {
-        syncTestCaseSearchParams(response.created[0].id);
-        setSelectedTestCaseId(response.created[0].id);
-      }
-      if (!response.failed) {
-        setIsImportModalOpen(false);
-      }
+      setIsImportModalOpen(false);
       await refreshCases();
     } catch (error) {
       showError(error, "Unable to import test cases");
@@ -3345,61 +3314,13 @@ export function TestCasesPage() {
     }
 
     try {
-      const header = [
-        "title",
-        "description",
-        "automated",
-        "priority",
-        "status",
-        "requirements",
-        "suites",
-        "action",
-        "expected_result"
-      ];
-      const rows = testCasesToExport.map((testCase) => {
-        const linkedRequirementNames = (testCase.requirement_ids || [testCase.requirement_id])
-          .map((id) => (id ? requirementTitleById[id] || "" : ""))
-          .filter(Boolean);
-        const linkedSuiteNames = (testCase.suite_ids || (testCase.suite_id ? [testCase.suite_id] : []))
-          .map((id) => suiteNameById[id] || "")
-          .filter(Boolean);
-        const scopedSteps = allStepsByCaseId[testCase.id] || [];
-
-        return [
-          testCase.title,
-          testCase.description || "",
-          testCase.automated || defaultTestCaseAutomated,
-          `P${testCase.priority || 3}`,
-          testCase.status || defaultTestCaseStatus,
-          linkedRequirementNames.join("\n"),
-          linkedSuiteNames.join("\n"),
-          scopedSteps.map((step) => formatBulkStepActionLabel(step, sharedGroupNameById)).join("\n"),
-          scopedSteps.map((step) => step.expected_result || "").join("\n")
-        ];
+      const response = await api.testCases.exportCases({
+        app_type_id: appTypeId || "",
+        test_case_ids: testCasesToExport.map((testCase) => testCase.id)
       });
-
-      const csv = [header, ...rows].map((row) => row.map((value) => toCsvCell(value)).join(",")).join("\n");
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-      const href = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      const fallbackFileLabel = testCasesToExport.length === 1
-        ? testCasesToExport[0].title
-        : appTypes.find((item) => item.id === appTypeId)?.name || "library";
-      const fileLabel = (options?.fileLabel || fallbackFileLabel)
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/gi, "-")
-        .replace(/^-+|-+$/g, "")
-        || "test-cases";
-
-      link.href = href;
-      link.download = `${fileLabel}-test-cases.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(href);
       showSuccess(
         options?.successMessage
-          || `Exported ${testCasesToExport.length} test case${testCasesToExport.length === 1 ? "" : "s"} to CSV.`
+          || `Test case export queued. Track progress in TestOps batch process ${response.transaction_id.slice(0, 8)}.`
       );
     } catch (error) {
       showError(error, "Unable to export test cases");
@@ -3414,7 +3335,7 @@ export function TestCasesPage() {
     }
 
     await exportCasesToCsv(filteredCases, {
-      successMessage: `Exported ${filteredCases.length} test case${filteredCases.length === 1 ? "" : "s"} to a user-friendly CSV format.`
+      successMessage: `Test case export queued for ${filteredCases.length} case${filteredCases.length === 1 ? "" : "s"}. Track progress in TestOps.`
     });
   };
 
@@ -4011,54 +3932,6 @@ export function TestCasesPage() {
       ),
     [displaySteps, stepDrafts]
   );
-  useEffect(() => {
-    setTestCaseParameterValues((current) => {
-      const next = pruneStepParameterValuesForScope(current, detectedStepParameters, "t");
-      const currentKeys = Object.keys(current);
-      const nextKeys = Object.keys(next);
-
-      if (
-        currentKeys.length === nextKeys.length
-        && currentKeys.every((key) => current[key] === next[key])
-      ) {
-        return current;
-      }
-
-      return next;
-    });
-  }, [detectedStepParameters]);
-  useEffect(() => {
-    setSuiteParameterValues((current) => {
-      const next = pruneStepParameterValuesForScope(current, detectedStepParameters, "s");
-      const currentKeys = Object.keys(current);
-      const nextKeys = Object.keys(next);
-
-      if (
-        currentKeys.length === nextKeys.length
-        && currentKeys.every((key) => current[key] === next[key])
-      ) {
-        return current;
-      }
-
-      return next;
-    });
-  }, [detectedStepParameters]);
-  useEffect(() => {
-    setRunPreviewParameterValues((current) => {
-      const next = pruneStepParameterValuesForScope(current, detectedStepParameters, "r");
-      const currentKeys = Object.keys(current);
-      const nextKeys = Object.keys(next);
-
-      if (
-        currentKeys.length === nextKeys.length
-        && currentKeys.every((key) => current[key] === next[key])
-      ) {
-        return current;
-      }
-
-      return next;
-    });
-  }, [detectedStepParameters]);
   const isCaseWorkspaceOpen = Boolean(selectedTestCaseId) || isCreating;
   const stepCountLabel = `${displaySteps.length} step${displaySteps.length === 1 ? "" : "s"}`;
   const allStepsSelected = Boolean(displaySteps.length) && selectedStepIds.length === displaySteps.length;
@@ -6001,7 +5874,7 @@ export function TestCasesPage() {
 
             <div className="action-row import-modal-actions">
               <button className="primary-button" disabled={!appTypeId || !importRows.length || importTestCases.isPending} onClick={() => void handleBulkImport()} type="button">
-                {importTestCases.isPending ? "Importing…" : `Import ${importRows.length || ""} Test Cases`}
+                {importTestCases.isPending ? "Queuing…" : `Queue ${importRows.length || ""} Test Cases`}
               </button>
               <button
                 className="ghost-button"

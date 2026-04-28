@@ -296,7 +296,12 @@ async function runJob(jobId) {
         description: `Generating AI test cases for ${requirements.length} requirement${requirements.length === 1 ? "" : "s"}.`,
         started_at: new Date().toISOString(),
         metadata: {
-          requirement_count: requirements.length
+          requirement_count: requirements.length,
+          total_items: requirements.length,
+          processed_items: 0,
+          generated_cases_count: 0,
+          progress_percent: 0,
+          current_phase: "ai-generation"
         }
       });
       await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
@@ -371,6 +376,20 @@ async function runJob(jobId) {
           } finally {
             processedRequirements += 1;
             await updateJobProgress.run(processedRequirements, generatedCasesCount, jobId);
+            if (linkedTransaction) {
+              await workspaceTransactionService.updateTransaction(linkedTransaction.id, {
+                description: `Generated ${generatedCasesCount} AI test case${generatedCasesCount === 1 ? "" : "s"} after ${processedRequirements} of ${requirements.length} requirement${requirements.length === 1 ? "" : "s"}.`,
+                metadata: {
+                  requirement_count: requirements.length,
+                  total_items: requirements.length,
+                  processed_items: processedRequirements,
+                  processed_requirements: processedRequirements,
+                  generated_cases_count: generatedCasesCount,
+                  progress_percent: requirements.length ? Math.round((processedRequirements / requirements.length) * 100) : 0,
+                  current_phase: "ai-generation"
+                }
+              });
+            }
           }
         }
       })
@@ -389,8 +408,12 @@ async function runJob(jobId) {
             ? `Generated ${generatedCasesCount} AI test case${generatedCasesCount === 1 ? "" : "s"} across ${processedRequirements} requirement${processedRequirements === 1 ? "" : "s"}.`
             : `AI generation finished with issues after ${processedRequirements} processed requirement${processedRequirements === 1 ? "" : "s"}.`,
         metadata: {
+          total_items: requirements.length,
+          processed_items: processedRequirements,
           processed_requirements: processedRequirements,
           generated_cases_count: generatedCasesCount,
+          progress_percent: 100,
+          current_phase: finalStatus === "completed" ? "completed" : "failed",
           error: finalError
         },
         completed_at: new Date().toISOString()
@@ -506,6 +529,11 @@ exports.createJob = async ({
     description: `Queued AI generation for ${requirements.length} requirement${requirements.length === 1 ? "" : "s"} in ${appType.name}.`,
     metadata: {
       requirement_count: requirements.length,
+      total_items: requirements.length,
+      processed_items: 0,
+      generated_cases_count: 0,
+      progress_percent: 0,
+      current_phase: "queued",
       max_cases_per_requirement: clampInteger(max_cases_per_requirement, {
         fallback: DEFAULT_CASES_PER_REQUIREMENT,
         min: 1,

@@ -12,7 +12,7 @@ module.exports = async function (fastify) {
   fastify.get("/workspace-transactions", async (req) => {
     await fastify.authenticate(req);
 
-    const { project_id, app_type_id, category, limit } = req.query;
+    const { project_id, app_type_id, category, limit, include_global } = req.query;
     let scopedProjectId = project_id || null;
 
     if (app_type_id) {
@@ -34,6 +34,7 @@ module.exports = async function (fastify) {
       project_id: scopedProjectId || undefined,
       app_type_id: app_type_id || undefined,
       category: category || undefined,
+      include_global: include_global === true || include_global === "true",
       limit: limit !== undefined ? Number(limit) : undefined
     });
   });
@@ -50,5 +51,43 @@ module.exports = async function (fastify) {
     }
 
     return workspaceTransactionService.listTransactionEvents(transaction.id);
+  });
+
+  fastify.get("/workspace-transactions/:id/artifacts", async (req) => {
+    await fastify.authenticate(req);
+
+    const transaction = await workspaceTransactionService.getTransaction(req.params.id);
+
+    if (transaction.project_id) {
+      await projectService.getProject(transaction.project_id, req.user.id);
+    } else if (req.user?.role !== "admin") {
+      throw createError("Project scope is required.", 403);
+    }
+
+    return workspaceTransactionService.listTransactionArtifacts(transaction.id);
+  });
+
+  fastify.get("/workspace-transactions/:id/artifacts/:artifactId/download", async (req, reply) => {
+    await fastify.authenticate(req);
+
+    const transaction = await workspaceTransactionService.getTransaction(req.params.id);
+
+    if (transaction.project_id) {
+      await projectService.getProject(transaction.project_id, req.user.id);
+    } else if (req.user?.role !== "admin") {
+      throw createError("Project scope is required.", 403);
+    }
+
+    const artifact = await workspaceTransactionService.getTransactionArtifact(req.params.artifactId);
+
+    if (artifact.transaction_id !== transaction.id) {
+      throw createError("Artifact does not belong to this transaction.", 404);
+    }
+
+    reply
+      .header("Content-Type", artifact.mime_type || "application/octet-stream")
+      .header("Content-Disposition", `attachment; filename="${String(artifact.file_name || "artifact.txt").replace(/"/g, "")}"`);
+
+    return artifact.content || "";
   });
 };

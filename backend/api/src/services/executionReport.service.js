@@ -76,17 +76,24 @@ const deriveStepRows = (steps, logs) =>
   steps
     .slice()
     .sort((left, right) => Number(left.step_order || 0) - Number(right.step_order || 0))
-    .map((step) => ({
-      id: step.id,
-      order: step.step_order,
-      type: step.step_type || "web",
-      action: step.action || "",
-      expected_result: step.expected_result || "",
-      status: logs.stepStatuses?.[step.id] || "queued",
-      note: logs.stepNotes?.[step.id] || "",
-      has_evidence: Boolean(logs.stepEvidence?.[step.id]?.dataUrl),
-      captures: logs.stepCaptures?.[step.id] || logs.stepApiDetails?.[step.id]?.captures || {}
-    }));
+    .map((step) => {
+      const webDetail = logs.stepWebDetails?.[step.id] || null;
+
+      return {
+        id: step.id,
+        order: step.step_order,
+        type: step.step_type || "web",
+        action: step.action || "",
+        expected_result: step.expected_result || "",
+        status: logs.stepStatuses?.[step.id] || "queued",
+        note: logs.stepNotes?.[step.id] || "",
+        has_evidence: Boolean(logs.stepEvidence?.[step.id]?.dataUrl),
+        captures: logs.stepCaptures?.[step.id] || logs.stepApiDetails?.[step.id]?.captures || {},
+        console_count: Array.isArray(webDetail?.console) ? webDetail.console.length : 0,
+        network_count: Array.isArray(webDetail?.network) ? webDetail.network.length : 0,
+        page_url: webDetail?.url || ""
+      };
+    });
 
 const deriveCaseStatus = (steps, result, logs) => {
   const status = normalizeText(result?.status);
@@ -160,6 +167,40 @@ const buildReportModel = async (executionId) => {
 
   const durationMs = cases.reduce((total, item) => total + Number(item.duration_ms || 0), 0);
   const passRate = counts.total ? Math.round((counts.passed / counts.total) * 100) : 0;
+  const suitesByKey = new Map();
+
+  cases.forEach((testCase) => {
+    const suiteKey = testCase.suite_id || "__direct__";
+    const current = suitesByKey.get(suiteKey) || {
+      id: testCase.suite_id,
+      name: testCase.suite_name || "Direct run",
+      total: 0,
+      passed: 0,
+      failed: 0,
+      blocked: 0,
+      running: 0,
+      duration_ms: 0,
+      step_count: 0,
+      cases: []
+    };
+
+    current.total += 1;
+    current.duration_ms += Number(testCase.duration_ms || 0);
+    current.step_count += testCase.steps.length;
+    current.cases.push(testCase);
+
+    if (testCase.status === "passed") {
+      current.passed += 1;
+    } else if (testCase.status === "failed") {
+      current.failed += 1;
+    } else if (testCase.status === "blocked") {
+      current.blocked += 1;
+    } else {
+      current.running += 1;
+    }
+
+    suitesByKey.set(suiteKey, current);
+  });
 
   return {
     execution,
@@ -169,23 +210,135 @@ const buildReportModel = async (executionId) => {
       pass_rate: passRate,
       duration_ms: durationMs
     },
+    suites: [...suitesByKey.values()],
     cases
   };
 };
 
-const statusClass = (status) =>
-  status === "passed" || status === "completed"
-    ? "pass"
-    : status === "failed"
-      ? "fail"
-      : status === "blocked"
-        ? "warn"
-        : "run";
+const STATUS_META = {
+  passed: { label: "Passed", bg: "#e4f7ed", fg: "#126c48", border: "#28a66d" },
+  completed: { label: "Completed", bg: "#e4f7ed", fg: "#126c48", border: "#28a66d" },
+  failed: { label: "Failed", bg: "#ffe7ed", fg: "#a32647", border: "#d94b6a" },
+  blocked: { label: "Blocked", bg: "#fff3d7", fg: "#85530a", border: "#d9901f" },
+  running: { label: "Running", bg: "#e9efff", fg: "#284da8", border: "#5271d8" },
+  queued: { label: "Queued", bg: "#eef2f7", fg: "#475569", border: "#94a3b8" }
+};
 
-const renderReportHtml = (report) => {
+const getStatusMeta = (status) => STATUS_META[normalizeText(status).toLowerCase()] || STATUS_META.queued;
+
+const renderStatusPill = (status) => {
+  const meta = getStatusMeta(status);
+
+  return `<span style="display:inline-block;border-radius:999px;padding:4px 9px;background:${meta.bg};color:${meta.fg};font-size:11px;font-weight:800;line-height:1;border:1px solid ${meta.border};">${escapeHtml(meta.label)}</span>`;
+};
+
+const shouldShowCompactSteps = (report, suite) =>
+  report.summary.total <= 8
+  && suite.total <= 3
+  && suite.step_count > 0
+  && suite.step_count <= 12;
+
+const renderOutcomeRows = (report) => {
+  const rows = [
+    {
+      scope: "Run",
+      suite: report.execution.name || report.execution.id,
+      total: report.summary.total,
+      passed: report.summary.passed,
+      failed: report.summary.failed,
+      blocked: report.summary.blocked,
+      running: report.summary.running,
+      duration_ms: report.summary.duration_ms
+    },
+    ...report.suites.map((suite) => ({
+      scope: "Suite",
+      suite: suite.name,
+      total: suite.total,
+      passed: suite.passed,
+      failed: suite.failed,
+      blocked: suite.blocked,
+      running: suite.running,
+      duration_ms: suite.duration_ms
+    }))
+  ];
+
+  return rows.map((row, index) => `
+    <tr>
+      <td style="padding:10px 12px;border-bottom:1px solid #e7edf5;color:#647084;font-size:12px;font-weight:700;">${escapeHtml(row.scope)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e7edf5;color:#111827;font-size:13px;font-weight:${index === 0 ? "800" : "700"};">${escapeHtml(row.suite)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e7edf5;text-align:right;color:#111827;font-size:13px;">${escapeHtml(row.total)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e7edf5;text-align:right;color:#126c48;font-size:13px;font-weight:800;">${escapeHtml(row.passed)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e7edf5;text-align:right;color:#a32647;font-size:13px;font-weight:800;">${escapeHtml(row.failed)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e7edf5;text-align:right;color:#85530a;font-size:13px;">${escapeHtml(row.blocked)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e7edf5;text-align:right;color:#284da8;font-size:13px;">${escapeHtml(row.running)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e7edf5;text-align:right;color:#111827;font-size:13px;">${escapeHtml(formatDuration(row.duration_ms))}</td>
+    </tr>
+  `).join("");
+};
+
+const renderStepRows = (testCase) => `
+  <table style="width:100%;border-collapse:collapse;margin-top:8px;font-size:12px;background:#fbfdff;border:1px solid #e7edf5;border-radius:6px;overflow:hidden;">
+    <thead>
+      <tr style="background:#f2f6fb;color:#58667a;text-align:left;">
+        <th style="padding:8px 9px;border-bottom:1px solid #e7edf5;width:42px;">#</th>
+        <th style="padding:8px 9px;border-bottom:1px solid #e7edf5;">Step</th>
+        <th style="padding:8px 9px;border-bottom:1px solid #e7edf5;width:84px;">Status</th>
+        <th style="padding:8px 9px;border-bottom:1px solid #e7edf5;width:105px;">Signals</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${testCase.steps.map((step) => `
+        <tr>
+          <td style="padding:8px 9px;border-bottom:1px solid #e7edf5;color:#647084;">${escapeHtml(step.order)}</td>
+          <td style="padding:8px 9px;border-bottom:1px solid #e7edf5;color:#111827;">
+            <div style="font-weight:700;">${escapeHtml(step.action || "No action recorded")}</div>
+            ${step.expected_result ? `<div style="margin-top:3px;color:#647084;">Expected: ${escapeHtml(step.expected_result)}</div>` : ""}
+            ${step.note ? `<div style="margin-top:3px;color:#475569;">${escapeHtml(step.note.replace(/\n+/g, " "))}</div>` : ""}
+            ${step.page_url ? `<div style="margin-top:3px;color:#647084;">URL: ${escapeHtml(step.page_url)}</div>` : ""}
+          </td>
+          <td style="padding:8px 9px;border-bottom:1px solid #e7edf5;">${renderStatusPill(step.status)}</td>
+          <td style="padding:8px 9px;border-bottom:1px solid #e7edf5;color:#647084;">${[
+            step.has_evidence ? "image" : null,
+            step.console_count ? `${step.console_count} console` : null,
+            step.network_count ? `${step.network_count} network` : null
+          ].filter(Boolean).join(" · ") || "none"}</td>
+        </tr>
+      `).join("")}
+    </tbody>
+  </table>
+`;
+
+const renderSuiteCard = (report, suite, mode) => {
+  const includeSteps = mode === "detailed" || shouldShowCompactSteps(report, suite);
+
+  return `
+    <div style="display:inline-block;vertical-align:top;width:100%;max-width:440px;margin:0 10px 12px 0;background:#ffffff;border:1px solid #dfe7f1;border-radius:8px;overflow:hidden;">
+      <div style="padding:14px 16px;border-top:4px solid ${suite.failed ? "#d94b6a" : suite.blocked ? "#d9901f" : "#28a66d"};border-bottom:1px solid #edf2f7;background:#fbfdff;">
+        <div style="font-size:15px;font-weight:800;color:#111827;">${escapeHtml(suite.name)}</div>
+        <div style="margin-top:4px;font-size:12px;color:#647084;">${escapeHtml(formatDuration(suite.duration_ms))} · ${escapeHtml(suite.total)} case${suite.total === 1 ? "" : "s"} · ${escapeHtml(suite.step_count)} step${suite.step_count === 1 ? "" : "s"}</div>
+      </div>
+      <div style="padding:10px 14px;">
+        ${suite.cases.map((testCase) => `
+          <div style="padding:8px 0;border-bottom:1px solid #edf2f7;">
+            <div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;">
+              <div style="font-size:13px;color:#111827;font-weight:700;line-height:1.35;">${escapeHtml(testCase.title)}</div>
+              ${renderStatusPill(testCase.status)}
+            </div>
+            <div style="margin-top:3px;font-size:12px;color:#647084;">${escapeHtml(formatDuration(testCase.duration_ms))}${testCase.error ? ` · ${escapeHtml(testCase.error)}` : ""}</div>
+            ${includeSteps ? renderStepRows(testCase) : ""}
+          </div>
+        `).join("")}
+        ${!includeSteps && suite.step_count ? `<div style="padding:8px 0 2px;color:#647084;font-size:12px;">Step detail is kept out of this compact email because the suite has ${escapeHtml(suite.step_count)} steps. The PDF export includes the full step trace.</div>` : ""}
+      </div>
+    </div>
+  `;
+};
+
+const renderReportHtml = (report, { mode = "email" } = {}) => {
   const execution = report.execution;
   const summary = report.summary;
   const title = execution.name || "Execution run report";
+  const isDetailed = mode === "detailed";
 
   return `<!doctype html>
 <html>
@@ -193,63 +346,54 @@ const renderReportHtml = (report) => {
     <meta charset="utf-8" />
     <title>${escapeHtml(title)}</title>
   </head>
-  <body style="margin:0;background:#f5f7fb;color:#172033;font-family:Arial,Helvetica,sans-serif;">
-    <div style="max-width:980px;margin:0 auto;padding:28px;">
-      <div style="background:#ffffff;border:1px solid #dfe5ef;border-radius:8px;padding:24px;">
-        <p style="margin:0 0 8px;color:#536173;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;">QAira Run Report</p>
-        <h1 style="margin:0 0 8px;font-size:28px;line-height:1.15;color:#101928;">${escapeHtml(title)}</h1>
-        <p style="margin:0;color:#536173;">Generated ${escapeHtml(formatDate(report.generated_at))} · Started ${escapeHtml(formatDate(execution.started_at))} · Ended ${escapeHtml(formatDate(execution.ended_at))}</p>
-        <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-top:22px;">
+  <body style="margin:0;background:#eef3f8;color:#111827;font-family:Arial,Helvetica,sans-serif;">
+    <div style="max-width:1040px;margin:0 auto;padding:28px;">
+      <div style="background:#122033;border-radius:8px;padding:24px;border:1px solid #122033;">
+        <p style="margin:0 0 8px;color:#9fb5cf;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;">QAira Run Report</p>
+        <h1 style="margin:0 0 8px;font-size:28px;line-height:1.15;color:#ffffff;">${escapeHtml(title)}</h1>
+        <p style="margin:0;color:#d7e2ef;font-size:13px;">Generated ${escapeHtml(formatDate(report.generated_at))} · Started ${escapeHtml(formatDate(execution.started_at))} · Ended ${escapeHtml(formatDate(execution.ended_at))}</p>
+      </div>
+
+      <div style="background:#ffffff;border:1px solid #dfe7f1;border-radius:8px;padding:14px;margin-top:14px;">
+        <div style="display:flex;flex-wrap:wrap;gap:10px;">
           ${[
-            ["Pass rate", `${summary.pass_rate}%`, "pass"],
-            ["Passed", summary.passed, "pass"],
-            ["Failed", summary.failed, "fail"],
-            ["Blocked", summary.blocked, "warn"],
-            ["Duration", formatDuration(summary.duration_ms), "run"]
-          ].map(([label, value, tone]) => `
-            <div style="border:1px solid #dfe5ef;border-left:4px solid ${tone === "pass" ? "#159363" : tone === "fail" ? "#ce3f5f" : tone === "warn" ? "#be7a14" : "#4568dc"};border-radius:6px;padding:12px;background:#fbfcfe;">
-              <div style="font-size:20px;font-weight:800;color:#101928;">${escapeHtml(value)}</div>
-              <div style="font-size:12px;color:#536173;">${escapeHtml(label)}</div>
+            ["Pass rate", `${summary.pass_rate}%`, "#28a66d"],
+            ["Total cases", summary.total, "#5271d8"],
+            ["Passed", summary.passed, "#28a66d"],
+            ["Failed", summary.failed, "#d94b6a"],
+            ["Duration", formatDuration(summary.duration_ms), "#5b6472"]
+          ].map(([label, value, color]) => `
+            <div style="flex:1 1 140px;min-width:130px;border:1px solid #e4ebf3;border-left:4px solid ${color};border-radius:7px;padding:11px 12px;background:#fbfdff;">
+              <div style="font-size:20px;font-weight:800;color:#111827;line-height:1.1;">${escapeHtml(value)}</div>
+              <div style="margin-top:4px;font-size:12px;color:#647084;">${escapeHtml(label)}</div>
             </div>
           `).join("")}
         </div>
       </div>
-      <div style="margin-top:18px;">
-        ${report.cases.map((testCase) => `
-          <div style="background:#ffffff;border:1px solid #dfe5ef;border-radius:8px;margin-bottom:12px;overflow:hidden;">
-            <div style="padding:16px 18px;border-bottom:1px solid #edf1f7;display:flex;justify-content:space-between;gap:16px;">
-              <div>
-                <strong style="display:block;font-size:16px;color:#101928;">${escapeHtml(testCase.title)}</strong>
-                <span style="font-size:13px;color:#536173;">${escapeHtml(testCase.suite_name || "Direct run")} · ${escapeHtml(formatDuration(testCase.duration_ms))}</span>
-              </div>
-              <span class="${statusClass(testCase.status)}" style="height:fit-content;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:800;background:${testCase.status === "passed" ? "#e3f8ef;color:#107650" : testCase.status === "failed" ? "#ffe8ee;color:#a92748" : "#fff4de;color:#8a570f"};">${escapeHtml(testCase.status.toUpperCase())}</span>
-            </div>
-            ${testCase.error ? `<div style="padding:10px 18px;color:#a92748;background:#fff5f7;font-size:13px;">${escapeHtml(testCase.error)}</div>` : ""}
-            <table style="width:100%;border-collapse:collapse;font-size:13px;">
-              <thead>
-                <tr style="background:#f8fafc;color:#536173;text-align:left;">
-                  <th style="padding:10px 12px;border-bottom:1px solid #edf1f7;">Step</th>
-                  <th style="padding:10px 12px;border-bottom:1px solid #edf1f7;">Action</th>
-                  <th style="padding:10px 12px;border-bottom:1px solid #edf1f7;">Status</th>
-                  <th style="padding:10px 12px;border-bottom:1px solid #edf1f7;">Evidence</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${testCase.steps.map((step) => `
-                  <tr>
-                    <td style="padding:10px 12px;border-bottom:1px solid #edf1f7;">${escapeHtml(step.order)}</td>
-                    <td style="padding:10px 12px;border-bottom:1px solid #edf1f7;">
-                      <div>${escapeHtml(step.action || "No action recorded")}</div>
-                      ${step.note ? `<div style="margin-top:4px;color:#536173;">${escapeHtml(step.note)}</div>` : ""}
-                    </td>
-                    <td style="padding:10px 12px;border-bottom:1px solid #edf1f7;">${escapeHtml(String(step.status).toUpperCase())}</td>
-                    <td style="padding:10px 12px;border-bottom:1px solid #edf1f7;">${step.has_evidence ? "Image" : ""}</td>
-                  </tr>
-                `).join("")}
-              </tbody>
-            </table>
-          </div>
-        `).join("")}
+
+      <div style="background:#ffffff;border:1px solid #dfe7f1;border-radius:8px;margin-top:14px;overflow:hidden;">
+        <div style="padding:14px 16px;border-bottom:1px solid #e7edf5;">
+          <strong style="font-size:15px;color:#111827;">Run and suite outcomes</strong>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="background:#f6f9fc;color:#647084;text-align:left;">
+              <th style="padding:9px 12px;border-bottom:1px solid #e7edf5;">Scope</th>
+              <th style="padding:9px 12px;border-bottom:1px solid #e7edf5;">Name</th>
+              <th style="padding:9px 12px;border-bottom:1px solid #e7edf5;text-align:right;">Cases</th>
+              <th style="padding:9px 12px;border-bottom:1px solid #e7edf5;text-align:right;">Passed</th>
+              <th style="padding:9px 12px;border-bottom:1px solid #e7edf5;text-align:right;">Failed</th>
+              <th style="padding:9px 12px;border-bottom:1px solid #e7edf5;text-align:right;">Blocked</th>
+              <th style="padding:9px 12px;border-bottom:1px solid #e7edf5;text-align:right;">Running</th>
+              <th style="padding:9px 12px;border-bottom:1px solid #e7edf5;text-align:right;">Duration</th>
+            </tr>
+          </thead>
+          <tbody>${renderOutcomeRows(report)}</tbody>
+        </table>
+      </div>
+
+      <div style="margin-top:14px;">
+        ${report.suites.map((suite) => renderSuiteCard(report, suite, isDetailed ? "detailed" : "email")).join("")}
       </div>
     </div>
   </body>
@@ -280,7 +424,7 @@ const wrapLine = (line, max = 92) => {
   return lines.length ? lines : [""];
 };
 
-const buildReportLines = (report) => {
+const buildReportLines = (report, { detailed = false } = {}) => {
   const lines = [
     `QAira Run Report: ${report.execution.name || report.execution.id}`,
     `Generated: ${formatDate(report.generated_at)}`,
@@ -291,38 +435,305 @@ const buildReportLines = (report) => {
     ""
   ];
 
-  report.cases.forEach((testCase, index) => {
-    lines.push(`${index + 1}. ${testCase.title} [${testCase.status}]`);
-    if (testCase.error) {
-      lines.push(`   Error: ${testCase.error}`);
-    }
-    testCase.steps.forEach((step) => {
-      lines.push(`   Step ${step.order} ${String(step.type || "").toUpperCase()} [${step.status}]: ${step.action || "No action recorded"}`);
-      if (step.note) {
-        lines.push(`     ${step.note.replace(/\n+/g, " ")}`);
+  lines.push("Suite outcomes:");
+  report.suites.forEach((suite) => {
+    lines.push(
+      `- ${suite.name}: ${suite.total} cases, ${suite.passed} passed, ${suite.failed} failed, ${suite.blocked} blocked, ${formatDuration(suite.duration_ms)}`
+    );
+  });
+  lines.push("");
+
+  report.suites.forEach((suite) => {
+    const includeSteps = detailed || shouldShowCompactSteps(report, suite);
+    lines.push(`${suite.name} (${formatDuration(suite.duration_ms)})`);
+    suite.cases.forEach((testCase, index) => {
+      lines.push(`${index + 1}. ${testCase.title} [${testCase.status}]`);
+      if (testCase.error) {
+        lines.push(`   Error: ${testCase.error}`);
+      }
+      if (includeSteps) {
+        testCase.steps.forEach((step) => {
+          lines.push(`   Step ${step.order} ${String(step.type || "").toUpperCase()} [${step.status}]: ${step.action || "No action recorded"}`);
+          if (step.note) {
+            lines.push(`     ${step.note.replace(/\n+/g, " ")}`);
+          }
+        });
       }
     });
+    if (!includeSteps && suite.step_count) {
+      lines.push(`   Step detail omitted from compact email text. PDF export includes ${suite.step_count} steps.`);
+    }
     lines.push("");
   });
 
   return lines.flatMap((line) => wrapLine(line));
 };
 
+const pdfNumber = (value) => {
+  const normalized = Number(value || 0);
+  return Number.isFinite(normalized) ? normalized.toFixed(2).replace(/\.?0+$/, "") : "0";
+};
+
+const hexToRgb = (hex) => {
+  const normalized = String(hex || "#000000").replace("#", "");
+  const value = normalized.length === 3
+    ? normalized.split("").map((entry) => `${entry}${entry}`).join("")
+    : normalized.padEnd(6, "0").slice(0, 6);
+
+  return [
+    Number.parseInt(value.slice(0, 2), 16) / 255,
+    Number.parseInt(value.slice(2, 4), 16) / 255,
+    Number.parseInt(value.slice(4, 6), 16) / 255
+  ].map(pdfNumber);
+};
+
+const pdfColor = (hex, operator = "rg") => `${hexToRgb(hex).join(" ")} ${operator}`;
+
+const wrapPdfText = (value, width, fontSize) => {
+  const maxChars = Math.max(10, Math.floor(width / Math.max(fontSize * 0.5, 1)));
+  return String(value || "").split(/\n+/).flatMap((line) => wrapLine(line, maxChars));
+};
+
 const renderReportPdf = (report) => {
+  const pageWidth = 612;
+  const pageHeight = 842;
+  const margin = 36;
+  const usableWidth = pageWidth - margin * 2;
+  const bottomLimit = pageHeight - margin;
   const pages = [];
-  let current = [];
+  let ops = [];
+  let cursorY = margin;
 
-  buildReportLines(report).forEach((line) => {
-    if (current.length >= 48) {
-      pages.push(current);
-      current = [];
+  const toPdfY = (topY, height = 0) => pageHeight - topY - height;
+  const addPage = (continued = false) => {
+    ops = [];
+    pages.push(ops);
+    cursorY = margin;
+
+    if (continued) {
+      ops.push(`${pdfColor("#edf3f8")} 0 ${pdfNumber(pageHeight - 28)} ${pageWidth} 28 re f`);
+      ops.push(`BT ${pdfColor("#5b6472")} /F2 9 Tf ${margin} ${pdfNumber(pageHeight - 18)} Td (${pdfEscape(report.execution.name || "QAira Run Report")}) Tj ET`);
+      cursorY = 52;
     }
-    current.push(line);
-  });
+  };
+  const ensure = (height) => {
+    if (cursorY + height > bottomLimit) {
+      addPage(true);
+    }
+  };
+  const rect = (x, y, width, height, fill, stroke) => {
+    const commands = ["q"];
+    if (fill) {
+      commands.push(pdfColor(fill));
+    }
+    if (stroke) {
+      commands.push(pdfColor(stroke, "RG"));
+    }
+    commands.push(`${pdfNumber(x)} ${pdfNumber(toPdfY(y, height))} ${pdfNumber(width)} ${pdfNumber(height)} re`);
+    commands.push(fill && stroke ? "B" : fill ? "f" : "S");
+    commands.push("Q");
+    ops.push(commands.join("\n"));
+  };
+  const text = (value, x, y, size = 10, options = {}) => {
+    const font = options.bold ? "F2" : "F1";
+    const color = options.color || "#111827";
+    ops.push(`BT ${pdfColor(color)} /${font} ${pdfNumber(size)} Tf ${pdfNumber(x)} ${pdfNumber(pageHeight - y)} Td (${pdfEscape(value)}) Tj ET`);
+  };
+  const wrappedText = (value, x, y, width, size = 10, options = {}) => {
+    const lineHeight = options.lineHeight || size + 4;
+    const lines = wrapPdfText(value, width, size);
 
-  if (current.length) {
-    pages.push(current);
-  }
+    lines.forEach((line, index) => {
+      text(line, x, y + index * lineHeight, size, options);
+    });
+
+    return lines.length * lineHeight;
+  };
+  const statusPill = (status, x, y) => {
+    const meta = getStatusMeta(status);
+    const label = meta.label.toUpperCase();
+    const width = Math.max(48, label.length * 5.5 + 16);
+    rect(x, y - 10, width, 17, meta.bg, meta.border);
+    text(label, x + 8, y + 2, 7, { bold: true, color: meta.fg });
+    return width;
+  };
+  const sectionTitle = (label) => {
+    ensure(30);
+    text(label, margin, cursorY, 14, { bold: true, color: "#122033" });
+    cursorY += 22;
+  };
+  const signalLabel = (step) => [
+    step.has_evidence ? "image" : null,
+    step.console_count ? `${step.console_count} console` : null,
+    step.network_count ? `${step.network_count} network` : null
+  ].filter(Boolean).join(" | ") || "no artifacts";
+
+  addPage(false);
+
+  rect(margin, cursorY, usableWidth, 92, "#122033", "#122033");
+  text("QAira Run Report", margin + 18, cursorY + 25, 11, { bold: true, color: "#9fb5cf" });
+  wrappedText(report.execution.name || "Execution run report", margin + 18, cursorY + 48, usableWidth - 36, 20, {
+    bold: true,
+    color: "#ffffff",
+    lineHeight: 23
+  });
+  text(`Generated ${formatDate(report.generated_at)} | Started ${formatDate(report.execution.started_at)} | Ended ${formatDate(report.execution.ended_at)}`, margin + 18, cursorY + 78, 8, {
+    color: "#d7e2ef"
+  });
+  cursorY += 112;
+
+  const cardGap = 8;
+  const cardWidth = (usableWidth - cardGap * 4) / 5;
+  [
+    ["Pass rate", `${report.summary.pass_rate}%`, "#28a66d"],
+    ["Total cases", report.summary.total, "#5271d8"],
+    ["Passed", report.summary.passed, "#28a66d"],
+    ["Failed", report.summary.failed, "#d94b6a"],
+    ["Duration", formatDuration(report.summary.duration_ms), "#5b6472"]
+  ].forEach(([label, value, color], index) => {
+    const x = margin + index * (cardWidth + cardGap);
+    rect(x, cursorY, cardWidth, 54, "#ffffff", "#dfe7f1");
+    rect(x, cursorY, 4, 54, color, color);
+    text(String(value), x + 12, cursorY + 23, 17, { bold: true, color: "#111827" });
+    text(label, x + 12, cursorY + 41, 8, { color: "#647084" });
+  });
+  cursorY += 78;
+
+  sectionTitle("Run and suite outcomes");
+  const tableColumns = [
+    ["Scope", 52],
+    ["Name", 188],
+    ["Cases", 46],
+    ["Passed", 52],
+    ["Failed", 48],
+    ["Blocked", 54],
+    ["Running", 54],
+    ["Duration", 58]
+  ];
+  const tableRows = [
+    {
+      scope: "Run",
+      name: report.execution.name || report.execution.id,
+      total: report.summary.total,
+      passed: report.summary.passed,
+      failed: report.summary.failed,
+      blocked: report.summary.blocked,
+      running: report.summary.running,
+      duration: formatDuration(report.summary.duration_ms)
+    },
+    ...report.suites.map((suite) => ({
+      scope: "Suite",
+      name: suite.name,
+      total: suite.total,
+      passed: suite.passed,
+      failed: suite.failed,
+      blocked: suite.blocked,
+      running: suite.running,
+      duration: formatDuration(suite.duration_ms)
+    }))
+  ];
+
+  ensure(24 + tableRows.length * 22);
+  rect(margin, cursorY - 4, usableWidth, 24, "#f6f9fc", "#dfe7f1");
+  let x = margin + 8;
+  tableColumns.forEach(([label, width]) => {
+    text(label, x, cursorY + 11, 8, { bold: true, color: "#647084" });
+    x += width;
+  });
+  cursorY += 25;
+  tableRows.forEach((row, rowIndex) => {
+    ensure(24);
+    rect(margin, cursorY - 4, usableWidth, 24, rowIndex % 2 ? "#ffffff" : "#fbfdff", "#edf2f7");
+    x = margin + 8;
+    [
+      row.scope,
+      row.name,
+      row.total,
+      row.passed,
+      row.failed,
+      row.blocked,
+      row.running,
+      row.duration
+    ].forEach((value, index) => {
+      const color = index === 3 ? "#126c48" : index === 4 ? "#a32647" : "#111827";
+      text(String(value), x, cursorY + 11, 8, { bold: rowIndex === 0 || index === 1, color });
+      x += tableColumns[index][1];
+    });
+    cursorY += 24;
+  });
+  cursorY += 22;
+
+  report.suites.forEach((suite) => {
+    sectionTitle(`${suite.name} | ${formatDuration(suite.duration_ms)} | ${suite.total} case${suite.total === 1 ? "" : "s"}`);
+
+    suite.cases.forEach((testCase) => {
+      const titleLines = wrapPdfText(testCase.title, usableWidth - 120, 11);
+      const caseHeaderHeight = Math.max(38, titleLines.length * 15 + 18);
+      ensure(caseHeaderHeight);
+      rect(margin, cursorY - 4, usableWidth, caseHeaderHeight, "#ffffff", "#dfe7f1");
+      wrappedText(testCase.title, margin + 12, cursorY + 14, usableWidth - 130, 11, {
+        bold: true,
+        color: "#111827",
+        lineHeight: 14
+      });
+      statusPill(testCase.status, pageWidth - margin - 76, cursorY + 15);
+      text(formatDuration(testCase.duration_ms), margin + 12, cursorY + caseHeaderHeight - 9, 8, { color: "#647084" });
+      cursorY += caseHeaderHeight + 8;
+
+      if (testCase.error) {
+        const errorLines = wrapPdfText(`Error: ${testCase.error}`, usableWidth - 36, 8);
+        const errorHeight = errorLines.length * 11 + 12;
+        rect(margin + 8, cursorY - 4, usableWidth - 16, errorHeight, "#fff5f7", "#ffd4de");
+        wrappedText(`Error: ${testCase.error}`, margin + 18, cursorY + 10, usableWidth - 36, 8, {
+          color: "#a32647",
+          lineHeight: 11
+        });
+        cursorY += errorHeight + 6;
+      }
+
+      testCase.steps.forEach((step) => {
+        const action = step.action || "No action recorded";
+        const actionHeight = wrapPdfText(action, usableWidth - 120, 9).length * 12;
+        const expectedHeight = step.expected_result ? wrapPdfText(`Expected: ${step.expected_result}`, usableWidth - 120, 8).length * 10 : 0;
+        const noteHeight = step.note ? wrapPdfText(step.note.replace(/\n+/g, " "), usableWidth - 120, 8).length * 10 : 0;
+        const urlHeight = step.page_url ? wrapPdfText(`URL: ${step.page_url}`, usableWidth - 120, 7).length * 9 : 0;
+        const rowHeight = Math.max(42, actionHeight + expectedHeight + noteHeight + urlHeight + 18);
+
+        ensure(rowHeight + 8);
+        rect(margin + 8, cursorY - 3, usableWidth - 16, rowHeight, "#fbfdff", "#e7edf5");
+        text(`Step ${step.order}`, margin + 18, cursorY + 15, 8, { bold: true, color: "#647084" });
+        statusPill(step.status, margin + 18, cursorY + 33);
+        let detailY = cursorY + 14;
+        detailY += wrappedText(action, margin + 92, detailY, usableWidth - 120, 9, {
+          bold: true,
+          color: "#111827",
+          lineHeight: 12
+        });
+        if (step.expected_result) {
+          detailY += wrappedText(`Expected: ${step.expected_result}`, margin + 92, detailY, usableWidth - 120, 8, {
+            color: "#647084",
+            lineHeight: 10
+          });
+        }
+        if (step.note) {
+          detailY += wrappedText(step.note.replace(/\n+/g, " "), margin + 92, detailY, usableWidth - 120, 8, {
+            color: "#475569",
+            lineHeight: 10
+          });
+        }
+        if (step.page_url) {
+          wrappedText(`URL: ${step.page_url}`, margin + 92, detailY, usableWidth - 120, 7, {
+            color: "#647084",
+            lineHeight: 9
+          });
+        }
+        text(signalLabel(step), pageWidth - margin - 118, cursorY + rowHeight - 9, 7, { color: "#647084" });
+        cursorY += rowHeight + 8;
+      });
+
+      cursorY += 6;
+    });
+  });
 
   const objects = [];
   const addObject = (content) => {
@@ -331,18 +742,14 @@ const renderReportPdf = (report) => {
   };
   const catalogId = addObject("<< /Type /Catalog /Pages 2 0 R >>");
   const pagesId = addObject("");
-  const fontId = addObject("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  const regularFontId = addObject("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  const boldFontId = addObject("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
   const pageIds = [];
 
-  pages.forEach((pageLines) => {
-    const streamLines = ["BT", "/F1 10 Tf", "50 792 Td", "14 TL"];
-    pageLines.forEach((line, index) => {
-      streamLines.push(`${index === 0 ? "" : "T* "}(${pdfEscape(line)}) Tj`);
-    });
-    streamLines.push("ET");
-    const stream = streamLines.join("\n");
+  pages.forEach((pageOps) => {
+    const stream = pageOps.join("\n");
     const contentId = addObject(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`);
-    const pageId = addObject(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+    const pageId = addObject(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${regularFontId} 0 R /F2 ${boldFontId} 0 R >> >> /Contents ${contentId} 0 R >>`);
     pageIds.push(pageId);
   });
 
@@ -374,7 +781,7 @@ const normalizeRecipients = (value) => {
 
 exports.buildReport = buildReportModel;
 
-exports.renderReportHtml = async (executionId) => renderReportHtml(await buildReportModel(executionId));
+exports.renderReportHtml = async (executionId) => renderReportHtml(await buildReportModel(executionId), { mode: "detailed" });
 
 exports.renderReportPdf = async (executionId) => renderReportPdf(await buildReportModel(executionId));
 

@@ -1309,7 +1309,7 @@ export function DesignPage() {
         queryClient.invalidateQueries({ queryKey: ["executions"] }),
         queryClient.invalidateQueries({ queryKey: ["executions", projectId] })
       ]);
-      navigate(`/executions?execution=${response.id}`);
+      navigate(`/executions?view=suite-runs&execution=${response.id}`);
     } catch (error) {
       showError(error, "Unable to create run");
     }

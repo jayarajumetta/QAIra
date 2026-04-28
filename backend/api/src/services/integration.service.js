@@ -433,7 +433,7 @@ const normalizeConfig = (type, input, username) => {
       execution_scope: "api+web",
       active_web_engine,
       browser: normalizeTestEngineBrowser(raw.browser, String(integrationTypeConfig.browser || "chromium")),
-      headless: raw.headless !== false,
+      headless: raw.headless === true,
       healing_enabled: raw.healing_enabled !== false,
       max_repair_attempts: normalizeInteger(raw.max_repair_attempts) ?? Number(integrationTypeConfig.max_repair_attempts ?? 0),
       trace_mode: normalizeTestEngineTraceMode(raw.trace_mode, String(integrationTypeConfig.trace_mode || "off")),

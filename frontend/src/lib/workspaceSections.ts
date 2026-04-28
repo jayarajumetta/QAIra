@@ -26,6 +26,7 @@ export const WORKSPACE_PAGE_LABELS: Record<string, string> = {
   "/shared-steps": "Shared Step Groups",
   "/design": "Test Suites",
   "/executions": "Test Runs",
+  "/testops": "TestOps",
   "/test-environments": "Environments",
   "/test-data": "Test Data",
   "/test-configurations": "Configurations",
@@ -51,5 +52,6 @@ export const WORKSPACE_SECTION_LABEL_KEYS: Record<string, string> = {
 export const WORKSPACE_LIBRARY_PATHS = new Set([
   ...TEST_AUTHORING_SECTION_ITEMS.map((item) => item.to),
   "/executions",
+  "/testops",
   ...TEST_ENVIRONMENT_SECTION_ITEMS.map((item) => item.to)
 ]);

@@ -52,6 +52,14 @@ const navigation = [
         disabledWhenNoProjects: true
       },
       {
+        id: "testops",
+        to: "/testops",
+        label: "TestOps",
+        shortLabel: "Ops",
+        icon: ActivityIcon,
+        disabledWhenNoProjects: true
+      },
+      {
         id: "environment",
         to: "/test-environments",
         label: "Test Environment",
@@ -269,6 +277,8 @@ export function AppShell() {
         return t("nav.testAuthoring", defaultLabel);
       case "runs":
         return t("nav.testRuns", defaultLabel);
+      case "testops":
+        return defaultLabel;
       case "environment":
         return t("nav.testEnvironment", defaultLabel);
       case "people":
@@ -666,6 +676,10 @@ function PlayIcon() {
 
 function RunIcon() {
   return <IconFrame><circle cx="12" cy="12" r="8" /><path d="m10 8 6 4-6 4z" /></IconFrame>;
+}
+
+function ActivityIcon() {
+  return <IconFrame><path d="M4 12h3l2-6 4 12 2-6h5" /></IconFrame>;
 }
 
 function LogoutIcon() {

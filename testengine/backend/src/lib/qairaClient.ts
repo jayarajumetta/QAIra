@@ -100,6 +100,7 @@ export async function reportQueuedStep(
       mimeType?: string;
     } | null;
     api_detail?: Record<string, unknown> | null;
+    web_detail?: unknown;
     captures?: Record<string, string>;
     recovery_attempted?: boolean;
     recovery_succeeded?: boolean;

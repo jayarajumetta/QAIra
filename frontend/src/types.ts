@@ -259,6 +259,14 @@ export type WorkspaceTransactionEvent = {
   created_at?: string;
 };
 
+export type WorkspaceTransactionArtifact = {
+  id: string;
+  transaction_id: string;
+  file_name: string;
+  mime_type: string;
+  created_at?: string;
+};
+
 export type SmartExecutionImpactCase = {
   test_case_id: string;
   title: string;
