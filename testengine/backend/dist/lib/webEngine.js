@@ -381,12 +381,13 @@ class PlaywrightWebSession {
     async screenshot(label) {
         const buffer = await this.pageOrThrow.screenshot({
             fullPage: true,
-            type: "png"
+            type: "jpeg",
+            quality: 58
         });
         return {
-            dataUrl: `data:image/png;base64,${buffer.toString("base64")}`,
-            fileName: `${label}.png`,
-            mimeType: "image/png"
+            dataUrl: `data:image/jpeg;base64,${buffer.toString("base64")}`,
+            fileName: `${label}.jpg`,
+            mimeType: "image/jpeg"
         };
     }
     markDiagnostics() {

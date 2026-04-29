@@ -5,6 +5,7 @@ const requirementService = require("../services/requirement.service");
 const requirementDesignService = require("../services/requirementDesign.service");
 const aiTestCaseGenerationService = require("../services/aiTestCaseGeneration.service");
 const aiCaseAuthoringService = require("../services/aiCaseAuthoring.service");
+const aiAutomationBuilderService = require("../services/aiAutomationBuilder.service");
 const batchProcessService = require("../services/batchProcess.service");
 const { TEST_CASE_AUTOMATED_VALUES, TEST_CASE_STATUS_VALUES } = require("../domain/catalog");
 
@@ -121,6 +122,51 @@ module.exports = async function (fastify) {
     });
   });
 
+  fastify.get("/test-cases/automation/learning-cache", async (req) => {
+    await fastify.authenticate(req);
+
+    const { project_id, app_type_id, limit } = req.query;
+
+    if (app_type_id) {
+      const appType = await appTypeService.getAppType(app_type_id);
+      await projectService.getProject(appType.project_id, req.user.id);
+    } else if (project_id) {
+      await projectService.getProject(project_id, req.user.id);
+    } else if (req.user?.role !== "admin") {
+      throw new Error("Project or app type scope is required");
+    }
+
+    return aiAutomationBuilderService.listLearningCache({
+      project_id,
+      app_type_id,
+      limit: limit !== undefined ? Number(limit) : undefined
+    });
+  });
+
+  fastify.post("/test-cases/automation/build-batch", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      app_type_id: { required: true, type: "string" },
+      test_case_ids: { required: false, type: "array", items: "string" },
+      integration_id: { required: false, type: "string" },
+      start_url: { required: false, type: "string" },
+      additional_context: { required: false, type: "string" },
+      test_environment_id: { required: false, type: "string" },
+      test_configuration_id: { required: false, type: "string" },
+      test_data_set_id: { required: false, type: "string" },
+      failure_threshold: { required: false, type: "number" }
+    }, req.body);
+
+    const appType = await appTypeService.getAppType(req.body.app_type_id);
+    await projectService.getProject(appType.project_id, req.user.id);
+
+    return batchProcessService.queueAutomationBuild({
+      ...req.body,
+      created_by: req.user.id
+    });
+  });
+
   fastify.get("/test-cases", async (req) => {
     await fastify.authenticate(req);
     const { suite_id, requirement_id, status, app_type_id } = req.query;
@@ -143,6 +189,100 @@ module.exports = async function (fastify) {
       await projectService.getProject(appType.project_id, req.user.id);
     }
     return testCase;
+  });
+
+  fastify.post("/test-cases/:id/automation/build", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      integration_id: { required: false, type: "string" },
+      start_url: { required: false, type: "string" },
+      additional_context: { required: false, type: "string" },
+      test_environment_id: { required: false, type: "string" },
+      test_configuration_id: { required: false, type: "string" },
+      test_data_set_id: { required: false, type: "string" },
+      captured_actions: { required: false, type: "array" },
+      captured_network: { required: false, type: "array" }
+    }, req.body || {});
+
+    const testCase = await service.getTestCase(req.params.id);
+
+    if (testCase.app_type_id) {
+      const appType = await appTypeService.getAppType(testCase.app_type_id);
+      await projectService.getProject(appType.project_id, req.user.id);
+    }
+
+    return aiAutomationBuilderService.buildAutomationForCase({
+      test_case_id: req.params.id,
+      integration_id: req.body?.integration_id,
+      start_url: req.body?.start_url,
+      additional_context: req.body?.additional_context,
+      test_environment_id: req.body?.test_environment_id,
+      test_configuration_id: req.body?.test_configuration_id,
+      test_data_set_id: req.body?.test_data_set_id,
+      captured_actions: req.body?.captured_actions,
+      captured_network: req.body?.captured_network,
+      created_by: req.user.id
+    });
+  });
+
+  fastify.post("/test-cases/:id/automation/recorder-session", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      start_url: { required: false, type: "string" },
+      test_environment_id: { required: false, type: "string" },
+      test_configuration_id: { required: false, type: "string" },
+      test_data_set_id: { required: false, type: "string" }
+    }, req.body || {});
+
+    const testCase = await service.getTestCase(req.params.id);
+
+    if (testCase.app_type_id) {
+      const appType = await appTypeService.getAppType(testCase.app_type_id);
+      await projectService.getProject(appType.project_id, req.user.id);
+    }
+
+    return aiAutomationBuilderService.startRecorderSession({
+      test_case_id: req.params.id,
+      start_url: req.body?.start_url,
+      test_environment_id: req.body?.test_environment_id,
+      test_configuration_id: req.body?.test_configuration_id,
+      test_data_set_id: req.body?.test_data_set_id,
+      created_by: req.user.id
+    });
+  });
+
+  fastify.post("/test-cases/:id/automation/recorder-session/:sessionId/finish", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      transaction_id: { required: false, type: "string" },
+      integration_id: { required: false, type: "string" },
+      additional_context: { required: false, type: "string" },
+      test_environment_id: { required: false, type: "string" },
+      test_configuration_id: { required: false, type: "string" },
+      test_data_set_id: { required: false, type: "string" }
+    }, req.body || {});
+
+    const testCase = await service.getTestCase(req.params.id);
+
+    if (testCase.app_type_id) {
+      const appType = await appTypeService.getAppType(testCase.app_type_id);
+      await projectService.getProject(appType.project_id, req.user.id);
+    }
+
+    return aiAutomationBuilderService.finishRecorderSession({
+      test_case_id: req.params.id,
+      recorder_session_id: req.params.sessionId,
+      transaction_id: req.body?.transaction_id,
+      integration_id: req.body?.integration_id,
+      additional_context: req.body?.additional_context,
+      test_environment_id: req.body?.test_environment_id,
+      test_configuration_id: req.body?.test_configuration_id,
+      test_data_set_id: req.body?.test_data_set_id,
+      created_by: req.user.id
+    });
   });
 
   fastify.post("/test-cases/design-test-cases-preview", async (req) => {

@@ -223,6 +223,8 @@ const WORKSPACE_TRANSACTION_METADATA_LABELS: Record<string, string> = {
 
 const DEFAULT_DURATION_LABEL = "0s";
 const MAX_EXECUTION_EVIDENCE_IMAGE_BYTES = 3 * 1024 * 1024;
+const MAX_EXECUTION_EVIDENCE_IMAGE_DIMENSION = 1400;
+const EXECUTION_EVIDENCE_JPEG_QUALITY = 0.68;
 
 type BoardStatusTone = ExecutionStatus | ExecutionResult["status"];
 
@@ -390,29 +392,53 @@ const readExecutionEvidenceImage = (file: File) =>
       return;
     }
 
-    if (file.size > MAX_EXECUTION_EVIDENCE_IMAGE_BYTES) {
-      reject(new Error("Evidence images must be 3 MB or smaller because they are stored directly in the run record."));
-      return;
-    }
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
 
-    const reader = new FileReader();
+    image.onload = () => {
+      try {
+        const scale = Math.min(
+          1,
+          MAX_EXECUTION_EVIDENCE_IMAGE_DIMENSION / Math.max(image.naturalWidth || 1, image.naturalHeight || 1)
+        );
+        const width = Math.max(1, Math.round((image.naturalWidth || 1) * scale));
+        const height = Math.max(1, Math.round((image.naturalHeight || 1) * scale));
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
 
-    reader.onload = () => {
-      const dataUrl = String(reader.result || "");
+        if (!context) {
+          reject(new Error("Unable to compress the selected image in this browser."));
+          return;
+        }
 
-      if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(dataUrl)) {
-        reject(new Error("Unable to encode the selected image for run evidence."));
-        return;
+        canvas.width = width;
+        canvas.height = height;
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, width, height);
+        context.drawImage(image, 0, 0, width, height);
+
+        const dataUrl = canvas.toDataURL("image/jpeg", EXECUTION_EVIDENCE_JPEG_QUALITY);
+        const encodedBytes = Math.round((dataUrl.length - "data:image/jpeg;base64,".length) * 0.75);
+
+        if (encodedBytes > MAX_EXECUTION_EVIDENCE_IMAGE_BYTES) {
+          reject(new Error("Evidence images must compress to 3 MB or smaller because they are stored directly in the run record."));
+          return;
+        }
+
+        resolve({
+          dataUrl,
+          fileName: file.name ? file.name.replace(/\.[^.]+$/, ".jpg") : "evidence.jpg",
+          mimeType: "image/jpeg"
+        });
+      } finally {
+        URL.revokeObjectURL(objectUrl);
       }
-
-      resolve({
-        dataUrl,
-        fileName: file.name || undefined,
-        mimeType: file.type || undefined
-      });
     };
-    reader.onerror = () => reject(new Error(`Unable to read ${file.name}`));
-    reader.readAsDataURL(file);
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error(`Unable to read ${file.name}`));
+    };
+    image.src = objectUrl;
   });
 
 function buildProgressSegments(
@@ -6362,38 +6388,6 @@ function ExecutionStepCard({
           >
             <AutomationCodeIcon />
           </InlineStepToolButton>
-        </div>
-        <div className="execution-step-card-top-actions">
-          <button
-            aria-label={`Run step ${step.step_order}`}
-            className="execution-step-action-button"
-            disabled={isLocked || isRunningApi}
-            onClick={onRunStep}
-            title="Run step"
-            type="button"
-          >
-            <ExecutionStartIcon />
-          </button>
-          <button
-            aria-label={`Mark step ${step.step_order} as passed`}
-            className="execution-step-action-button execution-step-pass"
-            disabled={isLocked || isRunningApi}
-            onClick={onPass}
-            title="Mark passed"
-            type="button"
-          >
-            <ExecutionStepPassIcon />
-          </button>
-          <button
-            aria-label={`Mark step ${step.step_order} as failed`}
-            className="execution-step-action-button execution-step-fail"
-            disabled={isLocked || isRunningApi}
-            onClick={onFail}
-            title="Mark failed"
-            type="button"
-          >
-            <ExecutionStepFailIcon />
-          </button>
         </div>
       </div>
 

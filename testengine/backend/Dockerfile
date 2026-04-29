@@ -1,16 +1,16 @@
-FROM mcr.microsoft.com/playwright:v1.52.0-jammy AS build
+FROM mcr.microsoft.com/playwright:v1.59.1-jammy AS build
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 
 COPY tsconfig.json ./
 COPY src ./src
 
 RUN npm run build
 
-FROM mcr.microsoft.com/playwright:v1.52.0-jammy
+FROM mcr.microsoft.com/playwright:v1.59.1-jammy
 
 WORKDIR /app
 
@@ -18,8 +18,8 @@ ENV NODE_ENV=production
 ENV PORT=4301
 ENV ARTIFACT_ROOT=/artifacts
 
-COPY package.json ./
-RUN npm install --omit=dev && npm cache clean --force
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=build /app/dist ./dist
 

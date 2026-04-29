@@ -338,6 +338,57 @@ exports.queueTestCaseExport = async ({ app_type_id, test_case_ids = [], created_
   });
 };
 
+exports.queueAutomationBuild = async ({
+  app_type_id,
+  test_case_ids = [],
+  integration_id,
+  start_url,
+  test_environment_id,
+  test_configuration_id,
+  test_data_set_id,
+  failure_threshold,
+  additional_context,
+  created_by
+} = {}) => {
+  const appType = app_type_id ? await selectAppType.get(app_type_id) : null;
+
+  if (!appType) {
+    throw new Error("App type not found");
+  }
+
+  const selectedCaseCount = Array.isArray(test_case_ids) ? test_case_ids.length : 0;
+
+  return exports.queueBatchJob({
+    project_id: appType.project_id,
+    app_type_id,
+    category: "automation_build",
+    action: "batch_case_automation_build",
+    title: "Batch web automation build",
+    description: selectedCaseCount
+      ? `Queued ${selectedCaseCount} selected manual web case${selectedCaseCount === 1 ? "" : "s"} for automation build.`
+      : "Queued manual web cases for automation build.",
+    metadata: {
+      selected_case_count: selectedCaseCount,
+      total_items: selectedCaseCount,
+      current_phase: "queued"
+    },
+    created_by,
+    operation: "automation_build",
+    payload: {
+      app_type_id,
+      test_case_ids,
+      integration_id,
+      start_url,
+      test_environment_id,
+      test_configuration_id,
+      test_data_set_id,
+      failure_threshold,
+      additional_context,
+      created_by
+    }
+  });
+};
+
 async function runUserImport(job) {
   const userService = require("./user.service");
   const payload = parseJsonValue(job.payload, {});
@@ -483,11 +534,22 @@ async function runTestCaseExport(job) {
   };
 }
 
+async function runAutomationBuild(job) {
+  const aiAutomationBuilderService = require("./aiAutomationBuilder.service");
+  const payload = parseJsonValue(job.payload, {});
+
+  return aiAutomationBuilderService.buildAutomationBatch({
+    ...payload,
+    transaction_id: job.transaction_id
+  });
+}
+
 const JOB_HANDLERS = {
   user_import: runUserImport,
   requirement_import: runRequirementImport,
   test_case_import: runTestCaseImport,
-  test_case_export: runTestCaseExport
+  test_case_export: runTestCaseExport,
+  automation_build: runAutomationBuild
 };
 
 let isProcessing = false;

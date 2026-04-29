@@ -144,11 +144,13 @@ prefer:
 
 ```bash
 QAIRA_API_BASE_URL=https://qaira.qualipal.in/api \
-QAIRA_TESTENGINE_SECRET=replace-with-your-shared-secret \
 QAIRA_AUTH_TOKEN=replace-with-a-qaira-token \
 QAIRA_PROJECT_ID=replace-with-project-id \
 ./start-testengine-ops.sh
 ```
+
+`QAIRA_TESTENGINE_SECRET` is optional for this script. If omitted, the Test
+Engine uses the same development fallback as the QAira API.
 
 If you do not want integration lookup, set `ENGINE_PUBLIC_URL` directly instead.
 When the stack is up, the Test Engine host serves:

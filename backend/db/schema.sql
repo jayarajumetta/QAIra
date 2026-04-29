@@ -573,6 +573,33 @@ CREATE INDEX IF NOT EXISTS idx_ai_test_case_generation_jobs_scope_status
 CREATE INDEX IF NOT EXISTS idx_ai_test_case_generation_jobs_project_created
   ON ai_test_case_generation_jobs (project_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS automation_learning_cache (
+  id TEXT PRIMARY KEY,
+  project_id TEXT,
+  app_type_id TEXT,
+  test_case_id TEXT,
+  page_url TEXT,
+  page_key TEXT NOT NULL,
+  locator_intent TEXT NOT NULL,
+  locator TEXT NOT NULL,
+  locator_kind TEXT,
+  confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'ai_builder',
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  hit_count INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (app_type_id) REFERENCES app_types(id) ON DELETE CASCADE,
+  FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_automation_learning_cache_unique
+  ON automation_learning_cache (app_type_id, page_key, locator_intent, locator);
+
+CREATE INDEX IF NOT EXISTS idx_automation_learning_cache_scope
+  ON automation_learning_cache (project_id, app_type_id, updated_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_workspace_transactions_related
   ON workspace_transactions (related_kind, related_id, created_at DESC);
 

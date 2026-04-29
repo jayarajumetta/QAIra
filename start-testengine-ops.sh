@@ -18,10 +18,10 @@ Options:
 
 Required environment variables:
   QAIRA_API_BASE_URL       QAira public API base URL, for example https://qaira.qualipal.in/api
-  QAIRA_TESTENGINE_SECRET  Shared secret used by QAira and the Test Engine queue APIs
 
 Optional environment variables:
   QAIRA_TESTENGINE_IMAGE   Default: jayarajumetta/qaira-testengine:latest
+  QAIRA_TESTENGINE_SECRET  Shared secret for QAira queue APIs. Defaults to the QAira dev fallback.
   QAIRA_PROJECT_ID         Resolve project-scoped Test Engine and OPS integrations first
   QAIRA_AUTH_TOKEN         Read active integrations from QAira with this bearer token
   QAIRA_AUTH_EMAIL         Login email used when QAIRA_AUTH_TOKEN is not provided
@@ -47,7 +47,6 @@ Optional environment variables:
 
 Example:
   QAIRA_API_BASE_URL=https://qaira.qualipal.in/api \\
-  QAIRA_TESTENGINE_SECRET=your-shared-secret \\
   QAIRA_AUTH_TOKEN=replace-with-a-qaira-token \\
   QAIRA_PROJECT_ID=replace-with-project-id \\
   ./start-testengine-ops.sh
@@ -144,7 +143,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 QAIRA_API_BASE_URL="${QAIRA_API_BASE_URL:-}"
-QAIRA_TESTENGINE_SECRET="${QAIRA_TESTENGINE_SECRET:-}"
+PROVIDED_TESTENGINE_SECRET="${QAIRA_TESTENGINE_SECRET:-${TESTENGINE_SHARED_SECRET:-}}"
+QAIRA_TESTENGINE_SECRET="${PROVIDED_TESTENGINE_SECRET:-qaira-testengine-dev-secret}"
 QAIRA_TESTENGINE_IMAGE="${QAIRA_TESTENGINE_IMAGE:-jayarajumetta/qaira-testengine:latest}"
 TESTENGINE_PORT="${TESTENGINE_PORT:-4301}"
 OPS_ENVIRONMENT="${OPS_ENVIRONMENT:-}"
@@ -157,10 +157,9 @@ if [ -z "$QAIRA_API_BASE_URL" ]; then
   exit 1
 fi
 
-if [ -z "$QAIRA_TESTENGINE_SECRET" ]; then
-  echo "QAIRA_TESTENGINE_SECRET is required."
-  echo "Use the same shared secret on the QAira API host and the Test Engine host."
-  exit 1
+if [ -z "$PROVIDED_TESTENGINE_SECRET" ]; then
+  echo "Warning: QAIRA_TESTENGINE_SECRET was not set; using the QAira dev fallback secret."
+  echo "Warning: This works only when the QAira API host also uses its default fallback."
 fi
 
 resolve_from_integrations

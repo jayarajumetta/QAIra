@@ -4,6 +4,7 @@ import { queueRunExecution, saveAcceptedRun } from "./lib/executor.js";
 import { createOpsTelemetry } from "./lib/opsTelemetry.js";
 import { startQueueWorker } from "./lib/queueWorker.js";
 import { getRun, getRunEnvelope, listRuns, saveRun } from "./lib/runStore.js";
+import { registerRecorderRoutes } from "./lib/recorder.js";
 import type { EngineRunEnvelope } from "./contracts/qaira.js";
 
 const port = Number.parseInt(process.env.PORT || "4301", 10);
@@ -43,6 +44,7 @@ const app = Fastify({
 const opsTelemetry = await createOpsTelemetry(app.log);
 
 await opsTelemetry.register(app);
+await registerRecorderRoutes(app);
 
 app.get("/health", async () => ({
   ok: true,

@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AiCaseAuthoringModal } from "../components/AiCaseAuthoringModal";
 import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
-import { AddIcon, CopyIcon, ExportIcon, MoveIcon, OpenIcon, TrashIcon } from "../components/AppIcons";
+import { ActivityIcon, AddIcon, CopyIcon, ExportIcon, MoveIcon, OpenIcon, PlayIcon, TrashIcon } from "../components/AppIcons";
 import { CatalogActionMenu } from "../components/CatalogActionMenu";
 import { CatalogViewToggle } from "../components/CatalogViewToggle";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
@@ -93,8 +93,10 @@ import type {
   AppType,
   Execution,
   ExecutionResult,
+  Integration,
   ProjectMember,
   Project,
+  RecorderSessionResponse,
   Requirement,
   SharedStepGroup,
   TestCase,
@@ -166,7 +168,7 @@ type CaseStepFilter = "all" | "with-steps" | "no-steps";
 type CaseRunFilter = "all" | "with-runs" | "no-runs";
 type TestCaseExecutionAssigneeOption = AssigneeOption;
 
-type TestCaseEditorSectionKey = "case" | "steps" | "history";
+type TestCaseEditorSectionKey = "case" | "steps" | "automation" | "history";
 
 const createEmptyCaseDraft = (defaultStatus = "active", defaultAutomated: "yes" | "no" = "no"): TestCaseDraft => ({
   title: "",
@@ -196,12 +198,14 @@ const executionHistoryDateFormatter = new Intl.DateTimeFormat(undefined, {
 const createDefaultTestCaseSections = (): Record<TestCaseEditorSectionKey, boolean> => ({
   case: false,
   steps: true,
+  automation: false,
   history: false
 });
 
 const createCreateModeTestCaseSections = (): Record<TestCaseEditorSectionKey, boolean> => ({
   case: true,
   steps: true,
+  automation: false,
   history: false
 });
 
@@ -664,6 +668,15 @@ const formatExecutionHistoryDate = (value?: string | null) => {
   return Number.isNaN(parsed.getTime()) ? value : executionHistoryDateFormatter.format(parsed);
 };
 
+function resolveScopedIntegration(integrations: Integration[], type: Integration["type"], projectId: string) {
+  const active = integrations.filter((integration) => integration.type === type && integration.is_active);
+  const scoped = projectId
+    ? active.find((integration) => String(integration.config?.project_id || "") === projectId)
+    : null;
+
+  return scoped || active.find((integration) => !String(integration.config?.project_id || "").trim()) || active[0] || null;
+}
+
 export function TestCasesPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -691,6 +704,11 @@ export function TestCasesPage() {
   const [selectedExecutionConfigurationId, setSelectedExecutionConfigurationId] = useState("");
   const [selectedExecutionDataSetId, setSelectedExecutionDataSetId] = useState("");
   const [selectedExecutionAssigneeId, setSelectedExecutionAssigneeId] = useState("");
+  const [automationStartUrl, setAutomationStartUrl] = useState("");
+  const [automationContext, setAutomationContext] = useState("");
+  const [automationFailureThreshold, setAutomationFailureThreshold] = useState(3);
+  const [recorderSession, setRecorderSession] = useState<RecorderSessionResponse | null>(null);
+  const [recorderSessionCaseId, setRecorderSessionCaseId] = useState("");
   const [expandedSections, setExpandedSections] = useState<Record<TestCaseEditorSectionKey, boolean>>(createDefaultTestCaseSections);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error">("success");
@@ -827,6 +845,20 @@ export function TestCasesPage() {
     queryKey: ["integrations", "llm"],
     queryFn: () => api.integrations.list({ type: "llm", is_active: true })
   });
+  const testEngineIntegrationsQuery = useQuery({
+    queryKey: ["integrations", "testengine", projectId],
+    queryFn: () => api.integrations.list({ type: "testengine", is_active: true }),
+    enabled: Boolean(projectId && session)
+  });
+  const automationLearningCacheQuery = useQuery({
+    queryKey: ["automation-learning-cache", projectId, appTypeId],
+    queryFn: () => api.testCases.learningCache({
+      project_id: projectId || undefined,
+      app_type_id: appTypeId || undefined,
+      limit: 12
+    }),
+    enabled: Boolean((projectId || appTypeId) && session)
+  });
   const stepsQuery = useQuery({
     queryKey: ["test-case-steps", selectedTestCaseId],
     queryFn: () => api.testSteps.list({ test_case_id: selectedTestCaseId }),
@@ -860,6 +892,51 @@ export function TestCasesPage() {
   const previewCaseAuthoring = useMutation({ mutationFn: api.testCases.previewCaseAuthoring });
   const previewDesignedCases = useMutation({ mutationFn: api.testCases.previewDesignedCases });
   const acceptDesignedCases = useMutation({ mutationFn: api.testCases.acceptDesignedCases });
+  const buildSingleAutomation = useMutation({
+    mutationFn: ({ testCaseId }: { testCaseId: string }) =>
+      api.testCases.buildAutomation(testCaseId, {
+        integration_id: integrationId || undefined,
+        start_url: automationStartUrl.trim() || undefined,
+        additional_context: automationContext.trim() || undefined,
+        test_environment_id: selectedExecutionEnvironmentId || undefined,
+        test_configuration_id: selectedExecutionConfigurationId || undefined,
+        test_data_set_id: selectedExecutionDataSetId || undefined
+      })
+  });
+  const buildBatchAutomation = useMutation({
+    mutationFn: ({ testCaseIds }: { testCaseIds: string[] }) =>
+      api.testCases.buildAutomationBatch({
+        app_type_id: appTypeId,
+        test_case_ids: testCaseIds,
+        integration_id: integrationId || undefined,
+        start_url: automationStartUrl.trim() || undefined,
+        additional_context: automationContext.trim() || undefined,
+        test_environment_id: selectedExecutionEnvironmentId || undefined,
+        test_configuration_id: selectedExecutionConfigurationId || undefined,
+        test_data_set_id: selectedExecutionDataSetId || undefined,
+        failure_threshold: automationFailureThreshold
+      })
+  });
+  const startRecorder = useMutation({
+    mutationFn: ({ testCaseId }: { testCaseId: string }) =>
+      api.testCases.startRecorderSession(testCaseId, {
+        start_url: automationStartUrl.trim() || undefined,
+        test_environment_id: selectedExecutionEnvironmentId || undefined,
+        test_configuration_id: selectedExecutionConfigurationId || undefined,
+        test_data_set_id: selectedExecutionDataSetId || undefined
+      })
+  });
+  const finishRecorder = useMutation({
+    mutationFn: ({ testCaseId, sessionId, transactionId }: { testCaseId: string; sessionId: string; transactionId?: string }) =>
+      api.testCases.finishRecorderSession(testCaseId, sessionId, {
+        transaction_id: transactionId,
+        integration_id: integrationId || undefined,
+        additional_context: automationContext.trim() || undefined,
+        test_environment_id: selectedExecutionEnvironmentId || undefined,
+        test_configuration_id: selectedExecutionConfigurationId || undefined,
+        test_data_set_id: selectedExecutionDataSetId || undefined
+      })
+  });
   const createStep = useMutation({ mutationFn: api.testSteps.create });
   const groupSteps = useMutation({ mutationFn: api.testSteps.group });
   const ungroupSteps = useMutation({ mutationFn: api.testSteps.ungroup });
@@ -878,6 +955,7 @@ export function TestCasesPage() {
   const projects = projectsQuery.data || [];
   const users = (usersQuery.data || []) as User[];
   const projectMembers = (projectMembersQuery.data || []) as ProjectMember[];
+  const testEngineIntegrations = testEngineIntegrationsQuery.data || [];
   const appTypes = appTypesQuery.data || [];
   const requirements = requirementsQuery.data || [];
   const suites = suitesQuery.data || [];
@@ -1078,6 +1156,11 @@ export function TestCasesPage() {
     setExecutionName("");
     setSelectedExecutionAssigneeId("");
     resetExecutionContextSelection();
+    setAutomationStartUrl("");
+    setAutomationContext("");
+    setAutomationFailureThreshold(3);
+    setRecorderSession(null);
+    setRecorderSessionCaseId("");
     setCaseDraft(emptyCaseDraft);
     setNewStepDraft(EMPTY_STEP_DRAFT);
     setStepInsertIndex(null);
@@ -1272,6 +1355,8 @@ export function TestCasesPage() {
     filteredCases.length > 0 && filteredCases.every((item) => selectedActionTestCaseIds.includes(item.id));
   const selectedProject = projects.find((project) => project.id === projectId) || null;
   const selectedAppType = appTypes.find((appType) => appType.id === appTypeId) || null;
+  const testEngineIntegration = resolveScopedIntegration(testEngineIntegrations, "testengine", projectId);
+  const automationLearningCache = automationLearningCacheQuery.data || [];
   const executionsById = useMemo(
     () =>
       executions.reduce<Record<string, Execution>>((map, execution) => {
@@ -1288,6 +1373,19 @@ export function TestCasesPage() {
   const selectedTestCase = useMemo(
     () => testCases.find((item) => item.id === selectedTestCaseId) || null,
     [selectedTestCaseId, testCases]
+  );
+  const automationTargetCaseIds = useMemo(
+    () =>
+      selectedActionTestCaseIds.length
+        ? selectedActionTestCaseIds
+        : selectedTestCase
+          ? [selectedTestCase.id]
+          : [],
+    [selectedActionTestCaseIds, selectedTestCase]
+  );
+  const automationTargetCases = useMemo(
+    () => testCases.filter((item) => automationTargetCaseIds.includes(item.id)),
+    [automationTargetCaseIds, testCases]
   );
   const selectedCaseSuiteIds = useMemo(
     () =>
@@ -1850,7 +1948,9 @@ export function TestCasesPage() {
       queryClient.invalidateQueries({ queryKey: ["requirements", projectId] }),
       queryClient.invalidateQueries({ queryKey: ["design-test-cases", appTypeId] }),
       queryClient.invalidateQueries({ queryKey: ["design-suites", appTypeId] }),
-      queryClient.invalidateQueries({ queryKey: ["test-cases"] })
+      queryClient.invalidateQueries({ queryKey: ["test-cases"] }),
+      queryClient.invalidateQueries({ queryKey: ["automation-learning-cache"] }),
+      queryClient.invalidateQueries({ queryKey: ["workspace-transactions"] })
     ]);
   };
 
@@ -2410,6 +2510,120 @@ export function TestCasesPage() {
       navigate(`/executions?view=test-case-runs&execution=${response.id}`);
     } catch (error) {
       showError(error, "Unable to create run");
+    }
+  };
+
+  const handleBuildSelectedAutomation = async () => {
+    if (!appTypeId || !automationTargetCaseIds.length) {
+      showError(new Error("Select one or more test cases before building automation."), "Unable to build automation");
+      return;
+    }
+
+    try {
+      if (automationTargetCaseIds.length === 1) {
+        const response = await buildSingleAutomation.mutateAsync({ testCaseId: automationTargetCaseIds[0] });
+        showSuccess(`Automation associated with ${response.generated_step_count} step${response.generated_step_count === 1 ? "" : "s"}.`);
+      } else {
+        const response = await buildBatchAutomation.mutateAsync({ testCaseIds: automationTargetCaseIds });
+        showSuccess(`Automation build queued as ${response.transaction_id}. Track the batch in TestOps.`);
+      }
+
+      await refreshCases();
+    } catch (error) {
+      showError(error, "Unable to build automation");
+    }
+  };
+
+  const handleStartRecorder = async () => {
+    if (!selectedTestCase) {
+      showError(new Error("Select a saved web test case before starting the recorder."), "Unable to start recorder");
+      return;
+    }
+
+    if (!testEngineIntegration) {
+      showError(new Error("Configure an active Test Engine integration before starting the recorder."), "Unable to start recorder");
+      return;
+    }
+
+    try {
+      const response = await startRecorder.mutateAsync({ testCaseId: selectedTestCase.id });
+      setRecorderSession(response);
+      setRecorderSessionCaseId(selectedTestCase.id);
+      showSuccess("Recorder started in the local Test Engine browser session.");
+    } catch (error) {
+      showError(error, "Unable to start recorder");
+    }
+  };
+
+  const handleFinishRecorder = async () => {
+    if (!recorderSession?.id || !recorderSessionCaseId) {
+      showError(new Error("Start a recorder session before finishing it."), "Unable to finish recorder session");
+      return;
+    }
+
+    try {
+      const response = await finishRecorder.mutateAsync({
+        testCaseId: recorderSessionCaseId,
+        sessionId: recorderSession.id,
+        transactionId: recorderSession.transaction_id
+      });
+      setRecorderSession(null);
+      setRecorderSessionCaseId("");
+      showSuccess(`Recorder actions converted into ${response.generated_step_count} automated step${response.generated_step_count === 1 ? "" : "s"}.`);
+      await refreshCases();
+    } catch (error) {
+      showError(error, "Unable to finish recorder session");
+    }
+  };
+
+  const handleRunAutomationTargets = async () => {
+    if (!session?.user.id) {
+      showError(new Error("You need an active session before handing cases to the Test Engine."), "Unable to hand off test cases");
+      return;
+    }
+
+    if (!projectId || !appTypeId || !automationTargetCaseIds.length) {
+      showError(new Error("Select one or more test cases before handing them to the Test Engine."), "Unable to hand off test cases");
+      return;
+    }
+
+    if (!testEngineIntegration) {
+      showError(new Error("Configure an active Test Engine integration before handing cases to the engine."), "Unable to hand off test cases");
+      return;
+    }
+
+    if (automationTargetManualCount > 0) {
+      showError(new Error("Build automation for the selected manual cases before handing them to the Test Engine."), "Unable to hand off test cases");
+      return;
+    }
+
+    if (!selectedExecutionEnvironmentId || !selectedExecutionDataSetId) {
+      showError(new Error("Select a test environment and test data before handing cases to the Test Engine."), "Unable to hand off test cases");
+      return;
+    }
+
+    try {
+      const response = await createExecution.mutateAsync({
+        project_id: projectId,
+        app_type_id: appTypeId,
+        test_case_ids: automationTargetCaseIds,
+        test_environment_id: selectedExecutionEnvironmentId,
+        test_configuration_id: selectedExecutionConfigurationId || undefined,
+        test_data_set_id: selectedExecutionDataSetId,
+        assigned_to: selectedExecutionAssigneeId || undefined,
+        name: `${automationTargetCases.length === 1 ? automationTargetCases[0]?.title || "Test case" : `${automationTargetCases.length} Test Cases`} Engine Run`,
+        created_by: session.user.id
+      });
+      const startResponse = await startExecution.mutateAsync(response.id);
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["executions"] }),
+        queryClient.invalidateQueries({ queryKey: ["executions", projectId] })
+      ]);
+      showSuccess(summarizeExecutionStart(startResponse, "Test Engine handoff started."));
+      navigate(`/executions?view=test-case-runs&execution=${response.id}`);
+    } catch (error) {
+      showError(error, "Unable to hand off test cases");
     }
   };
 
@@ -4098,6 +4312,10 @@ export function TestCasesPage() {
     : isCreating
       ? "No draft steps added yet."
       : "No steps added yet for this test case.";
+  const automationSectionSummary = automationTargetCaseIds.length
+    ? `${automationTargetCaseIds.length} case${automationTargetCaseIds.length === 1 ? "" : "s"} selected for AI build, recorder, or Test Engine handoff.`
+    : "Select a saved case to build automation or hand it to the Test Engine.";
+  const automationTargetManualCount = automationTargetCases.filter((testCase) => testCase.automated !== "yes").length;
   const historySectionSummary = selectedHistory.length
     ? "Review the latest recorded outcomes and preserved run evidence for this reusable test case."
     : "No run history has been recorded for this reusable test case yet.";
@@ -4248,6 +4466,17 @@ export function TestCasesPage() {
         >
           <TestCaseRunIcon />
           <span>{isSelectedCaseRunning ? "Starting…" : "Run test"}</span>
+        </button>
+      ) : null}
+      {isCaseWorkspaceOpen ? (
+        <button
+          className="ghost-button"
+          disabled={isCreating || !selectedTestCase}
+          onClick={() => setExpandedSections((current) => ({ ...current, automation: true }))}
+          type="button"
+        >
+          <AutomationCodeIcon />
+          <span>Automate</span>
         </button>
       ) : null}
       {isCaseWorkspaceOpen ? (
@@ -5536,6 +5765,168 @@ export function TestCasesPage() {
                       ) : null}
                     </div>
                   </EditorAccordionSection>
+
+                  {!isCreating ? (
+                    <EditorAccordionSection
+                      countLabel={automationTargetCaseIds.length ? `${automationTargetCaseIds.length} target${automationTargetCaseIds.length === 1 ? "" : "s"}` : "Ready"}
+                      isExpanded={expandedSections.automation}
+                      onToggle={() => setExpandedSections((current) => ({ ...current, automation: !current.automation }))}
+                      summary={automationSectionSummary}
+                      title="Automation builder"
+                    >
+                      <div className="automation-builder-panel">
+                        <div className="metric-strip compact">
+                          <div className="mini-card">
+                            <strong>{integrations.length ? "Ready" : "Fallback"}</strong>
+                            <span>LLM builder</span>
+                          </div>
+                          <div className="mini-card">
+                            <strong>{testEngineIntegration ? "Ready" : "Setup"}</strong>
+                            <span>Test Engine</span>
+                          </div>
+                          <div className="mini-card">
+                            <strong>{automationTargetManualCount}</strong>
+                            <span>Manual targets</span>
+                          </div>
+                          <div className="mini-card">
+                            <strong>{automationLearningCache.length}</strong>
+                            <span>Cached locators</span>
+                          </div>
+                        </div>
+
+                        <ExecutionContextSelector
+                          appTypeId={appTypeId}
+                          onConfigurationChange={setSelectedExecutionConfigurationId}
+                          onDataSetChange={setSelectedExecutionDataSetId}
+                          onEnvironmentChange={setSelectedExecutionEnvironmentId}
+                          prefillFirstAvailable
+                          projectId={projectId}
+                          selectedConfigurationId={selectedExecutionConfigurationId}
+                          selectedDataSetId={selectedExecutionDataSetId}
+                          selectedEnvironmentId={selectedExecutionEnvironmentId}
+                        />
+
+                        <div className="record-grid automation-builder-form">
+                          <FormField label="Start URL">
+                            <input
+                              onChange={(event) => setAutomationStartUrl(event.target.value)}
+                              placeholder="Uses selected environment base URL when blank"
+                              value={automationStartUrl}
+                            />
+                          </FormField>
+                          <FormField label="Failure threshold">
+                            <input
+                              min={1}
+                              max={50}
+                              onChange={(event) => setAutomationFailureThreshold(Math.max(1, Number(event.target.value) || 1))}
+                              type="number"
+                              value={automationFailureThreshold}
+                            />
+                          </FormField>
+                        </div>
+
+                        <FormField label="Builder guidance">
+                          <textarea
+                            onChange={(event) => setAutomationContext(event.target.value)}
+                            placeholder="Auth assumptions, preferred data tokens, flows to ignore, or edge cases to preserve."
+                            rows={4}
+                            value={automationContext}
+                          />
+                        </FormField>
+
+                        {automationTargetCases.length ? (
+                          <div className="selection-chip-row">
+                            {automationTargetCases.map((testCase) => (
+                              <span className="selection-chip" key={testCase.id}>
+                                {testCase.display_id || testCase.title}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        <div className="testops-action-row">
+                          <button
+                            className="primary-button"
+                            disabled={!automationTargetCaseIds.length || buildSingleAutomation.isPending || buildBatchAutomation.isPending}
+                            onClick={() => void handleBuildSelectedAutomation()}
+                            type="button"
+                          >
+                            <TestCaseSparkIcon />
+                            <span>
+                              {buildSingleAutomation.isPending || buildBatchAutomation.isPending
+                                ? "Building..."
+                                : automationTargetCaseIds.length > 1
+                                  ? "Queue selected build"
+                                  : "Build this case"}
+                            </span>
+                          </button>
+                          <button
+                            className="ghost-button"
+                            disabled={!automationTargetCaseIds.length || automationTargetManualCount > 0 || !testEngineIntegration || !selectedExecutionEnvironmentId || !selectedExecutionDataSetId || createExecution.isPending || startExecution.isPending}
+                            onClick={() => void handleRunAutomationTargets()}
+                            type="button"
+                          >
+                            <ActivityIcon size={16} />
+                            <span>{createExecution.isPending || startExecution.isPending ? "Handing off..." : "Run in Test Engine"}</span>
+                          </button>
+                        </div>
+
+                        <div className="stack-list automation-recorder-stack">
+                          <div className="stack-item">
+                            <div>
+                              <strong>Recorder</strong>
+                              <span>{recorderSession ? `Session ${recorderSession.id.slice(0, 8)} is ${recorderSession.status}.` : "Capture clicks, fills, tab navigation, and business API traffic for this case."}</span>
+                            </div>
+                            <div className="testops-recorder-actions">
+                              <button
+                                className="ghost-button"
+                                disabled={!selectedTestCase || !testEngineIntegration || startRecorder.isPending || Boolean(recorderSession)}
+                                onClick={() => void handleStartRecorder()}
+                                type="button"
+                              >
+                                <PlayIcon size={16} />
+                                <span>{startRecorder.isPending ? "Starting..." : "Start recorder"}</span>
+                              </button>
+                              <button
+                                className="primary-button"
+                                disabled={!recorderSession || finishRecorder.isPending}
+                                onClick={() => void handleFinishRecorder()}
+                                type="button"
+                              >
+                                <AutomationCodeIcon />
+                                <span>{finishRecorder.isPending ? "Converting..." : "Finish and build"}</span>
+                              </button>
+                            </div>
+                          </div>
+                          {recorderSession ? (
+                            <div className="stack-item">
+                              <div>
+                                <strong>{recorderSession.status_url || recorderSession.engine_base_url || "Local Test Engine"}</strong>
+                                <span>{recorderSession.action_count || 0} actions · {recorderSession.network_count || 0} API candidates</span>
+                              </div>
+                              <StatusBadge value={recorderSession.status} />
+                            </div>
+                          ) : null}
+                        </div>
+
+                        {automationLearningCache.length ? (
+                          <div className="stack-list testops-learning-list">
+                            {automationLearningCache.slice(0, 6).map((entry) => (
+                              <div className="stack-item" key={entry.id}>
+                                <div>
+                                  <strong>{entry.locator_intent}</strong>
+                                  <span>{entry.page_key} · {entry.locator_kind || entry.source}</span>
+                                </div>
+                                <code className="execution-operation-json">{entry.locator}</code>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="empty-state compact">No locator learning is cached for this scope yet.</div>
+                        )}
+                      </div>
+                    </EditorAccordionSection>
+                  ) : null}
 
                   {!isCreating ? (
                     <EditorAccordionSection

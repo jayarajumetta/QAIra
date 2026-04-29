@@ -79,6 +79,8 @@ const deriveStepRows = (steps, logs) =>
     .map((step) => {
       const webDetail = logs.stepWebDetails?.[step.id] || null;
 
+      const evidence = logs.stepEvidence?.[step.id] || null;
+
       return {
         id: step.id,
         order: step.step_order,
@@ -87,7 +89,8 @@ const deriveStepRows = (steps, logs) =>
         expected_result: step.expected_result || "",
         status: logs.stepStatuses?.[step.id] || "queued",
         note: logs.stepNotes?.[step.id] || "",
-        has_evidence: Boolean(logs.stepEvidence?.[step.id]?.dataUrl),
+        evidence,
+        has_evidence: Boolean(evidence?.dataUrl),
         captures: logs.stepCaptures?.[step.id] || logs.stepApiDetails?.[step.id]?.captures || {},
         console_count: Array.isArray(webDetail?.console) ? webDetail.console.length : 0,
         network_count: Array.isArray(webDetail?.network) ? webDetail.network.length : 0,
@@ -494,6 +497,79 @@ const wrapPdfText = (value, width, fontSize) => {
   return String(value || "").split(/\n+/).flatMap((line) => wrapLine(line, maxChars));
 };
 
+const parseJpegEvidence = (evidence) => {
+  const dataUrl = normalizeText(evidence?.dataUrl || evidence?.data_url);
+
+  if (!dataUrl) {
+    return null;
+  }
+
+  const match = dataUrl.match(/^data:image\/(?:jpeg|jpg);base64,([A-Za-z0-9+/=\s]+)$/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const data = Buffer.from(match[1].replace(/\s+/g, ""), "base64");
+  const size = readJpegSize(data);
+
+  if (!size) {
+    return null;
+  }
+
+  return {
+    data,
+    width: size.width,
+    height: size.height,
+    fileName: normalizeText(evidence?.fileName || evidence?.file_name) || "evidence.jpg"
+  };
+};
+
+const readJpegSize = (data) => {
+  if (!Buffer.isBuffer(data) || data.length < 4 || data[0] !== 0xff || data[1] !== 0xd8) {
+    return null;
+  }
+
+  let offset = 2;
+
+  while (offset + 9 < data.length) {
+    if (data[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+
+    const marker = data[offset + 1];
+    offset += 2;
+
+    if (marker === 0xd9 || marker === 0xda) {
+      break;
+    }
+
+    if (offset + 2 > data.length) {
+      break;
+    }
+
+    const length = data.readUInt16BE(offset);
+
+    if (length < 2 || offset + length > data.length) {
+      break;
+    }
+
+    const isStartOfFrame = marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker);
+
+    if (isStartOfFrame && offset + 7 < data.length) {
+      return {
+        height: data.readUInt16BE(offset + 3),
+        width: data.readUInt16BE(offset + 5)
+      };
+    }
+
+    offset += length;
+  }
+
+  return null;
+};
+
 const renderReportPdf = (report) => {
   const pageWidth = 612;
   const pageHeight = 842;
@@ -501,6 +577,7 @@ const renderReportPdf = (report) => {
   const usableWidth = pageWidth - margin * 2;
   const bottomLimit = pageHeight - margin;
   const pages = [];
+  const images = [];
   let ops = [];
   let cursorY = margin;
 
@@ -556,6 +633,30 @@ const renderReportPdf = (report) => {
     rect(x, y - 10, width, 17, meta.bg, meta.border);
     text(label, x + 8, y + 2, 7, { bold: true, color: meta.fg });
     return width;
+  };
+  const addImageResource = (evidence) => {
+    const parsed = parseJpegEvidence(evidence);
+
+    if (!parsed) {
+      return null;
+    }
+
+    const existing = images.find((image) => image.fileName === parsed.fileName && image.data.equals(parsed.data));
+
+    if (existing) {
+      return existing;
+    }
+
+    const image = {
+      ...parsed,
+      name: `Im${images.length + 1}`
+    };
+
+    images.push(image);
+    return image;
+  };
+  const drawImage = (image, x, y, width, height) => {
+    ops.push(`q ${pdfNumber(width)} 0 0 ${pdfNumber(height)} ${pdfNumber(x)} ${pdfNumber(toPdfY(y, height))} cm /${image.name} Do Q`);
   };
   const sectionTitle = (label) => {
     ensure(30);
@@ -697,7 +798,11 @@ const renderReportPdf = (report) => {
         const expectedHeight = step.expected_result ? wrapPdfText(`Expected: ${step.expected_result}`, usableWidth - 120, 8).length * 10 : 0;
         const noteHeight = step.note ? wrapPdfText(step.note.replace(/\n+/g, " "), usableWidth - 120, 8).length * 10 : 0;
         const urlHeight = step.page_url ? wrapPdfText(`URL: ${step.page_url}`, usableWidth - 120, 7).length * 9 : 0;
-        const rowHeight = Math.max(42, actionHeight + expectedHeight + noteHeight + urlHeight + 18);
+        const evidenceImage = addImageResource(step.evidence);
+        const imageWidth = evidenceImage ? Math.min(220, usableWidth - 140, evidenceImage.width) : 0;
+        const imageHeight = evidenceImage ? Math.max(44, Math.min(140, (imageWidth / evidenceImage.width) * evidenceImage.height)) : 0;
+        const imageBlockHeight = evidenceImage ? imageHeight + 24 : 0;
+        const rowHeight = Math.max(42, actionHeight + expectedHeight + noteHeight + urlHeight + imageBlockHeight + 18);
 
         ensure(rowHeight + 8);
         rect(margin + 8, cursorY - 3, usableWidth - 16, rowHeight, "#fbfdff", "#e7edf5");
@@ -722,10 +827,14 @@ const renderReportPdf = (report) => {
           });
         }
         if (step.page_url) {
-          wrappedText(`URL: ${step.page_url}`, margin + 92, detailY, usableWidth - 120, 7, {
+          detailY += wrappedText(`URL: ${step.page_url}`, margin + 92, detailY, usableWidth - 120, 7, {
             color: "#647084",
             lineHeight: 9
           });
+        }
+        if (evidenceImage) {
+          text("Evidence image", margin + 92, detailY + 10, 7, { bold: true, color: "#647084" });
+          drawImage(evidenceImage, margin + 92, detailY + 16, imageWidth, imageHeight);
         }
         text(signalLabel(step), pageWidth - margin - 118, cursorY + rowHeight - 9, 7, { color: "#647084" });
         cursorY += rowHeight + 8;
@@ -744,34 +853,66 @@ const renderReportPdf = (report) => {
   const pagesId = addObject("");
   const regularFontId = addObject("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
   const boldFontId = addObject("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
+  const imageObjectRefs = images.map((image) => {
+    const header = Buffer.from(
+      [
+        `<< /Type /XObject`,
+        `/Subtype /Image`,
+        `/Width ${image.width}`,
+        `/Height ${image.height}`,
+        `/ColorSpace /DeviceRGB`,
+        `/BitsPerComponent 8`,
+        `/Filter /DCTDecode`,
+        `/Length ${image.data.length}`,
+        `>>`,
+        `stream\n`
+      ].join(" "),
+      "binary"
+    );
+    const footer = Buffer.from("\nendstream", "binary");
+
+    return {
+      name: image.name,
+      id: addObject(Buffer.concat([header, image.data, footer]))
+    };
+  });
+  const xObjectResources = imageObjectRefs.length
+    ? `/XObject << ${imageObjectRefs.map((image) => `/${image.name} ${image.id} 0 R`).join(" ")} >>`
+    : "";
   const pageIds = [];
 
   pages.forEach((pageOps) => {
     const stream = pageOps.join("\n");
     const contentId = addObject(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`);
-    const pageId = addObject(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${regularFontId} 0 R /F2 ${boldFontId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+    const pageId = addObject(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${regularFontId} 0 R /F2 ${boldFontId} 0 R >> ${xObjectResources} >> /Contents ${contentId} 0 R >>`);
     pageIds.push(pageId);
   });
 
   objects[pagesId - 1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pageIds.length} >>`;
 
-  const chunks = ["%PDF-1.4\n"];
+  const chunks = [Buffer.from("%PDF-1.4\n", "binary")];
   const offsets = [0];
+  const lengthSoFar = () => chunks.reduce((total, chunk) => total + chunk.length, 0);
+  const pushChunk = (chunk) => {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), "binary"));
+  };
 
   objects.forEach((object, index) => {
-    offsets.push(Buffer.byteLength(chunks.join("")));
-    chunks.push(`${index + 1} 0 obj\n${object}\nendobj\n`);
+    offsets.push(lengthSoFar());
+    pushChunk(`${index + 1} 0 obj\n`);
+    pushChunk(object);
+    pushChunk("\nendobj\n");
   });
 
-  const xrefOffset = Buffer.byteLength(chunks.join(""));
-  chunks.push(`xref\n0 ${objects.length + 1}\n`);
-  chunks.push("0000000000 65535 f \n");
+  const xrefOffset = lengthSoFar();
+  pushChunk(`xref\n0 ${objects.length + 1}\n`);
+  pushChunk("0000000000 65535 f \n");
   offsets.slice(1).forEach((offset) => {
-    chunks.push(`${String(offset).padStart(10, "0")} 00000 n \n`);
+    pushChunk(`${String(offset).padStart(10, "0")} 00000 n \n`);
   });
-  chunks.push(`trailer\n<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`);
+  pushChunk(`trailer\n<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`);
 
-  return Buffer.from(chunks.join(""), "utf8");
+  return Buffer.concat(chunks);
 };
 
 const normalizeRecipients = (value) => {

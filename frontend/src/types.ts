@@ -354,6 +354,51 @@ export type TestStep = {
   reusable_group_id?: string | null;
 };
 
+export type AutomationLearningCacheEntry = {
+  id: string;
+  project_id?: string | null;
+  app_type_id?: string | null;
+  test_case_id?: string | null;
+  page_url?: string | null;
+  page_key: string;
+  locator_intent: string;
+  locator: string;
+  locator_kind?: string | null;
+  confidence: number;
+  source: string;
+  metadata?: Record<string, unknown>;
+  hit_count: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type AutomationBuildResponse = {
+  test_case_id: string;
+  title: string;
+  automated: "yes" | "no";
+  generated_step_count: number;
+  learned_locator_count: number;
+  cache_hits: number;
+  fallback_used: boolean;
+  fallback_reason?: string | null;
+  summary: string;
+  transaction_id?: string;
+  artifact_id?: string | null;
+};
+
+export type RecorderSessionResponse = {
+  id: string;
+  status: "running" | "stopped" | "failed";
+  started_at?: string;
+  stopped_at?: string | null;
+  start_url?: string | null;
+  action_count?: number;
+  network_count?: number;
+  transaction_id?: string;
+  engine_base_url?: string;
+  status_url?: string;
+};
+
 export type TestStepType = "web" | "api" | "android" | "ios";
 
 export type StepApiRequestHeader = {

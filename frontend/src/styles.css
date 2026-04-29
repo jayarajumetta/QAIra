@@ -13089,57 +13089,6 @@ button.execution-activity-card {
   min-width: 0;
 }
 
-.execution-step-mark-buttons {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.execution-step-action-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: transparent;
-  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, opacity 140ms ease;
-}
-
-.execution-step-action-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-}
-
-.execution-step-action-button svg {
-  width: 1rem;
-  height: 1rem;
-}
-
-.execution-step-pass {
-  color: var(--success);
-  background: rgba(13, 157, 108, 0.12);
-  border-color: rgba(13, 157, 108, 0.2);
-}
-
-.execution-step-fail {
-  color: var(--danger);
-  background: rgba(205, 54, 88, 0.1);
-  border-color: rgba(205, 54, 88, 0.18);
-}
-
-.execution-step-run {
-  color: var(--primary-strong);
-  background: rgba(33, 104, 243, 0.1);
-  border-color: rgba(33, 104, 243, 0.18);
-}
-
-.execution-step-action-button:disabled {
-  opacity: 0.55;
-  transform: none;
-}
-
 .execution-step-note-input {
   width: 100%;
   min-height: 2.4rem;
@@ -17043,8 +16992,58 @@ html {
   align-items: start;
 }
 
+.testops-builder-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.78fr) minmax(420px, 1.1fr);
+  gap: 16px;
+  align-items: start;
+}
+
 .testops-panel {
   min-width: 0;
+}
+
+.testops-case-picker {
+  display: grid;
+  gap: 12px;
+}
+
+.testops-automation-panel {
+  position: sticky;
+  top: 16px;
+}
+
+.testops-builder-form {
+  grid-template-columns: 1fr;
+}
+
+.automation-builder-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.automation-builder-form {
+  grid-template-columns: minmax(0, 1fr) minmax(9rem, 0.28fr);
+}
+
+.automation-recorder-stack .stack-item {
+  align-items: flex-start;
+}
+
+.testops-action-row,
+.testops-recorder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.testops-recorder-actions {
+  justify-content: flex-end;
+}
+
+.testops-learning-list .stack-item {
+  align-items: flex-start;
 }
 
 .testops-operation-grid {
@@ -17071,11 +17070,13 @@ html {
 }
 
 @media (max-width: 1080px) {
-  .testops-layout {
+  .testops-layout,
+  .testops-builder-layout {
     grid-template-columns: 1fr;
   }
 
-  .testops-detail-panel {
+  .testops-detail-panel,
+  .testops-automation-panel {
     position: static;
   }
 }

@@ -4,6 +4,8 @@ import type {
   AiDesignImageInput,
   AiDesignPreviewResponse,
   AiTestCaseGenerationJob,
+  AutomationBuildResponse,
+  AutomationLearningCacheEntry,
   AuthSetupPayload,
   ApiError,
   AppType,
@@ -19,6 +21,7 @@ import type {
   Requirement,
   Role,
   SessionPayload,
+  RecorderSessionResponse,
   SharedStepGroup,
   SmartExecutionPreviewResponse,
   TestConfiguration,
@@ -462,6 +465,28 @@ export const api = {
       request<BatchQueueResponse>("/test-cases/export", {
         method: "POST",
         body: JSON.stringify(input)
+      }),
+    learningCache: (query?: { project_id?: string; app_type_id?: string; limit?: number }) =>
+      request<AutomationLearningCacheEntry[]>(`/test-cases/automation/learning-cache${toQueryString(query)}`),
+    buildAutomation: (id: string, input?: { integration_id?: string; start_url?: string; additional_context?: string; test_environment_id?: string; test_configuration_id?: string; test_data_set_id?: string }) =>
+      request<AutomationBuildResponse>(`/test-cases/${id}/automation/build`, {
+        method: "POST",
+        body: JSON.stringify(input || {})
+      }),
+    buildAutomationBatch: (input: { app_type_id: string; test_case_ids?: string[]; integration_id?: string; start_url?: string; additional_context?: string; test_environment_id?: string; test_configuration_id?: string; test_data_set_id?: string; failure_threshold?: number }) =>
+      request<BatchQueueResponse>("/test-cases/automation/build-batch", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
+    startRecorderSession: (id: string, input?: { start_url?: string; test_environment_id?: string; test_configuration_id?: string; test_data_set_id?: string }) =>
+      request<RecorderSessionResponse>(`/test-cases/${id}/automation/recorder-session`, {
+        method: "POST",
+        body: JSON.stringify(input || {})
+      }),
+    finishRecorderSession: (id: string, sessionId: string, input?: { transaction_id?: string; integration_id?: string; additional_context?: string; test_environment_id?: string; test_configuration_id?: string; test_data_set_id?: string }) =>
+      request<AutomationBuildResponse & { recorder_session?: { id: string; action_count: number; network_count: number } }>(`/test-cases/${id}/automation/recorder-session/${sessionId}/finish`, {
+        method: "POST",
+        body: JSON.stringify(input || {})
       }),
     update: (id: string, input: Partial<{ app_type_id: string; suite_id: string; suite_ids: string[]; title: string; description: string; parameter_values: Record<string, string>; automated: "yes" | "no"; priority: number; status: string; requirement_id: string; requirement_ids: string[]; steps: Array<{ step_order?: number; action?: string; expected_result?: string; step_type?: TestStep["step_type"]; automation_code?: string; api_request?: TestStep["api_request"]; group_id?: string; group_name?: string; group_kind?: "local" | "reusable"; reusable_group_id?: string }> }>) =>
       request<{ updated: boolean }>(`/test-cases/${id}`, { method: "PUT", body: JSON.stringify(input) }),

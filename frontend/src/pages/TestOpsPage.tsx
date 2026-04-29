@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ActivityIcon, OpenIcon } from "../components/AppIcons";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ActivityIcon, OpenIcon, PlayIcon, SparkIcon } from "../components/AppIcons";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { ProgressMeter } from "../components/ProgressMeter";
@@ -11,9 +11,9 @@ import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useAuth } from "../auth/AuthContext";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { api } from "../lib/api";
-import type { Integration, WorkspaceTransaction, WorkspaceTransactionArtifact } from "../types";
+import type { Integration, RecorderSessionResponse, TestCase, WorkspaceTransaction, WorkspaceTransactionArtifact } from "../types";
 
-type TestOpsView = "batch-process" | "ops-telemetry";
+type TestOpsView = "automation-builder" | "batch-process" | "ops-telemetry";
 
 const BATCH_PROCESS_CATEGORIES = new Set([
   "bulk_import",
@@ -138,12 +138,23 @@ function resolveScopedIntegration(integrations: Integration[], type: Integration
   return scoped || active.find((integration) => !String(integration.config?.project_id || "").trim()) || active[0] || null;
 }
 
-export function TestOpsPage() {
+function isManualCase(testCase: TestCase) {
+  return testCase.automated !== "yes";
+}
+
+export function TestOpsPage({ initialView = "batch-process" }: { initialView?: TestOpsView } = {}) {
   const { session } = useAuth();
+  const queryClient = useQueryClient();
   const [projectId, setProjectId] = useCurrentProject();
   const [appTypeId, setAppTypeId] = useState("");
-  const [view, setView] = useState<TestOpsView>("batch-process");
+  const [view, setView] = useState<TestOpsView>(initialView);
   const [selectedTransactionId, setSelectedTransactionId] = useState("");
+  const [selectedCaseId, setSelectedCaseId] = useState("");
+  const [selectedCaseIds, setSelectedCaseIds] = useState<string[]>([]);
+  const [startUrl, setStartUrl] = useState("");
+  const [builderContext, setBuilderContext] = useState("");
+  const [builderMessage, setBuilderMessage] = useState("");
+  const [recorderSession, setRecorderSession] = useState<RecorderSessionResponse | null>(null);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -174,6 +185,20 @@ export function TestOpsPage() {
         ? 15_000
         : false
   });
+  const testCasesQuery = useQuery({
+    queryKey: ["test-cases", "automation-builder", appTypeId],
+    queryFn: () => api.testCases.list({ app_type_id: appTypeId }),
+    enabled: Boolean(appTypeId && session && view === "automation-builder")
+  });
+  const learningCacheQuery = useQuery({
+    queryKey: ["automation-learning-cache", projectId, appTypeId],
+    queryFn: () => api.testCases.learningCache({
+      project_id: projectId || undefined,
+      app_type_id: appTypeId || undefined,
+      limit: 25
+    }),
+    enabled: Boolean((projectId || appTypeId) && session && view === "automation-builder")
+  });
   const transactionEventsQuery = useQuery({
     queryKey: ["workspace-transaction-events", "testops", selectedTransactionId],
     queryFn: () => api.workspaceTransactions.events(selectedTransactionId),
@@ -190,16 +215,107 @@ export function TestOpsPage() {
   const projects = projectsQuery.data || [];
   const appTypes = appTypesQuery.data || [];
   const integrations = integrationsQuery.data || [];
+  const testCases = testCasesQuery.data || [];
+  const manualCases = useMemo(() => testCases.filter(isManualCase), [testCases]);
   const batchTransactions = useMemo(
     () => (transactionsQuery.data || []).filter(isBatchProcessTransaction),
     [transactionsQuery.data]
   );
   const selectedTransaction = batchTransactions.find((transaction) => transaction.id === selectedTransactionId) || null;
   const testEngineIntegration = resolveScopedIntegration(integrations, "testengine", projectId);
+  const llmIntegration = resolveScopedIntegration(integrations, "llm", projectId);
   const opsIntegration = resolveScopedIntegration(integrations, "ops", projectId);
   const opsBoardUrl = buildReadableUrl(testEngineIntegration?.base_url, "/ops-telemetry");
   const runningCount = batchTransactions.filter((transaction) => transaction.status === "queued" || transaction.status === "running").length;
   const failedCount = batchTransactions.filter((transaction) => transaction.status === "failed").length;
+  const activeCase = testCases.find((testCase) => testCase.id === selectedCaseId) || manualCases[0] || null;
+  const learningCache = learningCacheQuery.data || [];
+
+  const invalidateAutomationViews = () => {
+    void queryClient.invalidateQueries({ queryKey: ["test-cases"] });
+    void queryClient.invalidateQueries({ queryKey: ["workspace-transactions"] });
+    void queryClient.invalidateQueries({ queryKey: ["automation-learning-cache"] });
+  };
+
+  const buildSingleAutomation = useMutation({
+    mutationFn: () => {
+      if (!activeCase) {
+        throw new Error("Select a manual web case first.");
+      }
+
+      return api.testCases.buildAutomation(activeCase.id, {
+        integration_id: llmIntegration?.id,
+        start_url: startUrl || undefined,
+        additional_context: builderContext || undefined
+      });
+    },
+    onSuccess: (response) => {
+      setBuilderMessage(`Automation associated with ${response.generated_step_count} step${response.generated_step_count === 1 ? "" : "s"}.`);
+      invalidateAutomationViews();
+    },
+    onError: (error) => setBuilderMessage(error instanceof Error ? error.message : "Unable to build automation.")
+  });
+
+  const buildBatchAutomation = useMutation({
+    mutationFn: () => {
+      if (!appTypeId) {
+        throw new Error("Select an app type first.");
+      }
+
+      return api.testCases.buildAutomationBatch({
+        app_type_id: appTypeId,
+        test_case_ids: selectedCaseIds,
+        integration_id: llmIntegration?.id,
+        start_url: startUrl || undefined,
+        additional_context: builderContext || undefined
+      });
+    },
+    onSuccess: (response) => {
+      setBuilderMessage(`Batch automation build queued as ${response.transaction_id}.`);
+      setSelectedTransactionId(response.transaction_id);
+      setView("batch-process");
+      invalidateAutomationViews();
+    },
+    onError: (error) => setBuilderMessage(error instanceof Error ? error.message : "Unable to queue batch automation.")
+  });
+
+  const startRecorder = useMutation({
+    mutationFn: () => {
+      if (!activeCase) {
+        throw new Error("Select a manual web case first.");
+      }
+
+      return api.testCases.startRecorderSession(activeCase.id, {
+        start_url: startUrl || undefined
+      });
+    },
+    onSuccess: (response) => {
+      setRecorderSession(response);
+      setBuilderMessage("Recorder started in the local Test Engine browser session.");
+      invalidateAutomationViews();
+    },
+    onError: (error) => setBuilderMessage(error instanceof Error ? error.message : "Unable to start recorder.")
+  });
+
+  const finishRecorder = useMutation({
+    mutationFn: () => {
+      if (!activeCase || !recorderSession?.id) {
+        throw new Error("Start a recorder session before finishing it.");
+      }
+
+      return api.testCases.finishRecorderSession(activeCase.id, recorderSession.id, {
+        transaction_id: recorderSession.transaction_id,
+        integration_id: llmIntegration?.id,
+        additional_context: builderContext || undefined
+      });
+    },
+    onSuccess: (response) => {
+      setBuilderMessage(`Recorder actions converted into ${response.generated_step_count} automated step${response.generated_step_count === 1 ? "" : "s"}.`);
+      setRecorderSession(null);
+      invalidateAutomationViews();
+    },
+    onError: (error) => setBuilderMessage(error instanceof Error ? error.message : "Unable to finish recorder session.")
+  });
 
   const handleDownloadArtifact = async (artifact: WorkspaceTransactionArtifact) => {
     if (!selectedTransaction) {
@@ -223,7 +339,7 @@ export function TestOpsPage() {
       <PageHeader
         eyebrow="TestOps"
         title="TestOps"
-        description="Monitor background test operations and open the OPS telemetry board without leaving QAira."
+        description="Monitor background automation builds, imports, exports, reports, Test Engine jobs, and OPS telemetry without leaving QAira."
         meta={[
           { label: "Batch records", value: batchTransactions.length },
           { label: "Running", value: runningCount },
@@ -244,17 +360,212 @@ export function TestOpsPage() {
       <WorkspaceScopeBar
         appTypeId={appTypeId}
         appTypes={appTypes}
-        onAppTypeChange={setAppTypeId}
+        onAppTypeChange={(value) => {
+          setAppTypeId(value);
+          setSelectedCaseId("");
+          setSelectedCaseIds([]);
+          setRecorderSession(null);
+        }}
         onProjectChange={(value) => {
           setProjectId(value);
           setAppTypeId("");
           setSelectedTransactionId("");
+          setSelectedCaseId("");
+          setSelectedCaseIds([]);
+          setRecorderSession(null);
         }}
         projectId={projectId}
         projects={projects}
       />
 
-      {view === "batch-process" ? (
+      {view === "automation-builder" ? (
+        <div className="testops-builder-layout">
+          <Panel
+            className="testops-panel"
+            title="Manual web cases"
+            subtitle="Select one case for an immediate AI build or choose several for a background batch."
+          >
+            {!appTypeId ? <div className="empty-state compact">Select a web app type to load manual cases.</div> : null}
+            {testCasesQuery.isLoading ? <TileCardSkeletonGrid /> : null}
+            {!testCasesQuery.isLoading && appTypeId && !manualCases.length ? (
+              <div className="empty-state compact">No manual cases are waiting for automation in this app type.</div>
+            ) : null}
+            {manualCases.length ? (
+              <div className="testops-case-picker">
+                {manualCases.map((testCase) => {
+                  const isActive = activeCase?.id === testCase.id;
+                  const isChecked = selectedCaseIds.includes(testCase.id);
+
+                  return (
+                    <article className={isActive ? "record-card tile-card is-active" : "record-card tile-card"} key={testCase.id}>
+                      <div className="tile-card-main">
+                        <div className="tile-card-header">
+                          <label className="checkbox-field">
+                            <input
+                              checked={isChecked}
+                              onChange={(event) =>
+                                setSelectedCaseIds((current) =>
+                                  event.target.checked
+                                    ? [...new Set([...current, testCase.id])]
+                                    : current.filter((id) => id !== testCase.id)
+                                )
+                              }
+                              type="checkbox"
+                            />
+                          </label>
+                          <div className="tile-card-title-group">
+                            <strong>{testCase.title}</strong>
+                            <span className="tile-card-kicker">{testCase.display_id || "Manual case"}</span>
+                          </div>
+                          <StatusBadge value={testCase.status || "draft"} />
+                        </div>
+                        <p className="tile-card-description">{testCase.description || "No description recorded yet."}</p>
+                        <div className="integration-card-footer">
+                          <button className="ghost-button compact" onClick={() => setSelectedCaseId(testCase.id)} type="button">
+                            <SparkIcon size={16} />
+                            <span>{isActive ? "Selected" : "Use case"}</span>
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : null}
+          </Panel>
+
+          <Panel
+            className="testops-panel testops-automation-panel"
+            title="AI automation build"
+            subtitle={activeCase ? `Target case: ${activeCase.title}` : "Choose a manual case to generate keyword automation."}
+          >
+            <div className="detail-stack">
+              <div className="metric-strip compact">
+                <div className="mini-card">
+                  <strong>{llmIntegration ? "Ready" : "Fallback"}</strong>
+                  <span>LLM</span>
+                </div>
+                <div className="mini-card">
+                  <strong>{testEngineIntegration ? "Ready" : "Setup"}</strong>
+                  <span>Local recorder</span>
+                </div>
+                <div className="mini-card">
+                  <strong>{learningCache.length}</strong>
+                  <span>Cached locators</span>
+                </div>
+                <div className="mini-card">
+                  <strong>{selectedCaseIds.length || manualCases.length}</strong>
+                  <span>Batch scope</span>
+                </div>
+              </div>
+
+              <div className="record-grid testops-builder-form">
+                <label className="form-field">
+                  <span>Start URL</span>
+                  <input
+                    onChange={(event) => setStartUrl(event.target.value)}
+                    placeholder="https://app.example.com/login"
+                    value={startUrl}
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Builder guidance</span>
+                  <textarea
+                    onChange={(event) => setBuilderContext(event.target.value)}
+                    placeholder="Preferred flows, auth assumptions, test data tokens, or areas to ignore."
+                    rows={4}
+                    value={builderContext}
+                  />
+                </label>
+              </div>
+
+              {builderMessage ? <div className="empty-state compact">{builderMessage}</div> : null}
+
+              <div className="testops-action-row">
+                <button
+                  className="primary-button"
+                  disabled={!activeCase || buildSingleAutomation.isPending}
+                  onClick={() => buildSingleAutomation.mutate()}
+                  type="button"
+                >
+                  <SparkIcon />
+                  <span>{buildSingleAutomation.isPending ? "Building…" : "Build Single Case"}</span>
+                </button>
+                <button
+                  className="ghost-button"
+                  disabled={!appTypeId || buildBatchAutomation.isPending}
+                  onClick={() => buildBatchAutomation.mutate()}
+                  type="button"
+                >
+                  <ActivityIcon />
+                  <span>{buildBatchAutomation.isPending ? "Queueing…" : selectedCaseIds.length ? "Queue Selected Batch" : "Queue Manual Batch"}</span>
+                </button>
+              </div>
+
+              <div className="stack-list">
+                <div className="stack-item">
+                  <div>
+                    <strong>Test case recorder</strong>
+                    <span>Starts a headed Playwright Chromium session through the active local Test Engine, captures user actions once, suppresses duplicate typing, and records fetch/XHR traffic for API test suggestions.</span>
+                  </div>
+                  <div className="testops-recorder-actions">
+                    <button
+                      className="ghost-button"
+                      disabled={!activeCase || !testEngineIntegration || startRecorder.isPending || Boolean(recorderSession)}
+                      onClick={() => startRecorder.mutate()}
+                      type="button"
+                    >
+                      <PlayIcon size={16} />
+                      <span>{startRecorder.isPending ? "Starting…" : "Start recorder"}</span>
+                    </button>
+                    <button
+                      className="primary-button"
+                      disabled={!recorderSession || finishRecorder.isPending}
+                      onClick={() => finishRecorder.mutate()}
+                      type="button"
+                    >
+                      <SparkIcon size={16} />
+                      <span>{finishRecorder.isPending ? "Converting…" : "Finish and build"}</span>
+                    </button>
+                  </div>
+                </div>
+                {recorderSession ? (
+                  <div className="stack-item">
+                    <div>
+                      <strong>Recorder session {recorderSession.id.slice(0, 8)}</strong>
+                      <span>{recorderSession.status_url || recorderSession.engine_base_url || "Local engine session active"}</span>
+                    </div>
+                    <StatusBadge value={recorderSession.status} />
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="execution-context-summary-head">
+                <div className="execution-context-summary-copy">
+                  <strong>Reusable learning</strong>
+                  <span>Page URLs and locators learned from AI builds and recorder sessions are reused across later builds in this scope.</span>
+                </div>
+                <span className="count-pill">{learningCache.length} cached</span>
+              </div>
+              {learningCache.length ? (
+                <div className="stack-list testops-learning-list">
+                  {learningCache.slice(0, 8).map((entry) => (
+                    <div className="stack-item" key={entry.id}>
+                      <div>
+                        <strong>{entry.locator_intent}</strong>
+                        <span>{entry.page_key} · {entry.locator_kind || entry.source}</span>
+                      </div>
+                      <code className="execution-operation-json">{entry.locator}</code>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state compact">No locator learning has been cached for this scope yet.</div>
+              )}
+            </div>
+          </Panel>
+        </div>
+      ) : view === "batch-process" ? (
         <div className="testops-layout">
           <Panel
             className="testops-panel"

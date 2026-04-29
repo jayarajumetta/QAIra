@@ -44,6 +44,7 @@ const PAGE_TITLES: Record<string, { key?: string; fallback: string }> = {
   "/shared-steps": { key: "page.sharedSteps", fallback: "Shared Step Groups" },
   "/executions": { key: "page.executions", fallback: "Test Runs" },
   "/testops": { fallback: "TestOps" },
+  "/ops-telemetry": { fallback: "OPS Telemetry" },
   "/test-environments": { key: "page.testEnvironments", fallback: "Test Environments" },
   "/test-data": { key: "page.testData", fallback: "Test Data" },
   "/test-configurations": { key: "page.testConfigurations", fallback: "Test Configurations" },
@@ -138,6 +139,7 @@ const router = createBrowserRouter([
       { path: "shared-steps", element: <SharedStepsPage /> },
       { path: "executions", element: <ExecutionsPage /> },
       { path: "testops", element: <TestOpsPage /> },
+      { path: "ops-telemetry", element: <TestOpsPage initialView="ops-telemetry" /> },
       { path: "test-environments", element: <TestEnvironmentPage view="environments" /> },
       { path: "test-data", element: <TestEnvironmentPage view="data" /> },
       { path: "test-configurations", element: <TestEnvironmentPage view="configurations" /> }

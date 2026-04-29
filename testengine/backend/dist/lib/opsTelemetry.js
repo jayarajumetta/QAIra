@@ -187,26 +187,23 @@ const renderBoardHtml = (config) => {
     <style>
       :root {
         color-scheme: light;
-        --bg: #f4f7f7;
-        --panel: rgba(255, 255, 255, 0.92);
+        --bg: #f6f8fb;
+        --panel: #ffffff;
         --panel-strong: #ffffff;
-        --line: rgba(15, 51, 59, 0.14);
-        --text: #12373e;
-        --muted: #58757c;
-        --accent: #0f8a8d;
-        --accent-soft: rgba(15, 138, 141, 0.14);
-        --warn: #a65a00;
-        --shadow: 0 20px 45px rgba(18, 55, 62, 0.12);
+        --line: #dbe3ee;
+        --text: #172033;
+        --muted: #667085;
+        --accent: #1767c2;
+        --accent-soft: rgba(23, 103, 194, 0.10);
+        --warn: #9a5b00;
+        --shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
       }
       * { box-sizing: border-box; }
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
-        background:
-          radial-gradient(circle at top left, rgba(15, 138, 141, 0.18), transparent 34%),
-          radial-gradient(circle at top right, rgba(10, 73, 89, 0.12), transparent 28%),
-          linear-gradient(180deg, #f7fbfb 0%, var(--bg) 100%);
+        font-family: Inter, "Segoe UI", system-ui, sans-serif;
+        background: var(--bg);
         color: var(--text);
       }
       .shell {
@@ -218,17 +215,17 @@ const renderBoardHtml = (config) => {
         display: grid;
         gap: 10px;
         padding: 24px 24px 18px;
-        border-radius: 24px;
-        background: linear-gradient(135deg, rgba(15, 138, 141, 0.12), rgba(255, 255, 255, 0.96));
-        border: 1px solid rgba(15, 138, 141, 0.16);
+        border-radius: 8px;
+        background: var(--panel);
+        border: 1px solid var(--line);
         box-shadow: var(--shadow);
       }
       .eyebrow {
         display: inline-flex;
         width: fit-content;
         padding: 6px 10px;
-        border-radius: 999px;
-        background: rgba(15, 138, 141, 0.14);
+        border-radius: 6px;
+        background: var(--accent-soft);
         color: var(--accent);
         font-size: 12px;
         font-weight: 700;
@@ -255,8 +252,8 @@ const renderBoardHtml = (config) => {
       }
       .pill {
         padding: 8px 12px;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.82);
+        border-radius: 6px;
+        background: #ffffff;
         border: 1px solid var(--line);
         font-size: 13px;
       }
@@ -270,7 +267,7 @@ const renderBoardHtml = (config) => {
       .events {
         background: var(--panel);
         border: 1px solid var(--line);
-        border-radius: 22px;
+        border-radius: 8px;
         box-shadow: var(--shadow);
       }
       .controls {
@@ -298,9 +295,9 @@ const renderBoardHtml = (config) => {
         width: 100%;
         min-height: 42px;
         padding: 10px 12px;
-        border-radius: 14px;
-        border: 1px solid rgba(15, 51, 59, 0.16);
-        background: rgba(255, 255, 255, 0.98);
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        background: #ffffff;
         color: var(--text);
       }
       .actions {
@@ -314,8 +311,8 @@ const renderBoardHtml = (config) => {
         min-height: 42px;
         padding: 10px 16px;
         border: 0;
-        border-radius: 14px;
-        background: linear-gradient(135deg, #0f8a8d, #0b6273);
+        border-radius: 6px;
+        background: #1767c2;
         color: white;
         font-weight: 700;
         cursor: pointer;
@@ -341,7 +338,7 @@ const renderBoardHtml = (config) => {
       }
       .summary-card {
         padding: 14px 15px;
-        border-radius: 18px;
+        border-radius: 8px;
         background: var(--panel-strong);
         border: 1px solid var(--line);
       }
@@ -380,7 +377,7 @@ const renderBoardHtml = (config) => {
       }
       .event-card {
         padding: 16px;
-        border-radius: 18px;
+        border-radius: 8px;
         background: var(--panel-strong);
         border: 1px solid var(--line);
       }
@@ -406,7 +403,7 @@ const renderBoardHtml = (config) => {
       }
       .tag {
         padding: 6px 10px;
-        border-radius: 999px;
+        border-radius: 6px;
         background: var(--accent-soft);
         color: var(--accent);
         font-size: 12px;
@@ -433,23 +430,23 @@ const renderBoardHtml = (config) => {
         margin: 12px 0 0;
         padding: 14px;
         overflow: auto;
-        border-radius: 14px;
-        background: #0c1e22;
-        color: #dbf4f5;
+        border-radius: 8px;
+        background: #111827;
+        color: #e5e7eb;
         font-size: 12px;
         line-height: 1.5;
       }
       .empty {
         padding: 26px 18px;
-        border-radius: 18px;
-        border: 1px dashed rgba(15, 51, 59, 0.24);
+        border-radius: 8px;
+        border: 1px dashed var(--line);
         color: var(--muted);
         text-align: center;
       }
       .error {
         margin-top: 12px;
         padding: 12px 14px;
-        border-radius: 14px;
+        border-radius: 8px;
         background: rgba(166, 90, 0, 0.12);
         color: var(--warn);
         display: none;
@@ -463,7 +460,7 @@ const renderBoardHtml = (config) => {
         .controls,
         .summary,
         .events {
-          border-radius: 18px;
+          border-radius: 8px;
         }
       }
     </style>
