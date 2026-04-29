@@ -57,6 +57,28 @@ wait_for_url() {
   warn "${label} did not respond at ${url} within 60 seconds."
 }
 
+require_url() {
+  url="$1"
+  label="$2"
+
+  if ! command -v curl >/dev/null 2>&1; then
+    die "curl is required for ${label} readiness checks."
+  fi
+
+  attempt=0
+  while [ "$attempt" -lt 30 ]; do
+    if curl -fsS --max-time 5 "$url" >/dev/null 2>&1; then
+      info "${label} is responding at ${url}"
+      return 0
+    fi
+
+    attempt=$((attempt + 1))
+    sleep 2
+  done
+
+  die "${label} did not respond at ${url} within 60 seconds."
+}
+
 aws_public_ipv4() {
   if ! command -v curl >/dev/null 2>&1; then
     return 0

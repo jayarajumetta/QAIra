@@ -13,7 +13,7 @@ Deploys the QAira Test Engine worker plane on an AWS EC2 host.
 Run this on the separate Test Engine host.
 
 Required:
-  QAIRA_API_BASE_URL       Public QAira API base, for example https://qaira.qualipal.in
+  QAIRA_API_BASE_URL       Public QAira API base, for example https://qaira.qualipal.in/api
 
 Options:
   --api-base-url <url>     Same as QAIRA_API_BASE_URL.
@@ -29,8 +29,8 @@ AWS defaults:
   - auto-builds ENGINE_PUBLIC_URL from EC2 public IPv4 when possible
 
 Examples:
-  QAIRA_API_BASE_URL=https://qaira.qualipal.in deploymentscripts/aws-testengine-deploy.sh
-  deploymentscripts/aws-testengine-deploy.sh --api-base-url https://qaira.qualipal.in --public-url http://13.55.32.201:4301
+  QAIRA_API_BASE_URL=https://qaira.qualipal.in/api deploymentscripts/aws-testengine-deploy.sh
+  deploymentscripts/aws-testengine-deploy.sh --api-base-url https://qaira.qualipal.in/api --public-url http://13.55.32.201:4301
 EOF
 }
 
@@ -82,8 +82,17 @@ export SELENIUM_GRID_BIND="${SELENIUM_GRID_BIND:-127.0.0.1}"
 export SELENIUM_VNC_BIND="${SELENIUM_VNC_BIND:-127.0.0.1}"
 
 if [ -z "${QAIRA_API_BASE_URL:-}" ]; then
-  die "QAIRA_API_BASE_URL is required, for example https://qaira.qualipal.in"
+  die "QAIRA_API_BASE_URL is required, for example https://qaira.qualipal.in/api"
 fi
+
+case "$QAIRA_API_BASE_URL" in
+  */api|*/api/|http://*:3000|https://*:3000)
+    ;;
+  *)
+    warn "QAIRA_API_BASE_URL usually needs the /api suffix when it points at the public QAira web entrypoint."
+    warn "Use a bare origin only when that origin proxies directly to qaira-api."
+    ;;
+esac
 
 if [ -z "${ENGINE_PUBLIC_URL:-}" ]; then
   PUBLIC_IPV4="$(aws_public_ipv4)"
@@ -110,8 +119,8 @@ else
   "$REPO_ROOT/start-testengine-ops.sh"
 fi
 
-wait_for_url "http://127.0.0.1:${TESTENGINE_PORT}/health" "Test Engine health endpoint"
-wait_for_url "http://127.0.0.1:${TESTENGINE_PORT}/api/v1/capabilities" "Test Engine capabilities endpoint"
+require_url "http://127.0.0.1:${TESTENGINE_PORT}/health" "Test Engine health endpoint"
+require_url "http://127.0.0.1:${TESTENGINE_PORT}/api/v1/capabilities" "Test Engine capabilities endpoint"
 
 info
 info "Test Engine deployment complete."

@@ -38,14 +38,14 @@ Use `QAIRA_HTTP_BIND=127.0.0.1` when nginx/Caddy/Apache on the same instance own
 ## Deploy Test Engine Host
 
 ```bash
-QAIRA_API_BASE_URL=https://qaira.qualipal.in \
+QAIRA_API_BASE_URL=https://qaira.qualipal.in/api \
 deploymentscripts/aws-testengine-deploy.sh
 ```
 
 If EC2 instance metadata is available, the script derives `ENGINE_PUBLIC_URL` from the public IPv4. You can set it explicitly:
 
 ```bash
-QAIRA_API_BASE_URL=https://qaira.qualipal.in \
+QAIRA_API_BASE_URL=https://qaira.qualipal.in/api \
 ENGINE_PUBLIC_URL=http://13.55.32.201:4301 \
 deploymentscripts/aws-testengine-deploy.sh
 ```

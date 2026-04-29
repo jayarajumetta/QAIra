@@ -96,7 +96,7 @@ For AWS EC2 hosts, prefer the scripts in [deploymentscripts](./deploymentscripts
 
 ```bash
 deploymentscripts/aws-app-deploy.sh
-QAIRA_API_BASE_URL=https://qaira.qualipal.in deploymentscripts/aws-testengine-deploy.sh
+QAIRA_API_BASE_URL=https://qaira.qualipal.in/api deploymentscripts/aws-testengine-deploy.sh
 deploymentscripts/aws-status.sh
 deploymentscripts/aws-logs.sh --stack app
 ```
