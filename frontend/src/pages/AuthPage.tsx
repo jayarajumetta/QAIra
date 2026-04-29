@@ -44,9 +44,6 @@ type FieldName = "name" | "email" | "password" | "newPassword" | "verificationCo
 type FormValues = Record<FieldName, string>;
 type FieldErrors = Partial<Record<FieldName, string>>;
 type TouchedFields = Partial<Record<FieldName, boolean>>;
-type CapabilityTheme = "blue" | "amber" | "teal";
-type CapabilityVisual = "marketplace" | "playbooks" | "evidence";
-type CapabilityLayout = "wide" | "balanced" | "portrait";
 type PendingVerification = {
   type: "signup" | "forgot";
   email: string;
@@ -72,80 +69,10 @@ const INITIAL_FORM_VALUES: FormValues = {
   verificationCode: ""
 };
 
-const AUTH_CAPABILITY_SLIDES: Array<{
-  id: string;
-  eyebrow: string;
-  title: string;
-  description: string;
-  theme: CapabilityTheme;
-  visual: CapabilityVisual;
-  proof: {
-    quote: string;
-    caption: string;
-  };
-  support: string;
-}> = [
-  {
-    id: "marketplace",
-    eyebrow: "AI Workspace",
-    title: "Fast, AI-powered testing for custom applications.",
-    description: "QAira brings design, coverage thinking, secure access, and execution orchestration into one focused workspace so teams move with less friction and fewer tabs.",
-    theme: "blue",
-    visual: "marketplace",
-    proof: {
-      quote: "One calmer surface for planning, authoring, and controlled execution.",
-      caption: "Built to feel premium before the first test even starts."
-    },
-    support: "Designed for teams that want depth without a noisy first impression."
-  },
-  {
-    id: "playbooks",
-    eyebrow: "Reusable Playbooks",
-    title: "Shape reusable coverage before the first run begins.",
-    description: "Carry requirements into linked cases, shared steps, and suite-ready flows without rebuilding the same scenario map every time the product changes.",
-    theme: "amber",
-    visual: "playbooks",
-    proof: {
-      quote: "Reusable structure keeps large QA programs from drifting into clutter.",
-      caption: "Coverage stays intentional, traceable, and ready for execution."
-    },
-    support: "A cleaner way to scale test design across modules, suites, and releases."
-  },
-  {
-    id: "evidence",
-    eyebrow: "Readable Evidence",
-    title: "Keep run proof clean enough for QA, product, and engineering.",
-    description: "Execution history, failures, and supporting evidence stay attached to the exact flow that produced them so reviews and handoffs stay grounded in one source.",
-    theme: "teal",
-    visual: "evidence",
-    proof: {
-      quote: "Readable evidence shortens the distance from failure to action.",
-      caption: "Release signals remain review-ready without extra reporting work."
-    },
-    support: "A landing story centered on clarity, trust, and execution confidence."
-  }
-];
-
 let googleScriptPromise: Promise<void> | null = null;
 
 function mergeIds(...values: Array<string | undefined>) {
   return values.filter(Boolean).join(" ") || undefined;
-}
-
-function getCapabilityLayout(width: number, height: number): CapabilityLayout {
-  const safeWidth = Math.max(width, 1);
-  const safeHeight = Math.max(height, 1);
-  const ratio = safeWidth / safeHeight;
-
-  if (ratio >= 1.28 && safeWidth >= 34 * 16) {
-    return "wide";
-  }
-
-  if (ratio >= 0.98 && safeWidth >= 27 * 16) {
-    return "balanced";
-  }
-
-  return "portrait";
 }
 
 function getFieldsForMode(mode: FormMode): FieldName[] {
@@ -345,7 +272,6 @@ export function AuthPage() {
   const navigate = useNavigate();
   const emailInputRef = useRef<HTMLInputElement>(null);
   const googleButtonRef = useRef<HTMLDivElement>(null);
-  const carouselPanelRef = useRef<HTMLDivElement>(null);
   const {
     login,
     loginWithGoogle,
@@ -366,8 +292,6 @@ export function AuthPage() {
   const [isResendingCode, setIsResendingCode] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
-  const [activeCapabilityIndex, setActiveCapabilityIndex] = useState(0);
-  const [capabilityLayout, setCapabilityLayout] = useState<CapabilityLayout>("wide");
   const [pendingVerification, setPendingVerification] = useState<PendingVerification | null>(null);
 
   const isSuccessMode = mode === "signup-success" || mode === "reset-success";
@@ -375,7 +299,6 @@ export function AuthPage() {
   const isEmailVerificationReady = authSetup.emailVerification.enabled;
   const isGoogleReady = authSetup.google.enabled && Boolean(authSetup.google.clientId);
   const currentCopy = getCurrentCopy(mode, pendingVerification, authSetup);
-  const activeCapability = AUTH_CAPABILITY_SLIDES[activeCapabilityIndex];
   const isBusy = isSubmitting || isGoogleSubmitting || isResendingCode;
 
   useEffect(() => {
@@ -415,47 +338,6 @@ export function AuthPage() {
 
     emailInputRef.current?.focus();
   }, [isSuccessMode, mode]);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      setActiveCapabilityIndex((current) => (current + 1) % AUTH_CAPABILITY_SLIDES.length);
-    }, 4800);
-
-    return () => window.clearInterval(intervalId);
-  }, []);
-
-  useEffect(() => {
-    const node = carouselPanelRef.current;
-
-    if (!node) {
-      return;
-    }
-
-    const syncLayout = () => {
-      const { height, width } = node.getBoundingClientRect();
-      const nextLayout = getCapabilityLayout(width, height);
-      setCapabilityLayout((current) => current === nextLayout ? current : nextLayout);
-    };
-
-    syncLayout();
-
-    const observer =
-      typeof ResizeObserver === "function"
-        ? new ResizeObserver(() => syncLayout())
-        : null;
-
-    observer?.observe(node);
-    window.addEventListener("resize", syncLayout);
-
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", syncLayout);
-    };
-  }, []);
 
   useEffect(() => {
     if (mode !== "login" || !isGoogleReady || !authSetup.google.clientId || !googleButtonRef.current) {
@@ -782,58 +664,33 @@ export function AuthPage() {
 
       <div className="container auth-shell">
         <section className="left auth-aside" aria-label="QAira product overview">
-          <div
-            className={`auth-aside-panel auth-carousel-panel theme-${activeCapability.theme}`}
-            data-carousel-layout={capabilityLayout}
-            ref={carouselPanelRef}
-          >
-            <div className="auth-carousel-grid">
-              <div className="auth-carousel-head">
-                <div className="auth-carousel-brand">
-                  <div className="brand-mark">Q</div>
-                  <div>
-                    <strong>QAira AI</strong>
-                    <p>Secure workspace intelligence</p>
-                  </div>
-                </div>
-                <span className="auth-carousel-status">Preview</span>
-              </div>
-
-              <div className="auth-carousel-slide" key={`${activeCapability.id}-${capabilityLayout}`}>
-                <div className="auth-carousel-copy-block">
-                  <p className="eyebrow">{activeCapability.eyebrow}</p>
-                  <h1>{activeCapability.title}</h1>
-                  <p className="auth-aside-copy">{activeCapability.description}</p>
-
-                  <div className="auth-carousel-proof" aria-label="Capability proof point">
-                    <span className="auth-carousel-proof-mark" aria-hidden="true">"</span>
-                    <div className="auth-carousel-proof-copy">
-                      <strong>{activeCapability.proof.quote}</strong>
-                      <span>{activeCapability.proof.caption}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="auth-carousel-visual-wrap">
-                  <AuthCapabilityGraphic layout={capabilityLayout} visual={activeCapability.visual} />
-                </div>
-              </div>
-
-              <div className="auth-carousel-footer-row">
-                <div className="auth-carousel-dots" aria-label="Capability slides">
-                  {AUTH_CAPABILITY_SLIDES.map((slide, index) => (
-                    <button
-                      aria-label={`Show capability: ${slide.eyebrow}`}
-                      className={index === activeCapabilityIndex ? "auth-carousel-dot is-active" : "auth-carousel-dot"}
-                      key={slide.id}
-                      onClick={() => setActiveCapabilityIndex(index)}
-                      type="button"
-                    />
-                  ))}
-                </div>
-                <p className="auth-aside-footer">{activeCapability.support}</p>
+          <div className="auth-product-story">
+            <div className="auth-product-brand">
+              <div className="brand-mark">Q</div>
+              <div>
+                <strong>QAIra</strong>
+                <p>AI quality workspace</p>
               </div>
             </div>
+
+            <div className="auth-product-copy">
+              <p className="eyebrow">Quality intelligence</p>
+              <h1>Design, run, and review QA from one calm workspace.</h1>
+              <p>
+                Keep requirements, reusable tests, executions, and evidence close together without turning login into another dashboard.
+              </p>
+            </div>
+
+            <div className="auth-flow-line" aria-label="QAira workflow">
+              <span>Design</span>
+              <span>Automate</span>
+              <span>Execute</span>
+              <span>Evidence</span>
+            </div>
+
+            <p className="auth-aside-footer">
+              Built for secure teams that need traceability without noise.
+            </p>
           </div>
         </section>
 
@@ -1148,153 +1005,6 @@ export function AuthPage() {
           </div>
         </main>
       </div>
-    </div>
-  );
-}
-
-function AuthCapabilityGraphic({
-  visual,
-  layout
-}: {
-  visual: CapabilityVisual;
-  layout: CapabilityLayout;
-}) {
-  const board =
-    visual === "marketplace"
-      ? {
-          windowLabel: "Workspace preview",
-          windowStatus: "Live",
-          focusLabel: "AI design flow",
-          focusTitle: "From product intent to runnable coverage",
-          focusCopy: "A guided surface for planning, authoring, and controlled execution.",
-          panels: [
-            { eyebrow: "Design", title: "AI-assisted drafting" },
-            { eyebrow: "Access", title: "Admin-governed entry" },
-            { eyebrow: "Delivery", title: "Execution handoff" }
-          ],
-          overlay: {
-            label: "Landing note",
-            value: "Less dashboard, more atmosphere."
-          }
-        }
-      : visual === "playbooks"
-        ? {
-            windowLabel: "Coverage flow",
-            windowStatus: "Mapped",
-            focusLabel: "Reusable structure",
-            focusTitle: "Requirements, cases, suites, and shared steps",
-            focusCopy: "Coverage grows in one direction instead of being rebuilt at every layer.",
-            panels: [
-              { eyebrow: "Requirements", title: "Traceable scope" },
-              { eyebrow: "Shared steps", title: "Reusable setup" },
-              { eyebrow: "Suites", title: "Run-ready grouping" }
-            ],
-            overlay: {
-              label: "Design note",
-              value: "Reusable playbooks reduce authoring drift."
-            }
-          }
-        : {
-            windowLabel: "Run evidence",
-            windowStatus: "Linked",
-            focusLabel: "Execution proof",
-            focusTitle: "Signals, failures, and evidence in one readable layer",
-            focusCopy: "Run history stays attached to the exact flow that generated it.",
-            panels: [
-              { eyebrow: "Runs", title: "Case-level history" },
-              { eyebrow: "Failures", title: "Defect-ready context" },
-              { eyebrow: "Reviews", title: "Release confidence" }
-            ],
-            overlay: {
-              label: "Evidence note",
-              value: "Clear proof speeds up product decisions."
-            }
-          };
-
-  const sidePanels = [board.panels[0], board.panels[2]];
-  const mainCardItems = layout === "portrait" ? board.panels.slice(0, 2) : board.panels;
-
-  return (
-    <div className={`auth-capability-visual auth-stage-visual is-${visual} is-${layout}`} aria-hidden="true">
-      <span className="auth-stage-glow auth-stage-glow--one" />
-      <span className="auth-stage-glow auth-stage-glow--two" />
-      <span className="auth-stage-orb auth-stage-orb--left" />
-      <span className="auth-stage-orb auth-stage-orb--right" />
-      <span className="auth-stage-ring" />
-
-      <div className="auth-stage-window auth-stage-window--left">
-        <div className="auth-stage-window-bar">
-          <span className="auth-stage-window-dots" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
-        </div>
-        <div className="auth-stage-window-body is-side">
-          <span className="auth-stage-panel-eyebrow">{sidePanels[0].eyebrow}</span>
-          <strong>{sidePanels[0].title}</strong>
-          <div className="auth-stage-side-bars" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </div>
-        </div>
-      </div>
-
-      <div className="auth-stage-window auth-stage-window--main">
-        <div className="auth-stage-window-bar">
-          <span className="auth-stage-window-dots" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
-          <span className="auth-stage-window-title">{board.windowLabel}</span>
-          <span className="auth-stage-window-status">{board.windowStatus}</span>
-        </div>
-
-        <div className="auth-stage-window-body is-main">
-          <div className="auth-stage-focus-copy">
-            <span className="auth-stage-panel-eyebrow">{board.focusLabel}</span>
-            <strong>{board.focusTitle}</strong>
-            <p>{board.focusCopy}</p>
-          </div>
-
-          <div className="auth-stage-card-grid">
-            {mainCardItems.map((item) => (
-              <div className="auth-stage-card" key={item.title}>
-                <span>{item.eyebrow}</span>
-                <strong>{item.title}</strong>
-              </div>
-            ))}
-          </div>
-
-          <div className="auth-stage-overlay-card">
-            <span>{board.overlay.label}</span>
-            <strong>{board.overlay.value}</strong>
-          </div>
-        </div>
-      </div>
-
-      <div className="auth-stage-window auth-stage-window--right">
-        <div className="auth-stage-window-bar">
-          <span className="auth-stage-window-dots" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
-        </div>
-        <div className="auth-stage-window-body is-side">
-          <span className="auth-stage-panel-eyebrow">{sidePanels[1].eyebrow}</span>
-          <strong>{sidePanels[1].title}</strong>
-          <div className="auth-stage-signal-list" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </div>
-        </div>
-      </div>
-
-      <div className="auth-stage-floor" />
     </div>
   );
 }
