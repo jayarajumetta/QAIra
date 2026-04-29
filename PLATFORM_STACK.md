@@ -13,6 +13,7 @@ QAira already runs on Fastify, which means Pino logging is native through the ba
 - `HAProxy`
   - front door for the web app and API
   - stats UI on `http://localhost:8404/stats`
+  - set `QAIRA_HTTP_PORT` if host port `80` is already in use
 - `Prometheus`
   - scrapes QAira API metrics and OpenTelemetry Collector metrics
 - `Grafana`

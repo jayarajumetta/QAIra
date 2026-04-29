@@ -140,6 +140,12 @@ That stack adds:
 - Loki on `http://localhost:3100`
 - HAProxy stats on `http://localhost:8404/stats`
 
+If port `80` is already used on the host, publish HAProxy on another host port:
+
+```bash
+QAIRA_HTTP_PORT=8081 docker compose -f docker-compose.platform.yml up -d
+```
+
 More detail is in [PLATFORM_STACK.md](./PLATFORM_STACK.md).
 
 ## Manual PostgreSQL setup
