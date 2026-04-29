@@ -290,7 +290,7 @@ export const api = {
       request<Requirement[]>(`/requirements${toQueryString(query)}`),
     create: (input: { project_id: string; title: string; description?: string; external_references?: string[]; priority?: number; status?: string }) =>
       request<{ id: string }>("/requirements", { method: "POST", body: JSON.stringify(input) }),
-    bulkImport: (input: { project_id: string; rows: Array<Record<string, string | number | null | undefined>> }) =>
+    bulkImport: (input: { project_id: string; rows: Array<Record<string, unknown>> }) =>
       request<BatchQueueResponse>("/requirements/import", {
         method: "POST",
         body: JSON.stringify(input)
