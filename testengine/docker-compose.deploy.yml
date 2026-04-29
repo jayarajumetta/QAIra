@@ -28,7 +28,7 @@ services:
       OPS_TELEMETRY_API_KEY_HEADER: ${OPS_TELEMETRY_API_KEY_HEADER:-Authorization}
       OPS_TELEMETRY_API_KEY_PREFIX: ${OPS_TELEMETRY_API_KEY_PREFIX:-Bearer}
     ports:
-      - "${TESTENGINE_PORT:-4301}:4301"
+      - "${TESTENGINE_BIND:-0.0.0.0}:${TESTENGINE_PORT:-4301}:4301"
     volumes:
       - testengine-artifacts:/artifacts
     healthcheck:
@@ -45,7 +45,7 @@ services:
     image: ${QAIRA_SELENIUM_HUB_IMAGE:-selenium/hub:4.22.0}
     container_name: qaira-selenium-hub
     ports:
-      - "${SELENIUM_GRID_PORT:-4444}:4444"
+      - "${SELENIUM_GRID_BIND:-127.0.0.1}:${SELENIUM_GRID_PORT:-4444}:4444"
     restart: always
 
   selenium-node-chrome:
@@ -59,7 +59,7 @@ services:
       SE_NODE_MAX_SESSIONS: 1
       SE_VNC_NO_PASSWORD: ${SE_VNC_NO_PASSWORD:-1}
     ports:
-      - "${SELENIUM_VNC_PORT:-7900}:7900"
+      - "${SELENIUM_VNC_BIND:-127.0.0.1}:${SELENIUM_VNC_PORT:-7900}:7900"
     depends_on:
       - selenium-hub
     restart: always

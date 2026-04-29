@@ -92,6 +92,15 @@ If you want the EC2 host to pull the latest git changes and refresh its stack:
 ./deploy-ec2.sh --stack testengine
 ```
 
+For AWS EC2 hosts, prefer the scripts in [deploymentscripts](./deploymentscripts):
+
+```bash
+deploymentscripts/aws-app-deploy.sh
+QAIRA_API_BASE_URL=https://qaira.qualipal.in deploymentscripts/aws-testengine-deploy.sh
+deploymentscripts/aws-status.sh
+deploymentscripts/aws-logs.sh --stack app
+```
+
 ## Quick start: backend only
 
 Run the backend and PostgreSQL without the frontend:

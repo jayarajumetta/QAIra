@@ -68,8 +68,14 @@ Use [release-testengine.sh](/Users/jayarajumetta/MJ/qaira/release-testengine.sh:
 - [run-backend.sh](/Users/jayarajumetta/MJ/qaira/run-backend.sh:1)
 - [run-frontend.sh](/Users/jayarajumetta/MJ/qaira/run-frontend.sh:1)
 - [run-testengine.sh](/Users/jayarajumetta/MJ/qaira/run-testengine.sh:1)
+- [deploymentscripts/aws-app-deploy.sh](/Users/jayarajumetta/MJ/qaira/deploymentscripts/aws-app-deploy.sh:1)
+- [deploymentscripts/aws-testengine-deploy.sh](/Users/jayarajumetta/MJ/qaira/deploymentscripts/aws-testengine-deploy.sh:1)
+- [deploymentscripts/aws-status.sh](/Users/jayarajumetta/MJ/qaira/deploymentscripts/aws-status.sh:1)
+- [deploymentscripts/aws-logs.sh](/Users/jayarajumetta/MJ/qaira/deploymentscripts/aws-logs.sh:1)
 
 Set `PULL_IMAGES=1` if you want those scripts to pull registry images before starting services.
+
+For AWS EC2 deployments, prefer the `deploymentscripts` wrappers because they bind internal services to localhost by default and make duplicate/container audits easier.
 
 ## Recommended Deploy Split
 

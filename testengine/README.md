@@ -180,6 +180,10 @@ On an AMD64 host, you can opt back into Chrome with:
 QAIRA_SELENIUM_NODE_IMAGE=selenium/node-chrome:4.22.0 ./run-testengine.sh
 ```
 
+For image-based deployments, Selenium Grid and VNC bind to `127.0.0.1` by
+default. Override `SELENIUM_GRID_BIND` or `SELENIUM_VNC_BIND` only for temporary
+debugging behind restrictive network rules.
+
 ## See Also
 
 - [QAira background operations strategy](../QAIRA_BACKGROUND_OPERATIONS_STRATEGY.md)
