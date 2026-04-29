@@ -189,6 +189,7 @@ export type EngineRunEnvelope = {
   qaira_execution_id?: string | null;
   qaira_test_case_id: string;
   qaira_test_case_title: string;
+  external_references?: string[];
   project: {
     id: string;
     name: string;

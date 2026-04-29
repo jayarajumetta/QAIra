@@ -1,6 +1,7 @@
 const db = require("../db");
 const integrationService = require("./integration.service");
 const executionStepRuntimeService = require("./executionStepRuntime.service");
+const { normalizeStoredReferenceList } = require("../utils/externalReferences");
 
 const selectExecution = db.prepare(`
   SELECT id, project_id, app_type_id, name, status, started_at, ended_at
@@ -9,7 +10,7 @@ const selectExecution = db.prepare(`
 `);
 
 const selectExecutionCases = db.prepare(`
-  SELECT execution_id, test_case_id, test_case_title, suite_id, suite_name, sort_order
+  SELECT execution_id, test_case_id, test_case_title, external_references, suite_id, suite_name, sort_order
   FROM execution_case_snapshots
   WHERE execution_id = ?
   ORDER BY sort_order ASC, test_case_title ASC
@@ -30,6 +31,8 @@ const selectLatestResultsForExecution = db.prepare(`
     status,
     error,
     logs,
+    external_references,
+    defects,
     created_at
   FROM execution_results
   WHERE execution_id = ?
@@ -183,6 +186,7 @@ const buildHierarchySnapshot = async (executionId) => {
 
     return {
       ...item,
+      external_references: normalizeStoredReferenceList(item.external_references),
       result,
       logs,
       step_ids: stepIds,
@@ -362,6 +366,10 @@ exports.emitExecutionHierarchyEvents = async ({
     const events = [];
 
     if (step && config.emit_step_events !== false) {
+      const caseReferences = normalizeStoredReferenceList(testCase?.external_references);
+      const resultReferences = normalizeStoredReferenceList(testCase?.result?.external_references);
+      const resultDefects = normalizeStoredReferenceList(testCase?.result?.defects);
+
       events.push({
         ...basePayload,
         event_type: "execution.step.updated",
@@ -372,7 +380,9 @@ exports.emitExecutionHierarchyEvents = async ({
               id: testCase.test_case_id,
               title: testCase.test_case_title,
               status: testCase.status,
-              execution_result_id: execution_result_id || testCase.result?.id || null
+              execution_result_id: execution_result_id || testCase.result?.id || null,
+              external_references: [...new Set([...caseReferences, ...resultReferences])],
+              defects: resultDefects
             }
           : null,
         suite: suite,
@@ -398,6 +408,10 @@ exports.emitExecutionHierarchyEvents = async ({
     }
 
     if (testCase && config.emit_case_events !== false) {
+      const caseReferences = normalizeStoredReferenceList(testCase.external_references);
+      const resultReferences = normalizeStoredReferenceList(testCase.result?.external_references);
+      const resultDefects = normalizeStoredReferenceList(testCase.result?.defects);
+
       events.push({
         ...basePayload,
         event_type: "execution.case.updated",
@@ -410,6 +424,8 @@ exports.emitExecutionHierarchyEvents = async ({
           suite_id: testCase.suite_id || null,
           suite_name: testCase.suite_name || null,
           execution_result_id: execution_result_id || testCase.result?.id || null,
+          external_references: [...new Set([...caseReferences, ...resultReferences])],
+          defects: resultDefects,
           step_status_count: Object.keys(testCase.logs?.stepStatuses || {}).length,
           evidence_count: Object.keys(testCase.logs?.stepEvidence || {}).length
         },

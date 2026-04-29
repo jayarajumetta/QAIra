@@ -10,6 +10,7 @@ const {
   normalizeRichText,
   normalizeTestStepType
 } = require("../utils/testStepAutomation");
+const { normalizeStoredReferenceList } = require("../utils/externalReferences");
 
 const SUPPORTED_ENGINE_STEP_TYPES = new Set(["api", "web"]);
 const DEFAULT_LEASE_SECONDS = Math.max(30, Number(process.env.TESTENGINE_JOB_LEASE_SECONDS || 90));
@@ -415,6 +416,7 @@ const buildEngineEnvelope = ({
     qaira_execution_id: execution.id,
     qaira_test_case_id: caseSnapshot.test_case_id,
     qaira_test_case_title: caseSnapshot.test_case_title,
+    external_references: normalizeStoredReferenceList(caseSnapshot.external_references),
     project: {
       id: project.id,
       name: project.name

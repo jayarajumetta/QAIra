@@ -1,6 +1,7 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 const workspaceTransactionService = require("./workspaceTransaction.service");
+const { normalizeStoredReferenceList } = require("../utils/externalReferences");
 
 const QUEUED_BATCH_LIMIT = 5;
 
@@ -458,6 +459,7 @@ async function runTestCaseExport(job) {
     "automated",
     "priority",
     "status",
+    "external_references",
     "requirements",
     "suites",
     "action",
@@ -475,6 +477,7 @@ async function runTestCaseExport(job) {
       testCase.automated || "no",
       `P${testCase.priority || 3}`,
       testCase.status || "draft",
+      normalizeStoredReferenceList(testCase.external_references).join("\n"),
       requirementNames.join("\n"),
       suiteNames.join("\n"),
       steps.map((step) => step.action || "").join("\n"),

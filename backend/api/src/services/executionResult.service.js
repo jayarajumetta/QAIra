@@ -1,6 +1,7 @@
 const db = require("../db");
 const { v4: uuid } = require("uuid");
 const { EXECUTION_RESULT_STATUS_VALUES } = require("../domain/catalog");
+const { normalizeReferenceList, normalizeStoredReferenceList } = require("../utils/externalReferences");
 
 const getPrimarySuiteForTestCase = db.prepare(`
   SELECT test_suites.id, test_suites.name
@@ -36,6 +37,8 @@ exports.createExecutionResult = async (data) => {
     duration_ms,
     error,
     logs,
+    external_references,
+    defects,
     executed_by
   } = data;
 
@@ -99,8 +102,8 @@ exports.createExecutionResult = async (data) => {
 
   await db.prepare(`
     INSERT INTO execution_results
-    (id, execution_id, test_case_id, test_case_title, suite_id, suite_name, app_type_id, status, duration_ms, error, logs, executed_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, execution_id, test_case_id, test_case_title, suite_id, suite_name, app_type_id, status, duration_ms, error, logs, external_references, defects, executed_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     execution_id,
@@ -113,6 +116,8 @@ exports.createExecutionResult = async (data) => {
     duration_ms || null,
     error || null,
     logs || null,
+    normalizeReferenceList(external_references),
+    normalizeReferenceList(defects),
     executed_by || null
   );
 
@@ -143,7 +148,12 @@ exports.getExecutionResults = async ({ execution_id, test_case_id, app_type_id }
 
   query += ` ORDER BY created_at DESC`;
 
-  return db.prepare(query).all(...params);
+  const rows = await db.prepare(query).all(...params);
+  return rows.map((row) => ({
+    ...row,
+    external_references: normalizeStoredReferenceList(row.external_references),
+    defects: normalizeStoredReferenceList(row.defects)
+  }));
 };
 
 
@@ -156,7 +166,11 @@ exports.getExecutionResult = async (id) => {
 
   if (!result) throw new Error("Execution result not found");
 
-  return result;
+  return {
+    ...result,
+    external_references: normalizeStoredReferenceList(result.external_references),
+    defects: normalizeStoredReferenceList(result.defects)
+  };
 };
 
 exports.findLatestExecutionResult = async ({ execution_id, test_case_id }) => {
@@ -181,13 +195,19 @@ exports.updateExecutionResult = async (id, data) => {
 
   await db.prepare(`
     UPDATE execution_results
-    SET status = ?, duration_ms = ?, error = ?, logs = ?, executed_by = ?
+    SET status = ?, duration_ms = ?, error = ?, logs = ?, external_references = ?, defects = ?, executed_by = ?
     WHERE id = ?
   `).run(
     status,
     data.duration_ms ?? existing.duration_ms,
     data.error ?? existing.error,
     data.logs ?? existing.logs,
+    data.external_references !== undefined
+      ? normalizeReferenceList(data.external_references)
+      : normalizeStoredReferenceList(existing.external_references),
+    data.defects !== undefined
+      ? normalizeReferenceList(data.defects)
+      : normalizeStoredReferenceList(existing.defects),
     data.executed_by ?? existing.executed_by,
     id
   );
@@ -207,6 +227,8 @@ exports.upsertExecutionResult = async (data) => {
       duration_ms: data.duration_ms,
       error: data.error,
       logs: data.logs,
+      external_references: data.external_references,
+      defects: data.defects,
       executed_by: data.executed_by
     });
 

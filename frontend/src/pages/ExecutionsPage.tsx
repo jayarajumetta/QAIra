@@ -33,6 +33,7 @@ import { WorkspaceBackButton, WorkspaceMasterDetail } from "../components/Worksp
 import { WorkspaceScopeBar } from "../components/WorkspaceScopeBar";
 import { useCurrentProject } from "../hooks/useCurrentProject";
 import { api } from "../lib/api";
+import { formatReferenceList, parseReferenceList } from "../lib/externalReferences";
 import { summarizeExecutionStart } from "../lib/executionStartSummary";
 import { buildCaseAutomationCode, buildGroupAutomationCode, resolveStepAutomationCode } from "../lib/stepAutomation";
 import {
@@ -78,6 +79,7 @@ type ExecutionCaseView = {
   id: string;
   title: string;
   description: string | null;
+  external_references: string[];
   priority: number | null;
   status: string | null;
   parameter_values: Record<string, string>;
@@ -315,6 +317,7 @@ function toCaseView(snapshot: ExecutionCaseSnapshot): ExecutionCaseView {
     id: snapshot.test_case_id,
     title: snapshot.test_case_title,
     description: snapshot.test_case_description,
+    external_references: snapshot.external_references || [],
     priority: snapshot.priority,
     status: snapshot.status,
     parameter_values: snapshot.parameter_values || {},
@@ -1070,6 +1073,8 @@ export function ExecutionsPage() {
   const [codePreviewState, setCodePreviewState] = useState<{ title: string; subtitle: string; code: string } | null>(null);
   const [executionAssignmentDraft, setExecutionAssignmentDraft] = useState("");
   const [caseAssignmentDraft, setCaseAssignmentDraft] = useState("");
+  const [caseReferenceDraft, setCaseReferenceDraft] = useState("");
+  const [caseDefectDraft, setCaseDefectDraft] = useState("");
   const executionCardMeasureRef = useRef<HTMLDivElement | null>(null);
   const executionSearch = runLibrarySearchByView[testRunsView];
   const catalogViewMode = catalogViewModeByView[testRunsView];
@@ -1227,7 +1232,7 @@ export function ExecutionsPage() {
   });
   const createResult = useMutation({ mutationFn: api.executionResults.create });
   const updateResult = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: Partial<{ status: ExecutionResult["status"]; duration_ms: number; error: string; logs: string }> }) =>
+    mutationFn: ({ id, input }: { id: string; input: Parameters<typeof api.executionResults.update>[1] }) =>
       api.executionResults.update(id, input)
   });
 
@@ -2142,6 +2147,72 @@ export function ExecutionsPage() {
     }
   };
 
+  const handleSaveCaseReferences = async () => {
+    if (!selectedExecution || !selectedExecutionCase || !selectedExecution.app_type_id) {
+      return;
+    }
+
+    const externalReferences = parseReferenceList(caseReferenceDraft);
+    const defects = parseReferenceList(caseDefectDraft);
+    const currentStatus = selectedExecutionResult?.status || (Object.keys(stepStatuses).length ? selectedCaseStatusLabel : "running");
+    const safeStatus: ExecutionResult["status"] =
+      currentStatus === "passed" || currentStatus === "failed" || currentStatus === "blocked" || currentStatus === "running"
+        ? currentStatus
+        : "running";
+
+    try {
+      if (selectedExecutionResult) {
+        await updateResult.mutateAsync({
+          id: selectedExecutionResult.id,
+          input: {
+            external_references: externalReferences,
+            defects
+          }
+        });
+        queryClient.setQueryData<ExecutionResult[]>(["execution-results", selectedExecution.id], (current = []) =>
+          current.map((item) => item.id === selectedExecutionResult.id ? { ...item, external_references: externalReferences, defects } : item)
+        );
+      } else {
+        const response = await createResult.mutateAsync({
+          execution_id: selectedExecution.id,
+          test_case_id: selectedExecutionCase.id,
+          app_type_id: selectedExecution.app_type_id,
+          status: safeStatus,
+          duration_ms: selectedCaseDurationMs ?? undefined,
+          logs: stringifyExecutionLogs(selectedCaseLogs),
+          external_references: externalReferences,
+          defects,
+          executed_by: session!.user.id
+        });
+
+        queryClient.setQueryData<ExecutionResult[]>(["execution-results", selectedExecution.id], (current = []) => [
+          {
+            id: response.id,
+            execution_id: selectedExecution.id,
+            test_case_id: selectedExecutionCase.id,
+            test_case_title: selectedExecutionCase.title,
+            suite_id: selectedExecutionCase.suite_id,
+            suite_name: selectedExecutionCase.suite_name,
+            app_type_id: selectedExecution.app_type_id || "",
+            status: safeStatus,
+            duration_ms: selectedCaseDurationMs,
+            error: null,
+            logs: stringifyExecutionLogs(selectedCaseLogs),
+            external_references: externalReferences,
+            defects,
+            executed_by: session!.user.id
+          },
+          ...current
+        ]);
+      }
+
+      await refreshExecutionScope(selectedExecution.id);
+      showSuccess("Execution references updated.");
+    } catch (error) {
+      showError(error, "Unable to update execution references");
+    }
+  };
+
   const handleFinalizeExecution = async (mode: "complete" | "abort") => {
     if (!selectedExecution) {
       return;
@@ -2540,6 +2611,8 @@ export function ExecutionsPage() {
       duration_ms: durationMs ?? undefined,
       logs,
       error: aggregateStatus === "failed" ? "Step failed during run" : undefined,
+      external_references: currentCaseSnapshot.external_references || [],
+      defects: [],
       executed_by: session!.user.id
     });
 
@@ -2556,6 +2629,8 @@ export function ExecutionsPage() {
         duration_ms: durationMs,
         error: aggregateStatus === "failed" ? "Step failed during run" : null,
         logs,
+        external_references: currentCaseSnapshot.external_references || [],
+        defects: [],
         executed_by: session!.user.id
       },
       ...current
@@ -2681,6 +2756,17 @@ export function ExecutionsPage() {
   const selectedExecutionCaseReadableDescription = selectedExecutionCase
     ? resolveStepParameterText(selectedExecutionCase.description, executionStepParameterValues) || selectedExecutionCase.description || ""
     : "";
+  const selectedExecutionCaseReferenceText = formatReferenceList(
+    selectedExecutionResult?.external_references?.length
+      ? selectedExecutionResult.external_references
+      : selectedExecutionCase?.external_references || []
+  );
+  const selectedExecutionCaseDefectText = formatReferenceList(selectedExecutionResult?.defects || []);
+
+  useEffect(() => {
+    setCaseReferenceDraft(selectedExecutionCaseReferenceText);
+    setCaseDefectDraft(selectedExecutionCaseDefectText);
+  }, [selectedExecutionCaseDefectText, selectedExecutionCaseReferenceText, selectedExecution?.id, selectedExecutionCase?.id]);
 
   const openExecutionCaseAutomationPreview = () => {
     if (!selectedSteps.length) {
@@ -2894,6 +2980,9 @@ export function ExecutionsPage() {
     "No project scoped";
   const hasExecutionAssignmentChange = executionAssignmentDraft !== (selectedExecution?.assigned_to || "");
   const hasCaseAssignmentChange = caseAssignmentDraft !== selectedExecutionCaseExplicitAssigneeId;
+  const hasCaseReferenceChange =
+    caseReferenceDraft.trim() !== selectedExecutionCaseReferenceText
+    || caseDefectDraft.trim() !== selectedExecutionCaseDefectText;
   const selectedExecutionCaseAssignmentHint = selectedExecutionCase?.assigned_to
     ? "This case has its own run-level assignee override."
     : selectedExecution?.assigned_user
@@ -3500,6 +3589,8 @@ export function ExecutionsPage() {
       duration_ms: durationMs ?? undefined,
       logs,
       error: status === "failed" ? "Marked at suite level" : undefined,
+      external_references: currentCaseSnapshot.external_references || [],
+      defects: [],
       executed_by: session!.user.id
     });
 
@@ -3516,6 +3607,8 @@ export function ExecutionsPage() {
         duration_ms: durationMs,
         error: status === "failed" ? "Marked at suite level" : null,
         logs,
+        external_references: currentCaseSnapshot.external_references || [],
+        defects: [],
         executed_by: session!.user.id
       },
       ...current
@@ -4153,6 +4246,39 @@ export function ExecutionsPage() {
                           <button className="ghost-button" disabled={!selectedSteps.length} onClick={openExecutionCaseAutomationPreview} type="button">
                             <AutomationCodeIcon />
                             <span>Automation code</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="execution-assignment-panel execution-assignment-panel--case">
+                        <div className="execution-assignment-copy">
+                          <strong>Run references</strong>
+                          <span>Track external tickets and defects for this execution case.</span>
+                        </div>
+                        <div className="record-grid execution-reference-grid">
+                          <FormField label="Reference">
+                            <input
+                              disabled={!isExecutionStarted || isExecutionLocked || createResult.isPending || updateResult.isPending}
+                              onChange={(event) => setCaseReferenceDraft(event.target.value)}
+                              placeholder="Jira issue, story link, release ticket"
+                              value={caseReferenceDraft}
+                            />
+                          </FormField>
+                          <FormField label="Defect">
+                            <input
+                              disabled={!isExecutionStarted || isExecutionLocked || createResult.isPending || updateResult.isPending}
+                              onChange={(event) => setCaseDefectDraft(event.target.value)}
+                              placeholder="BUG-123, DEF-456"
+                              value={caseDefectDraft}
+                            />
+                          </FormField>
+                          <button
+                            className="ghost-button"
+                            disabled={!isExecutionStarted || isExecutionLocked || !hasCaseReferenceChange || createResult.isPending || updateResult.isPending}
+                            onClick={() => void handleSaveCaseReferences()}
+                            type="button"
+                          >
+                            <span>{createResult.isPending || updateResult.isPending ? "Saving…" : "Save references"}</span>
                           </button>
                         </div>
                       </div>

@@ -3,6 +3,7 @@ const { v4: uuid } = require("uuid");
 const requirementTestCaseService = require("./requirementTestCase.service");
 const displayIdService = require("./displayId.service");
 const workspaceTransactionService = require("./workspaceTransaction.service");
+const { normalizeReferenceList, normalizeStoredReferenceList } = require("../utils/externalReferences");
 
 const hydrateTestCaseIds = async (requirement) => {
   if (!requirement) {
@@ -11,6 +12,7 @@ const hydrateTestCaseIds = async (requirement) => {
 
   return {
     ...requirement,
+    external_references: normalizeStoredReferenceList(requirement.external_references),
     test_case_ids: await requirementTestCaseService.getTestCaseIdsForRequirement(requirement.id)
   };
 };
@@ -91,6 +93,7 @@ exports.bulkImportRequirements = async ({ project_id, rows = [], created_by, tra
         project_id,
         title,
         description: typeof row?.description === "string" ? row.description : undefined,
+        external_references: normalizeReferenceList(row?.external_references || row?.externalReferences || row?.reference || row?.references),
         priority: typeof row?.priority === "number" && Number.isFinite(row.priority) ? row.priority : undefined,
         status: typeof row?.status === "string" ? row.status : undefined,
         created_by
@@ -176,7 +179,7 @@ exports.bulkImportRequirements = async ({ project_id, rows = [], created_by, tra
   return response;
 };
 
-exports.createRequirement = async ({ project_id, title, description, priority, status, created_by }) => {
+exports.createRequirement = async ({ project_id, title, description, external_references, priority, status, created_by }) => {
   if (!project_id || !title) {
     throw new Error("Missing required fields");
   }
@@ -191,14 +194,15 @@ exports.createRequirement = async ({ project_id, title, description, priority, s
   const display_id = await displayIdService.createDisplayId("requirement");
 
   await db.prepare(`
-    INSERT INTO requirements (id, display_id, project_id, title, description, priority, status, created_by, updated_by, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    INSERT INTO requirements (id, display_id, project_id, title, description, external_references, priority, status, created_by, updated_by, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `).run(
     id,
     display_id,
     project_id,
     title,
     description || null,
+    normalizeReferenceList(external_references),
     priority ?? 3,
     status || null,
     created_by || null,
@@ -256,12 +260,15 @@ exports.updateRequirement = async (id, data) => {
 
   await db.prepare(`
     UPDATE requirements
-    SET project_id = ?, title = ?, description = ?, priority = ?, status = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+    SET project_id = ?, title = ?, description = ?, external_references = ?, priority = ?, status = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(
     data.project_id ?? existing.project_id,
     data.title ?? existing.title,
     data.description ?? existing.description,
+    data.external_references !== undefined
+      ? normalizeReferenceList(data.external_references)
+      : normalizeStoredReferenceList(existing.external_references),
     data.priority ?? existing.priority,
     data.status ?? existing.status,
     data.updated_by ?? existing.updated_by ?? existing.created_by ?? null,

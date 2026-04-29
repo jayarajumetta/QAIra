@@ -46,6 +46,7 @@ export type Requirement = {
   project_id: string;
   title: string;
   description: string | null;
+  external_references?: string[];
   priority: number | null;
   status: string | null;
   test_case_ids?: string[];
@@ -324,6 +325,7 @@ export type TestCase = {
   requirement_ids?: string[];
   title: string;
   description: string | null;
+  external_references?: string[];
   parameter_values?: Record<string, string>;
   automated: "yes" | "no" | null;
   priority: number | null;
@@ -627,6 +629,7 @@ export type ExecutionCaseSnapshot = {
   test_case_id: string;
   test_case_title: string;
   test_case_description: string | null;
+  external_references?: string[];
   suite_id: string | null;
   suite_name: string | null;
   priority: number | null;
@@ -671,6 +674,8 @@ export type ExecutionResult = {
   duration_ms: number | null;
   error: string | null;
   logs: string | null;
+  external_references?: string[];
+  defects?: string[];
   executed_by: string | null;
   created_at?: string;
 };

@@ -12,6 +12,7 @@ const {
   normalizeRichText,
   normalizeTestStepType
 } = require("../utils/testStepAutomation");
+const { normalizeReferenceList, normalizeStoredReferenceList } = require("../utils/externalReferences");
 
 const DEFAULT_PRIORITY = 3;
 const DEFAULT_STATUS = DOMAIN_METADATA.test_cases.default_status;
@@ -73,6 +74,7 @@ const insertTestCaseRecord = db.prepare(`
     suite_id,
     title,
     description,
+    external_references,
     parameter_values,
     automated,
     priority,
@@ -86,12 +88,12 @@ const insertTestCaseRecord = db.prepare(`
     updated_by,
     updated_at
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 `);
 
 const updateTestCaseRecord = db.prepare(`
   UPDATE test_cases
-  SET app_type_id = ?, suite_id = ?, title = ?, description = ?, parameter_values = ?, automated = ?, priority = ?, status = ?, requirement_id = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+  SET app_type_id = ?, suite_id = ?, title = ?, description = ?, external_references = ?, parameter_values = ?, automated = ?, priority = ?, status = ?, requirement_id = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
   WHERE id = ?
 `);
 
@@ -157,6 +159,7 @@ const hydrateSuiteIds = async (testCase) => {
 
   return {
     ...testCase,
+    external_references: normalizeStoredReferenceList(testCase.external_references),
     parameter_values: normalizeParameterValues(testCase.parameter_values),
     suite_ids: await suiteTestCaseService.getSuiteIdsForTestCase(testCase.id),
     requirement_ids: await requirementTestCaseService.getRequirementIdsForTestCase(testCase.id)
@@ -698,6 +701,7 @@ const createPersistablePayload = async ({
   suite_ids = [],
   title,
   description,
+  external_references,
   automated,
   priority,
   status,
@@ -740,6 +744,7 @@ const createPersistablePayload = async ({
     requirement_ids: resolvedRequirementIds,
     title: resolvedTitle,
     description: normalizeText(description),
+    external_references: normalizeReferenceList(external_references),
     parameter_values: normalizeParameterValues(parameter_values),
     automated: normalizeAutomated(automated),
     priority: normalizePriority(priority),
@@ -765,6 +770,7 @@ const createOne = db.transaction(async (payload) => {
     payload.suite_ids[0] || null,
     payload.title,
     payload.description,
+    payload.external_references,
     payload.parameter_values,
     payload.automated,
     payload.priority,
@@ -984,6 +990,12 @@ exports.bulkImportTestCases = async ({ app_type_id, requirement_id, rows = [], c
           app_type_id: resolvedAppTypeId,
           title: normalizedRow?.title,
           description: normalizedRow?.description,
+          external_references: normalizeReferenceList(
+            normalizedRow?.external_references
+            || normalizedRow?.externalReferences
+            || normalizedRow?.reference
+            || normalizedRow?.references
+          ),
           parameter_values: normalizedRow?.parameter_values || normalizedRow?.parameterValues,
           automated: normalizedRow?.automated,
           priority: normalizedRow?.priority,
@@ -1202,6 +1214,9 @@ exports.updateTestCase = async (id, data) => {
     requirement_ids: requestedRequirementIds,
     title: normalizeText(data.title) || existing.title,
     description: data.description !== undefined ? normalizeText(data.description) : existing.description,
+    external_references: data.external_references !== undefined
+      ? normalizeReferenceList(data.external_references)
+      : normalizeStoredReferenceList(existing.external_references),
     parameter_values: data.parameter_values !== undefined ? normalizeParameterValues(data.parameter_values) : normalizeParameterValues(existing.parameter_values),
     automated: data.automated !== undefined ? normalizeAutomated(data.automated, existing.automated || DEFAULT_AUTOMATED) : existing.automated || DEFAULT_AUTOMATED,
     priority: data.priority !== undefined ? normalizePriority(data.priority) : existing.priority ?? DEFAULT_PRIORITY,
@@ -1216,6 +1231,7 @@ exports.updateTestCase = async (id, data) => {
       payload.suite_ids[0] || null,
       payload.title,
       payload.description,
+      payload.external_references,
       payload.parameter_values,
       payload.automated,
       payload.priority,

@@ -31,6 +31,7 @@ import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { api } from "../lib/api";
 import { appendUniqueImages, parseExternalLinks, readImageFiles } from "../lib/aiDesignStudio";
 import { formatAuditTimestamp, resolveAuditUserLabel } from "../lib/auditDisplay";
+import { formatReferenceList, parseReferenceList } from "../lib/externalReferences";
 import { parseRequirementCsv } from "../lib/requirementImport";
 import { TEST_AUTHORING_SECTION_ITEMS } from "../lib/workspaceSections";
 import type { AiDesignImageInput, AiDesignedTestCaseCandidate, ExecutionResult, Requirement, TestCase, User } from "../types";
@@ -38,6 +39,7 @@ import type { AiDesignImageInput, AiDesignedTestCaseCandidate, ExecutionResult, 
 type RequirementDraft = {
   title: string;
   description: string;
+  externalReferencesText: string;
   priority: number;
   status: string;
 };
@@ -54,6 +56,7 @@ type RequirementCoverageMetric = {
 const createEmptyRequirementDraft = (defaultStatus = "open"): RequirementDraft => ({
   title: "",
   description: "",
+  externalReferencesText: "",
   priority: 3,
   status: defaultStatus
 });
@@ -139,7 +142,7 @@ export function RequirementsPage() {
   const [previewMessage, setPreviewMessage] = useState("");
   const [previewTone, setPreviewTone] = useState<"success" | "error">("success");
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [importRows, setImportRows] = useState<Array<{ title: string; description?: string; priority?: number; status?: string }>>([]);
+  const [importRows, setImportRows] = useState<Array<{ title: string; description?: string; external_references?: string[]; priority?: number; status?: string }>>([]);
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [importFileName, setImportFileName] = useState("");
 
@@ -402,6 +405,7 @@ export function RequirementsPage() {
         [
           item.title,
           item.description || "",
+          ...(item.external_references || []),
           item.status || defaultRequirementStatus,
           `p${item.priority ?? 3}`,
           `priority ${item.priority ?? 3}`
@@ -496,6 +500,12 @@ export function RequirementsPage() {
       label: "Description",
       defaultVisible: false,
       render: (item) => item.description || currentAppTypeName
+    },
+    {
+      key: "externalReferences",
+      label: "References",
+      defaultVisible: false,
+      render: (item) => formatReferenceList(item.external_references) || "—"
     },
     {
       key: "status",
@@ -652,6 +662,7 @@ export function RequirementsPage() {
     setDraft({
       title: selectedRequirement.title,
       description: selectedRequirement.description || "",
+      externalReferencesText: formatReferenceList(selectedRequirement.external_references),
       priority: selectedRequirement.priority ?? 3,
       status: selectedRequirement.status || defaultRequirementStatus
     });
@@ -777,6 +788,7 @@ export function RequirementsPage() {
         project_id: projectId,
         title: createDraft.title,
         description: createDraft.description || undefined,
+        external_references: parseReferenceList(createDraft.externalReferencesText),
         priority: createDraft.priority,
         status: createDraft.status
       });
@@ -810,6 +822,7 @@ export function RequirementsPage() {
         input: {
           title: draft.title,
           description: draft.description,
+          external_references: parseReferenceList(draft.externalReferencesText),
           priority: draft.priority,
           status: draft.status
         }
@@ -1369,6 +1382,9 @@ export function RequirementsPage() {
                       <FormField label="Description">
                         <textarea rows={4} value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} />
                       </FormField>
+                      <FormField label="External references" hint="Ticket links or IDs, separated with commas.">
+                        <input value={draft.externalReferencesText} onChange={(event) => setDraft((current) => ({ ...current, externalReferencesText: event.target.value }))} />
+                      </FormField>
 
                       <div className="action-row">
                         <button className="primary-button" disabled={updateRequirement.isPending || replaceMappings.isPending} type="submit">
@@ -1466,6 +1482,12 @@ export function RequirementsPage() {
                       onChange={(event) => setCreateDraft((current) => ({ ...current, description: event.target.value }))}
                     />
                   </FormField>
+                  <FormField label="External references" hint="Ticket links or IDs, separated with commas.">
+                    <input
+                      value={createDraft.externalReferencesText}
+                      onChange={(event) => setCreateDraft((current) => ({ ...current, externalReferencesText: event.target.value }))}
+                    />
+                  </FormField>
                 </div>
 
                 <div className="metric-strip compact">
@@ -1544,7 +1566,7 @@ export function RequirementsPage() {
                 <h3 id="bulk-requirement-import-title">Import requirements from CSV</h3>
                 <p>
                   Upload many requirements at once. Use columns: <strong>title</strong> (required), plus optional{" "}
-                  <strong>description</strong>, <strong>priority</strong> (1–5), and <strong>status</strong>.
+                  <strong>description</strong>, <strong>external_references</strong>, <strong>priority</strong> (1–5), and <strong>status</strong>.
                 </p>
               </div>
               <button
@@ -1589,6 +1611,7 @@ export function RequirementsPage() {
                     <thead>
                       <tr>
                         <th>Title</th>
+                        <th>References</th>
                         <th>Priority</th>
                         <th>Status</th>
                       </tr>
@@ -1597,6 +1620,7 @@ export function RequirementsPage() {
                       {importRows.slice(0, 5).map((row, index) => (
                         <tr key={`${row.title}-${index}`}>
                           <td>{row.title}</td>
+                          <td>{formatReferenceList(row.external_references) || "—"}</td>
                           <td>{row.priority ?? "—"}</td>
                           <td>{row.status || "—"}</td>
                         </tr>

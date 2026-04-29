@@ -3,6 +3,7 @@ const { v4: uuid } = require("uuid");
 const requirementDesignService = require("./requirementDesign.service");
 const testCaseService = require("./testCase.service");
 const workspaceTransactionService = require("./workspaceTransaction.service");
+const { normalizeStoredReferenceList } = require("../utils/externalReferences");
 
 const DEFAULT_CASES_PER_REQUIREMENT = 8;
 const DEFAULT_PARALLEL_REQUIREMENTS = 2;
@@ -219,6 +220,7 @@ async function generateCasesForRequirement({
       app_type_id: appType.id,
       title: candidate.title,
       description: candidate.description || undefined,
+      external_references: normalizeStoredReferenceList(requirement.external_references),
       priority: candidate.priority,
       status: "draft",
       requirement_ids: candidate.requirement_ids?.length ? candidate.requirement_ids : [requirement.id],

@@ -64,6 +64,7 @@ import {
 } from "../lib/testCaseSourceImport";
 import { api } from "../lib/api";
 import { appendUniqueImages, parseExternalLinks, readImageFiles, toggleRequirementOnPreviewCase } from "../lib/aiDesignStudio";
+import { formatReferenceList, parseReferenceList } from "../lib/externalReferences";
 import { summarizeExecutionStart } from "../lib/executionStartSummary";
 import { upsertSharedStepGroupInCache } from "../lib/sharedStepGroupCache";
 import {
@@ -108,6 +109,7 @@ import type {
 type TestCaseDraft = {
   title: string;
   description: string;
+  externalReferencesText: string;
   automated: "yes" | "no";
   priority: number;
   status: string;
@@ -173,6 +175,7 @@ type TestCaseEditorSectionKey = "case" | "steps" | "automation" | "history";
 const createEmptyCaseDraft = (defaultStatus = "active", defaultAutomated: "yes" | "no" = "no"): TestCaseDraft => ({
   title: "",
   description: "",
+  externalReferencesText: "",
   automated: defaultAutomated,
   priority: 3,
   status: defaultStatus,
@@ -1310,6 +1313,7 @@ export function TestCasesPage() {
         [
           testCase.title,
           testCase.description || "",
+          ...(testCase.external_references || []),
           requirementTitle
         ].some((value) => value.toLowerCase().includes(search));
 
@@ -1591,6 +1595,7 @@ export function TestCasesPage() {
       setCaseDraft({
         title: selectedTestCase.title,
         description: selectedTestCase.description || "",
+        externalReferencesText: formatReferenceList(selectedTestCase.external_references),
         automated: (selectedTestCase.automated || defaultTestCaseAutomated) as "yes" | "no",
         priority: selectedTestCase.priority ?? 3,
         status: selectedTestCase.status || defaultTestCaseStatus,
@@ -2260,6 +2265,7 @@ export function TestCasesPage() {
           suite_ids: createSuiteContextId ? [createSuiteContextId] : [],
           title: caseDraft.title,
           description: caseDraft.description || undefined,
+          external_references: parseReferenceList(caseDraft.externalReferencesText),
           parameter_values: testCaseParameterValues,
           automated: caseDraft.automated,
           priority: Number(caseDraft.priority),
@@ -2285,6 +2291,7 @@ export function TestCasesPage() {
             app_type_id: appTypeId,
             title: caseDraft.title,
             description: caseDraft.description,
+            external_references: parseReferenceList(caseDraft.externalReferencesText),
             parameter_values: testCaseParameterValues,
             automated: caseDraft.automated,
             priority: Number(caseDraft.priority),
@@ -3567,6 +3574,7 @@ export function TestCasesPage() {
         suite_ids: testCase.suite_ids || (testCase.suite_id ? [testCase.suite_id] : []),
         title: `${testCase.title} (Copy)`,
         description: testCase.description || undefined,
+        external_references: testCase.external_references || [],
         parameter_values: testCase.parameter_values || undefined,
         automated: testCase.automated || defaultTestCaseAutomated,
         priority: testCase.priority || 3,
@@ -4568,6 +4576,12 @@ export function TestCasesPage() {
       render: (testCase) => testCase.description || "No description yet for this test case."
     },
     {
+      key: "externalReferences",
+      label: "References",
+      defaultVisible: false,
+      render: (testCase) => formatReferenceList(testCase.external_references) || "—"
+    },
+    {
       key: "status",
       label: "Status",
       render: (testCase) => {
@@ -5505,6 +5519,12 @@ export function TestCasesPage() {
                             onChange={(event) => setCaseDraft((current) => ({ ...current, description: event.target.value }))}
                           />
                         </FormField>
+                        <FormField label="External references" hint="Ticket links or IDs, separated with commas.">
+                          <input
+                            value={caseDraft.externalReferencesText}
+                            onChange={(event) => setCaseDraft((current) => ({ ...current, externalReferencesText: event.target.value }))}
+                          />
+                        </FormField>
 
                         {selectedCaseSuites.length ? (
                           <div className="detail-summary">
@@ -6142,7 +6162,7 @@ export function TestCasesPage() {
               <div className="import-modal-title">
                 <p className="eyebrow">Bulk Import</p>
                 <h3 id="bulk-import-title">Import test cases from external sources</h3>
-                <p>Queue CSV, JUnit XML, TestNG XML, or Postman collection files together. CSV imports become manual cases, JUnit and TestNG imports keep automated suite and property data, and Postman requests land as API steps with <code>{"{{vars}}"}</code> converted into case test data. Large imports are sent in smaller batches automatically.</p>
+                <p>Queue CSV, JUnit XML, TestNG XML, or Postman collection files together. CSV imports support an <strong>external_references</strong> column for ticket links, while other sources keep their suite, property, and request metadata. Large imports are sent in smaller batches automatically.</p>
               </div>
               <button aria-label="Close bulk import dialog" className="ghost-button" disabled={importTestCases.isPending} onClick={() => {
                 setImportBatches([]);
@@ -6241,6 +6261,7 @@ export function TestCasesPage() {
                     <thead>
                       <tr>
                         <th>Title</th>
+                        <th>References</th>
                         <th>Step count</th>
                         <th>Groups</th>
                         <th>Suites</th>
@@ -6251,6 +6272,7 @@ export function TestCasesPage() {
                       {importRows.slice(0, 5).map((row, index) => (
                         <tr key={`${row.title}-${index}`}>
                           <td>{row.title}</td>
+                          <td>{formatReferenceList(row.external_references) || "—"}</td>
                           <td>{countImportedSteps(row)}</td>
                           <td>{countImportedGroups(row)}</td>
                           <td>{countImportedSuites(row)}</td>

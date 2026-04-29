@@ -15,6 +15,8 @@ module.exports = async function (fastify) {
       duration_ms: { required: false, type: "number" },
       error: { required: false, type: "string" },
       logs: { required: false, type: "string" },
+      external_references: { required: false, type: "array", items: "string" },
+      defects: { required: false, type: "array", items: "string" },
       executed_by: { required: false, type: "string" }
     }, req.body);
 
@@ -51,7 +53,9 @@ module.exports = async function (fastify) {
       status: { required: false, enum: EXECUTION_RESULT_STATUS_VALUES },
       duration_ms: { required: false, type: "number" },
       error: { required: false, type: "string" },
-      logs: { required: false, type: "string" }
+      logs: { required: false, type: "string" },
+      external_references: { required: false, type: "array", items: "string" },
+      defects: { required: false, type: "array", items: "string" }
     }, req.body);
 
     return service.updateExecutionResult(req.params.id, req.body);

@@ -12,6 +12,7 @@ module.exports = async function (fastify) {
       project_id: { required: true, type: "string" },
       title: { required: true, type: "string", minLength: 2 },
       description: { required: false, type: "string" },
+      external_references: { required: false, type: "array", items: "string" },
       priority: { required: false, type: "number" },
       status: { required: false, type: "string" }
     }, req.body);
@@ -76,6 +77,7 @@ module.exports = async function (fastify) {
       project_id: { required: false, type: "string" },
       title: { required: false, type: "string", minLength: 2 },
       description: { required: false, type: "string" },
+      external_references: { required: false, type: "array", items: "string" },
       priority: { required: false, type: "number" },
       status: { required: false, type: "string" }
     }, req.body);

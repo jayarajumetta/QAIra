@@ -27,6 +27,7 @@ export type ImportedTestCaseRow = {
   suites?: string;
   suite?: string;
   description?: string;
+  external_references?: string[];
   automated?: string;
   priority?: number;
   status?: string;
@@ -52,6 +53,7 @@ const HEADER_ALIASES: Record<keyof ImportedTestCaseRow, string[]> = {
   suites: ["suites", "suitenames", "linkedsuites"],
   suite: ["suite", "suitename", "linkedsuite"],
   description: ["description", "details", "notes", "scenario"],
+  external_references: ["externalreferences", "externalreference", "references", "reference", "externallinks", "externaltickets", "ticketlinks", "tickets", "jira", "issue", "issues"],
   automated: ["automated", "automation", "isautomated", "automatedcase", "autocoverage"],
   priority: ["priority", "severity"],
   status: ["status", "state"],
@@ -63,6 +65,8 @@ const HEADER_ALIASES: Record<keyof ImportedTestCaseRow, string[]> = {
 };
 
 const normalizeHeader = (header: string) => header.toLowerCase().replace(/[^a-z0-9]/g, "");
+const parseReferenceList = (value: string) =>
+  Array.from(new Set(value.split(/,|\r?\n|\|/).map((item) => item.trim()).filter(Boolean)));
 
 const findCanonicalKey = (header: string) => {
   const normalized = normalizeHeader(header);
@@ -149,6 +153,11 @@ export function parseTestCaseCsv(text: string): ParsedCsv {
 
         if (key === "parameter_values") {
           accumulator.parameter_values = parseParameterValuesText(value);
+          return accumulator;
+        }
+
+        if (key === "external_references") {
+          accumulator.external_references = parseReferenceList(value);
           return accumulator;
         }
 

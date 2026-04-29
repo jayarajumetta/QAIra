@@ -3,6 +3,7 @@ import { parseCsvGrid } from "./csvGrid";
 export type ImportedRequirementRow = {
   title: string;
   description?: string;
+  external_references?: string[];
   priority?: number;
   status?: string;
 };
@@ -16,11 +17,14 @@ type ParsedCsv = {
 const HEADER_ALIASES: Record<keyof ImportedRequirementRow, string[]> = {
   title: ["title", "requirement", "requirementtitle", "name", "summary"],
   description: ["description", "details", "notes", "acceptancecriteria", "story"],
+  external_references: ["externalreferences", "externalreference", "references", "reference", "externallinks", "externaltickets", "ticketlinks", "tickets", "jira", "issue", "issues"],
   priority: ["priority", "severity"],
   status: ["status", "state"]
 };
 
 const normalizeHeader = (header: string) => header.toLowerCase().replace(/[^a-z0-9]/g, "");
+const parseReferenceList = (value: string) =>
+  Array.from(new Set(value.split(/,|\r?\n|\|/).map((item) => item.trim()).filter(Boolean)));
 
 const findCanonicalKey = (header: string) => {
   const normalized = normalizeHeader(header);
@@ -62,6 +66,11 @@ export function parseRequirementCsv(text: string): ParsedCsv {
         if (key === "priority") {
           const parsed = Number(value);
           accumulator.priority = Number.isFinite(parsed) ? parsed : undefined;
+          return accumulator;
+        }
+
+        if (key === "external_references") {
+          accumulator.external_references = parseReferenceList(value);
           return accumulator;
         }
 

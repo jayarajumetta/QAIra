@@ -1,5 +1,6 @@
 const integrationService = require("./integration.service");
 const testCaseService = require("./testCase.service");
+const { normalizeStoredReferenceList } = require("../utils/externalReferences");
 
 const DEFAULT_CASE_LIMIT = 8;
 
@@ -471,10 +472,15 @@ exports.acceptGeneratedTestCases = async ({
   const created = [];
 
   for (const candidate of acceptedCases) {
+    const candidateRequirements = scopedRequirements.filter((requirement) => candidate.requirement_ids.includes(requirement.id));
+    const externalReferences = [
+      ...new Set(candidateRequirements.flatMap((requirement) => normalizeStoredReferenceList(requirement.external_references)))
+    ];
     const response = await testCaseService.createTestCase({
       app_type_id: appType.id,
       title: candidate.title,
       description: candidate.description || undefined,
+      external_references: externalReferences,
       priority: candidate.priority,
       status,
       requirement_ids: candidate.requirement_ids,

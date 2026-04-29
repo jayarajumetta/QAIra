@@ -7,6 +7,7 @@ const executionResultService = require("./executionResult.service");
 const apiRequestExecutionService = require("./apiRequestExecution.service");
 const executionStepRuntimeService = require("./executionStepRuntime.service");
 const opsTelemetryService = require("./opsTelemetry.service");
+const { normalizeStoredReferenceList } = require("../utils/externalReferences");
 
 const getSuiteIdsForExecution = db.prepare(`
   SELECT suite_id, suite_name
@@ -16,7 +17,7 @@ const getSuiteIdsForExecution = db.prepare(`
 `);
 
 const getCaseSnapshotsForExecution = db.prepare(`
-  SELECT execution_id, test_case_id, test_case_title, test_case_description, suite_id, suite_name, priority, status, parameter_values, suite_parameter_values, sort_order, assigned_to
+  SELECT execution_id, test_case_id, test_case_title, test_case_description, external_references, suite_id, suite_name, priority, status, parameter_values, suite_parameter_values, sort_order, assigned_to
   FROM execution_case_snapshots
   WHERE execution_id = ?
   ORDER BY sort_order ASC, test_case_title ASC
@@ -47,6 +48,7 @@ const insertExecutionCaseSnapshot = db.prepare(`
     test_case_id,
     test_case_title,
     test_case_description,
+    external_references,
     suite_id,
     suite_name,
     priority,
@@ -56,7 +58,7 @@ const insertExecutionCaseSnapshot = db.prepare(`
     sort_order,
     assigned_to
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const insertExecutionStepSnapshot = db.prepare(`
@@ -89,6 +91,7 @@ const selectCasesForSuite = db.prepare(`
     test_cases.id AS test_case_id,
     test_cases.title AS test_case_title,
     test_cases.description AS test_case_description,
+    test_cases.external_references,
     test_cases.parameter_values,
     test_suites.parameter_values AS suite_parameter_values,
     test_cases.priority,
@@ -107,6 +110,7 @@ const selectCaseForExecution = db.prepare(`
     app_type_id,
     title AS test_case_title,
     description AS test_case_description,
+    external_references,
     parameter_values,
     priority,
     status
@@ -404,6 +408,7 @@ async function attachExecutionCaseAssignees(caseSnapshots) {
 
   return caseSnapshots.map((snapshot) => ({
     ...snapshot,
+    external_references: normalizeStoredReferenceList(snapshot.external_references),
     parameter_values: normalizeParameterValues(snapshot.parameter_values),
     suite_parameter_values: normalizeParameterValues(snapshot.suite_parameter_values),
     assigned_user: snapshot.assigned_to ? assignedUsersById[snapshot.assigned_to] || null : null
@@ -519,6 +524,7 @@ async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
         test_case_id: suiteCase.test_case_id,
         test_case_title: suiteCase.test_case_title,
         test_case_description: suiteCase.test_case_description,
+        external_references: normalizeStoredReferenceList(suiteCase.external_references),
         suite_id: suiteRow.suite_id,
         suite_name: suiteRow.suite_name,
         priority: suiteCase.priority,
@@ -569,6 +575,7 @@ async function buildSnapshotPayload(executionId, suiteRows, options = {}) {
         test_case_id: directCase.test_case_id,
         test_case_title: directCase.test_case_title,
         test_case_description: directCase.test_case_description,
+        external_references: normalizeStoredReferenceList(directCase.external_references),
         suite_id: null,
         suite_name: null,
         priority: directCase.priority,
@@ -890,6 +897,7 @@ exports.createExecution = async ({
         caseSnapshot.test_case_id,
         caseSnapshot.test_case_title,
         caseSnapshot.test_case_description,
+        caseSnapshot.external_references || [],
         caseSnapshot.suite_id,
         caseSnapshot.suite_name,
         caseSnapshot.priority,
@@ -1071,6 +1079,7 @@ exports.rerunExecution = async (id, { failed_only = false, created_by, name } = 
         snapshot.test_case_id,
         snapshot.test_case_title,
         snapshot.test_case_description,
+        snapshot.external_references || [],
         snapshot.suite_id,
         snapshot.suite_name,
         snapshot.priority,

@@ -83,6 +83,7 @@ CREATE TABLE requirements (
   project_id TEXT NOT NULL,
   title TEXT NOT NULL,
   description TEXT,
+  external_references JSONB NOT NULL DEFAULT '[]'::jsonb,
   priority INTEGER DEFAULT 3,
   status TEXT,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -151,6 +152,7 @@ CREATE TABLE test_cases (
   suite_id TEXT,
   title TEXT NOT NULL,
   description TEXT,
+  external_references JSONB NOT NULL DEFAULT '[]'::jsonb,
   parameter_values JSONB NOT NULL DEFAULT '{}'::jsonb,
   automated TEXT NOT NULL DEFAULT 'no' CHECK(automated IN ('yes','no')),
   priority INTEGER DEFAULT 3,
@@ -311,6 +313,7 @@ CREATE TABLE execution_case_snapshots (
   test_case_id TEXT NOT NULL,
   test_case_title TEXT NOT NULL,
   test_case_description TEXT,
+  external_references JSONB NOT NULL DEFAULT '[]'::jsonb,
   suite_id TEXT,
   suite_name TEXT,
   priority INTEGER,
@@ -357,6 +360,8 @@ CREATE TABLE execution_results (
   duration_ms INTEGER,
   error TEXT,
   logs TEXT,
+  external_references JSONB NOT NULL DEFAULT '[]'::jsonb,
+  defects JSONB NOT NULL DEFAULT '[]'::jsonb,
   executed_by TEXT,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (execution_id) REFERENCES executions(id),
@@ -410,6 +415,7 @@ CREATE INDEX IF NOT EXISTS idx_integrations_type_active
 ALTER TABLE requirements ADD COLUMN IF NOT EXISTS created_by TEXT;
 ALTER TABLE requirements ADD COLUMN IF NOT EXISTS updated_by TEXT;
 ALTER TABLE requirements ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE requirements ADD COLUMN IF NOT EXISTS external_references JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 ALTER TABLE test_suites ADD COLUMN IF NOT EXISTS parameter_values JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE test_suites ADD COLUMN IF NOT EXISTS created_by TEXT;
@@ -423,6 +429,7 @@ ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS ai_generated_at TIMESTAMPTZ;
 ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS created_by TEXT;
 ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS updated_by TEXT;
 ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS external_references JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 ALTER TABLE test_cases DROP CONSTRAINT IF EXISTS test_cases_automated_check;
 ALTER TABLE test_cases
@@ -486,6 +493,10 @@ CREATE INDEX IF NOT EXISTS idx_execution_schedules_project_next_run
 
 ALTER TABLE execution_case_snapshots ADD COLUMN IF NOT EXISTS suite_parameter_values JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE execution_case_snapshots ADD COLUMN IF NOT EXISTS assigned_to TEXT;
+ALTER TABLE execution_case_snapshots ADD COLUMN IF NOT EXISTS external_references JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE execution_results ADD COLUMN IF NOT EXISTS external_references JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE execution_results ADD COLUMN IF NOT EXISTS defects JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_suite_test_cases_test_case_sort
   ON suite_test_cases (test_case_id, sort_order);
