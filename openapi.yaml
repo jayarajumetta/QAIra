@@ -1775,6 +1775,7 @@ components:
         capture_network: { type: boolean }
         artifact_retention_days: { type: integer }
         run_timeout_seconds: { type: integer }
+        queue_poll_interval_minutes: { type: integer, example: 5 }
         promote_healed_patches: { type: string, example: review }
     Integration:
       type: object

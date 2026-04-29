@@ -755,6 +755,7 @@ export function TestCasesPage() {
   const [isSuiteLinkModalOpen, setIsSuiteLinkModalOpen] = useState(false);
   const [suiteLinkDraftIds, setSuiteLinkDraftIds] = useState<string[]>([]);
   const [editingAutomationStepId, setEditingAutomationStepId] = useState("");
+  const [rephrasingStepId, setRephrasingStepId] = useState("");
   const [codePreviewState, setCodePreviewState] = useState<{ title: string; subtitle: string; code: string } | null>(null);
   const caseSectionRef = useRef<HTMLDivElement | null>(null);
   const suppressCaseSelectionFromUrlRef = useRef(false);
@@ -774,7 +775,7 @@ export function TestCasesPage() {
   const [aiRequirementIds, setAiRequirementIds] = useState<string[]>([]);
   const [integrationId, setIntegrationId] = useState("");
   const [maxCases, setMaxCases] = useState(8);
-  const [parallelRequirementLimit, setParallelRequirementLimit] = useState(2);
+  const [parallelRequirementLimit, setParallelRequirementLimit] = useState(5);
   const [aiAdditionalContext, setAiAdditionalContext] = useState("");
   const [aiExternalLinksText, setAiExternalLinksText] = useState("");
   const [aiReferenceImages, setAiReferenceImages] = useState<AiDesignImageInput[]>([]);
@@ -893,6 +894,7 @@ export function TestCasesPage() {
   const deleteTestCase = useMutation({ mutationFn: api.testCases.delete });
   const importTestCases = useMutation({ mutationFn: api.testCases.bulkImport });
   const previewCaseAuthoring = useMutation({ mutationFn: api.testCases.previewCaseAuthoring });
+  const rephraseStepWithAi = useMutation({ mutationFn: api.testCases.rephraseStep });
   const previewDesignedCases = useMutation({ mutationFn: api.testCases.previewDesignedCases });
   const acceptDesignedCases = useMutation({ mutationFn: api.testCases.acceptDesignedCases });
   const buildSingleAutomation = useMutation({
@@ -1187,9 +1189,10 @@ export function TestCasesPage() {
     setAiRequirementIds([]);
     setAiPreviewCases([]);
     setAiPreviewMessage("");
-    setParallelRequirementLimit(2);
+    setParallelRequirementLimit(5);
     setSchedulerActionCaseId("");
     setSchedulerActionKind("");
+    setRephrasingStepId("");
   }, [appTypeId]);
 
   useEffect(() => {
@@ -1858,6 +1861,7 @@ export function TestCasesPage() {
     setExpandedStepGroupIds([]);
     setStepDrafts({});
     setEditingAutomationStepId("");
+    setRephrasingStepId("");
     setCodePreviewState(null);
     setExpandedSections(isCreating ? createCreateModeTestCaseSections() : createDefaultTestCaseSections());
   }, [isCreating, selectedTestCaseId]);
@@ -3008,6 +3012,80 @@ export function TestCasesPage() {
           : step
       )
     );
+  };
+
+  const handleRephraseStepWithAi = async (step: TestStep) => {
+    if (!appTypeId) {
+      showError(new Error("Select an app type before asking AI to rephrase a step."), "Unable to rephrase step");
+      return;
+    }
+
+    const currentDraft = stepDrafts[step.id] || {
+      action: step.action || "",
+      expected_result: step.expected_result || "",
+      step_type: normalizeStepType(step.step_type),
+      automation_code: normalizeAutomationCode(step.automation_code),
+      api_request: normalizeApiRequest(step.api_request)
+    };
+
+    if (!currentDraft.action.trim() && !currentDraft.expected_result.trim()) {
+      showError(new Error("Write an action or expected result before asking AI to rephrase this step."), "Unable to rephrase step");
+      return;
+    }
+
+    setRephrasingStepId(step.id);
+
+    try {
+      const response = await rephraseStepWithAi.mutateAsync({
+        app_type_id: appTypeId,
+        requirement_id: caseDraft.requirement_id || undefined,
+        integration_id: integrationId || undefined,
+        test_case: {
+          title: caseDraft.title || selectedTestCase?.title || "",
+          description: caseDraft.description || selectedTestCase?.description || "",
+          parameter_values: testCaseParameterValues
+        },
+        step: {
+          step_order: step.step_order,
+          step_type: normalizeStepType(currentDraft.step_type || step.step_type),
+          action: currentDraft.action,
+          expected_result: currentDraft.expected_result
+        }
+      });
+      const nextDraft: StepDraft = {
+        ...currentDraft,
+        action: response.step.action || "",
+        expected_result: response.step.expected_result || "",
+        step_type: normalizeStepType(response.step.step_type || currentDraft.step_type)
+      };
+
+      if (isCreating) {
+        handleUpdateDraftStep(step.id, nextDraft);
+      } else {
+        await updateStep.mutateAsync({
+          id: step.id,
+          input: {
+            action: nextDraft.action,
+            expected_result: nextDraft.expected_result,
+            step_type: nextDraft.step_type
+          }
+        });
+        setStepDrafts((current) => ({
+          ...current,
+          [step.id]: nextDraft
+        }));
+        await queryClient.invalidateQueries({ queryKey: ["test-case-steps", selectedTestCaseId] });
+        if (step.reusable_group_id) {
+          await refreshSharedGroups();
+        }
+      }
+
+      showSuccess(`Step ${step.step_order} rephrased with AI.`);
+    } catch (error) {
+      showError(error, "Unable to rephrase step");
+    } finally {
+      setRephrasingStepId("");
+    }
   };
 
   const buildStepBlocks = <T extends { id: string; group_id?: string | null }>(items: T[]) =>
@@ -4823,6 +4901,7 @@ export function TestCasesPage() {
           canMoveDown={canMoveDown}
           canMoveUp={canMoveUp}
           isExpanded={expandedStepIds.includes(step.id)}
+          isRephrasing={rephrasingStepId === step.id}
           isSelected={selectedStepIds.includes(step.id)}
           onChange={(input) => handleUpdateDraftStep(step.id, input)}
           onCopy={() => handleCopySteps([step.id])}
@@ -4834,6 +4913,7 @@ export function TestCasesPage() {
           onMoveUp={() => handleReorderDraftStep(step.id, "up")}
           onChangeStepType={(nextType) => void handleChangeStepType(step.id, nextType)}
           onEditAutomation={() => setEditingAutomationStepId(step.id)}
+          onRephrase={() => void handleRephraseStepWithAi(step)}
           onPasteAbove={() => void handlePasteSteps(insertAboveIndex, groupContext)}
           onPasteBelow={() => void handlePasteSteps(insertBelowIndex, groupContext)}
           onToggle={() =>
@@ -4871,12 +4951,14 @@ export function TestCasesPage() {
         canMoveUp={canMoveUp}
         draft={stepDraft}
         isExpanded={expandedStepIds.includes(step.id)}
+        isRephrasing={rephrasingStepId === step.id}
         isSelected={selectedStepIds.includes(step.id)}
         onChangeStepType={(nextType) => void handleChangeStepType(step.id, nextType)}
         onCopy={() => handleCopySteps([step.id])}
         onCut={() => handleCutSteps([step.id])}
         onDelete={() => void handleDeleteStep(step.id)}
         onEditAutomation={() => setEditingAutomationStepId(step.id)}
+        onRephrase={() => void handleRephraseStepWithAi(step)}
         onInsertAbove={() => activateStepInsert(insertAboveIndex, groupContext)}
         onInsertBelow={() => activateStepInsert(insertBelowIndex, groupContext)}
         onMoveDown={() => void handleReorderStep(step.id, "down")}
@@ -6396,7 +6478,7 @@ export function TestCasesPage() {
           requirementHelpText="Select one or more requirements, provide extra context, then review the generated drafts before approving them into the reusable library."
           requirementLabel="Requirements"
           requirements={requirements}
-          scheduleHelperText="Schedule one AI run per selected requirement. The parallel field controls how many requirements are processed at once, and each generated case returns as a draft with green accept and red reject actions."
+          scheduleHelperText="Schedule batch AI generation for selected requirements. The worker processes up to five requirements at a time, backs off on LLM rate limits, and returns generated cases as drafts with green accept and red reject actions."
           selectedRequirementIds={aiSelectedRequirements.map((requirement) => requirement.id)}
         />
       ) : null}
@@ -6929,6 +7011,16 @@ function StepIconShell({ children }: { children: ReactNode }) {
     <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
       {children}
     </svg>
+  );
+}
+
+function StepAiIcon() {
+  return (
+    <StepIconShell>
+      <path d="m12 3 1.7 4.4L18 9l-4.3 1.6L12 15l-1.7-4.4L6 9l4.3-1.6Z" />
+      <path d="M19 14.5 20 17l2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1Z" />
+      <path d="M4.5 14 5.2 16l2 .8-2 .8-.7 2-.8-2-2-.8 2-.8Z" />
+    </StepIconShell>
   );
 }
 
@@ -7565,6 +7657,7 @@ function EditableStepCard({
   parameterValues,
   isExpanded,
   isSelected,
+  isRephrasing,
   canPaste,
   canMoveUp,
   canMoveDown,
@@ -7581,6 +7674,7 @@ function EditableStepCard({
   onMoveDown,
   onChangeStepType,
   onEditAutomation,
+  onRephrase,
   onPasteAbove,
   onPasteBelow
 }: {
@@ -7589,6 +7683,7 @@ function EditableStepCard({
   parameterValues: Record<string, string>;
   isExpanded: boolean;
   isSelected: boolean;
+  isRephrasing: boolean;
   canPaste: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
@@ -7605,6 +7700,7 @@ function EditableStepCard({
   onMoveDown: () => void;
   onChangeStepType: (nextType: TestStep["step_type"]) => void;
   onEditAutomation: () => void;
+  onRephrase: () => void;
   onPasteAbove: () => void;
   onPasteBelow: () => void;
 }) {
@@ -7725,6 +7821,15 @@ function EditableStepCard({
         </button>
         <div className="step-inline-tools">
           <InlineStepToolButton
+            ariaLabel={`Rephrase step ${step.step_order} with AI`}
+            className={isRephrasing ? "is-active is-loading" : ""}
+            disabled={isRephrasing}
+            onClick={onRephrase}
+            title={isRephrasing ? "AI is rephrasing this step" : "Rephrase step with AI"}
+          >
+            <StepAiIcon />
+          </InlineStepToolButton>
+          <InlineStepToolButton
             ariaLabel={`Edit automation for step ${step.step_order}`}
             className={stepHasAutomation(draft) ? "is-active" : ""}
             onClick={onEditAutomation}
@@ -7761,6 +7866,7 @@ function DraftStepCard({
   parameterValues,
   isSelected,
   isExpanded,
+  isRephrasing,
   canPaste,
   canMoveUp,
   canMoveDown,
@@ -7776,6 +7882,7 @@ function DraftStepCard({
   onMoveDown,
   onChangeStepType,
   onEditAutomation,
+  onRephrase,
   onPasteAbove,
   onPasteBelow
 }: {
@@ -7783,6 +7890,7 @@ function DraftStepCard({
   parameterValues: Record<string, string>;
   isSelected: boolean;
   isExpanded: boolean;
+  isRephrasing: boolean;
   canPaste: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
@@ -7798,6 +7906,7 @@ function DraftStepCard({
   onMoveDown: () => void;
   onChangeStepType: (nextType: TestStep["step_type"]) => void;
   onEditAutomation: () => void;
+  onRephrase: () => void;
   onPasteAbove: () => void;
   onPasteBelow: () => void;
 }) {
@@ -7905,6 +8014,15 @@ function DraftStepCard({
           </div>
         </button>
         <div className="step-inline-tools">
+          <InlineStepToolButton
+            ariaLabel={`Rephrase step ${step.step_order} with AI`}
+            className={isRephrasing ? "is-active is-loading" : ""}
+            disabled={isRephrasing}
+            onClick={onRephrase}
+            title={isRephrasing ? "AI is rephrasing this step" : "Rephrase step with AI"}
+          >
+            <StepAiIcon />
+          </InlineStepToolButton>
           <InlineStepToolButton
             ariaLabel={`Edit automation for step ${step.step_order}`}
             className={stepHasAutomation(step) ? "is-active" : ""}

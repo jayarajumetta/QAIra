@@ -842,6 +842,42 @@ export const createOpsTelemetry = async (logger: FastifyBaseLogger) => {
       });
   };
 
+  const storeEvent = (
+    payload: JsonObject,
+    remoteAddress: string | null,
+    requestSource: string | null
+  ): StoredTelemetryEvent | null => {
+    if (!config.enabled) {
+      return null;
+    }
+
+    const storedEvent = createStoredEvent(payload, remoteAddress, requestSource);
+
+    events.push(storedEvent);
+    if (events.length > config.maxEvents) {
+      events.splice(0, events.length - config.maxEvents);
+    }
+
+    persistEvent(storedEvent);
+
+    logger.info(
+      {
+        ops_telemetry: true,
+        event_id: storedEvent.id,
+        event_type: storedEvent.event_type,
+        service_name: storedEvent.service_name,
+        status: storedEvent.status,
+        execution_id: normalizeText(storedEvent.execution?.id),
+        test_case_id: normalizeText(storedEvent.test_case?.id),
+        suite_id: normalizeText(storedEvent.suite?.id),
+        step_id: normalizeText(storedEvent.step?.id)
+      },
+      "OPS telemetry event captured"
+    );
+
+    return storedEvent;
+  };
+
   const listEvents = (query: Record<string, unknown>) => {
     const filters = {
       service_name: normalizeText(query.service_name),
@@ -943,33 +979,11 @@ export const createOpsTelemetry = async (logger: FastifyBaseLogger) => {
         };
       }
 
-      const storedEvent = createStoredEvent(
+      const storedEvent = storeEvent(
         request.body,
         normalizeText(request.ip),
         normalizeText(request.headers["x-qaira-source"])
-      );
-
-      events.push(storedEvent);
-      if (events.length > config.maxEvents) {
-        events.splice(0, events.length - config.maxEvents);
-      }
-
-      persistEvent(storedEvent);
-
-      logger.info(
-        {
-          ops_telemetry: true,
-          event_id: storedEvent.id,
-          event_type: storedEvent.event_type,
-          service_name: storedEvent.service_name,
-          status: storedEvent.status,
-          execution_id: normalizeText(storedEvent.execution?.id),
-          test_case_id: normalizeText(storedEvent.test_case?.id),
-          suite_id: normalizeText(storedEvent.suite?.id),
-          step_id: normalizeText(storedEvent.step?.id)
-        },
-        "OPS telemetry event captured"
-      );
+      )!;
 
       reply.code(202);
       return {
@@ -995,6 +1009,16 @@ export const createOpsTelemetry = async (logger: FastifyBaseLogger) => {
         reply.type("text/html; charset=utf-8");
         return renderBoardHtml(config);
       });
+    },
+    captureLocalEvent(payload: JsonObject) {
+      const normalizedPayload = {
+        service_name: config.serviceName,
+        environment: config.environment,
+        source: "testengine",
+        ...payload
+      };
+
+      return storeEvent(normalizedPayload, null, "testengine-local");
     },
     getHealthSnapshot
   };

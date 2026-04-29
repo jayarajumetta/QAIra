@@ -102,7 +102,7 @@ CREATE TABLE feedback (
 
 CREATE TABLE integrations (
   id TEXT PRIMARY KEY,
-  type TEXT NOT NULL CHECK(type IN ('llm','jira','email','google_auth')),
+  type TEXT NOT NULL CHECK(type IN ('llm','jira','email','google_auth','google_drive','github','testengine','ops')),
   name TEXT NOT NULL,
   base_url TEXT,
   api_key TEXT,
@@ -614,6 +614,28 @@ CREATE INDEX IF NOT EXISTS idx_automation_learning_cache_scope
 CREATE INDEX IF NOT EXISTS idx_workspace_transactions_related
   ON workspace_transactions (related_kind, related_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS batch_process_jobs (
+  id TEXT PRIMARY KEY,
+  transaction_id TEXT NOT NULL UNIQUE,
+  operation TEXT NOT NULL,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  result JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'completed', 'failed')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  last_error TEXT,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (transaction_id) REFERENCES workspace_transactions(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_batch_process_jobs_transaction
+  ON batch_process_jobs (transaction_id);
+
+CREATE INDEX IF NOT EXISTS idx_batch_process_jobs_queue
+  ON batch_process_jobs (status, created_at ASC);
+
 CREATE TABLE IF NOT EXISTS workspace_transaction_events (
   id TEXT PRIMARY KEY,
   transaction_id TEXT NOT NULL,
@@ -632,3 +654,16 @@ ALTER TABLE workspace_transaction_events
 
 CREATE INDEX IF NOT EXISTS idx_workspace_transaction_events_lookup
   ON workspace_transaction_events (transaction_id, created_at ASC);
+
+CREATE TABLE IF NOT EXISTS workspace_transaction_artifacts (
+  id TEXT PRIMARY KEY,
+  transaction_id TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (transaction_id) REFERENCES workspace_transactions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_transaction_artifacts_lookup
+  ON workspace_transaction_artifacts (transaction_id, created_at DESC);

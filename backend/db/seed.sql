@@ -572,6 +572,76 @@ SET
   auth_provider = 'local',
   email_verified = TRUE;
 
+INSERT INTO integrations (
+  id,
+  type,
+  name,
+  base_url,
+  api_key,
+  model,
+  project_key,
+  username,
+  config,
+  is_active
+)
+VALUES
+(
+  'int_testengine_local',
+  'testengine',
+  'Local QAira Test Engine',
+  'http://localhost:4301',
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  '{
+    "project_id":"p1",
+    "runner":"hybrid",
+    "dispatch_mode":"qaira-pull",
+    "execution_scope":"api+web",
+    "active_web_engine":"selenium",
+    "browser":"chromium",
+    "headless":false,
+    "healing_enabled":true,
+    "max_repair_attempts":2,
+    "trace_mode":"on-first-retry",
+    "video_mode":"retain-on-failure",
+    "capture_console":true,
+    "capture_network":true,
+    "artifact_retention_days":14,
+    "run_timeout_seconds":1800,
+    "queue_poll_interval_minutes":5,
+    "promote_healed_patches":"review",
+    "live_view_url":"http://localhost:7900/?autoconnect=1&resize=scale"
+  }'::jsonb,
+  TRUE
+),
+(
+  'int_ops_local',
+  'ops',
+  'Local Test Engine OPS Telemetry',
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  '{
+    "project_id":"p1",
+    "events_path":"/api/v1/events",
+    "health_path":"/health",
+    "api_key_header":"Authorization",
+    "api_key_prefix":"Bearer",
+    "service_name":"qaira-testengine",
+    "environment":"local",
+    "timeout_ms":4000,
+    "emit_step_events":true,
+    "emit_case_events":true,
+    "emit_suite_events":true,
+    "emit_run_events":true
+  }'::jsonb,
+  TRUE
+);
+
 WITH ordered_projects AS (
   SELECT id, ROW_NUMBER() OVER (ORDER BY created_at ASC NULLS LAST, id ASC) AS seq
   FROM projects

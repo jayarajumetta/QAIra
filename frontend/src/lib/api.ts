@@ -3,6 +3,7 @@ import type {
   AiCaseAuthoringPreviewResponse,
   AiDesignImageInput,
   AiDesignPreviewResponse,
+  AiStepRephraseResponse,
   AiTestCaseGenerationJob,
   AutomationBuildResponse,
   AutomationLearningCacheEntry,
@@ -408,6 +409,27 @@ export const api = {
       };
     }) =>
       request<AiCaseAuthoringPreviewResponse>("/test-cases/ai-authoring-preview", {
+        method: "POST",
+        body: JSON.stringify(input)
+      }),
+    rephraseStep: (input: {
+      app_type_id: string;
+      requirement_id?: string;
+      integration_id?: string;
+      additional_context?: string;
+      test_case?: {
+        title?: string;
+        description?: string;
+        parameter_values?: Record<string, string>;
+      };
+      step: {
+        step_order?: number;
+        step_type?: TestStep["step_type"];
+        action?: string | null;
+        expected_result?: string | null;
+      };
+    }) =>
+      request<AiStepRephraseResponse>("/test-cases/ai-step-rephrase", {
         method: "POST",
         body: JSON.stringify(input)
       }),

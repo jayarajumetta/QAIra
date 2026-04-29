@@ -6,9 +6,14 @@ const workspaceTransactionService = require("./workspaceTransaction.service");
 const { normalizeStoredReferenceList } = require("../utils/externalReferences");
 
 const DEFAULT_CASES_PER_REQUIREMENT = 8;
-const DEFAULT_PARALLEL_REQUIREMENTS = 2;
+const DEFAULT_PARALLEL_REQUIREMENTS = 5;
 const MAX_CASES_PER_REQUIREMENT = 20;
-const MAX_PARALLEL_REQUIREMENTS = 10;
+const MAX_PARALLEL_REQUIREMENTS = 5;
+const REQUIREMENT_BATCH_LIMIT = 5;
+const MAX_LLM_RETRY_ATTEMPTS = 4;
+const BASE_RETRY_DELAY_MS = 1_500;
+const MAX_RETRY_DELAY_MS = 60_000;
+const INTER_BATCH_COOLDOWN_MS = 1_000;
 
 const processingJobIds = new Set();
 let isQueueProcessing = false;
@@ -154,6 +159,41 @@ const buildJobErrorMessage = (errors = []) => {
   return errors.slice(0, 3).join(" | ");
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const chunkRequirements = (requirements = [], size = REQUIREMENT_BATCH_LIMIT) => {
+  const chunks = [];
+
+  for (let index = 0; index < requirements.length; index += size) {
+    chunks.push(requirements.slice(index, index + size));
+  }
+
+  return chunks;
+};
+
+const isRetryableLlmError = (error) => {
+  const statusCode = Number(error?.statusCode || 0);
+
+  if ([408, 409, 425, 429, 500, 502, 503, 504].includes(statusCode)) {
+    return true;
+  }
+
+  const message = String(error?.message || "").toLowerCase();
+  return message.includes("rate limit") || message.includes("temporarily") || message.includes("timeout");
+};
+
+const resolveRetryDelayMs = (error, attempt) => {
+  const retryAfterMs = Number(error?.retryAfterMs || 0);
+
+  if (Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    return Math.min(retryAfterMs, MAX_RETRY_DELAY_MS);
+  }
+
+  const exponentialDelay = BASE_RETRY_DELAY_MS * (2 ** Math.max(0, attempt - 1));
+  const jitter = Math.round(Math.random() * 500);
+  return Math.min(exponentialDelay + jitter, MAX_RETRY_DELAY_MS);
+};
+
 async function hydrateJob(job) {
   if (!job) {
     return job;
@@ -236,6 +276,32 @@ async function generateCasesForRequirement({
   return createdCount;
 }
 
+async function generateCasesForRequirementWithRetry({ job, requirement, appType, onRetry }) {
+  let attempt = 0;
+
+  while (attempt < MAX_LLM_RETRY_ATTEMPTS) {
+    attempt += 1;
+
+    try {
+      return await generateCasesForRequirement({ job, requirement, appType });
+    } catch (error) {
+      if (attempt >= MAX_LLM_RETRY_ATTEMPTS || !isRetryableLlmError(error)) {
+        throw error;
+      }
+
+      const delayMs = resolveRetryDelayMs(error, attempt);
+
+      if (typeof onRetry === "function") {
+        await onRetry({ attempt, delayMs, error });
+      }
+
+      await sleep(delayMs);
+    }
+  }
+
+  return 0;
+}
+
 async function runJob(jobId) {
   if (!jobId || processingJobIds.has(jobId)) {
     return null;
@@ -308,10 +374,11 @@ async function runJob(jobId) {
       });
       await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
         phase: "run",
-        message: `Processing ${requirements.length} requirement${requirements.length === 1 ? "" : "s"} with ${workerCount} worker${workerCount === 1 ? "" : "s"}.`,
+        message: `Processing ${requirements.length} requirement${requirements.length === 1 ? "" : "s"} in batches of ${REQUIREMENT_BATCH_LIMIT} with up to ${workerCount} worker${workerCount === 1 ? "" : "s"}.`,
         details: {
           requirement_count: requirements.length,
-          worker_count: workerCount
+          worker_count: workerCount,
+          batch_size: REQUIREMENT_BATCH_LIMIT
         }
       });
     }
@@ -319,85 +386,123 @@ async function runJob(jobId) {
     let processedRequirements = 0;
     let generatedCasesCount = 0;
     const errors = [];
-    const queue = [...requirements];
+    const requirementBatches = chunkRequirements(requirements, REQUIREMENT_BATCH_LIMIT);
 
-    await Promise.all(
-      Array.from({ length: workerCount }, async () => {
-        while (queue.length) {
-          const requirement = queue.shift();
+    for (const [batchIndex, requirementBatch] of requirementBatches.entries()) {
+      const queue = [...requirementBatch];
+      const batchWorkerCount = Math.min(workerCount, queue.length);
 
-          if (!requirement) {
-            return;
+      if (linkedTransaction) {
+        await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
+          phase: "batch",
+          message: `Processing AI generation batch ${batchIndex + 1} of ${requirementBatches.length}.`,
+          details: {
+            batch_index: batchIndex + 1,
+            batch_count: requirementBatches.length,
+            requirement_count: requirementBatch.length,
+            worker_count: batchWorkerCount
           }
+        });
+      }
 
-          try {
-            if (linkedTransaction) {
-              await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
-                phase: "requirement",
-                message: `Generating cases for requirement "${requirement.title}".`,
-                details: {
-                  requirement_id: requirement.id,
-                  requirement_title: requirement.title
-                }
-              });
+      await Promise.all(
+        Array.from({ length: batchWorkerCount }, async () => {
+          while (queue.length) {
+            const requirement = queue.shift();
+
+            if (!requirement) {
+              return;
             }
-            generatedCasesCount += await generateCasesForRequirement({
-              job: queuedJob,
-              requirement,
-              appType
-            });
-            if (linkedTransaction) {
-              await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
-                level: "success",
-                phase: "requirement",
-                message: `Completed AI generation for requirement "${requirement.title}".`,
-                details: {
-                  requirement_id: requirement.id,
-                  requirement_title: requirement.title,
-                  processed_requirements: processedRequirements + 1,
-                  generated_cases_count: generatedCasesCount
-                }
+
+            try {
+              if (linkedTransaction) {
+                await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
+                  phase: "requirement",
+                  message: `Generating cases for requirement "${requirement.title}".`,
+                  details: {
+                    requirement_id: requirement.id,
+                    requirement_title: requirement.title
+                  }
+                });
+              }
+              generatedCasesCount += await generateCasesForRequirementWithRetry({
+                job: queuedJob,
+                requirement,
+                appType,
+                onRetry: linkedTransaction
+                  ? async ({ attempt, delayMs, error }) => {
+                      await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
+                        level: "warning",
+                        phase: "rate-limit",
+                        message: `Retrying AI generation for "${requirement.title}" after a temporary LLM limit.`,
+                        details: {
+                          requirement_id: requirement.id,
+                          requirement_title: requirement.title,
+                          attempt,
+                          retry_after_ms: delayMs,
+                          error: error instanceof Error ? error.message : "Temporary LLM failure"
+                        }
+                      });
+                    }
+                  : null
               });
-            }
-          } catch (error) {
-            errors.push(
-              `${requirement.title}: ${error instanceof Error ? error.message : "Unable to generate test cases"}`
-            );
-            if (linkedTransaction) {
-              await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
-                level: "error",
-                phase: "requirement",
-                message: `Failed AI generation for requirement "${requirement.title}".`,
-                details: {
-                  requirement_id: requirement.id,
-                  requirement_title: requirement.title,
-                  error: error instanceof Error ? error.message : "Unable to generate test cases"
-                }
-              });
-            }
-          } finally {
-            processedRequirements += 1;
-            await updateJobProgress.run(processedRequirements, generatedCasesCount, jobId);
-            if (linkedTransaction) {
-              await workspaceTransactionService.updateTransaction(linkedTransaction.id, {
-                description: `Generated ${generatedCasesCount} AI test case${generatedCasesCount === 1 ? "" : "s"} after ${processedRequirements} of ${requirements.length} requirement${requirements.length === 1 ? "" : "s"}.`,
-                metadata: {
-                  requirement_count: requirements.length,
-                  total_items: requirements.length,
-                  processed_items: processedRequirements,
-                  processed_requirements: processedRequirements,
-                  generated_cases_count: generatedCasesCount,
-                  progress_percent: requirements.length ? Math.round((processedRequirements / requirements.length) * 100) : 0,
-                  current_phase: "ai-generation"
-                }
-              });
+              if (linkedTransaction) {
+                await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
+                  level: "success",
+                  phase: "requirement",
+                  message: `Completed AI generation for requirement "${requirement.title}".`,
+                  details: {
+                    requirement_id: requirement.id,
+                    requirement_title: requirement.title,
+                    processed_requirements: processedRequirements + 1,
+                    generated_cases_count: generatedCasesCount
+                  }
+                });
+              }
+            } catch (error) {
+              errors.push(
+                `${requirement.title}: ${error instanceof Error ? error.message : "Unable to generate test cases"}`
+              );
+              if (linkedTransaction) {
+                await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
+                  level: "error",
+                  phase: "requirement",
+                  message: `Failed AI generation for requirement "${requirement.title}".`,
+                  details: {
+                    requirement_id: requirement.id,
+                    requirement_title: requirement.title,
+                    error: error instanceof Error ? error.message : "Unable to generate test cases"
+                  }
+                });
+              }
+            } finally {
+              processedRequirements += 1;
+              await updateJobProgress.run(processedRequirements, generatedCasesCount, jobId);
+              if (linkedTransaction) {
+                await workspaceTransactionService.updateTransaction(linkedTransaction.id, {
+                  description: `Generated ${generatedCasesCount} AI test case${generatedCasesCount === 1 ? "" : "s"} after ${processedRequirements} of ${requirements.length} requirement${requirements.length === 1 ? "" : "s"}.`,
+                  metadata: {
+                    requirement_count: requirements.length,
+                    total_items: requirements.length,
+                    processed_items: processedRequirements,
+                    processed_requirements: processedRequirements,
+                    generated_cases_count: generatedCasesCount,
+                    progress_percent: requirements.length ? Math.round((processedRequirements / requirements.length) * 100) : 0,
+                    current_phase: "ai-generation"
+                  }
+                });
+              }
             }
           }
-        }
-      })
-    );
+        })
+      );
 
-    const finalStatus = errors.length ? "failed" : "completed";
+      if (batchIndex < requirementBatches.length - 1) {
+        await sleep(INTER_BATCH_COOLDOWN_MS);
+      }
+    }
+
+    const finalStatus = errors.length && !generatedCasesCount ? "failed" : "completed";
     const finalError = buildJobErrorMessage(errors);
 
     await finishJob.run(finalStatus, processedRequirements, generatedCasesCount, finalError, jobId);
@@ -407,7 +512,9 @@ async function runJob(jobId) {
         status: finalStatus,
         description:
           finalStatus === "completed"
-            ? `Generated ${generatedCasesCount} AI test case${generatedCasesCount === 1 ? "" : "s"} across ${processedRequirements} requirement${processedRequirements === 1 ? "" : "s"}.`
+            ? errors.length
+              ? `Generated ${generatedCasesCount} AI test case${generatedCasesCount === 1 ? "" : "s"} across ${processedRequirements} requirement${processedRequirements === 1 ? "" : "s"} with ${errors.length} issue${errors.length === 1 ? "" : "s"}.`
+              : `Generated ${generatedCasesCount} AI test case${generatedCasesCount === 1 ? "" : "s"} across ${processedRequirements} requirement${processedRequirements === 1 ? "" : "s"}.`
             : `AI generation finished with issues after ${processedRequirements} processed requirement${processedRequirements === 1 ? "" : "s"}.`,
         metadata: {
           total_items: requirements.length,
@@ -415,17 +522,19 @@ async function runJob(jobId) {
           processed_requirements: processedRequirements,
           generated_cases_count: generatedCasesCount,
           progress_percent: 100,
-          current_phase: finalStatus === "completed" ? "completed" : "failed",
+          current_phase: finalStatus === "completed" ? (errors.length ? "completed-with-issues" : "completed") : "failed",
           error: finalError
         },
         completed_at: new Date().toISOString()
       });
       await workspaceTransactionService.appendTransactionEvent(linkedTransaction.id, {
-        level: finalStatus === "completed" ? "success" : "warning",
+        level: finalStatus === "completed" && !errors.length ? "success" : "warning",
         phase: "complete",
         message:
           finalStatus === "completed"
-            ? `Generated ${generatedCasesCount} AI test case${generatedCasesCount === 1 ? "" : "s"} across ${processedRequirements} requirement${processedRequirements === 1 ? "" : "s"}.`
+            ? errors.length
+              ? `Generated ${generatedCasesCount} AI test case${generatedCasesCount === 1 ? "" : "s"} with ${errors.length} issue${errors.length === 1 ? "" : "s"}.`
+              : `Generated ${generatedCasesCount} AI test case${generatedCasesCount === 1 ? "" : "s"} across ${processedRequirements} requirement${processedRequirements === 1 ? "" : "s"}.`
             : `AI generation finished with ${errors.length} issue${errors.length === 1 ? "" : "s"}.`,
         details: {
           processed_requirements: processedRequirements,

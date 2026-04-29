@@ -62,6 +62,12 @@ const normalizeTestEngineVideoMode = (value, fallback = "retain-on-failure") => 
   return ["off", "on", "retain-on-failure"].includes(normalized) ? normalized : fallback;
 };
 
+const normalizeTestEnginePollIntervalMinutes = (value, fallback = 5) => {
+  const parsed = normalizeInteger(value);
+  const normalizedFallback = Math.max(1, normalizeInteger(fallback) || 5);
+  return Math.max(1, Math.min(1440, parsed ?? normalizedFallback));
+};
+
 const TESTENGINE_CONNECTION_TIMEOUT_MS = Math.max(
   1500,
   normalizeInteger(process.env.TESTENGINE_CONNECTION_TIMEOUT_MS) || 5000
@@ -442,6 +448,10 @@ const normalizeConfig = (type, input, username) => {
       capture_network: raw.capture_network !== false,
       artifact_retention_days: normalizeInteger(raw.artifact_retention_days) ?? Number(integrationTypeConfig.artifact_retention_days ?? 7),
       run_timeout_seconds: normalizeInteger(raw.run_timeout_seconds) ?? Number(integrationTypeConfig.run_timeout_seconds ?? 1800),
+      queue_poll_interval_minutes: normalizeTestEnginePollIntervalMinutes(
+        raw.queue_poll_interval_minutes,
+        integrationTypeConfig.queue_poll_interval_minutes ?? 5
+      ),
       promote_healed_patches: normalizeText(raw.promote_healed_patches) || String(integrationTypeConfig.promote_healed_patches || "review"),
       live_view_url: normalizeText(raw.live_view_url)
     };

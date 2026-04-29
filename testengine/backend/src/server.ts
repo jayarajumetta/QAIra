@@ -142,7 +142,7 @@ app.post("/api/v1/runs/:id/retry", async (request, reply) => {
   return retried;
 });
 
-startQueueWorker(app.log);
+startQueueWorker(app.log, opsTelemetry);
 
 app.listen({
   port,

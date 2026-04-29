@@ -64,6 +64,7 @@ const sanitizeIntegration = (integration) => {
         capture_network: config.capture_network !== false,
         artifact_retention_days: config.artifact_retention_days ?? 7,
         run_timeout_seconds: config.run_timeout_seconds ?? 1800,
+        queue_poll_interval_minutes: config.queue_poll_interval_minutes ?? 5,
         promote_healed_patches: config.promote_healed_patches || "review",
         live_view_url: config.live_view_url || null
       }

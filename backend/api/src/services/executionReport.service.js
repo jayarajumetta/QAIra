@@ -2,7 +2,14 @@ const executionService = require("./execution.service");
 const executionResultService = require("./executionResult.service");
 const executionStepRuntimeService = require("./executionStepRuntime.service");
 const emailService = require("./email.service");
+const integrationService = require("./integration.service");
 const workspaceTransactionService = require("./workspaceTransaction.service");
+
+const configuredAiAnalysisTimeoutMs = Number(process.env.REPORT_AI_ANALYSIS_TIMEOUT_MS || 12_000);
+const AI_ANALYSIS_TIMEOUT_MS = Number.isFinite(configuredAiAnalysisTimeoutMs)
+  ? Math.max(3_000, configuredAiAnalysisTimeoutMs)
+  : 12_000;
+const AI_ANALYSIS_FAILED_CASE_LIMIT = 20;
 
 const normalizeText = (value) => {
   if (typeof value !== "string") {
@@ -19,6 +26,11 @@ const escapeHtml = (value) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+
+const normalizeTextArray = (value, fallback = []) => {
+  const entries = Array.isArray(value) ? value : fallback;
+  return entries.map((item) => normalizeText(item)).filter(Boolean).slice(0, 8);
+};
 
 const formatDate = (value) => {
   const normalized = normalizeText(value);
@@ -218,6 +230,227 @@ const buildReportModel = async (executionId) => {
   };
 };
 
+const extractJsonPayload = (content) => {
+  const trimmed = String(content || "").trim();
+
+  if (!trimmed) {
+    throw new Error("LLM response was empty");
+  }
+
+  const withoutFence = trimmed.startsWith("```")
+    ? trimmed.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim()
+    : trimmed;
+  const firstBrace = withoutFence.indexOf("{");
+  const lastBrace = withoutFence.lastIndexOf("}");
+  const jsonCandidate =
+    firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace
+      ? withoutFence.slice(firstBrace, lastBrace + 1)
+      : withoutFence;
+
+  return JSON.parse(jsonCandidate);
+};
+
+const createUnavailableAiAnalysis = (reason = "AI analysis was not available for this report.") => ({
+  status: "unavailable",
+  headline: "AI analysis unavailable",
+  summary: reason,
+  risk_level: "unknown",
+  key_findings: [],
+  recommended_actions: [],
+  failed_cases: [],
+  generated_at: new Date().toISOString()
+});
+
+const buildAiAnalysisPrompt = (report) => {
+  const notExecuted = report.summary.running || 0;
+  const failedSuites = report.suites
+    .filter((suite) => suite.failed || suite.blocked || suite.running)
+    .map((suite) => ({
+      suite: suite.name,
+      total: suite.total,
+      passed: suite.passed,
+      failed: suite.failed,
+      blocked: suite.blocked,
+      not_executed: suite.running,
+      duration: formatDuration(suite.duration_ms)
+    }));
+  const failedCases = report.cases
+    .filter((testCase) => ["failed", "blocked"].includes(testCase.status) || testCase.error)
+    .slice(0, AI_ANALYSIS_FAILED_CASE_LIMIT)
+    .map((testCase) => ({
+      suite: testCase.suite_name || "Direct run",
+      title: testCase.title,
+      status: testCase.status,
+      priority: testCase.priority || null,
+      duration: formatDuration(testCase.duration_ms),
+      error: testCase.error || null,
+      failed_steps: testCase.steps
+        .filter((step) => ["failed", "blocked"].includes(step.status) || step.note)
+        .slice(0, 4)
+        .map((step) => ({
+          order: step.order,
+          status: step.status,
+          action: step.action,
+          note: step.note || null
+        }))
+    }));
+
+  return [
+    "Analyze this QA execution and return strict JSON only.",
+    "",
+    "Run summary:",
+    JSON.stringify({
+      name: report.execution.name || report.execution.id,
+      status: report.execution.status || "queued",
+      total_cases: report.summary.total,
+      passed: report.summary.passed,
+      failed: report.summary.failed,
+      blocked: report.summary.blocked,
+      not_executed: notExecuted,
+      remaining: notExecuted,
+      pass_rate: report.summary.pass_rate,
+      duration: formatDuration(report.summary.duration_ms)
+    }, null, 2),
+    "",
+    "Suites needing attention:",
+    JSON.stringify(failedSuites, null, 2),
+    "",
+    "Failed or blocked test case details:",
+    JSON.stringify(failedCases, null, 2),
+    "",
+    "Return this exact JSON shape:",
+    "{",
+    '  "headline": "string",',
+    '  "summary": "string",',
+    '  "risk_level": "low | medium | high",',
+    '  "key_findings": ["string"],',
+    '  "recommended_actions": ["string"],',
+    '  "failed_cases": [',
+    '    { "suite": "string", "case": "string", "analysis": "string" }',
+    "  ]",
+    "}",
+    "",
+    "Guidance:",
+    "- Mention pass/fail/not executed counts and the practical release risk.",
+    "- Focus on failed suites, failed cases, blocked cases, recurring symptoms, and likely next triage actions.",
+    "- Keep the response concise enough for a PDF/email report.",
+    "- Do not include markdown or commentary outside the JSON."
+  ].join("\n");
+};
+
+const requestAiAnalysisCompletion = async ({ integration, prompt }) => {
+  const baseUrl = (integration.base_url || "https://api.openai.com/v1").replace(/\/$/, "");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AI_ANALYSIS_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${integration.api_key}`
+      },
+      body: JSON.stringify({
+        model: integration.model,
+        temperature: 0.2,
+        messages: [
+          {
+            role: "system",
+            content: "You are a senior QA release analyst. Return strict JSON only."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ]
+      }),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      const raw = await response.text();
+      const detail = raw.slice(0, 160).trim();
+      throw new Error(`LLM request failed with status ${response.status}${detail ? `: ${detail}` : ""}`);
+    }
+
+    const payload = await response.json();
+    const messageContent = payload?.choices?.[0]?.message?.content;
+
+    if (!messageContent) {
+      throw new Error("LLM response did not include analysis content");
+    }
+
+    return messageContent;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("AI analysis timed out");
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const normalizeAiAnalysis = (payload) => {
+  const headline = normalizeText(payload?.headline) || "AI execution analysis";
+  const summary = normalizeText(payload?.summary) || "The AI analysis completed, but did not include a narrative summary.";
+  const riskLevel = normalizeText(payload?.risk_level || payload?.riskLevel) || "unknown";
+  const failedCases = Array.isArray(payload?.failed_cases || payload?.failedCases)
+    ? (payload.failed_cases || payload.failedCases)
+        .map((item) => ({
+          suite: normalizeText(item?.suite) || "Unscoped",
+          case: normalizeText(item?.case || item?.title) || "Untitled case",
+          analysis: normalizeText(item?.analysis || item?.summary) || "Needs review."
+        }))
+        .slice(0, 8)
+    : [];
+
+  return {
+    status: "generated",
+    headline,
+    summary,
+    risk_level: riskLevel,
+    key_findings: normalizeTextArray(payload?.key_findings || payload?.keyFindings),
+    recommended_actions: normalizeTextArray(payload?.recommended_actions || payload?.recommendedActions),
+    failed_cases: failedCases,
+    generated_at: new Date().toISOString()
+  };
+};
+
+const generateAiAnalysis = async (report) => {
+  try {
+    const integration = await integrationService.getActiveIntegrationByType("llm");
+
+    if (!integration) {
+      return createUnavailableAiAnalysis("No active LLM integration is configured, so this report was generated without AI analysis.");
+    }
+
+    if (!integration.is_active) {
+      return createUnavailableAiAnalysis("The configured LLM integration is inactive, so this report was generated without AI analysis.");
+    }
+
+    const content = await requestAiAnalysisCompletion({
+      integration,
+      prompt: buildAiAnalysisPrompt(report)
+    });
+
+    return normalizeAiAnalysis(extractJsonPayload(content));
+  } catch (error) {
+    return createUnavailableAiAnalysis(
+      `AI analysis could not be generated. ${error instanceof Error ? error.message : "The report export continued without AI output."}`
+    );
+  }
+};
+
+const buildReportWithAiAnalysis = async (executionId) => {
+  const report = await buildReportModel(executionId);
+  return {
+    ...report,
+    ai_analysis: await generateAiAnalysis(report)
+  };
+};
+
 const STATUS_META = {
   passed: { label: "Passed", bg: "#e4f7ed", fg: "#126c48", border: "#28a66d" },
   completed: { label: "Completed", bg: "#e4f7ed", fg: "#126c48", border: "#28a66d" },
@@ -277,6 +510,51 @@ const renderOutcomeRows = (report) => {
       <td style="padding:10px 12px;border-bottom:1px solid #e7edf5;text-align:right;color:#111827;font-size:13px;">${escapeHtml(formatDuration(row.duration_ms))}</td>
     </tr>
   `).join("");
+};
+
+const renderInlineList = (items = []) =>
+  items.length
+    ? `<ul style="margin:8px 0 0;padding-left:18px;color:#334155;font-size:13px;line-height:1.55;">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : `<p style="margin:8px 0 0;color:#647084;font-size:13px;">No specific items were returned.</p>`;
+
+const renderAiAnalysisHtml = (analysis) => {
+  const resolved = analysis || createUnavailableAiAnalysis();
+  const isUnavailable = resolved.status !== "generated";
+
+  return `
+    <div style="background:#ffffff;border:1px solid #dfe7f1;border-radius:8px;margin-top:14px;overflow:hidden;">
+      <div style="padding:14px 16px;border-bottom:1px solid #e7edf5;background:${isUnavailable ? "#fbfdff" : "#f6fbff"};">
+        <strong style="font-size:15px;color:#111827;">AI execution analysis</strong>
+        <div style="margin-top:4px;font-size:12px;color:#647084;">${escapeHtml(isUnavailable ? "Report export continued without AI output." : `Risk level: ${resolved.risk_level || "unknown"}`)}</div>
+      </div>
+      <div style="padding:14px 16px;">
+        <div style="font-size:14px;font-weight:800;color:#111827;">${escapeHtml(resolved.headline)}</div>
+        <p style="margin:7px 0 0;color:#334155;font-size:13px;line-height:1.55;">${escapeHtml(resolved.summary)}</p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:12px;">
+          <div>
+            <div style="font-size:12px;font-weight:800;color:#647084;text-transform:uppercase;letter-spacing:.05em;">Key findings</div>
+            ${renderInlineList(resolved.key_findings)}
+          </div>
+          <div>
+            <div style="font-size:12px;font-weight:800;color:#647084;text-transform:uppercase;letter-spacing:.05em;">Recommended actions</div>
+            ${renderInlineList(resolved.recommended_actions)}
+          </div>
+        </div>
+        ${resolved.failed_cases?.length ? `
+          <div style="margin-top:12px;">
+            <div style="font-size:12px;font-weight:800;color:#647084;text-transform:uppercase;letter-spacing:.05em;">Failed case notes</div>
+            ${resolved.failed_cases.map((item) => `
+              <div style="margin-top:8px;padding:9px 10px;border:1px solid #e7edf5;border-radius:7px;background:#fbfdff;">
+                <div style="font-size:13px;font-weight:800;color:#111827;">${escapeHtml(item.case)}</div>
+                <div style="margin-top:2px;color:#647084;font-size:12px;">${escapeHtml(item.suite)}</div>
+                <div style="margin-top:5px;color:#334155;font-size:13px;line-height:1.5;">${escapeHtml(item.analysis)}</div>
+              </div>
+            `).join("")}
+          </div>
+        ` : ""}
+      </div>
+    </div>
+  `;
 };
 
 const renderStepRows = (testCase) => `
@@ -374,6 +652,8 @@ const renderReportHtml = (report, { mode = "email" } = {}) => {
         </div>
       </div>
 
+      ${renderAiAnalysisHtml(report.ai_analysis)}
+
       <div style="background:#ffffff;border:1px solid #dfe7f1;border-radius:8px;margin-top:14px;overflow:hidden;">
         <div style="padding:14px 16px;border-bottom:1px solid #e7edf5;">
           <strong style="font-size:15px;color:#111827;">Run and suite outcomes</strong>
@@ -427,6 +707,35 @@ const wrapLine = (line, max = 92) => {
   return lines.length ? lines : [""];
 };
 
+const buildAiAnalysisLines = (analysis) => {
+  const resolved = analysis || createUnavailableAiAnalysis();
+  const lines = [
+    "AI execution analysis:",
+    `${resolved.headline} (${resolved.status === "generated" ? `risk: ${resolved.risk_level || "unknown"}` : "unavailable"})`,
+    resolved.summary
+  ];
+
+  if (resolved.key_findings?.length) {
+    lines.push("Key findings:");
+    resolved.key_findings.forEach((item) => lines.push(`- ${item}`));
+  }
+
+  if (resolved.recommended_actions?.length) {
+    lines.push("Recommended actions:");
+    resolved.recommended_actions.forEach((item) => lines.push(`- ${item}`));
+  }
+
+  if (resolved.failed_cases?.length) {
+    lines.push("Failed case notes:");
+    resolved.failed_cases.forEach((item) => {
+      lines.push(`- ${item.suite} / ${item.case}: ${item.analysis}`);
+    });
+  }
+
+  lines.push("");
+  return lines;
+};
+
 const buildReportLines = (report, { detailed = false } = {}) => {
   const lines = [
     `QAira Run Report: ${report.execution.name || report.execution.id}`,
@@ -437,6 +746,8 @@ const buildReportLines = (report, { detailed = false } = {}) => {
     `Duration: ${formatDuration(report.summary.duration_ms)}`,
     ""
   ];
+
+  lines.push(...buildAiAnalysisLines(report.ai_analysis));
 
   lines.push("Suite outcomes:");
   report.suites.forEach((suite) => {
@@ -700,6 +1011,25 @@ const renderReportPdf = (report) => {
   });
   cursorY += 78;
 
+  sectionTitle("AI execution analysis");
+  buildAiAnalysisLines(report.ai_analysis)
+    .filter(Boolean)
+    .slice(1)
+    .forEach((line, index) => {
+      const isHeading = line.endsWith(":");
+      const size = index === 0 ? 10 : 8;
+      const height = wrapPdfText(line, usableWidth, size).length * (size + 4);
+
+      ensure(height + 4);
+      wrappedText(line, margin, cursorY, usableWidth, size, {
+        bold: index === 0 || isHeading,
+        color: isHeading ? "#122033" : "#334155",
+        lineHeight: size + 4
+      });
+      cursorY += height + 3;
+    });
+  cursorY += 14;
+
   sectionTitle("Run and suite outcomes");
   const tableColumns = [
     ["Scope", 52],
@@ -922,9 +1252,9 @@ const normalizeRecipients = (value) => {
 
 exports.buildReport = buildReportModel;
 
-exports.renderReportHtml = async (executionId) => renderReportHtml(await buildReportModel(executionId), { mode: "detailed" });
+exports.renderReportHtml = async (executionId) => renderReportHtml(await buildReportWithAiAnalysis(executionId), { mode: "detailed" });
 
-exports.renderReportPdf = async (executionId) => renderReportPdf(await buildReportModel(executionId));
+exports.renderReportPdf = async (executionId) => renderReportPdf(await buildReportWithAiAnalysis(executionId));
 
 exports.emailReport = async ({ execution_id, recipients, requested_by } = {}) => {
   const normalizedRecipients = normalizeRecipients(recipients);
@@ -933,7 +1263,7 @@ exports.emailReport = async ({ execution_id, recipients, requested_by } = {}) =>
     throw new Error("At least one report recipient is required");
   }
 
-  const report = await buildReportModel(execution_id);
+  const report = await buildReportWithAiAnalysis(execution_id);
   const title = report.execution.name || "QAira execution run";
   const html = renderReportHtml(report);
   const text = buildReportLines(report).join("\n");

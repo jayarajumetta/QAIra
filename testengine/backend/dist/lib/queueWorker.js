@@ -3,9 +3,81 @@ import { completeQueuedJobWithMetadata, executeQueuedApiStep, isQairaQueueConfig
 import { saveRun, updateRun } from "./runStore.js";
 import { createWebRunSession } from "./webEngine.js";
 import { registerContextValue } from "./runtimeContext.js";
-const POLL_INTERVAL_MS = Math.max(750, Number(process.env.TESTENGINE_POLL_INTERVAL_MS || 1500));
-const POLL_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.TESTENGINE_POLL_CONCURRENCY || 1)));
+const DEFAULT_POLL_INTERVAL_MS = 5 * 60 * 1000;
+const MIN_POLL_INTERVAL_MS = 1000;
+const MAX_POLL_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const normalizeNumber = (value) => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+    }
+    if (typeof value === "string" && value.trim()) {
+        const parsed = Number(value.trim());
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+};
+const clampPollInterval = (value) => Math.round(Math.min(MAX_POLL_INTERVAL_MS, Math.max(MIN_POLL_INTERVAL_MS, value)));
+const resolvePollIntervalMs = () => {
+    const configuredMs = normalizeNumber(process.env.TESTENGINE_POLL_INTERVAL_MS);
+    if (configuredMs !== null) {
+        return clampPollInterval(configuredMs);
+    }
+    const configuredMinutes = normalizeNumber(process.env.TESTENGINE_POLL_INTERVAL_MINUTES);
+    if (configuredMinutes !== null) {
+        return clampPollInterval(configuredMinutes * 60 * 1000);
+    }
+    return DEFAULT_POLL_INTERVAL_MS;
+};
+const POLL_INTERVAL_MS = resolvePollIntervalMs();
+const POLL_CONCURRENCY = Math.max(1, Math.min(8, Math.trunc(normalizeNumber(process.env.TESTENGINE_POLL_CONCURRENCY) ?? 1)));
 const nowIso = () => new Date().toISOString();
+const serializeError = (error) => {
+    if (error instanceof Error) {
+        return {
+            name: error.name,
+            message: error.message,
+            stack: error.stack
+        };
+    }
+    return {
+        message: String(error || "Unknown error")
+    };
+};
+function emitTelemetry(telemetry, payload) {
+    if (!telemetry) {
+        return;
+    }
+    try {
+        telemetry.captureLocalEvent(payload);
+    }
+    catch {
+        // Logging must not become another reason queue execution fails.
+    }
+}
+function buildJobTelemetry(job, workerId, extra = {}) {
+    const envelope = job.payload;
+    return {
+        worker: {
+            id: workerId
+        },
+        job: {
+            id: job.id,
+            engine_run_id: job.engine_run_id,
+            status: job.status,
+            lease_expires_at: job.lease_expires_at || null
+        },
+        project_id: envelope.project?.id || null,
+        execution: {
+            id: envelope.qaira_execution_id || envelope.qaira_run_id,
+            name: envelope.manual_spec?.title || job.test_case_title
+        },
+        test_case: {
+            id: job.test_case_id,
+            title: job.test_case_title
+        },
+        ...extra
+    };
+}
 function updateRunState(runId, state, summary) {
     updateRun(runId, (current) => ({
         ...current,
@@ -22,7 +94,7 @@ function syncCapturedValuesToWebContext(captures, webRunSession) {
         registerContextValue(webRunSession.context, key, value);
     });
 }
-async function executeQueuedJob(job, workerId, logger) {
+async function executeQueuedJob(job, workerId, logger, telemetry) {
     const envelope = job.payload;
     const existingStatuses = job.runtime_state?.logs?.stepStatuses || {};
     const orderedSteps = envelope.steps.slice().sort((left, right) => left.order - right.order);
@@ -36,6 +108,11 @@ async function executeQueuedJob(job, workerId, logger) {
     try {
         await startQueuedJob(job.id, workerId);
         updateRunState(accepted.id, "running", `Leased ${job.test_case_title} from QAira queue.`);
+        emitTelemetry(telemetry, buildJobTelemetry(job, workerId, {
+            event_type: "testengine.queue.job.started",
+            status: "running",
+            summary: `${job.test_case_title} started in the Test Engine queue worker.`
+        }));
         const remainingSteps = orderedSteps.filter((step) => existingStatuses[step.id] !== "passed");
         if (!remainingSteps.length) {
             await completeQueuedJobWithMetadata(job.id, {
@@ -46,6 +123,11 @@ async function executeQueuedJob(job, workerId, logger) {
                 healing_succeeded: healingSucceeded
             });
             updateRunState(accepted.id, "completed", `${job.test_case_title} was already complete.`);
+            emitTelemetry(telemetry, buildJobTelemetry(job, workerId, {
+                event_type: "testengine.queue.job.completed",
+                status: "passed",
+                summary: `${job.test_case_title} was already complete.`
+            }));
             return;
         }
         if (webRunSession) {
@@ -67,6 +149,16 @@ async function executeQueuedJob(job, workerId, logger) {
                         healing_attempted: healingAttempted,
                         healing_succeeded: healingSucceeded
                     });
+                    emitTelemetry(telemetry, buildJobTelemetry(job, workerId, {
+                        event_type: "testengine.queue.job.failed",
+                        status: "failed",
+                        summary: failureSummary,
+                        step: {
+                            id: step.id,
+                            order: step.order,
+                            type: step.step_type
+                        }
+                    }));
                     return;
                 }
                 continue;
@@ -82,6 +174,16 @@ async function executeQueuedJob(job, workerId, logger) {
                     healing_attempted: healingAttempted,
                     healing_succeeded: healingSucceeded
                 });
+                emitTelemetry(telemetry, buildJobTelemetry(job, workerId, {
+                    event_type: "testengine.queue.job.failed",
+                    status: "failed",
+                    summary: message,
+                    step: {
+                        id: step.id,
+                        order: step.order,
+                        type: step.step_type
+                    }
+                }));
                 return;
             }
             const stepResult = await webRunSession.runStep(step);
@@ -117,6 +219,16 @@ async function executeQueuedJob(job, workerId, logger) {
                     healing_succeeded: healingSucceeded,
                     patch_proposals: patchProposals
                 });
+                emitTelemetry(telemetry, buildJobTelemetry(job, workerId, {
+                    event_type: "testengine.queue.job.failed",
+                    status: "failed",
+                    summary: failureSummary,
+                    step: {
+                        id: step.id,
+                        order: step.order,
+                        type: step.step_type
+                    }
+                }));
                 return;
             }
         }
@@ -130,10 +242,21 @@ async function executeQueuedJob(job, workerId, logger) {
             patch_proposals: patchProposals
         });
         updateRunState(accepted.id, "completed", completionSummary);
+        emitTelemetry(telemetry, buildJobTelemetry(job, workerId, {
+            event_type: "testengine.queue.job.completed",
+            status: "passed",
+            summary: completionSummary
+        }));
     }
     catch (error) {
         const message = error instanceof Error ? error.message : `${job.test_case_title} failed in queue worker.`;
         updateRunState(accepted.id, "failed", message);
+        emitTelemetry(telemetry, buildJobTelemetry(job, workerId, {
+            event_type: "testengine.queue.job.crashed",
+            status: "failed",
+            summary: message,
+            error: serializeError(error)
+        }));
         try {
             await completeQueuedJobWithMetadata(job.id, {
                 status: "failed",
@@ -147,6 +270,12 @@ async function executeQueuedJob(job, workerId, logger) {
         }
         catch (reportError) {
             logger.error({ error: reportError, jobId: job.id }, "Unable to report queued job failure back to QAira");
+            emitTelemetry(telemetry, buildJobTelemetry(job, workerId, {
+                event_type: "testengine.queue.report.failed",
+                status: "failed",
+                summary: "Unable to report queued job failure back to QAira.",
+                error: serializeError(reportError)
+            }));
         }
     }
     finally {
@@ -156,17 +285,45 @@ async function executeQueuedJob(job, workerId, logger) {
             }
             catch (stopError) {
                 logger.error({ error: stopError, jobId: job.id }, "Unable to stop web automation session cleanly");
+                emitTelemetry(telemetry, buildJobTelemetry(job, workerId, {
+                    event_type: "testengine.queue.web-session.stop.failed",
+                    status: "failed",
+                    summary: "Unable to stop web automation session cleanly.",
+                    error: serializeError(stopError)
+                }));
             }
         }
     }
 }
-export function startQueueWorker(logger) {
+export function startQueueWorker(logger, telemetry) {
     if (!isQairaQueueConfigured()) {
         logger.info("QAira queue pull mode is disabled because QAIRA_API_BASE_URL is not configured.");
+        emitTelemetry(telemetry, {
+            event_type: "testengine.queue.worker.disabled",
+            status: "disabled",
+            summary: "QAira queue pull mode is disabled because QAIRA_API_BASE_URL is not configured.",
+            configuration: {
+                qaira_api_base_url_configured: Boolean(process.env.QAIRA_API_BASE_URL),
+                qaira_testengine_secret_configured: Boolean(process.env.QAIRA_TESTENGINE_SECRET || process.env.TESTENGINE_SHARED_SECRET)
+            }
+        });
         return;
     }
     const activeJobs = new Set();
     let isPolling = false;
+    logger.info({
+        poll_interval_ms: POLL_INTERVAL_MS,
+        poll_concurrency: POLL_CONCURRENCY
+    }, "QAira queue pull worker started");
+    emitTelemetry(telemetry, {
+        event_type: "testengine.queue.worker.started",
+        status: "running",
+        summary: `QAira queue pull worker started. Polling every ${POLL_INTERVAL_MS}ms.`,
+        configuration: {
+            poll_interval_ms: POLL_INTERVAL_MS,
+            poll_concurrency: POLL_CONCURRENCY
+        }
+    });
     const poll = async () => {
         if (isPolling) {
             return;
@@ -180,9 +337,15 @@ export function startQueueWorker(logger) {
                     break;
                 }
                 activeJobs.add(job.id);
-                void executeQueuedJob(job, workerId, logger)
+                void executeQueuedJob(job, workerId, logger, telemetry)
                     .catch((error) => {
                     logger.error({ error, jobId: job.id }, "Queued job execution crashed");
+                    emitTelemetry(telemetry, buildJobTelemetry(job, workerId, {
+                        event_type: "testengine.queue.job.crashed",
+                        status: "failed",
+                        summary: "Queued job execution crashed.",
+                        error: serializeError(error)
+                    }));
                 })
                     .finally(() => {
                     activeJobs.delete(job.id);
@@ -191,6 +354,12 @@ export function startQueueWorker(logger) {
         }
         catch (error) {
             logger.error({ error }, "Unable to poll QAira queued jobs");
+            emitTelemetry(telemetry, {
+                event_type: "testengine.queue.poll.failed",
+                status: "failed",
+                summary: "Unable to poll QAira queued jobs.",
+                error: serializeError(error)
+            });
         }
         finally {
             isPolling = false;

@@ -196,7 +196,7 @@ export function AiDesignStudioModal({
                       <FormField label="Requirements in parallel">
                         <input
                           min="1"
-                          max="10"
+                          max="5"
                           type="number"
                           value={parallelRequirementCount || 1}
                           onChange={(event) => onParallelRequirementCountChange(Number(event.target.value) || 1)}
@@ -366,7 +366,9 @@ export function AiDesignStudioModal({
                       <div className="step-card-top">
                         <div>
                           <strong>{item.title}</strong>
-                          <span className="ai-case-meta">Priority {item.priority} · {item.step_count} steps</span>
+                          <span className="ai-case-meta">
+                            Priority {item.priority} · {item.step_count} steps{item.applicable_domain ? ` · ${item.applicable_domain}` : ""}
+                          </span>
                         </div>
                         <button className="ghost-button danger" onClick={() => onRemovePreviewCase(item.client_id)} type="button">
                           Delete

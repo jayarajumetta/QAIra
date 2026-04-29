@@ -338,6 +338,38 @@ module.exports = async function (fastify) {
     });
   });
 
+  fastify.post("/test-cases/ai-step-rephrase", async (req) => {
+    await fastify.authenticate(req);
+
+    fastify.validate({
+      app_type_id: { required: true, type: "string" },
+      requirement_id: { required: false, type: "string" },
+      integration_id: { required: false, type: "string" },
+      additional_context: { required: false, type: "string" },
+      test_case: { required: false, type: "object" },
+      step: { required: true, type: "object" }
+    }, req.body);
+
+    const appType = await appTypeService.getAppType(req.body.app_type_id);
+    await projectService.getProject(appType.project_id, req.user.id);
+    const requirement = req.body.requirement_id
+      ? await requirementService.getRequirement(req.body.requirement_id)
+      : null;
+
+    if (requirement && requirement.project_id !== appType.project_id) {
+      throw new Error("Requirement must belong to the same project as the selected app type");
+    }
+
+    return aiCaseAuthoringService.rephraseTestStep({
+      requirement,
+      appType,
+      integration_id: req.body.integration_id,
+      additional_context: req.body.additional_context,
+      test_case: req.body.test_case,
+      step: req.body.step
+    });
+  });
+
   fastify.post("/test-cases/design-test-cases-accept", async (req) => {
     await fastify.authenticate(req);
 

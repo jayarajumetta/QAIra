@@ -28,6 +28,10 @@ Optional environment variables:
   QAIRA_AUTH_PASSWORD      Login password paired with QAIRA_AUTH_EMAIL
   ENGINE_PUBLIC_URL        Public URL of this Test Engine host. Falls back to active integration, then localhost
   TESTENGINE_PORT          Host port for the engine container. Default: 4301
+  TESTENGINE_POLL_INTERVAL_MINUTES
+                         Queue pull cadence. Defaults to the active Test Engine integration or 5.
+  TESTENGINE_POLL_INTERVAL_MS
+                         Lower-level queue pull cadence override in milliseconds.
   OPS_OTLP_ENDPOINT        Optional OTLP endpoint to inject as OTEL_EXPORTER_OTLP_ENDPOINT
   OTEL_EXPORTER_OTLP_ENDPOINT
   OTEL_SERVICE_NAME        Defaults to the active OPS service_name or qaira-testengine
@@ -166,6 +170,8 @@ resolve_from_integrations
 
 DEFAULT_ENGINE_PUBLIC_URL="http://localhost:${TESTENGINE_PORT}"
 ENGINE_PUBLIC_URL="${ENGINE_PUBLIC_URL:-${RESOLVED_ENGINE_PUBLIC_URL:-$DEFAULT_ENGINE_PUBLIC_URL}}"
+TESTENGINE_POLL_INTERVAL_MINUTES="${TESTENGINE_POLL_INTERVAL_MINUTES:-${RESOLVED_TESTENGINE_POLL_INTERVAL_MINUTES:-5}}"
+TESTENGINE_POLL_INTERVAL_MS="${TESTENGINE_POLL_INTERVAL_MS:-${RESOLVED_TESTENGINE_POLL_INTERVAL_MS:-}}"
 OPS_TELEMETRY_EVENTS_PATH="${OPS_TELEMETRY_EVENTS_PATH:-${RESOLVED_OPS_EVENTS_PATH:-/api/v1/events}}"
 OPS_TELEMETRY_BOARD_PATH="${OPS_TELEMETRY_BOARD_PATH:-${RESOLVED_OPS_BOARD_PATH:-/ops-telemetry}}"
 OPS_ENVIRONMENT="${OPS_ENVIRONMENT:-${RESOLVED_OPS_ENVIRONMENT:-production}}"
@@ -203,6 +209,8 @@ export QAIRA_API_BASE_URL
 export QAIRA_TESTENGINE_SECRET
 export ENGINE_PUBLIC_URL
 export TESTENGINE_PORT
+export TESTENGINE_POLL_INTERVAL_MINUTES
+export TESTENGINE_POLL_INTERVAL_MS
 export OTEL_EXPORTER_OTLP_ENDPOINT
 export OTEL_SERVICE_NAME
 export OTEL_RESOURCE_ATTRIBUTES
@@ -228,6 +236,11 @@ if [ -n "${RESOLVED_OPS_INTEGRATION_NAME:-}" ]; then
   echo "Active OPS integration: ${RESOLVED_OPS_INTEGRATION_NAME}"
 fi
 echo "Engine public URL: $ENGINE_PUBLIC_URL"
+if [ -n "$TESTENGINE_POLL_INTERVAL_MS" ]; then
+  echo "Queue poll interval: ${TESTENGINE_POLL_INTERVAL_MS} ms"
+else
+  echo "Queue poll interval: ${TESTENGINE_POLL_INTERVAL_MINUTES} minute(s)"
+fi
 echo "OPS service label: $OPS_TELEMETRY_SERVICE_NAME"
 echo "OPS environment: $OPS_TELEMETRY_ENVIRONMENT"
 echo "OPS transport host: $PUBLIC_OPS_TRANSPORT_HOST"

@@ -143,6 +143,7 @@ export type AiDesignedTestCaseCandidate = {
   title: string;
   description: string | null;
   priority: number;
+  applicable_domain?: string | null;
   requirement_ids: string[];
   requirement_titles: string[];
   steps: Array<{
@@ -203,6 +204,21 @@ export type AiCaseAuthoringPreviewResponse = {
     name: string;
   };
   case: AiAuthoredTestCasePreview;
+};
+
+export type AiStepRephraseResponse = {
+  integration: {
+    id: string;
+    name: string;
+    type: string;
+    model?: string | null;
+  };
+  step: {
+    step_order: number;
+    step_type?: "web" | "api" | "android" | "ios" | null;
+    action: string | null;
+    expected_result: string | null;
+  };
 };
 
 export type AiTestCaseGenerationJob = {

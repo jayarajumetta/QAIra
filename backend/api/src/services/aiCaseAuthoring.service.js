@@ -239,6 +239,65 @@ const buildPrompt = ({ requirement, appType, currentCase, additionalContext }) =
   return prompt.join("\n");
 };
 
+const buildStepRephrasePrompt = ({ requirement, appType, currentCase, step, additionalContext }) => {
+  const prompt = [
+    "Rephrase one QA test step so it is concise, executable, and high quality.",
+    "",
+    "Application context:",
+    `- Type: ${appType.name} (${appType.type})`,
+    "",
+    "Linked requirement:"
+  ];
+
+  if (requirement) {
+    prompt.push(`- Title: ${requirement.title}`);
+    prompt.push(`- Description: ${requirement.description || "No description provided."}`);
+  } else {
+    prompt.push("- No linked requirement was supplied. Preserve the current test case intent.");
+  }
+
+  prompt.push("");
+  prompt.push("Current test case:");
+  prompt.push(`- Title: ${currentCase.title || "Untitled draft"}`);
+  prompt.push(`- Description: ${currentCase.description || "No description yet."}`);
+
+  if (Object.keys(currentCase.parameter_values).length) {
+    prompt.push("");
+    prompt.push("Available test data declarations:");
+    Object.entries(currentCase.parameter_values).forEach(([key, value]) => {
+      prompt.push(`- ${key}: ${value || "(empty)"}`);
+    });
+  }
+
+  prompt.push("");
+  prompt.push("Step to rephrase:");
+  prompt.push(`- Step ${step.step_order} [${step.step_type}]: ${step.action || "No action written."}`);
+  prompt.push(`- Expected: ${step.expected_result || "No expected result written."}`);
+
+  if (additionalContext) {
+    prompt.push("");
+    prompt.push("Additional author guidance from the user:");
+    prompt.push(additionalContext);
+  }
+
+  prompt.push("");
+  prompt.push("Return strict JSON with this shape:");
+  prompt.push("{");
+  prompt.push('  "step_order": 1,');
+  prompt.push('  "step_type": "web",');
+  prompt.push('  "action": "string",');
+  prompt.push('  "expected_result": "string"');
+  prompt.push("}");
+  prompt.push("");
+  prompt.push("Guidance:");
+  prompt.push("- Preserve the business intent, data tokens such as @t.email, and platform step_type unless a correction is clearly needed.");
+  prompt.push("- Use one observable user or system action and one clear expected result.");
+  prompt.push("- Do not add unrelated preconditions or extra steps.");
+  prompt.push("- Do not include markdown or commentary outside the JSON.");
+
+  return prompt.join("\n");
+};
+
 const normalizePreview = (payload, currentCase, fallbackStepType) => {
   const title = normalizeText(payload?.title) || currentCase.title || null;
 
@@ -265,6 +324,23 @@ const normalizePreview = (payload, currentCase, fallbackStepType) => {
     step_count: steps.length,
     parameter_count: Object.keys(parameter_values).length
   };
+};
+
+const normalizeStepPreview = (payload, currentStep, fallbackStepType) => {
+  const [step] = normalizeSteps([
+    {
+      step_order: currentStep.step_order,
+      step_type: payload?.step_type || payload?.stepType || currentStep.step_type,
+      action: payload?.action ?? currentStep.action,
+      expected_result: payload?.expected_result ?? payload?.expectedResult ?? currentStep.expected_result
+    }
+  ], fallbackStepType);
+
+  if (!step) {
+    throw new Error("AI step rephrase response did not include a usable step");
+  }
+
+  return step;
 };
 
 exports.previewCaseAuthoring = async ({
@@ -315,5 +391,61 @@ exports.previewCaseAuthoring = async ({
       name: appType.name
     },
     case: preview
+  };
+};
+
+exports.rephraseTestStep = async ({
+  requirement,
+  appType,
+  integration_id,
+  test_case,
+  step,
+  additional_context
+}) => {
+  if (!appType) {
+    throw new Error("An app type is required for AI step rephrase");
+  }
+
+  if (!step || typeof step !== "object") {
+    throw new Error("A test step is required for AI rephrase");
+  }
+
+  const fallbackStepType = DEFAULT_STEP_TYPE_BY_APP_TYPE[appType.type] || "web";
+  const currentCase = {
+    title: normalizeText(test_case?.title) || "",
+    description: normalizeRichText(test_case?.description) || "",
+    parameter_values: normalizeParameterValues(test_case?.parameter_values),
+    steps: []
+  };
+  const currentStep = {
+    step_order: Number.isFinite(Number(step?.step_order)) ? Number(step.step_order) : 1,
+    action: normalizeRichText(step?.action),
+    expected_result: normalizeRichText(step?.expected_result || step?.expectedResult),
+    step_type: normalizeTestStepType(step?.step_type || step?.stepType, fallbackStepType)
+  };
+
+  if (!currentStep.action && !currentStep.expected_result) {
+    throw new Error("The selected step needs an action or expected result before AI can rephrase it");
+  }
+
+  const integration = await resolveIntegration(integration_id);
+  const prompt = buildStepRephrasePrompt({
+    requirement,
+    appType,
+    currentCase,
+    step: currentStep,
+    additionalContext: normalizeRichText(additional_context)
+  });
+  const content = await requestChatCompletion({ integration, prompt });
+  const rephrasedStep = normalizeStepPreview(extractJsonPayload(content), currentStep, fallbackStepType);
+
+  return {
+    integration: {
+      id: integration.id,
+      name: integration.name,
+      type: integration.type,
+      model: integration.model
+    },
+    step: rephrasedStep
   };
 };

@@ -164,6 +164,14 @@ When the stack is up, the Test Engine host serves:
 The `/ops-telemetry` board lets operators filter captured execution hierarchy
 events by `service_name`, status, event type, and execution identifiers.
 
+Queue pull mode polls QAira for queued automated API and web jobs every 5
+minutes by default. Configure `queue_poll_interval_minutes` on the active
+Test Engine integration in QAira; `start-testengine-ops.sh` resolves that value
+into `TESTENGINE_POLL_INTERVAL_MINUTES` / `TESTENGINE_POLL_INTERVAL_MS` for the
+standalone worker. When the queue is empty, the worker does not emit job events.
+Worker startup, poll failures, execution crashes, and failure-reporting issues
+are captured on the local OPS telemetry board.
+
 On Apple Silicon or other ARM64 hosts, QAira defaults the Selenium browser node to
 `selenium/node-chromium:4.22.0` because Selenium's official Chrome node images are
 AMD64-only. If you want to override the Grid images explicitly, set:

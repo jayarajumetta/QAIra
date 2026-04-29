@@ -60,6 +60,7 @@ type IntegrationDraft = {
   engine_capture_network: boolean;
   engine_artifact_retention_days: string;
   engine_run_timeout_seconds: string;
+  engine_queue_poll_interval_minutes: string;
   engine_live_view_url: string;
   ops_project_id: string;
   ops_events_path: string;
@@ -146,6 +147,7 @@ const buildEmptyDraft = (
     engine_capture_network: testEngineDefaults.capture_network !== false,
     engine_artifact_retention_days: String(testEngineDefaults.artifact_retention_days ?? "14"),
     engine_run_timeout_seconds: String(testEngineDefaults.run_timeout_seconds ?? "1800"),
+    engine_queue_poll_interval_minutes: String(testEngineDefaults.queue_poll_interval_minutes ?? "5"),
     engine_live_view_url: "",
     ops_project_id: "",
     ops_events_path: typeof opsDefaults.events_path === "string" ? opsDefaults.events_path : "/api/v1/events",
@@ -322,7 +324,8 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
       engine_capture_console: current.engine_capture_console,
       engine_capture_network: current.engine_capture_network,
       engine_artifact_retention_days: current.engine_artifact_retention_days || String(testEngineDefaults.artifact_retention_days ?? "14"),
-      engine_run_timeout_seconds: current.engine_run_timeout_seconds || String(testEngineDefaults.run_timeout_seconds ?? "1800")
+      engine_run_timeout_seconds: current.engine_run_timeout_seconds || String(testEngineDefaults.run_timeout_seconds ?? "1800"),
+      engine_queue_poll_interval_minutes: current.engine_queue_poll_interval_minutes || String(testEngineDefaults.queue_poll_interval_minutes ?? "5")
     };
   }
 
@@ -422,6 +425,12 @@ function getDraftFromIntegration(
         : typeof config.run_timeout_seconds === "string"
           ? config.run_timeout_seconds
           : emptyDraft.engine_run_timeout_seconds,
+    engine_queue_poll_interval_minutes:
+      typeof config.queue_poll_interval_minutes === "number"
+        ? String(config.queue_poll_interval_minutes)
+        : typeof config.queue_poll_interval_minutes === "string"
+          ? config.queue_poll_interval_minutes
+          : emptyDraft.engine_queue_poll_interval_minutes,
     engine_live_view_url: typeof config.live_view_url === "string" ? config.live_view_url : "",
     ops_project_id: typeof config.project_id === "string" ? config.project_id : "",
     ops_events_path: typeof config.events_path === "string" ? config.events_path : emptyDraft.ops_events_path,
@@ -505,6 +514,7 @@ function buildIntegrationConfig(draft: IntegrationDraft, definitions: Integratio
       capture_network: draft.engine_capture_network,
       artifact_retention_days: Number.parseInt(draft.engine_artifact_retention_days, 10) || 7,
       run_timeout_seconds: Number.parseInt(draft.engine_run_timeout_seconds, 10) || 1800,
+      queue_poll_interval_minutes: Number.parseInt(draft.engine_queue_poll_interval_minutes, 10) || 5,
       live_view_url: draft.engine_live_view_url.trim() || null,
       promote_healed_patches: "review"
     };
@@ -579,10 +589,16 @@ function getIntegrationSummary(integration: Integration, definitions: Integratio
 
   if (integration.type === "testengine") {
     const activeWebEngine = typeof config.active_web_engine === "string" ? config.active_web_engine : "playwright";
+    const pollIntervalMinutes =
+      typeof config.queue_poll_interval_minutes === "number"
+        ? config.queue_poll_interval_minutes
+        : typeof config.queue_poll_interval_minutes === "string"
+          ? Number.parseInt(config.queue_poll_interval_minutes, 10) || 5
+          : 5;
 
     return {
       primary: integration.base_url || "Engine host not set",
-      secondary: `${typeof config.project_id === "string" && config.project_id.trim() ? "project-specific" : "all projects"} · queue pull · ${String(activeWebEngine).toUpperCase()} web`
+      secondary: `${typeof config.project_id === "string" && config.project_id.trim() ? "project-specific" : "all projects"} · queue pull every ${pollIntervalMinutes} min · ${String(activeWebEngine).toUpperCase()} web`
     };
   }
 
@@ -1289,6 +1305,21 @@ export function IntegrationsPage() {
                     </div>
 
                     <div className="record-grid">
+                      <FormField label="Queue Poll Interval (min)">
+                        <input
+                          inputMode="numeric"
+                          placeholder="5"
+                          value={draft.engine_queue_poll_interval_minutes}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_queue_poll_interval_minutes: event.target.value }))}
+                        />
+                      </FormField>
+
+                      <div className="empty-state compact integration-helper">
+                        The standalone Test Engine uses this cadence when it pulls queued API and web automation jobs from QAira.
+                      </div>
+                    </div>
+
+                    <div className="record-grid">
                       <FormField label="Active Web Engine">
                         <select
                           value={draft.engine_active_web_engine}
@@ -1368,6 +1399,10 @@ export function IntegrationsPage() {
                       <article className="integration-readable-card">
                         <span className="integration-readable-label">Capabilities endpoint</span>
                         <strong className="integration-readable-value">{testEngineCapabilitiesUrl || "Available after a valid host URL is entered"}</strong>
+                      </article>
+                      <article className="integration-readable-card">
+                        <span className="integration-readable-label">Queue polling</span>
+                        <strong className="integration-readable-value">Every {Number.parseInt(draft.engine_queue_poll_interval_minutes, 10) || 5} min</strong>
                       </article>
                       <article className="integration-readable-card">
                         <span className="integration-readable-label">Runtime profile</span>

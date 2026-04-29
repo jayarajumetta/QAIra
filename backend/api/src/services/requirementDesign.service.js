@@ -148,7 +148,7 @@ const resolveCaseRequirements = (item, requirements = []) => {
   return [];
 };
 
-const normalizeCaseDraft = (item, index, { requirements = [], requireRequirementMapping = false } = {}) => {
+const normalizeCaseDraft = (item, index, { requirements = [], requireRequirementMapping = false, applicableDomain = null } = {}) => {
   const title = normalizeText(item?.title);
 
   if (!title) {
@@ -165,6 +165,7 @@ const normalizeCaseDraft = (item, index, { requirements = [], requireRequirement
     title,
     description: normalizeText(item?.description),
     priority: Number.isFinite(Number(item?.priority)) ? Number(item.priority) : 3,
+    applicable_domain: normalizeText(item?.applicable_domain || item?.applicableDomain || item?.domain) || applicableDomain,
     requirement_ids: resolvedRequirements.map((requirement) => requirement.id),
     requirement_titles: resolvedRequirements.map((requirement) => requirement.title),
     steps: normalizeSteps(item?.steps)
@@ -172,6 +173,7 @@ const normalizeCaseDraft = (item, index, { requirements = [], requireRequirement
 };
 
 const normalizeGeneratedCases = (payload, maxCases, requirements) => {
+  const applicableDomain = normalizeText(payload?.applicable_domain || payload?.applicableDomain || payload?.domain);
   const collection = Array.isArray(payload)
     ? payload
     : Array.isArray(payload?.testCases)
@@ -184,13 +186,15 @@ const normalizeGeneratedCases = (payload, maxCases, requirements) => {
     throw new Error("LLM did not return any test cases");
   }
 
-  return collection.slice(0, maxCases).map((item, index) => normalizeCaseDraft(item, index, { requirements }));
+  return collection.slice(0, maxCases).map((item, index) => normalizeCaseDraft(item, index, { requirements, applicableDomain }));
 };
 
 const buildPrompt = ({ requirements, appType, maxCases, additionalContext, externalLinks, images }) => {
   const references = buildRequirementReferenceMap(requirements);
   const prompt = [
     "Design high-quality QA test cases for the following product requirements.",
+    "Use the requirement title and description as the default source of truth, then blend in any app context, user guidance, links, or image labels below.",
+    "First identify the most applicable testing domain for this requirement set, then generate cases that fit that domain.",
     "",
     "Requirements to cover:"
   ];
@@ -226,13 +230,15 @@ const buildPrompt = ({ requirements, appType, maxCases, additionalContext, exter
   }
 
   prompt.push("");
-  prompt.push(`Return up to ${maxCases} test cases as strict JSON with this shape:`);
+  prompt.push(`Return up to ${maxCases} test cases as strict JSON with this exact processable shape:`);
   prompt.push("{");
+  prompt.push('  "applicable_domain": "authentication | payments | ecommerce | reporting | workflow | integration | mobile | api | data | security | performance | accessibility | general",');
   prompt.push('  "testCases": [');
   prompt.push("    {");
   prompt.push('      "title": "string",');
   prompt.push('      "description": "string",');
   prompt.push('      "priority": 1,');
+  prompt.push('      "applicable_domain": "string",');
   prompt.push('      "requirement_refs": ["R1"],');
   prompt.push('      "steps": [');
   prompt.push("        {");
@@ -245,7 +251,10 @@ const buildPrompt = ({ requirements, appType, maxCases, additionalContext, exter
   prompt.push("}");
   prompt.push("");
   prompt.push("Guidance:");
+  prompt.push("- Pick the applicable_domain from the requirement intent, business process, data handled, integrations, platform type, and risk profile.");
   prompt.push("- Cover happy path, validation, edge conditions, negative conditions, and operational risk where relevant.");
+  prompt.push("- Prefer crisp manual test cases with clear preconditions embedded in the first step when needed.");
+  prompt.push("- Make every step executable: one action, one observable expected result, no vague statements like verify properly.");
   prompt.push("- Keep titles concise and reusable across suites.");
   prompt.push("- Use 1-5 priority where 1 is most critical.");
   prompt.push("- Each generated case must include one or more requirement_refs from the provided requirement list.");
@@ -304,6 +313,10 @@ const requestChatCompletion = async ({ integration, content }) => {
     const detail = raw.slice(0, 200).trim();
     const error = new Error(`LLM request failed with status ${response.status}${detail ? `: ${detail}` : ""}`);
     error.statusCode = response.status;
+    const retryAfter = Number(response.headers.get("retry-after"));
+    if (Number.isFinite(retryAfter) && retryAfter > 0) {
+      error.retryAfterMs = Math.min(retryAfter * 1000, 60_000);
+    }
     throw error;
   }
 

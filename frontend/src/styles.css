@@ -1778,7 +1778,7 @@ textarea {
 .step-card-top .step-card-toggle {
   min-width: 0;
   flex: 1;
-  padding-right: 4.85rem;
+  padding-right: 7.15rem;
 }
 
 .step-card.is-expanded {
@@ -2141,6 +2141,14 @@ textarea {
   color: var(--success);
 }
 
+.step-inline-tool.is-loading {
+  cursor: wait;
+}
+
+.step-inline-tool.is-loading svg {
+  animation: qaira-spin 900ms linear infinite;
+}
+
 .step-inline-tool.is-type {
   color: var(--primary-strong);
 }
@@ -2148,6 +2156,12 @@ textarea {
 .step-inline-tool--group {
   width: 1.85rem;
   height: 1.85rem;
+}
+
+@keyframes qaira-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .step-type-menu {
@@ -3034,8 +3048,25 @@ textarea {
     display: grid;
   }
 
+  .step-card-top {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .step-card-top .step-card-toggle {
+    order: 4;
+    flex-basis: 100%;
+    padding-right: 0;
+  }
+
+  .step-inline-tools,
+  .step-card-menu--floating {
+    position: static;
+    transform: none;
+  }
+
   .step-inline-tools {
-    right: 2.45rem;
+    margin-left: auto;
   }
 
   .step-card-summary-row {
