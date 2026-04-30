@@ -47,6 +47,7 @@ type IntegrationDraft = {
   github_directory: string;
   github_file_extension: string;
   engine_project_id: string;
+  engine_qaira_api_base_url: string;
   engine_callback_url: string;
   engine_callback_secret: string;
   engine_active_web_engine: "playwright" | "selenium";
@@ -134,6 +135,7 @@ const buildEmptyDraft = (
     github_directory: "qaira-sync",
     github_file_extension: "ts",
     engine_project_id: "",
+    engine_qaira_api_base_url: "",
     engine_callback_url: "",
     engine_callback_secret: "",
     engine_active_web_engine: (typeof testEngineDefaults.active_web_engine === "string" ? testEngineDefaults.active_web_engine : "selenium") as IntegrationDraft["engine_active_web_engine"],
@@ -397,6 +399,7 @@ function getDraftFromIntegration(
     github_directory: typeof config.directory === "string" ? config.directory : emptyDraft.github_directory,
     github_file_extension: typeof config.file_extension === "string" ? config.file_extension : emptyDraft.github_file_extension,
     engine_project_id: typeof config.project_id === "string" ? config.project_id : "",
+    engine_qaira_api_base_url: typeof config.qaira_api_base_url === "string" ? config.qaira_api_base_url : "",
     engine_callback_url: typeof config.callback_url === "string" ? config.callback_url : "",
     engine_callback_secret: typeof config.callback_secret === "string" ? config.callback_secret : "",
     engine_active_web_engine: (typeof config.active_web_engine === "string" ? config.active_web_engine : emptyDraft.engine_active_web_engine) as IntegrationDraft["engine_active_web_engine"],
@@ -500,6 +503,7 @@ function buildIntegrationConfig(draft: IntegrationDraft, definitions: Integratio
   if (draft.type === "testengine") {
     return {
       project_id: draft.engine_project_id || undefined,
+      qaira_api_base_url: draft.engine_qaira_api_base_url.trim() || null,
       runner: "hybrid",
       dispatch_mode: "qaira-pull",
       execution_scope: "api+web",
@@ -596,9 +600,13 @@ function getIntegrationSummary(integration: Integration, definitions: Integratio
           ? Number.parseInt(config.queue_poll_interval_minutes, 10) || 5
           : 5;
 
+    const qairaApiBaseUrl = typeof config.qaira_api_base_url === "string" && config.qaira_api_base_url.trim()
+      ? config.qaira_api_base_url.trim()
+      : "";
+
     return {
       primary: integration.base_url || "Engine host not set",
-      secondary: `${typeof config.project_id === "string" && config.project_id.trim() ? "project-specific" : "all projects"} · queue pull every ${pollIntervalMinutes} min · ${String(activeWebEngine).toUpperCase()} web`
+      secondary: `${typeof config.project_id === "string" && config.project_id.trim() ? "project-specific" : "all projects"} · queue pull every ${pollIntervalMinutes} min · ${String(activeWebEngine).toUpperCase()} web${qairaApiBaseUrl ? ` · QAira API ${qairaApiBaseUrl}` : ""}`
     };
   }
 
@@ -1302,6 +1310,14 @@ export function IntegrationsPage() {
                           onChange={(event) => setDraft((current) => ({ ...current, base_url: event.target.value }))}
                         />
                       </FormField>
+
+                      <FormField label="QAira API Base URL">
+                        <input
+                          placeholder="https://qaira.company.internal/api"
+                          value={draft.engine_qaira_api_base_url}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_qaira_api_base_url: event.target.value }))}
+                        />
+                      </FormField>
                     </div>
 
                     <div className="record-grid">
@@ -1315,7 +1331,7 @@ export function IntegrationsPage() {
                       </FormField>
 
                       <div className="empty-state compact integration-helper">
-                        The standalone Test Engine uses this cadence when it pulls queued API and web automation jobs from QAira.
+                        The standalone Test Engine uses this cadence when it pulls queued API and web automation jobs from QAira. Set the engine container's QAIRA_API_BASE_URL to the QAira API URL above, or to the public QAira URL when /api proxying is available.
                       </div>
                     </div>
 

@@ -4601,6 +4601,9 @@ export function TestCasesPage() {
       key: "select",
       label: "",
       canToggle: false,
+      canReorder: false,
+      canResize: false,
+      width: 56,
       headerRender: () => (
         <label className="data-table-header-checkbox" onClick={(event) => event.stopPropagation()}>
           <input
@@ -4634,34 +4637,46 @@ export function TestCasesPage() {
     {
       key: "id",
       label: "ID",
+      width: 120,
+      minWidth: 96,
       render: (testCase) => <DisplayIdBadge value={testCase.display_id || testCase.id} />
     },
     {
       key: "title",
       label: "Test case",
       canToggle: false,
+      width: 280,
+      minWidth: 180,
       render: (testCase) => <strong>{testCase.title}</strong>
     },
     {
       key: "requirement",
       label: "Requirement",
+      width: 240,
+      minWidth: 160,
       render: (testCase) => getRequirementTitleForCase(testCase) || "No requirement linked"
     },
     {
       key: "description",
       label: "Description",
       defaultVisible: false,
+      width: 320,
+      minWidth: 180,
       render: (testCase) => testCase.description || "No description yet for this test case."
     },
     {
       key: "externalReferences",
       label: "References",
       defaultVisible: false,
+      width: 220,
+      minWidth: 150,
       render: (testCase) => formatReferenceList(testCase.external_references) || "—"
     },
     {
       key: "status",
       label: "Status",
+      width: 136,
+      minWidth: 112,
       render: (testCase) => {
         const history = historyByCaseId[testCase.id] || [];
         const latest = history[0];
@@ -4671,22 +4686,30 @@ export function TestCasesPage() {
     {
       key: "automated",
       label: "Automated",
+      width: 124,
+      minWidth: 104,
       render: (testCase) => (testCase.automated === "yes" ? "Yes" : "No")
     },
     {
       key: "priority",
       label: "Priority",
+      width: 104,
+      minWidth: 88,
       render: (testCase) => `P${testCase.priority || 3}`
     },
     {
       key: "steps",
       label: "Steps",
+      width: 92,
+      minWidth: 80,
       render: (testCase) => stepCountByCaseId[testCase.id] || 0
     },
     {
       key: "testSteps",
       label: "Test steps",
       defaultVisible: false,
+      width: 380,
+      minWidth: 220,
       render: (testCase) => {
         const steps = allStepsByCaseId[testCase.id] || [];
 
@@ -4714,6 +4737,8 @@ export function TestCasesPage() {
       key: "testData",
       label: "Test data",
       defaultVisible: false,
+      width: 260,
+      minWidth: 180,
       render: (testCase) => {
         const parameterEntries = Object.entries(testCase.parameter_values || {}).sort(([left], [right]) => left.localeCompare(right));
 
@@ -4733,41 +4758,56 @@ export function TestCasesPage() {
     {
       key: "suites",
       label: "Suites",
+      width: 92,
+      minWidth: 80,
       render: (testCase) => (testCase.suite_ids || (testCase.suite_id ? [testCase.suite_id] : [])).length || 0
     },
     {
       key: "runs",
       label: "Runs",
+      width: 88,
+      minWidth: 76,
       render: (testCase) => (historyByCaseId[testCase.id] || []).length
     },
     {
       key: "createdBy",
       label: "Created by",
       defaultVisible: false,
+      width: 160,
+      minWidth: 124,
       render: (testCase) => resolveAuditUserLabel(testCase.created_by, userById)
     },
     {
       key: "createdAt",
       label: "Created at",
       defaultVisible: false,
+      width: 172,
+      minWidth: 140,
       render: (testCase) => formatAuditTimestamp(testCase.created_at)
     },
     {
       key: "updatedBy",
       label: "Last updated by",
       defaultVisible: false,
+      width: 172,
+      minWidth: 132,
       render: (testCase) => resolveAuditUserLabel(testCase.updated_by || testCase.created_by, userById)
     },
     {
       key: "updatedAt",
       label: "Last updated at",
       defaultVisible: false,
+      width: 184,
+      minWidth: 148,
       render: (testCase) => formatAuditTimestamp(testCase.updated_at || testCase.created_at)
     },
     {
       key: "actions",
       label: "Actions",
       canToggle: false,
+      canReorder: false,
+      canResize: false,
+      width: 92,
       render: (testCase) => {
         const isPendingSchedulerCase =
           testCase.ai_generation_source === "scheduler" && testCase.ai_generation_review_status === "pending";
@@ -5495,6 +5535,8 @@ export function TestCasesPage() {
               {!isLibraryLoading && filteredCases.length && catalogViewMode === "list" ? (
                 <DataTable
                   columns={testCaseListColumns}
+                  enableColumnResize
+                  enableHeaderColumnReorder
                   emptyMessage="No test cases match the current search."
                   getRowClassName={(testCase) => (selectedTestCaseId === testCase.id && !isCreating ? "is-active-row" : "")}
                   getRowKey={(testCase) => testCase.id}
@@ -6244,7 +6286,7 @@ export function TestCasesPage() {
               <div className="import-modal-title">
                 <p className="eyebrow">Bulk Import</p>
                 <h3 id="bulk-import-title">Import test cases from external sources</h3>
-                <p>Queue CSV, JUnit XML, TestNG XML, or Postman collection files together. CSV imports support an <strong>external_references</strong> column for ticket links, while other sources keep their suite, property, and request metadata. Large imports are sent in smaller batches automatically.</p>
+                <p>Queue CSV, JUnit XML, TestNG XML, or Postman collection files together. CSV imports support an <strong>external_references</strong> column for ticket links, while Postman requests import as API test cases even when the collection has no test scripts. Large imports are sent in smaller batches automatically.</p>
               </div>
               <button aria-label="Close bulk import dialog" className="ghost-button" disabled={importTestCases.isPending} onClick={() => {
                 setImportBatches([]);

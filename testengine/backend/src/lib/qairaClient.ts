@@ -1,6 +1,9 @@
 import type { EngineQueuedJob } from "../contracts/qaira.js";
 
 const QAIRA_API_BASE_URL = String(process.env.QAIRA_API_BASE_URL || "").trim().replace(/\/+$/, "");
+const QAIRA_API_PATH_PREFIX = String(process.env.QAIRA_API_PATH_PREFIX || process.env.QAIRA_API_PREFIX || "")
+  .trim()
+  .replace(/^\/+|\/+$/g, "");
 const QAIRA_TESTENGINE_SECRET = String(
   process.env.QAIRA_TESTENGINE_SECRET
   || process.env.TESTENGINE_SHARED_SECRET
@@ -20,9 +23,33 @@ function ensureConfigured() {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  ensureConfigured();
+const appendPath = (base: string, path: string) => `${base.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
 
+const getApiBaseCandidates = () => {
+  const candidates = [QAIRA_API_BASE_URL];
+
+  if (QAIRA_API_PATH_PREFIX) {
+    candidates.unshift(appendPath(QAIRA_API_BASE_URL, QAIRA_API_PATH_PREFIX));
+  } else {
+    try {
+      const parsedBaseUrl = new URL(QAIRA_API_BASE_URL);
+      const normalizedPath = parsedBaseUrl.pathname.replace(/\/+$/, "");
+
+      if (!normalizedPath.endsWith("/api")) {
+        parsedBaseUrl.pathname = `${normalizedPath || ""}/api`;
+        parsedBaseUrl.search = "";
+        parsedBaseUrl.hash = "";
+        candidates.push(parsedBaseUrl.toString().replace(/\/+$/, ""));
+      }
+    } catch {
+      candidates.push(appendPath(QAIRA_API_BASE_URL, "api"));
+    }
+  }
+
+  return Array.from(new Set(candidates.map((candidate) => candidate.replace(/\/+$/, ""))));
+};
+
+async function requestOnce<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set("authorization", `Bearer ${QAIRA_TESTENGINE_SECRET}`);
 
@@ -30,7 +57,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers.set("content-type", "application/json");
   }
 
-  const response = await fetch(`${QAIRA_API_BASE_URL}${path}`, {
+  const response = await fetch(appendPath(baseUrl, path), {
     ...init,
     headers
   });
@@ -48,6 +75,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return payload as T;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  ensureConfigured();
+
+  const candidates = getApiBaseCandidates();
+  let lastError: Error | null = null;
+
+  for (const [index, baseUrl] of candidates.entries()) {
+    try {
+      return await requestOnce<T>(baseUrl, path, init);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error || "QAira internal API request failed"));
+
+      if (index === candidates.length - 1 || !/QAira internal API returned (404|405)\b/.test(lastError.message)) {
+        throw lastError;
+      }
+    }
+  }
+
+  throw lastError || new Error("QAira internal API request failed");
 }
 
 export function isQairaQueueConfigured() {

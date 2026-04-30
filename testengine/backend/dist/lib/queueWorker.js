@@ -1,7 +1,8 @@
 import { buildAcceptedRun } from "./pipeline.js";
-import { completeQueuedJobWithMetadata, executeQueuedApiStep, isQairaQueueConfigured, leaseNextQueuedJob, reportQueuedStep, startQueuedJob } from "./qairaClient.js";
+import { completeQueuedJobWithMetadata, isQairaQueueConfigured, leaseNextQueuedJob, reportQueuedStep, startQueuedJob } from "./qairaClient.js";
 import { saveRun, updateRun } from "./runStore.js";
 import { createWebRunSession } from "./webEngine.js";
+import { executeApiStepInEngine } from "./apiEngine.js";
 import { registerContextValue } from "./runtimeContext.js";
 const DEFAULT_POLL_INTERVAL_MS = 5 * 60 * 1000;
 const MIN_POLL_INTERVAL_MS = 1000;
@@ -102,6 +103,7 @@ async function executeQueuedJob(job, workerId, logger, telemetry) {
     const webRunSession = orderedSteps.some((step) => step.step_type === "web")
         ? createWebRunSession(envelope, job.runtime_state?.captured_values || {})
         : null;
+    let capturedValues = { ...(job.runtime_state?.captured_values || {}) };
     let healingAttempted = Boolean(job.runtime_state?.healing_attempted);
     let healingSucceeded = Boolean(job.runtime_state?.healing_succeeded);
     const patchProposals = [];
@@ -136,8 +138,19 @@ async function executeQueuedJob(job, workerId, logger, telemetry) {
         for (const [index, step] of remainingSteps.entries()) {
             updateRunState(accepted.id, "running", `${job.test_case_title}: executing ${step.step_type.toUpperCase()} step ${index + 1} of ${remainingSteps.length}.`);
             if (step.step_type === "api") {
-                const result = await executeQueuedApiStep(job.id, step.id);
-                syncCapturedValuesToWebContext(result.captures, webRunSession);
+                const result = await executeApiStepInEngine(envelope, step, capturedValues);
+                const report = await reportQueuedStep(job.id, step.id, {
+                    status: result.status,
+                    note: result.note,
+                    evidence: result.evidence,
+                    api_detail: result.detail,
+                    captures: result.captures
+                });
+                capturedValues = {
+                    ...capturedValues,
+                    ...(report.captures || {})
+                };
+                syncCapturedValuesToWebContext(report.captures, webRunSession);
                 if (result.status === "failed") {
                     const failureSummary = result.note || `${job.test_case_title} failed on step ${step.order}.`;
                     updateRunState(accepted.id, "failed", failureSummary);
@@ -206,6 +219,10 @@ async function executeQueuedJob(job, workerId, logger, telemetry) {
                 recovery_attempted: stepResult.recovery_attempted,
                 recovery_succeeded: stepResult.recovery_succeeded
             });
+            capturedValues = {
+                ...capturedValues,
+                ...(report.captures || {})
+            };
             syncCapturedValuesToWebContext(report.captures, webRunSession);
             if (stepResult.status === "failed") {
                 const failureSummary = stepResult.note || `${job.test_case_title} failed on step ${step.order}.`;

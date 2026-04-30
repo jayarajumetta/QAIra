@@ -36,6 +36,8 @@ type PostmanRequestLike = {
   };
 };
 
+type PostmanUrlLike = NonNullable<PostmanRequestLike["url"]>;
+
 const SUPPORTED_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 const VARIABLE_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
 
@@ -49,6 +51,21 @@ const normalizeParameterName = (value: string) =>
 
 const replacePostmanVariables = (value?: string | null) =>
   String(value || "").replace(VARIABLE_PATTERN, (_, name: string) => `@${normalizeParameterName(name)}`);
+
+const normalizePostmanRequest = (value: unknown): PostmanRequestLike | null => {
+  if (typeof value === "string") {
+    return {
+      method: "GET",
+      url: value
+    };
+  }
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as PostmanRequestLike;
+};
 
 const collectReferencedVariables = (value?: string | null) => {
   const source = String(value || "");
@@ -85,6 +102,156 @@ const joinSegments = (value?: string[] | string) => {
   }
 
   return String(value || "");
+};
+
+const removeQueryAndHash = (value: string) => value.split(/[?#]/)[0] || "";
+
+const safeDecodeURIComponent = (value: string) => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+const stripHostLikeLeadingSegment = (segments: string[]) => {
+  const [firstSegment] = segments;
+
+  if (
+    segments.length > 1
+    && firstSegment
+    && (firstSegment === "qaira-variable" || firstSegment.includes(".") || firstSegment.startsWith("@"))
+  ) {
+    return segments.slice(1);
+  }
+
+  return segments;
+};
+
+const getPathSegmentsFromRawUrl = (value: string) => {
+  const normalized = replacePostmanVariables(removeQueryAndHash(value).trim());
+
+  if (!normalized) {
+    return [];
+  }
+
+  try {
+    const parsedUrl = new URL(normalized.replace(/@([a-z0-9_.-]+)/gi, "qaira-variable"), "https://qaira.local");
+    return stripHostLikeLeadingSegment(parsedUrl.pathname.split("/").filter(Boolean));
+  } catch {
+    const segments = normalized
+      .replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
+      .split("/")
+      .filter(Boolean);
+    return stripHostLikeLeadingSegment(segments);
+  }
+};
+
+const getRequestPathSegments = (url?: PostmanUrlLike) => {
+  if (typeof url === "string") {
+    return getPathSegmentsFromRawUrl(url);
+  }
+
+  if (!url || typeof url !== "object") {
+    return [];
+  }
+
+  const pathSegments = Array.isArray(url.path)
+    ? url.path
+    : String(url.path || "").split("/");
+
+  const normalizedPathSegments = pathSegments
+    .map((segment) => replacePostmanVariables(String(segment || "")).trim())
+    .filter(Boolean);
+
+  if (normalizedPathSegments.length) {
+    return normalizedPathSegments;
+  }
+
+  return url.raw ? getPathSegmentsFromRawUrl(url.raw) : [];
+};
+
+const humanizePathSegment = (segment: string, index: number, segments: string[]) => {
+  const normalized = safeDecodeURIComponent(segment)
+    .replace(/^:+/, "")
+    .replace(/^@+/, "")
+    .replace(/[{}]/g, "")
+    .replace(/\.[a-z0-9]+$/i, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim();
+
+  if (!normalized) {
+    return index === segments.length - 1 ? "Endpoint" : "";
+  }
+
+  const isLikelyIdentifier =
+    /^@/.test(segment) ||
+    /^:/.test(segment) ||
+    /^\{.*\}$/.test(segment) ||
+    /\bid\b/i.test(normalized) ||
+    /^[0-9a-f]{8,}$/i.test(normalized) ||
+    /^\d+$/.test(normalized);
+
+  if (isLikelyIdentifier) {
+    return "Id";
+  }
+
+  return normalized
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+};
+
+const buildHumanizedPathTitle = (segments: string[]) =>
+  segments.reduce<string[]>((parts, segment, index) => {
+    const humanizedSegment = humanizePathSegment(segment, index, segments);
+
+    if (!humanizedSegment) {
+      return parts;
+    }
+
+    if (humanizedSegment === "Id" && parts.length) {
+      const previousPart = parts.pop() || "";
+      const singularBase = previousPart.replace(/s$/i, "");
+      parts.push(`${singularBase} By Id`);
+      return parts;
+    }
+
+    parts.push(humanizedSegment);
+    return parts;
+  }, []).join(" ");
+
+const getMethodVerb = (method: string) => {
+  switch (method) {
+    case "POST":
+      return "Create";
+    case "PUT":
+    case "PATCH":
+      return "Update";
+    case "DELETE":
+      return "Delete";
+    case "HEAD":
+      return "Check";
+    case "OPTIONS":
+      return "Inspect";
+    case "GET":
+    default:
+      return "Get";
+  }
+};
+
+const buildSmartRequestTitle = (request: PostmanRequestLike, fallbackName: string) => {
+  const method = String(request.method || "GET").trim().toUpperCase();
+  const pathSegments = getRequestPathSegments(request.url);
+  const filteredPathSegments = pathSegments
+    .filter((segment) => !/^https?:$/i.test(segment))
+    .filter((segment) => !/^(api|rest|graphql|v\d+)$/i.test(segment));
+  const meaningfulSegments = (filteredPathSegments.length ? filteredPathSegments : pathSegments).slice(-3);
+  const pathTitle = buildHumanizedPathTitle(meaningfulSegments);
+
+  return collapseWhitespace(`${getMethodVerb(method)} ${pathTitle || fallbackName || "API Request"}`);
 };
 
 const resolveRequestUrl = (url?: PostmanRequestLike["url"]) => {
@@ -243,27 +410,29 @@ const collectItems = (
       return;
     }
 
-    const request = item?.request as PostmanRequestLike | undefined;
+    const request = normalizePostmanRequest(item?.request);
 
     if (!request) {
       warnings.push(`Skipped "${itemName}" because it does not contain a request payload.`);
       return;
     }
 
-    const step = buildPostmanStep(itemName, request);
+    const testCaseTitle = buildSmartRequestTitle(request, itemName);
+    const step = buildPostmanStep(testCaseTitle, request);
     const parameterValues = collectRequestVariables(request).reduce<Record<string, string>>((next, name) => {
       next[name] = localVariables[name] || "";
       return next;
     }, {});
 
     rows.push({
-      title: itemName,
+      title: testCaseTitle,
       description: collapseWhitespace(
         [
           "Imported from a Postman collection.",
           `Collection: ${collectionName}.`,
           folderPath.length ? `Folder: ${folderPath.join(" / ")}.` : "",
-          `Method: ${String(step.api_request?.method || "GET").toUpperCase()}.`
+          `Method: ${String(step.api_request?.method || "GET").toUpperCase()}.`,
+          itemName !== testCaseTitle ? `Postman item: ${itemName}.` : ""
         ].filter(Boolean).join(" ")
       ),
       automated: "yes",

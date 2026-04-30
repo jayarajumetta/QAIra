@@ -15,7 +15,7 @@ import { useCurrentProject } from "../hooks/useCurrentProject";
 import { useDomainMetadata } from "../hooks/useDomainMetadata";
 import { useDialogFocus } from "../hooks/useDialogFocus";
 import { api } from "../lib/api";
-import { parseSpreadsheetFile, toKeyValueRows } from "../lib/testDataImport";
+import { parseTestDataFile, toKeyValueRows } from "../lib/testDataImport";
 import { TEST_ENVIRONMENT_SECTION_ITEMS } from "../lib/workspaceSections";
 import type { KeyValueEntry, TestConfiguration, TestDataSet, TestDataSetMode, TestDataSetRow, TestEnvironment } from "../types";
 
@@ -304,7 +304,7 @@ export function TestEnvironmentPage({ view }: { view: TestEnvironmentPageView })
       ? "Keep run targets, URLs, and reusable environment variables organized by project and app type."
       : view === "configurations"
         ? "Maintain reusable browser, device, and platform combinations so runs stay consistent."
-        : "Store spreadsheet-style data and key/value sets that can be attached to runs on demand.";
+        : "Store JSON, spreadsheet-style data, and key/value sets that can be attached to runs on demand.";
   const currentViewCount = view === "environments" ? environments.length : view === "configurations" ? configurations.length : dataSets.length;
 
   const showSuccess = (text: string) => {
@@ -1068,18 +1068,20 @@ function DataSetForm({
   const [importFeedback, setImportFeedback] = useState("");
   const [importFeedbackTone, setImportFeedbackTone] = useState<"success" | "error">("success");
 
-  const handleSpreadsheetImport = async (file?: File | null) => {
+  const handleDataFileImport = async (file?: File | null) => {
     if (!file) {
       return;
     }
 
     try {
-      const parsed = await parseSpreadsheetFile(file);
+      const parsed = await parseTestDataFile(file);
+      const nextName = draft.name.trim() ? draft.name : file.name.replace(/\.[^.]+$/, "").trim();
 
       if (draft.mode === "key_value") {
         const importedRows = toKeyValueRows(parsed.columns, parsed.rows);
         onChange({
           ...draft,
+          name: nextName,
           columns: ["key", "value"],
           rows: importedRows
         });
@@ -1094,6 +1096,7 @@ function DataSetForm({
 
       onChange({
         ...draft,
+        name: nextName,
         columns: parsed.columns,
         rows: parsed.rows
       });
@@ -1105,7 +1108,7 @@ function DataSetForm({
       );
     } catch (error) {
       setImportFeedbackTone("error");
-      setImportFeedback(error instanceof Error ? error.message : "Unable to import this spreadsheet.");
+      setImportFeedback(error instanceof Error ? error.message : "Unable to import this file.");
     }
   };
 
@@ -1129,13 +1132,13 @@ function DataSetForm({
               ))}
             </select>
           </FormField>
-          <FormField label={draft.mode === "table" ? "Spreadsheet import" : "Key/value import"}>
+          <FormField label={draft.mode === "table" ? "Data file import" : "Key/value import"}>
             <input
-              accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+              accept=".xlsx,.xls,.csv,.json,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
               onChange={(event) => {
                 const nextFile = event.target.files?.[0];
                 event.target.value = "";
-                void handleSpreadsheetImport(nextFile);
+                void handleDataFileImport(nextFile);
               }}
               type="file"
             />
@@ -1156,7 +1159,7 @@ function DataSetForm({
           </strong>
           <span>
             {draft.mode === "table"
-              ? "Import a CSV/spreadsheet or add columns first, then add rows only when you need them."
+              ? "Import a JSON, CSV, or spreadsheet file, or add columns first and then add rows."
               : "Switch back to spreadsheet mode anytime. Existing key/value entries will stay convertible."}
           </span>
         </div>
@@ -1348,7 +1351,7 @@ function DataTableEditor({
         </div>
       </div>
 
-      {!columns.length ? <div className="empty-state compact resource-table-empty">No columns yet. Import a spreadsheet or add a column to start building this table.</div> : null}
+      {!columns.length ? <div className="empty-state compact resource-table-empty">No columns yet. Import a JSON, CSV, or spreadsheet file, or add a column to start building this table.</div> : null}
 
       {columns.length ? (
         <div className="table-wrap">
@@ -1452,7 +1455,7 @@ function DataTableEditor({
               {!rows.length ? (
                 <tr>
                   <td colSpan={columns.length + 1}>
-                    <div className="empty-state compact resource-table-empty">No rows yet. Add one row or import a spreadsheet with data.</div>
+                    <div className="empty-state compact resource-table-empty">No rows yet. Add one row or import a file with data.</div>
                   </td>
                 </tr>
               ) : null}

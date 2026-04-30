@@ -452,6 +452,7 @@ const normalizeConfig = (type, input, username) => {
         raw.queue_poll_interval_minutes,
         integrationTypeConfig.queue_poll_interval_minutes ?? 5
       ),
+      qaira_api_base_url: normalizeText(raw.qaira_api_base_url),
       promote_healed_patches: normalizeText(raw.promote_healed_patches) || String(integrationTypeConfig.promote_healed_patches || "review"),
       live_view_url: normalizeText(raw.live_view_url)
     };

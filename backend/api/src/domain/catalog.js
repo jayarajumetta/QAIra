@@ -84,6 +84,7 @@ const INTEGRATION_TYPE_OPTIONS = freezeOptions([
       artifact_retention_days: 14,
       run_timeout_seconds: 1800,
       queue_poll_interval_minutes: 5,
+      qaira_api_base_url: "",
       promote_healed_patches: "review"
     }
   },

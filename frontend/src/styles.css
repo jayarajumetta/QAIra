@@ -3502,6 +3502,12 @@ textarea {
   border-collapse: collapse;
 }
 
+.data-table.is-resizable {
+  table-layout: fixed;
+  width: max-content;
+  min-width: 100%;
+}
+
 .data-table th,
 .data-table td {
   text-align: left;
@@ -3514,6 +3520,74 @@ textarea {
   color: var(--muted);
   font-weight: 600;
   font-size: 0.84rem;
+}
+
+.data-table th.is-draggable-column {
+  cursor: grab;
+}
+
+.data-table th.is-header-dragging {
+  opacity: 0.62;
+}
+
+.data-table-column-header {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  width: 100%;
+}
+
+.data-table-column-drag-area {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.data-table-column-drag-area[draggable="true"] {
+  cursor: grab;
+}
+
+.data-table-column-drag-area[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.data-table-column-resize-handle {
+  position: absolute;
+  top: -0.55rem;
+  right: -0.9rem;
+  bottom: -0.55rem;
+  width: 0.7rem;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 3;
+}
+
+.data-table-column-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0.55rem;
+  bottom: 0.55rem;
+  left: 50%;
+  width: 2px;
+  border-radius: 999px;
+  background: rgba(33, 104, 243, 0.16);
+  transform: translateX(-50%);
+  opacity: 0;
+  transition: opacity 140ms ease, background 140ms ease;
+}
+
+.data-table-column-resize-handle:hover::after,
+.data-table-column-resize-handle:focus-visible::after {
+  background: var(--primary);
+  opacity: 1;
+}
+
+body.is-resizing-data-table-column,
+body.is-resizing-data-table-column * {
+  cursor: col-resize !important;
+  user-select: none;
 }
 
 .catalog-data-table thead th {
@@ -5464,6 +5538,15 @@ body {
 :root[data-theme="dark"] .data-table td,
 :root[data-theme="dark"] .data-table th {
   border-bottom-color: rgba(180, 199, 231, 0.12);
+}
+
+:root[data-theme="dark"] .data-table-column-resize-handle::after {
+  background: rgba(108, 167, 255, 0.24);
+}
+
+:root[data-theme="dark"] .data-table-column-resize-handle:hover::after,
+:root[data-theme="dark"] .data-table-column-resize-handle:focus-visible::after {
+  background: #8bbcff;
 }
 
 :root[data-theme="dark"] .data-table-config-option {

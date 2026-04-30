@@ -1,4 +1,7 @@
 const QAIRA_API_BASE_URL = String(process.env.QAIRA_API_BASE_URL || "").trim().replace(/\/+$/, "");
+const QAIRA_API_PATH_PREFIX = String(process.env.QAIRA_API_PATH_PREFIX || process.env.QAIRA_API_PREFIX || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
 const QAIRA_TESTENGINE_SECRET = String(process.env.QAIRA_TESTENGINE_SECRET
     || process.env.TESTENGINE_SHARED_SECRET
     || "qaira-testengine-dev-secret").trim();
@@ -13,14 +16,36 @@ function ensureConfigured() {
         throw new Error("QAIRA_TESTENGINE_SECRET is required for queue-pull mode");
     }
 }
-async function request(path, init) {
-    ensureConfigured();
+const appendPath = (base, path) => `${base.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
+const getApiBaseCandidates = () => {
+    const candidates = [QAIRA_API_BASE_URL];
+    if (QAIRA_API_PATH_PREFIX) {
+        candidates.unshift(appendPath(QAIRA_API_BASE_URL, QAIRA_API_PATH_PREFIX));
+    }
+    else {
+        try {
+            const parsedBaseUrl = new URL(QAIRA_API_BASE_URL);
+            const normalizedPath = parsedBaseUrl.pathname.replace(/\/+$/, "");
+            if (!normalizedPath.endsWith("/api")) {
+                parsedBaseUrl.pathname = `${normalizedPath || ""}/api`;
+                parsedBaseUrl.search = "";
+                parsedBaseUrl.hash = "";
+                candidates.push(parsedBaseUrl.toString().replace(/\/+$/, ""));
+            }
+        }
+        catch {
+            candidates.push(appendPath(QAIRA_API_BASE_URL, "api"));
+        }
+    }
+    return Array.from(new Set(candidates.map((candidate) => candidate.replace(/\/+$/, ""))));
+};
+async function requestOnce(baseUrl, path, init) {
     const headers = new Headers(init?.headers);
     headers.set("authorization", `Bearer ${QAIRA_TESTENGINE_SECRET}`);
     if (init?.body && !headers.has("content-type")) {
         headers.set("content-type", "application/json");
     }
-    const response = await fetch(`${QAIRA_API_BASE_URL}${path}`, {
+    const response = await fetch(appendPath(baseUrl, path), {
         ...init,
         headers
     });
@@ -36,6 +61,23 @@ async function request(path, init) {
         throw new Error(message || `QAira internal API returned ${response.status}`);
     }
     return payload;
+}
+async function request(path, init) {
+    ensureConfigured();
+    const candidates = getApiBaseCandidates();
+    let lastError = null;
+    for (const [index, baseUrl] of candidates.entries()) {
+        try {
+            return await requestOnce(baseUrl, path, init);
+        }
+        catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error || "QAira internal API request failed"));
+            if (index === candidates.length - 1 || !/QAira internal API returned (404|405)\b/.test(lastError.message)) {
+                throw lastError;
+            }
+        }
+    }
+    throw lastError || new Error("QAira internal API request failed");
 }
 export function isQairaQueueConfigured() {
     return Boolean(QAIRA_API_BASE_URL && QAIRA_TESTENGINE_SECRET);
