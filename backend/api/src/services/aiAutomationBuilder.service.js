@@ -1300,6 +1300,20 @@ const readEngineJson = async (url, init = {}) => {
   return payload;
 };
 
+const buildEngineUrl = (baseUrl, value) => {
+  const normalized = normalizeText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    return new URL(normalized).toString();
+  } catch {
+    return new URL(normalized, `${String(baseUrl || "").replace(/\/+$/, "")}/`).toString();
+  }
+};
+
 exports.startRecorderSession = async ({
   test_case_id,
   start_url,
@@ -1371,10 +1385,14 @@ exports.startRecorderSession = async ({
 
   await appendEvent(transaction.id, {
     phase: "recorder.started",
-    message: "Started a headed local browser recorder session through the active Test Engine.",
+    message: session.live_view_path || session.live_view_url
+      ? "Started a browser-backed recorder session with a QAira live view."
+      : "Started a local browser recorder session through the active Test Engine.",
     details: {
       recorder_session_id: session.id,
       engine_base_url: baseUrl,
+      display_mode: session.display_mode || null,
+      live_view_available: Boolean(session.live_view_path || session.live_view_url),
       start_url: resolvedStartUrl,
       test_environment_id: buildContext.environment?.id || null,
       test_configuration_id: buildContext.configuration?.id || null,
@@ -1386,6 +1404,7 @@ exports.startRecorderSession = async ({
     ...session,
     transaction_id: transaction.id,
     engine_base_url: baseUrl,
+    live_view_url: buildEngineUrl(baseUrl, session.live_view_url || session.live_view_path),
     status_url: `${baseUrl}/api/v1/recorder/sessions/${session.id}`
   };
 };

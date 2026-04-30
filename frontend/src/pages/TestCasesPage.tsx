@@ -680,6 +680,10 @@ function resolveScopedIntegration(integrations: Integration[], type: Integration
   return scoped || active.find((integration) => !String(integration.config?.project_id || "").trim()) || active[0] || null;
 }
 
+function formatRecorderDisplayMode(value?: string | null) {
+  return value === "browser-live-view" ? "Live view" : value === "local-browser-with-live-view" ? "Local browser + live view" : "Recorder";
+}
+
 export function TestCasesPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -1364,6 +1368,7 @@ export function TestCasesPage() {
   const selectedAppType = appTypes.find((appType) => appType.id === appTypeId) || null;
   const testEngineIntegration = resolveScopedIntegration(testEngineIntegrations, "testengine", projectId);
   const automationLearningCache = automationLearningCacheQuery.data || [];
+  const recorderLiveUrl = recorderSession?.live_view_url || "";
   const executionsById = useMemo(
     () =>
       executions.reduce<Record<string, Execution>>((map, execution) => {
@@ -2560,7 +2565,7 @@ export function TestCasesPage() {
       const response = await startRecorder.mutateAsync({ testCaseId: selectedTestCase.id });
       setRecorderSession(response);
       setRecorderSessionCaseId(selectedTestCase.id);
-      showSuccess("Recorder started in the local Test Engine browser session.");
+      showSuccess(response.live_view_url ? "Recorder live view is ready in QAira." : "Recorder started in the Test Engine browser session.");
     } catch (error) {
       showError(error, "Unable to start recorder");
     }
@@ -6045,11 +6050,24 @@ export function TestCasesPage() {
                           {recorderSession ? (
                             <div className="stack-item">
                               <div>
-                                <strong>{recorderSession.status_url || recorderSession.engine_base_url || "Local Test Engine"}</strong>
+                                <strong>{formatRecorderDisplayMode(recorderSession.display_mode)}</strong>
                                 <span>{recorderSession.action_count || 0} actions · {recorderSession.network_count || 0} API candidates</span>
                               </div>
+                              {recorderLiveUrl ? (
+                                <a className="ghost-button compact" href={recorderLiveUrl} rel="noreferrer" target="_blank">
+                                  <OpenIcon size={16} />
+                                  <span>Open live view</span>
+                                </a>
+                              ) : null}
                               <StatusBadge value={recorderSession.status} />
                             </div>
+                          ) : null}
+                          {recorderLiveUrl ? (
+                            <iframe
+                              className="recorder-live-frame"
+                              src={recorderLiveUrl}
+                              title="QAira recorder live view"
+                            />
                           ) : null}
                         </div>
 

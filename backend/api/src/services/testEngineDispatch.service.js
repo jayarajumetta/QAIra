@@ -159,6 +159,41 @@ const normalizeEngineHostUrl = (value) => {
 
 const nowIso = () => new Date().toISOString();
 
+const isMissingWorkspaceTransactionError = (error) =>
+  error instanceof Error && /workspace transaction not found/i.test(error.message || "");
+
+const appendQueueTransactionEvent = async (transactionId, event) => {
+  if (!transactionId) {
+    return null;
+  }
+
+  try {
+    return await workspaceTransactionService.appendTransactionEvent(transactionId, event);
+  } catch (error) {
+    if (isMissingWorkspaceTransactionError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+};
+
+const updateQueueTransaction = async (transactionId, patch) => {
+  if (!transactionId) {
+    return null;
+  }
+
+  try {
+    return await workspaceTransactionService.updateTransaction(transactionId, patch);
+  } catch (error) {
+    if (isMissingWorkspaceTransactionError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+};
+
 const normalizeInteger = (value, fallback = null) => {
   if (typeof value === "number" && Number.isFinite(value)) {
     return Math.trunc(value);
@@ -1067,7 +1102,7 @@ exports.leaseNextQueuedJob = db.transaction(async ({ worker_id, engine_host, lea
   const leased = await getQueuedJob(row.id);
 
   if (leased.transaction_id) {
-    await workspaceTransactionService.appendTransactionEvent(leased.transaction_id, {
+    await appendQueueTransactionEvent(leased.transaction_id, {
       level: "info",
       phase: "queue.leased",
       message: `${leased.test_case_title} was leased by the Test Engine worker.`,
@@ -1107,7 +1142,7 @@ exports.startQueuedJob = async ({ job_id, worker_id } = {}) => {
   });
 
   if (job.transaction_id) {
-    await workspaceTransactionService.appendTransactionEvent(job.transaction_id, {
+    await appendQueueTransactionEvent(job.transaction_id, {
       level: "info",
       phase: "run.started",
       message: `${job.test_case_title} started in the Test Engine.`,
@@ -1230,7 +1265,7 @@ exports.executeQueuedApiStep = async ({ job_id, step_id } = {}) => {
   });
 
   if (job.transaction_id) {
-    await workspaceTransactionService.appendTransactionEvent(job.transaction_id, {
+    await appendQueueTransactionEvent(job.transaction_id, {
       level: stepResult.status === "failed" ? "error" : "info",
       phase: stepResult.status === "failed" ? "step.failed" : "step.completed",
       message: stepResult.note,
@@ -1404,7 +1439,7 @@ exports.reportQueuedStep = async ({
   });
 
   if (job.transaction_id) {
-    await workspaceTransactionService.appendTransactionEvent(job.transaction_id, {
+    await appendQueueTransactionEvent(job.transaction_id, {
       level: normalizedStatus === "failed" ? "error" : normalizedStatus === "blocked" ? "warning" : "info",
       phase: normalizedStatus === "failed" ? "step.failed" : normalizedStatus === "blocked" ? "step.blocked" : "step.completed",
       message: normalizeText(note) || `${job.test_case_title}: step ${step.order} ${normalizedStatus}.`,
@@ -1537,7 +1572,7 @@ exports.completeQueuedJob = async ({
   });
 
   if (job.transaction_id) {
-    await workspaceTransactionService.appendTransactionEvent(job.transaction_id, {
+    await appendQueueTransactionEvent(job.transaction_id, {
       level: finalStatus === "passed" ? "success" : finalStatus === "failed" ? "error" : "warning",
       phase: finalStatus === "passed" ? "run.completed" : finalStatus === "failed" ? "run.failed" : "run.blocked",
       message: normalizedSummary,
@@ -1565,7 +1600,7 @@ exports.completeQueuedJob = async ({
       }
     });
 
-    await workspaceTransactionService.updateTransaction(job.transaction_id, {
+    await updateQueueTransaction(job.transaction_id, {
       status: finalStatus === "passed" ? "completed" : "failed",
       completed_at: completedAt,
       description: normalizedSummary,

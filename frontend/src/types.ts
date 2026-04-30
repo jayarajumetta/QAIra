@@ -410,11 +410,23 @@ export type RecorderSessionResponse = {
   started_at?: string;
   stopped_at?: string | null;
   start_url?: string | null;
+  display_mode?: "browser-live-view" | "local-browser-with-live-view" | string | null;
   action_count?: number;
   network_count?: number;
   transaction_id?: string;
   engine_base_url?: string;
   status_url?: string;
+  live_view_path?: string | null;
+  live_view_url?: string | null;
+  capture?: {
+    actions?: boolean;
+    network?: boolean;
+    duplicate_typing_suppression?: boolean;
+    injection?: string;
+    extension_ready?: boolean;
+    remote_control?: boolean;
+    screenshot_stream?: boolean;
+  };
 };
 
 export type TestStepType = "web" | "api" | "android" | "ios";

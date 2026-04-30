@@ -138,6 +138,10 @@ function resolveScopedIntegration(integrations: Integration[], type: Integration
   return scoped || active.find((integration) => !String(integration.config?.project_id || "").trim()) || active[0] || null;
 }
 
+function formatRecorderDisplayMode(value?: string | null) {
+  return value === "browser-live-view" ? "Live view" : value === "local-browser-with-live-view" ? "Local browser + live view" : "Recorder";
+}
+
 function isManualCase(testCase: TestCase) {
   return testCase.automated !== "yes";
 }
@@ -230,6 +234,7 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
   const failedCount = batchTransactions.filter((transaction) => transaction.status === "failed").length;
   const activeCase = testCases.find((testCase) => testCase.id === selectedCaseId) || manualCases[0] || null;
   const learningCache = learningCacheQuery.data || [];
+  const recorderLiveUrl = recorderSession?.live_view_url || "";
 
   const invalidateAutomationViews = () => {
     void queryClient.invalidateQueries({ queryKey: ["test-cases"] });
@@ -291,7 +296,7 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
     },
     onSuccess: (response) => {
       setRecorderSession(response);
-      setBuilderMessage("Recorder started in the local Test Engine browser session.");
+      setBuilderMessage(response.live_view_url ? "Recorder live view is ready in QAira." : "Recorder started in the Test Engine browser session.");
       invalidateAutomationViews();
     },
     onError: (error) => setBuilderMessage(error instanceof Error ? error.message : "Unable to start recorder.")
@@ -506,7 +511,7 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
                 <div className="stack-item">
                   <div>
                     <strong>Test case recorder</strong>
-                    <span>Starts a headed Playwright Chromium session through the active local Test Engine, captures user actions once, suppresses duplicate typing, and records fetch/XHR traffic for API test suggestions.</span>
+                    <span>Starts a browser-backed Test Engine session, captures user actions once, suppresses duplicate typing, and records fetch/XHR traffic for API test suggestions.</span>
                   </div>
                   <div className="testops-recorder-actions">
                     <button
@@ -533,10 +538,27 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
                   <div className="stack-item">
                     <div>
                       <strong>Recorder session {recorderSession.id.slice(0, 8)}</strong>
-                      <span>{recorderSession.status_url || recorderSession.engine_base_url || "Local engine session active"}</span>
+                      <span>
+                        {formatRecorderDisplayMode(recorderSession.display_mode)}
+                        {" · "}
+                        {recorderSession.action_count || 0} actions · {recorderSession.network_count || 0} API candidates
+                      </span>
                     </div>
+                    {recorderLiveUrl ? (
+                      <a className="ghost-button compact" href={recorderLiveUrl} rel="noreferrer" target="_blank">
+                        <OpenIcon size={16} />
+                        <span>Open live view</span>
+                      </a>
+                    ) : null}
                     <StatusBadge value={recorderSession.status} />
                   </div>
+                ) : null}
+                {recorderLiveUrl ? (
+                  <iframe
+                    className="recorder-live-frame"
+                    src={recorderLiveUrl}
+                    title="QAira recorder live view"
+                  />
                 ) : null}
               </div>
 

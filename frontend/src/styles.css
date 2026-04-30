@@ -17313,6 +17313,18 @@ html {
   justify-content: flex-end;
 }
 
+.recorder-live-frame {
+  width: 100%;
+  min-height: 560px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.automation-recorder-stack .recorder-live-frame {
+  min-height: 480px;
+}
+
 .testops-learning-list .stack-item {
   align-items: flex-start;
 }
