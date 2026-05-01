@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { MoreIcon } from "./AppIcons";
 
 export type CatalogActionMenuItem = {
@@ -20,8 +21,57 @@ export function CatalogActionMenu({
   className?: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setMenuStyle(null);
+      return;
+    }
+
+    const updateMenuPosition = () => {
+      const trigger = triggerRef.current;
+
+      if (!trigger) {
+        return;
+      }
+
+      const rect = trigger.getBoundingClientRect();
+      const menuWidth = Math.max(menuRef.current?.offsetWidth || 256, 256);
+      const menuHeight = menuRef.current?.offsetHeight || 260;
+      const viewportPadding = 8;
+      const left = Math.min(
+        Math.max(viewportPadding, rect.right - menuWidth),
+        window.innerWidth - menuWidth - viewportPadding
+      );
+      const bottomTop = rect.bottom + viewportPadding;
+      const top = bottomTop + menuHeight > window.innerHeight - viewportPadding
+        ? Math.max(viewportPadding, rect.top - menuHeight - viewportPadding)
+        : bottomTop;
+
+      setMenuStyle({
+        left,
+        top,
+        minWidth: "16rem",
+        maxWidth: "min(calc(100vw - 1rem), 22rem)",
+        maxHeight: `calc(100vh - ${viewportPadding * 2}px)`,
+        opacity: 1
+      });
+    };
+
+    updateMenuPosition();
+    const frameId = window.requestAnimationFrame(updateMenuPosition);
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -50,6 +100,37 @@ export function CatalogActionMenu({
     };
   }, [isOpen]);
 
+  const menu = isOpen ? (
+    <div
+      className="step-card-menu-panel catalog-action-menu-panel"
+      ref={menuRef}
+      role="menu"
+      style={menuStyle || { opacity: 0, pointerEvents: "none" }}
+    >
+      {actions.map((action) => (
+        <button
+          className={["step-card-menu-item", action.tone ? `is-${action.tone}` : ""].filter(Boolean).join(" ")}
+          disabled={action.disabled}
+          key={action.label}
+          onClick={(event) => {
+            event.stopPropagation();
+            action.onClick();
+            setIsOpen(false);
+          }}
+          role="menuitem"
+          title={action.label}
+          type="button"
+        >
+          {action.icon}
+          <span className="step-card-menu-item-content">
+            <span className="step-card-menu-item-label">{action.label}</span>
+            {action.description ? <span className="step-card-menu-item-description">{action.description}</span> : null}
+          </span>
+        </button>
+      ))}
+    </div>
+  ) : null;
+
   return (
     <div className={["step-card-menu", "step-card-menu--flat", "catalog-action-menu", className].filter(Boolean).join(" ")}>
       <button
@@ -67,31 +148,7 @@ export function CatalogActionMenu({
       >
         <MoreIcon />
       </button>
-      {isOpen ? (
-        <div className="step-card-menu-panel catalog-action-menu-panel" ref={menuRef} role="menu">
-          {actions.map((action) => (
-            <button
-              className={["step-card-menu-item", action.tone ? `is-${action.tone}` : ""].filter(Boolean).join(" ")}
-              disabled={action.disabled}
-              key={action.label}
-              onClick={(event) => {
-                event.stopPropagation();
-                action.onClick();
-                setIsOpen(false);
-              }}
-              role="menuitem"
-              title={action.label}
-              type="button"
-            >
-              {action.icon}
-              <span className="step-card-menu-item-content">
-                <span className="step-card-menu-item-label">{action.label}</span>
-                {action.description ? <span className="step-card-menu-item-description">{action.description}</span> : null}
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : null}
+      {menu && typeof document !== "undefined" ? createPortal(menu, document.body) : null}
     </div>
   );
 }

@@ -37,6 +37,13 @@ const getResultsForExecution = db.prepare(`
   ORDER BY created_at DESC, id DESC
 `);
 
+const getResultLogsForExecution = db.prepare(`
+  SELECT test_case_id, logs, created_at, id
+  FROM execution_results
+  WHERE execution_id = ?
+  ORDER BY created_at ASC, id ASC
+`);
+
 const insertExecutionSuite = db.prepare(`
   INSERT INTO execution_suites (execution_id, suite_id, suite_name)
   VALUES (?, ?, ?)
@@ -303,6 +310,45 @@ function buildExecutionRuntimeParameterValues(execution, caseSnapshot, capturedV
   });
 
   return values;
+}
+
+function collectSuiteScopedCapturedValues(execution, caseSnapshot, currentTestCaseId) {
+  if (!execution?.id || !caseSnapshot?.suite_id) {
+    return {};
+  }
+
+  const latestLogsByCaseId = new Map();
+
+  getResultLogsForExecution.all(execution.id).forEach((row) => {
+    latestLogsByCaseId.set(row.test_case_id, row.logs);
+  });
+
+  return (execution.case_snapshots || [])
+    .filter((snapshot) =>
+      snapshot.suite_id === caseSnapshot.suite_id
+      && snapshot.test_case_id !== currentTestCaseId
+      && Number(snapshot.sort_order || 0) <= Number(caseSnapshot.sort_order || 0)
+    )
+    .sort((left, right) => Number(left.sort_order || 0) - Number(right.sort_order || 0))
+    .reduce((accumulator, snapshot) => {
+      const logs = latestLogsByCaseId.get(snapshot.test_case_id);
+
+      if (!logs) {
+        return accumulator;
+      }
+
+      const captures = executionStepRuntimeService.extractCapturedValuesFromLogs(logs);
+
+      Object.entries(captures || {}).forEach(([key, value]) => {
+        const normalizedKey = String(key || "").trim().replace(/^@+/, "").toLowerCase();
+
+        if (normalizedKey.startsWith("s.")) {
+          accumulator[normalizedKey] = value === undefined || value === null ? "" : String(value);
+        }
+      });
+
+      return accumulator;
+    }, {});
 }
 
 function resolveExecutionCaseDurationMs(execution, existingResult) {
@@ -1280,7 +1326,11 @@ exports.runExecutionApiStep = async (executionId, testCaseId, stepId, { executed
     test_case_id: testCaseId
   });
   const existingLogs = executionStepRuntimeService.parseStructuredLogs(existingResult?.logs || null);
-  const capturedValues = executionStepRuntimeService.extractCapturedValuesFromLogs(existingLogs);
+  const currentCaseCapturedValues = executionStepRuntimeService.extractCapturedValuesFromLogs(existingLogs);
+  const capturedValues = {
+    ...collectSuiteScopedCapturedValues(execution, caseSnapshot, testCaseId),
+    ...currentCaseCapturedValues
+  };
 
   if (resolvedStepType === "web") {
     const testEngineIntegration = await integrationService.getActiveIntegrationByTypeForProject("testengine", execution.project_id);

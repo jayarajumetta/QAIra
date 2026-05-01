@@ -6354,6 +6354,7 @@ export function TestCasesPage() {
           onSave={(input) => void handleSaveStepAutomation(editingAutomationStep.id, input)}
           parameterValues={mergedScopedParameterValues}
           step={{
+            id: editingAutomationStep.id,
             step_order: editingAutomationStep.step_order,
             action: stepDrafts[editingAutomationStep.id]?.action ?? editingAutomationStep.action,
             expected_result: stepDrafts[editingAutomationStep.id]?.expected_result ?? editingAutomationStep.expected_result,

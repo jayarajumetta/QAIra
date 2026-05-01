@@ -17,6 +17,7 @@ import {
 import type { ApiRequestPreview, StepApiRequest, StepApiValidation, TestStepType } from "../types";
 
 type StepAutomationInput = {
+  id?: string;
   step_order?: number;
   action?: string | null;
   expected_result?: string | null;
@@ -93,34 +94,271 @@ function buildWebKeywordSnippet(option: WebKeywordOption, locator: string, data:
   }
 }
 
-function mergeSuggestedApiAutomation(
-  request: StepApiRequest,
-  suggestions?: ApiRequestPreview["ai_suggestions"]
-): StepApiRequest {
-  if (!suggestions) {
-    return request;
+const CURL_VALUE_FLAGS = new Set([
+  "-X",
+  "--request",
+  "-H",
+  "--header",
+  "-d",
+  "--data",
+  "--data-raw",
+  "--data-binary",
+  "--data-ascii",
+  "--data-urlencode",
+  "--url",
+  "-A",
+  "--user-agent"
+]);
+
+const CURL_BOOLEAN_FLAGS = new Set([
+  "-G",
+  "-I",
+  "--head",
+  "-k",
+  "--insecure",
+  "-L",
+  "--location",
+  "-s",
+  "--silent",
+  "-i",
+  "--include",
+  "--compressed",
+  "--http1.1",
+  "--http2"
+]);
+const CURL_API_METHODS = new Set<NonNullable<StepApiRequest["method"]>>(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+
+function tokenizeCurlCommand(source: string) {
+  const normalized = String(source || "").replace(/\\\r?\n/g, " ");
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "\"" | "'" | null = null;
+  let escaped = false;
+
+  for (const char of normalized) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\" && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+
+    if ((char === "\"" || char === "'") && (!quote || quote === char)) {
+      quote = quote ? null : char;
+      continue;
+    }
+
+    if (!quote && /\s/.test(char)) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += char;
   }
 
-  const existingValidations = request.validations || [];
-  const suggestedValidations = (suggestions.assertions || []).filter((suggestion) =>
-    !existingValidations.some((validation) =>
-      validation.kind === suggestion.kind
-      && (validation.target || "") === (suggestion.target || "")
-      && (validation.expected || "") === (suggestion.expected || "")
-    )
-  );
-  const existingCaptures = request.captures || [];
-  const suggestedCaptures = (suggestions.captures || []).filter((suggestion) =>
-    !existingCaptures.some((capture) =>
-      (capture.path || "") === (suggestion.path || "")
-      || (capture.parameter || "") === (suggestion.parameter || "")
-    )
-  );
+  if (current) {
+    tokens.push(current);
+  }
+
+  return tokens;
+}
+
+function readCurlFlagValue(tokens: string[], index: number) {
+  const token = tokens[index] || "";
+  const equalsIndex = token.indexOf("=");
+
+  if (equalsIndex > 0 && token.startsWith("--")) {
+    return {
+      flag: token.slice(0, equalsIndex),
+      value: token.slice(equalsIndex + 1),
+      nextIndex: index
+    };
+  }
+
+  if (/^-X[A-Za-z]+$/.test(token)) {
+    return {
+      flag: "-X",
+      value: token.slice(2),
+      nextIndex: index
+    };
+  }
 
   return {
-    ...request,
-    validations: [...existingValidations, ...suggestedValidations],
-    captures: [...existingCaptures, ...suggestedCaptures]
+    flag: token,
+    value: tokens[index + 1] || "",
+    nextIndex: index + 1
+  };
+}
+
+function parseHeaderLine(value: string) {
+  const separatorIndex = value.indexOf(":");
+
+  if (separatorIndex <= 0) {
+    return null;
+  }
+
+  return {
+    key: value.slice(0, separatorIndex).trim(),
+    value: value.slice(separatorIndex + 1).trim()
+  };
+}
+
+function inferBodyMode(body: string, headers: Array<{ key: string; value: string }>): StepApiRequest["body_mode"] {
+  const contentType = headers.find((header) => header.key.toLowerCase() === "content-type")?.value.toLowerCase() || "";
+  const trimmedBody = body.trim();
+
+  if (!trimmedBody) {
+    return "none";
+  }
+
+  if (contentType.includes("json") || /^[\[{]/.test(trimmedBody)) {
+    return "json";
+  }
+
+  if (contentType.includes("xml") || /^<[\s\S]+>$/.test(trimmedBody)) {
+    return "xml";
+  }
+
+  if (contentType.includes("x-www-form-urlencoded") || /^[^=&\s]+=[\s\S]*(&[^=&\s]+=[\s\S]*)*$/.test(trimmedBody)) {
+    return "form";
+  }
+
+  return "text";
+}
+
+function parseCurlRequest(source: string): { request: StepApiRequest; warnings: string[] } {
+  const tokens = tokenizeCurlCommand(source);
+  const warnings: string[] = [];
+
+  if (!tokens.length) {
+    throw new Error("Paste a cURL command before building the request.");
+  }
+
+  let index = tokens[0] === "curl" ? 1 : 0;
+  let method = "";
+  let url = "";
+  const headers: Array<{ key: string; value: string }> = [];
+  const bodyParts: string[] = [];
+
+  while (index < tokens.length) {
+    const token = tokens[index];
+
+    if (token === "--") {
+      index += 1;
+      continue;
+    }
+
+    if (token.startsWith("-")) {
+      const { flag, value, nextIndex } = readCurlFlagValue(tokens, index);
+
+      if (flag === "-X" || flag === "--request") {
+        method = value.toUpperCase();
+        index = nextIndex + 1;
+        continue;
+      }
+
+      if (flag === "-H" || flag === "--header") {
+        const header = parseHeaderLine(value);
+
+        if (header) {
+          headers.push(header);
+        } else {
+          warnings.push(`Ignored header "${value}" because it is missing a colon.`);
+        }
+
+        index = nextIndex + 1;
+        continue;
+      }
+
+      if (flag === "--url") {
+        url = value;
+        index = nextIndex + 1;
+        continue;
+      }
+
+      if (flag === "-d" || flag.startsWith("--data")) {
+        bodyParts.push(value);
+        index = nextIndex + 1;
+        continue;
+      }
+
+      if (flag === "-A" || flag === "--user-agent") {
+        headers.push({ key: "User-Agent", value });
+        index = nextIndex + 1;
+        continue;
+      }
+
+      if (flag === "-I" || flag === "--head") {
+        method = "HEAD";
+        index += 1;
+        continue;
+      }
+
+      if (CURL_BOOLEAN_FLAGS.has(flag)) {
+        if (flag === "-G") {
+          method = "GET";
+        }
+
+        index += 1;
+        continue;
+      }
+
+      if (CURL_VALUE_FLAGS.has(flag)) {
+        index = nextIndex + 1;
+        continue;
+      }
+
+      warnings.push(`Ignored cURL option "${token}".`);
+      index += 1;
+      continue;
+    }
+
+    if (!url && /^https?:\/\//i.test(token)) {
+      url = token;
+    }
+
+    index += 1;
+  }
+
+  let body = bodyParts.join("&");
+
+  if (!url) {
+    throw new Error("Could not find an http or https URL in the cURL command.");
+  }
+
+  const methodCandidate = (method || (body ? "POST" : "GET")) as NonNullable<StepApiRequest["method"]>;
+  const normalizedMethod = CURL_API_METHODS.has(methodCandidate) ? methodCandidate : "GET";
+
+  if (normalizedMethod === "GET" && body) {
+    try {
+      const parsedUrl = new URL(url);
+      const separator = parsedUrl.search ? "&" : "";
+      parsedUrl.search = `${parsedUrl.search}${separator}${body}`;
+      url = parsedUrl.toString();
+      body = "";
+    } catch {
+      warnings.push("Kept GET cURL data in the body because the URL could not be updated.");
+    }
+  }
+
+  return {
+    request: {
+      method: normalizedMethod,
+      url,
+      headers,
+      body_mode: inferBodyMode(body, headers),
+      body,
+      validations: [{ kind: "status", target: "", expected: "200" }],
+      captures: []
+    },
+    warnings
   };
 }
 
@@ -559,6 +797,104 @@ function resolveApiRequestParameters(request: StepApiRequest | null, values: Rec
   } satisfies StepApiRequest;
 }
 
+export function ApiRequestInfoDetails({
+  request,
+  resolvedRequest = null,
+  title = "Request information"
+}: {
+  request: StepApiRequest | null;
+  resolvedRequest?: StepApiRequest | null;
+  title?: string;
+}) {
+  const displayRequest = request || resolvedRequest;
+  const method = displayRequest?.method || "GET";
+  const url = displayRequest?.url || "";
+  const resolvedUrl = resolvedRequest?.url || "";
+  const headers = displayRequest?.headers || [];
+  const resolvedHeaders = resolvedRequest?.headers || [];
+  const body = displayRequest?.body || "";
+  const resolvedBody = resolvedRequest?.body || "";
+  const hasResolvedDiff = Boolean(
+    resolvedRequest
+    && (
+      resolvedUrl !== url
+      || resolvedBody !== body
+      || JSON.stringify(resolvedHeaders) !== JSON.stringify(headers)
+    )
+  );
+
+  return (
+    <details className="automation-request-details">
+      <summary>
+        <span>{title}</span>
+        <strong>{method}</strong>
+      </summary>
+      <div className="automation-request-details-body">
+        <div className="automation-request-info-grid">
+          <span>Method</span>
+          <strong>{method}</strong>
+          <span>URL</span>
+          <code>{url || "No request URL configured."}</code>
+          {hasResolvedDiff ? (
+            <>
+              <span>Resolved URL</span>
+              <code>{resolvedUrl || "No resolved request URL yet."}</code>
+            </>
+          ) : null}
+          <span>Body mode</span>
+          <strong>{displayRequest?.body_mode || "none"}</strong>
+        </div>
+
+        {headers.length ? (
+          <div className="automation-response-meta automation-request-meta">
+            <strong>Headers</strong>
+            <div className="automation-response-headers">
+              {headers.map((header, index) => (
+                <span className="automation-response-header-chip" key={`${header.key}-${index}`}>
+                  <strong>{header.key || "Header"}</strong>
+                  <span>{header.value || "—"}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {body ? (
+          <div className="automation-response-meta automation-request-meta">
+            <strong>Body</strong>
+            <pre className="automation-code-block automation-code-block--compact automation-code-block--selection">
+              <code>{body}</code>
+            </pre>
+          </div>
+        ) : null}
+
+        {hasResolvedDiff && resolvedHeaders.length ? (
+          <div className="automation-response-meta automation-request-meta">
+            <strong>Resolved headers</strong>
+            <div className="automation-response-headers">
+              {resolvedHeaders.map((header, index) => (
+                <span className="automation-response-header-chip" key={`resolved-${header.key}-${index}`}>
+                  <strong>{header.key || "Header"}</strong>
+                  <span>{header.value || "—"}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {hasResolvedDiff && resolvedBody ? (
+          <div className="automation-response-meta automation-request-meta">
+            <strong>Resolved body</strong>
+            <pre className="automation-code-block automation-code-block--compact automation-code-block--selection">
+              <code>{resolvedBody}</code>
+            </pre>
+          </div>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
 function buildChildJsonPath(parentPath: string, key: string | number) {
   if (typeof key === "number") {
     return `${parentPath}[${key}]`;
@@ -784,6 +1120,37 @@ function readJsonPathValue(source: unknown, path: string) {
       error: error instanceof Error ? error.message : "Invalid JPath"
     };
   }
+}
+
+function buildUniqueCaptureToken(preferredToken: string | null | undefined, usedNames: Set<string>) {
+  const parsed = parseStepParameterName(preferredToken || "", "t") || parseStepParameterName("@t.responseValue", "t");
+
+  if (!parsed) {
+    return "@t.responseValue";
+  }
+
+  const baseRawName = parsed.rawName || "responseValue";
+  let candidateRawName = baseRawName;
+  let suffix = 1;
+
+  while (usedNames.has(`${parsed.scope}.${candidateRawName.toLowerCase()}`)) {
+    candidateRawName = `${baseRawName}${suffix}`;
+    suffix += 1;
+  }
+
+  const nextName = `${parsed.scope}.${candidateRawName.toLowerCase()}`;
+  usedNames.add(nextName);
+
+  return `@${parsed.scope}.${candidateRawName}`;
+}
+
+function readPreviewCaptureValue(preview: ApiRequestPreview, path?: string | null) {
+  const source = preview.response.body_json !== null && preview.response.body_json !== undefined
+    ? preview.response.body_json
+    : preview.response.body_text;
+  const resolved = readJsonPathValue(source, path || "$");
+
+  return resolved.found ? stringifyJsonSelectionValue(resolved.value) : "";
 }
 
 function parseAssertionExpectedValue(value?: string | null) {
@@ -1082,6 +1449,15 @@ export function StepAutomationDialog({
   onClose: () => void;
   onSave: (input: { step_type: TestStepType; automation_code: string; api_request: StepApiRequest | null }) => void;
 }) {
+  const stepRevisionKey = JSON.stringify({
+    id: step.id || "",
+    step_order: step.step_order || 1,
+    action: step.action || "",
+    expected_result: step.expected_result || "",
+    step_type: step.step_type || "",
+    automation_code: step.automation_code || "",
+    api_request: step.api_request || null
+  });
   const [stepType, setStepType] = useState<TestStepType>(normalizeStepType(step.step_type));
   const [automationCode, setAutomationCode] = useState(normalizeAutomationCode(step.automation_code));
   const [apiRequest, setApiRequest] = useState<StepApiRequest>(ensureApiRequest(step.api_request));
@@ -1095,6 +1471,8 @@ export function StepAutomationDialog({
   const [webKeywordLocator, setWebKeywordLocator] = useState("");
   const [webKeywordData, setWebKeywordData] = useState("");
   const [webKeywordMessage, setWebKeywordMessage] = useState("");
+  const [curlImportText, setCurlImportText] = useState("");
+  const [curlImportMessage, setCurlImportMessage] = useState("");
 
   useEffect(() => {
     setStepType(normalizeStepType(step.step_type));
@@ -1109,7 +1487,9 @@ export function StepAutomationDialog({
     setWebKeywordLocator("");
     setWebKeywordData("");
     setWebKeywordMessage("");
-  }, [step]);
+    setCurlImportText("");
+    setCurlImportMessage("");
+  }, [stepRevisionKey]);
 
   useEffect(() => {
     if (stepType !== "api") {
@@ -1209,13 +1589,12 @@ export function StepAutomationDialog({
       const suggestionCaptureCount = result.ai_suggestions?.captures.length || 0;
 
       setApiPreview(result);
-      setApiRequest((current) => mergeSuggestedApiAutomation(current, result.ai_suggestions));
       setSelectedJsonPath(null);
       setApiPreviewMessage(
         [
           `Captured response ${result.response.status} in ${result.response.duration_ms} ms.`,
           suggestionSummary
-            ? `${suggestionSummary} Applied ${suggestionAssertionCount} assertion suggestion${suggestionAssertionCount === 1 ? "" : "s"} and ${suggestionCaptureCount} parser suggestion${suggestionCaptureCount === 1 ? "" : "s"}.`
+            ? `${suggestionSummary} Review ${suggestionAssertionCount} assertion suggestion${suggestionAssertionCount === 1 ? "" : "s"} and ${suggestionCaptureCount} parser suggestion${suggestionCaptureCount === 1 ? "" : "s"} before applying.`
             : ""
         ].filter(Boolean).join(" ")
       );
@@ -1226,6 +1605,107 @@ export function StepAutomationDialog({
       setApiPreviewMessage("");
     } finally {
       setIsRunningApiRequest(false);
+    }
+  };
+
+  const handleApplyApiSuggestions = () => {
+    if (!apiPreview?.ai_suggestions) {
+      setApiPreviewError("Run the request before asking QAira to suggest assertions and parsers.");
+      setApiPreviewMessage("");
+      return;
+    }
+
+    const usedNames = new Set<string>();
+    availableParameters.forEach((parameter) => usedNames.add(parameter.name));
+    (apiRequest.captures || []).forEach((capture) => {
+      const parsed = parseStepParameterName(capture.parameter, "t");
+
+      if (parsed) {
+        usedNames.add(parsed.name);
+      }
+    });
+
+    let addedAssertionCount = 0;
+    let addedCaptureCount = 0;
+    const existingCaptures = apiRequest.captures || [];
+    const nextCaptures = [...existingCaptures];
+    const existingValidations = apiRequest.validations || [];
+    const nextValidations = [...existingValidations];
+
+    (apiPreview.ai_suggestions.assertions || []).forEach((suggestion) => {
+      const alreadyExists = nextValidations.some((validation) =>
+        validation.kind === suggestion.kind
+        && (validation.target || "") === (suggestion.target || "")
+        && (validation.expected || "") === (suggestion.expected || "")
+      );
+
+      if (!alreadyExists) {
+        nextValidations.push(suggestion);
+        addedAssertionCount += 1;
+      }
+    });
+
+    (apiPreview.ai_suggestions.captures || []).forEach((suggestion) => {
+      const path = suggestion.path || "";
+
+      if (!path || nextCaptures.some((capture) => (capture.path || "") === path)) {
+        return;
+      }
+
+      const parameter = buildUniqueCaptureToken(suggestion.parameter, usedNames);
+      const parsed = parseStepParameterName(parameter, "t");
+      const scopeState = parsed ? (getParameterScopeState?.(parsed.scope) || {}) : {};
+
+      if (scopeState.disabled) {
+        return;
+      }
+
+      nextCaptures.push({
+        path,
+        parameter
+      });
+      addedCaptureCount += 1;
+
+      if (parsed && onSaveResponseValue) {
+        onSaveResponseValue(parsed.name, readPreviewCaptureValue(apiPreview, path));
+      }
+    });
+
+    setApiRequest((current) => ({
+      ...current,
+      validations: nextValidations,
+      captures: nextCaptures
+    }));
+    setApiPreviewError("");
+    setApiPreviewMessage(
+      `Added ${addedAssertionCount} assertion suggestion${addedAssertionCount === 1 ? "" : "s"} and ${addedCaptureCount} parser suggestion${addedCaptureCount === 1 ? "" : "s"}.`
+    );
+  };
+
+  const handleBuildFromCurl = () => {
+    try {
+      const parsed = parseCurlRequest(curlImportText);
+
+      setStepType("api");
+      setApiRequest((current) => ({
+        ...current,
+        ...parsed.request,
+        validations: current.validations?.length ? current.validations : parsed.request.validations,
+        captures: current.captures?.length ? current.captures : parsed.request.captures
+      }));
+      setApiPreview(null);
+      setSelectedJsonPath(null);
+      setApiPreviewError("");
+      setCurlImportMessage(
+        [
+          `Built ${parsed.request.method || "GET"} request from cURL.`,
+          parsed.warnings.length ? parsed.warnings.join(" ") : ""
+        ].filter(Boolean).join(" ")
+      );
+    } catch (error) {
+      setCurlImportMessage("");
+      setApiPreviewError(error instanceof Error ? error.message : "Unable to parse the cURL command.");
+      setApiPreviewMessage("");
     }
   };
 
@@ -1328,11 +1808,14 @@ export function StepAutomationDialog({
       };
     });
 
-    if (matchedResponseParameter && onSaveResponseValue) {
+    if (onSaveResponseValue) {
       onSaveResponseValue(
-        matchedResponseParameter.name,
+        parsedResponseParameter.name,
         stringifyJsonSelectionValue(selectedJsonPath.value)
       );
+    }
+
+    if (matchedResponseParameter && onSaveResponseValue) {
       setApiPreviewMessage(`Added response parser for ${parsedResponseParameter.token} and refreshed its preview value from ${selectedJsonPath.path}.`);
     } else {
       setApiPreviewMessage(`Added response parser from ${selectedJsonPath.path} to ${parsedResponseParameter.token}. Save automation to persist this parameter definition.`);
@@ -1455,21 +1938,58 @@ export function StepAutomationDialog({
                   </FormField>
                 ) : null}
 
+                <ApiRequestInfoDetails request={normalizedApiRequest || apiRequest} resolvedRequest={resolvedApiRequest} />
+
+                <details className="automation-request-details automation-curl-builder">
+                  <summary>
+                    <span>Build from cURL</span>
+                    <strong>Import</strong>
+                  </summary>
+                  <div className="automation-request-details-body">
+                    <FormField label="cURL request">
+                      <textarea
+                        placeholder={"curl -X POST https://api.example.com/orders -H 'Content-Type: application/json' --data '{\"name\":\"QAira\"}'"}
+                        rows={5}
+                        value={curlImportText}
+                        onChange={(event) => setCurlImportText(event.target.value)}
+                      />
+                    </FormField>
+                    <div className="action-row">
+                      <button className="ghost-button inline-button" onClick={handleBuildFromCurl} type="button">
+                        <AutomationCodeIcon />
+                        <span>Build request</span>
+                      </button>
+                    </div>
+                    {curlImportMessage ? <div className="inline-message success-message">{curlImportMessage}</div> : null}
+                  </div>
+                </details>
+
                 <div className="automation-response-shell">
                   <div className="automation-response-header">
                     <div>
                       <strong>API response capture</strong>
                       <span>Run the current request with the active test data values, inspect the response hierarchy, and lift a JSON path into your assertions.</span>
                     </div>
-                    <button
-                      className="primary-button automation-run-button"
-                      disabled={isRunningApiRequest || !resolvedApiRequest?.url}
-                      onClick={() => void handleRunApiRequest()}
-                      type="button"
-                    >
-                      <PlayIcon />
-                      <span>{isRunningApiRequest ? "Running..." : "Run"}</span>
-                    </button>
+                    <div className="automation-response-actions">
+                      <button
+                        className="primary-button automation-run-button"
+                        disabled={isRunningApiRequest || !resolvedApiRequest?.url}
+                        onClick={() => void handleRunApiRequest()}
+                        type="button"
+                      >
+                        <PlayIcon />
+                        <span>{isRunningApiRequest ? "Running..." : "Run"}</span>
+                      </button>
+                      <button
+                        className="ghost-button inline-button"
+                        disabled={!apiPreview?.ai_suggestions}
+                        onClick={handleApplyApiSuggestions}
+                        type="button"
+                      >
+                        <AutomationCodeIcon />
+                        <span>Auto suggest assertions and parsers</span>
+                      </button>
+                    </div>
                   </div>
 
                   {apiPreviewError ? <div className="inline-message error-message">{apiPreviewError}</div> : null}

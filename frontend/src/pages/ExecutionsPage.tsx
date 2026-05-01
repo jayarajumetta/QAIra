@@ -13,6 +13,7 @@ import { ExecutionContextSelector } from "../components/ExecutionContextSelector
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import {
+  ApiRequestInfoDetails,
   AutomationCodeIcon,
   CodePreviewDialog,
   JsonResponseTreeNode,
@@ -921,6 +922,47 @@ function collectExecutionOutputParameterValues(
     .sort((left, right) => left.step_order - right.step_order)
     .reduce<Record<string, string>>((accumulator, step) => {
       Object.assign(accumulator, stepCaptures[step.id] || {});
+      return accumulator;
+    }, {});
+}
+
+function collectSuiteScopedExecutionOutputParameterValues(
+  resultByCaseId: Record<string, ExecutionResult>,
+  caseSnapshots: ExecutionCaseSnapshot[],
+  selectedTestCaseId: string
+) {
+  const selectedSnapshot = caseSnapshots.find((snapshot) => snapshot.test_case_id === selectedTestCaseId);
+
+  if (!selectedSnapshot?.suite_id) {
+    return {};
+  }
+
+  return caseSnapshots
+    .filter((snapshot) =>
+      snapshot.suite_id === selectedSnapshot.suite_id
+      && snapshot.sort_order <= selectedSnapshot.sort_order
+    )
+    .sort((left, right) => left.sort_order - right.sort_order)
+    .reduce<Record<string, string>>((accumulator, snapshot) => {
+      const result = resultByCaseId[snapshot.test_case_id];
+
+      if (!result?.logs) {
+        return accumulator;
+      }
+
+      const parsed = parseExecutionLogs(result.logs);
+      const captures = mergeExecutionStepCaptures(parsed.stepCaptures || {}, parsed.stepApiDetails || {});
+
+      Object.values(captures).forEach((captureMap) => {
+        Object.entries(captureMap || {}).forEach(([key, value]) => {
+          const parsedName = parseStepParameterName(key, "t");
+
+          if (parsedName?.scope === "s") {
+            accumulator[parsedName.name] = value;
+          }
+        });
+      });
+
       return accumulator;
     }, {});
 }
@@ -1978,13 +2020,17 @@ export function ExecutionsPage() {
     () => collectExecutionOutputParameterValues(stepCaptures, selectedSteps),
     [selectedSteps, stepCaptures]
   );
+  const suiteExecutionOutputParameterValues = useMemo(
+    () => collectSuiteScopedExecutionOutputParameterValues(resultByCaseId, snapshotCases, selectedTestCaseId),
+    [resultByCaseId, selectedTestCaseId, snapshotCases]
+  );
   const selectedExecutionOutputParameterEntries = useMemo(
     () => buildExecutionOutputParameterEntries(stepCaptures, selectedSteps),
     [selectedSteps, stepCaptures]
   );
   const executionStepParameterValues = useMemo(
-    () => combineStepParameterValues(executionInputParameterValues, executionOutputParameterValues),
-    [executionInputParameterValues, executionOutputParameterValues]
+    () => combineStepParameterValues(executionInputParameterValues, suiteExecutionOutputParameterValues, executionOutputParameterValues),
+    [executionInputParameterValues, executionOutputParameterValues, suiteExecutionOutputParameterValues]
   );
 
   const caseDerivedStatus = (testCase: ExecutionCaseView): ExecutionResult["status"] | "queued" => {
@@ -5385,6 +5431,16 @@ function ExecutionApiStepDialog({
     detail?.request?.body !== undefined
       ? detail.request.body
       : step.api_request?.body || null;
+  const requestInfo = useMemo(
+    () => ({
+      method: (detail?.request?.method || step.api_request?.method || "GET") as NonNullable<NonNullable<TestStep["api_request"]>["method"]>,
+      url: detail?.request?.url || step.api_request?.url || "",
+      headers: requestHeaders.map(([key, value]) => ({ key, value })),
+      body_mode: step.api_request?.body_mode || (requestBody ? "text" : "none"),
+      body: requestBody || ""
+    }),
+    [detail?.request?.method, detail?.request?.url, requestBody, requestHeaders, step.api_request?.body_mode, step.api_request?.method, step.api_request?.url]
+  );
   const responseJson = detail?.response?.json !== undefined ? detail.response.json : null;
   const responseBody = detail?.response
     ? detail.response.json !== undefined && detail.response.json !== null
@@ -5420,7 +5476,7 @@ function ExecutionApiStepDialog({
       <div
         aria-label={`Step ${step.step_order} API execution details`}
         aria-modal="true"
-        className="modal-card resource-modal-card execution-api-detail-modal"
+        className="modal-card resource-modal-card automation-editor-modal execution-api-detail-modal"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
       >
@@ -5474,6 +5530,8 @@ function ExecutionApiStepDialog({
                   </button>
                 ) : null}
               </div>
+
+              <ApiRequestInfoDetails request={requestInfo} />
 
               <div className="automation-response-meta">
                 <strong>Request</strong>
