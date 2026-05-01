@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIcon, MousePointerIcon, OpenIcon, SparkIcon, TrashIcon } from "../components/AppIcons";
 import { PageHeader } from "../components/PageHeader";
@@ -221,6 +221,21 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
   const appTypes = appTypesQuery.data || [];
   const integrations = integrationsQuery.data || [];
   const testCases = testCasesQuery.data || [];
+
+  useEffect(() => {
+    if (!appTypes.length) {
+      setAppTypeId("");
+      return;
+    }
+
+    if (!appTypes.some((appType) => appType.id === appTypeId)) {
+      setAppTypeId(appTypes[0].id);
+      setSelectedCaseId("");
+      setSelectedCaseIds([]);
+      setRecorderSession(null);
+    }
+  }, [appTypeId, appTypes]);
+
   const manualCases = useMemo(() => testCases.filter(isManualCase), [testCases]);
   const batchTransactions = useMemo(
     () => (transactionsQuery.data || []).filter(isBatchProcessTransaction),
