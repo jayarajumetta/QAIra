@@ -411,6 +411,7 @@ export type RecorderSessionResponse = {
   status: "running" | "stopped" | "failed";
   started_at?: string;
   stopped_at?: string | null;
+  last_activity_at?: string | null;
   start_url?: string | null;
   display_mode?: "browser-live-view" | "local-browser-with-live-view" | string | null;
   action_count?: number;

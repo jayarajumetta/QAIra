@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ActivityIcon, OpenIcon, PlayIcon, SparkIcon } from "../components/AppIcons";
+import { ActivityIcon, MousePointerIcon, OpenIcon, SparkIcon, TrashIcon } from "../components/AppIcons";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { ProgressMeter } from "../components/ProgressMeter";
@@ -159,6 +159,7 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
   const [builderContext, setBuilderContext] = useState("");
   const [builderMessage, setBuilderMessage] = useState("");
   const [recorderSession, setRecorderSession] = useState<RecorderSessionResponse | null>(null);
+  const isAdmin = session?.user.role === "admin";
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -225,6 +226,10 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
     () => (transactionsQuery.data || []).filter(isBatchProcessTransaction),
     [transactionsQuery.data]
   );
+  const deletableBatchTransactions = useMemo(
+    () => batchTransactions.filter((transaction) => transaction.status !== "queued" && transaction.status !== "running"),
+    [batchTransactions]
+  );
   const selectedTransaction = batchTransactions.find((transaction) => transaction.id === selectedTransactionId) || null;
   const testEngineIntegration = resolveScopedIntegration(integrations, "testengine", projectId);
   const llmIntegration = resolveScopedIntegration(integrations, "llm", projectId);
@@ -255,7 +260,7 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
       });
     },
     onSuccess: (response) => {
-      setBuilderMessage(`Automation associated with ${response.generated_step_count} step${response.generated_step_count === 1 ? "" : "s"}.`);
+      setBuilderMessage(`AI automation associated with ${response.generated_step_count} step${response.generated_step_count === 1 ? "" : "s"}.`);
       invalidateAutomationViews();
     },
     onError: (error) => setBuilderMessage(error instanceof Error ? error.message : "Unable to build automation.")
@@ -276,7 +281,7 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
       });
     },
     onSuccess: (response) => {
-      setBuilderMessage(`Batch automation build queued as ${response.transaction_id}.`);
+      setBuilderMessage(`Batch AI automation queued as ${response.transaction_id}.`);
       setSelectedTransactionId(response.transaction_id);
       setView("batch-process");
       invalidateAutomationViews();
@@ -326,6 +331,28 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
     onError: (error) => setBuilderMessage(error instanceof Error ? error.message : "Unable to finish recorder session.")
   });
 
+  const deleteBatchLog = useMutation({
+    mutationFn: (transactionId: string) => api.workspaceTransactions.delete(transactionId),
+    onSuccess: async (_, transactionId) => {
+      if (selectedTransactionId === transactionId) {
+        setSelectedTransactionId("");
+      }
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["workspace-transactions"] }),
+        queryClient.invalidateQueries({ queryKey: ["workspace-transaction-events"] }),
+        queryClient.invalidateQueries({ queryKey: ["workspace-transaction-artifacts"] })
+      ]);
+    }
+  });
+  const clearOpsLogs = useMutation({
+    mutationFn: () => api.opsTelemetry.clearLogs({ project_id: projectId || undefined }),
+    onSuccess: (response) => {
+      setBuilderMessage(`OPS telemetry logs cleared${response.deleted ? ` (${response.deleted})` : ""}.`);
+    },
+    onError: (error) => setBuilderMessage(error instanceof Error ? error.message : "Unable to clear OPS telemetry logs.")
+  });
+
   const handleDownloadArtifact = async (artifact: WorkspaceTransactionArtifact) => {
     if (!selectedTransaction) {
       return;
@@ -341,6 +368,39 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
     link.click();
     link.remove();
     URL.revokeObjectURL(href);
+  };
+
+  const handleDeleteSelectedBatchLog = async () => {
+    if (!selectedTransaction || !window.confirm(`Delete batch process log "${selectedTransaction.title}"?`)) {
+      return;
+    }
+
+    try {
+      await deleteBatchLog.mutateAsync(selectedTransaction.id);
+      setBuilderMessage("Batch process log deleted.");
+    } catch (error) {
+      setBuilderMessage(error instanceof Error ? error.message : "Unable to delete batch process log.");
+    }
+  };
+
+  const handleDeleteVisibleBatchLogs = async () => {
+    if (!deletableBatchTransactions.length || !window.confirm(`Delete ${deletableBatchTransactions.length} finished batch process log${deletableBatchTransactions.length === 1 ? "" : "s"}?`)) {
+      return;
+    }
+
+    let deleted = 0;
+
+    for (const transaction of deletableBatchTransactions) {
+      try {
+        await deleteBatchLog.mutateAsync(transaction.id);
+        deleted += 1;
+      } catch (error) {
+        setBuilderMessage(`${deleted} log${deleted === 1 ? "" : "s"} deleted before a failure. ${error instanceof Error ? error.message : "Unable to delete one of the logs."}`);
+        return;
+      }
+    }
+
+    setBuilderMessage(`${deleted} finished batch process log${deleted === 1 ? "" : "s"} deleted.`);
   };
 
   return (
@@ -386,6 +446,8 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
         projectId={projectId}
         projects={projects}
       />
+
+      {builderMessage && view !== "automation-builder" ? <div className="empty-state compact">{builderMessage}</div> : null}
 
       {view === "automation-builder" ? (
         <div className="testops-builder-layout">
@@ -498,7 +560,7 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
                   type="button"
                 >
                   <SparkIcon />
-                  <span>{buildSingleAutomation.isPending ? "Building…" : "Build Single Case"}</span>
+                  <span>{buildSingleAutomation.isPending ? "Automating…" : "Automate case with AI"}</span>
                 </button>
                 <button
                   className="ghost-button"
@@ -507,7 +569,7 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
                   type="button"
                 >
                   <ActivityIcon />
-                  <span>{buildBatchAutomation.isPending ? "Queueing…" : selectedCaseIds.length ? "Queue Selected Batch" : "Queue Manual Batch"}</span>
+                  <span>{buildBatchAutomation.isPending ? "Queueing…" : selectedCaseIds.length ? "Queue selected AI batch" : "Queue manual AI batch"}</span>
                 </button>
               </div>
 
@@ -524,7 +586,7 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
                       onClick={() => startRecorder.mutate()}
                       type="button"
                     >
-                      <PlayIcon size={16} />
+                      <MousePointerIcon size={16} />
                       <span>{startRecorder.isPending ? "Starting…" : "Start recorder"}</span>
                     </button>
                     <button
@@ -597,6 +659,19 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
             className="testops-panel"
             title="Batch process"
             subtitle="Imports, exports, automation handoffs, generated cases, reports, and sync work appear here with their latest trace state."
+            actions={
+              isAdmin ? (
+                <button
+                  className="ghost-button danger"
+                  disabled={!deletableBatchTransactions.length || deleteBatchLog.isPending}
+                  onClick={() => void handleDeleteVisibleBatchLogs()}
+                  type="button"
+                >
+                  <TrashIcon size={16} />
+                  <span>{deleteBatchLog.isPending ? "Deleting..." : "Delete finished logs"}</span>
+                </button>
+              ) : undefined
+            }
           >
             {transactionsQuery.isLoading ? <TileCardSkeletonGrid /> : null}
             {!transactionsQuery.isLoading && batchTransactions.length ? (
@@ -644,6 +719,19 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
             className="testops-panel testops-detail-panel"
             title={selectedTransaction ? selectedTransaction.title : "Process trace"}
             subtitle={selectedTransaction ? "The latest metadata and event timeline for this operation." : "Choose a batch process card to inspect its trace."}
+            actions={
+              isAdmin && selectedTransaction ? (
+                <button
+                  className="ghost-button danger"
+                  disabled={deleteBatchLog.isPending || selectedTransaction.status === "queued" || selectedTransaction.status === "running"}
+                  onClick={() => void handleDeleteSelectedBatchLog()}
+                  type="button"
+                >
+                  <TrashIcon size={16} />
+                  <span>{deleteBatchLog.isPending ? "Deleting..." : "Delete log"}</span>
+                </button>
+              ) : undefined
+            }
           >
             {selectedTransaction ? (
               <div className="detail-stack">
@@ -755,11 +843,26 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
           title="OPS telemetry"
           subtitle={opsIntegration ? `Using ${opsIntegration.name}` : "Configure an active OPS telemetry integration and Test Engine host to load the board."}
           actions={
-            opsBoardUrl ? (
-              <a className="ghost-button" href={opsBoardUrl} rel="noreferrer" target="_blank">
-                <OpenIcon />
-                Open board
-              </a>
+            opsBoardUrl || isAdmin ? (
+              <>
+                {opsBoardUrl ? (
+                  <a className="ghost-button" href={opsBoardUrl} rel="noreferrer" target="_blank">
+                    <OpenIcon />
+                    <span>Open board</span>
+                  </a>
+                ) : null}
+                {isAdmin ? (
+                  <button
+                    className="ghost-button danger"
+                    disabled={!opsBoardUrl || clearOpsLogs.isPending}
+                    onClick={() => clearOpsLogs.mutate()}
+                    type="button"
+                  >
+                    <TrashIcon size={16} />
+                    <span>{clearOpsLogs.isPending ? "Clearing..." : "Delete telemetry logs"}</span>
+                  </button>
+                ) : null}
+              </>
             ) : undefined
           }
         >

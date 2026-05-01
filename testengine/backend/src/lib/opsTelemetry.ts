@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { FastifyBaseLogger, FastifyInstance } from "fastify";
 
@@ -926,6 +926,30 @@ export const createOpsTelemetry = async (logger: FastifyBaseLogger) => {
     };
   };
 
+  const clearEvents = async () => {
+    const deleted = events.length;
+    events.splice(0, events.length);
+    writeQueue = writeQueue
+      .then(() => writeFile(config.storePath, "", "utf8"))
+      .catch((error) => {
+        logger.error({ error, storePath: config.storePath }, "Unable to clear OPS telemetry event store");
+      });
+    await writeQueue;
+
+    logger.warn(
+      {
+        ops_telemetry: true,
+        deleted
+      },
+      "OPS telemetry events cleared"
+    );
+
+    return {
+      ok: true,
+      deleted
+    };
+  };
+
   const getHealthSnapshot = () => ({
     enabled: config.enabled,
     service_name: config.serviceName,
@@ -994,6 +1018,23 @@ export const createOpsTelemetry = async (logger: FastifyBaseLogger) => {
     });
 
     app.get(routePath, async (request) => listEvents(request.query as Record<string, unknown>));
+    app.delete(routePath, async (request, reply) => {
+      if (!config.enabled) {
+        reply.code(503);
+        return {
+          message: "OPS telemetry is disabled"
+        };
+      }
+
+      if (!authorizeRequest(request.headers as Record<string, unknown>)) {
+        reply.code(401);
+        return {
+          message: "Unauthorized OPS telemetry request"
+        };
+      }
+
+      return clearEvents();
+    });
   };
 
   return {

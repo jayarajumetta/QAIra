@@ -288,6 +288,58 @@ const postEvent = async (integration, payload) => {
   }
 };
 
+exports.clearTelemetryLogs = async ({ project_id } = {}) => {
+  const integration =
+    await integrationService.getActiveIntegrationByTypeForProject("ops", project_id)
+    || {
+      type: "ops",
+      base_url: null,
+      api_key: null,
+      config: {
+        project_id,
+        events_path: "/api/v1/events",
+        api_key_header: "Authorization",
+        api_key_prefix: "Bearer",
+        timeout_ms: 4000
+      }
+    };
+  const config = isPlainObject(integration?.config) ? integration.config : {};
+  const resolvedBaseUrl = await resolveOpsBaseUrl(integration, project_id);
+  const timeoutMs = Math.max(500, normalizeInteger(config.timeout_ms, 4000) || 4000);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const headers = {
+    accept: "application/json"
+  };
+  const authHeaderName = normalizeText(config.api_key_header) || "Authorization";
+  const authHeaderValue = buildAuthHeaderValue(config.api_key_prefix, integration.api_key);
+
+  if (authHeaderValue) {
+    headers[authHeaderName] = authHeaderValue;
+  }
+
+  try {
+    const response = await fetch(buildEventUrl(resolvedBaseUrl, config.events_path), {
+      method: "DELETE",
+      headers,
+      signal: controller.signal
+    });
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      throw new Error(payload?.message || `OPS telemetry clear failed with status ${response.status}`);
+    }
+
+    return {
+      cleared: true,
+      deleted: Number(payload?.deleted || 0),
+      events_path: normalizeText(config.events_path) || "/api/v1/events"
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 const emitSafe = async (integration, payload) => {
   try {
     await postEvent(integration, payload);

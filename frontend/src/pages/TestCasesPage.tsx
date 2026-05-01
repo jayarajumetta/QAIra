@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AiCaseAuthoringModal } from "../components/AiCaseAuthoringModal";
 import { AiDesignStudioModal } from "../components/AiDesignStudioModal";
-import { ActivityIcon, AddIcon, CopyIcon, ExportIcon, MoveIcon, OpenIcon, PlayIcon, TrashIcon } from "../components/AppIcons";
+import { AddIcon, CopyIcon, ExportIcon, MousePointerIcon, MoveIcon, OpenIcon, TrashIcon } from "../components/AppIcons";
 import { CatalogActionMenu } from "../components/CatalogActionMenu";
 import { CatalogViewToggle } from "../components/CatalogViewToggle";
 import { CatalogSearchFilter } from "../components/CatalogSearchFilter";
@@ -1381,6 +1381,10 @@ export function TestCasesPage() {
     () => testCases.filter((item) => selectedActionTestCaseIds.includes(item.id)),
     [selectedActionTestCaseIds, testCases]
   );
+  const selectedManualAutomationCases = useMemo(
+    () => selectedActionCases.filter((item) => item.automated !== "yes"),
+    [selectedActionCases]
+  );
 
   const selectedTestCase = useMemo(
     () => testCases.find((item) => item.id === selectedTestCaseId) || null,
@@ -2538,15 +2542,32 @@ export function TestCasesPage() {
     try {
       if (automationTargetCaseIds.length === 1) {
         const response = await buildSingleAutomation.mutateAsync({ testCaseId: automationTargetCaseIds[0] });
-        showSuccess(`Automation associated with ${response.generated_step_count} step${response.generated_step_count === 1 ? "" : "s"}.`);
+        showSuccess(`AI automation associated with ${response.generated_step_count} step${response.generated_step_count === 1 ? "" : "s"}.`);
       } else {
         const response = await buildBatchAutomation.mutateAsync({ testCaseIds: automationTargetCaseIds });
-        showSuccess(`Automation build queued as ${response.transaction_id}. Track the batch in TestOps.`);
+        showSuccess(`Batch AI automation queued as ${response.transaction_id}. Track it in TestOps.`);
       }
 
       await refreshCases();
     } catch (error) {
       showError(error, "Unable to build automation");
+    }
+  };
+
+  const handleScheduleSelectedManualAutomation = async () => {
+    if (!appTypeId || !selectedManualAutomationCases.length) {
+      showError(new Error("Select one or more manual test cases before scheduling AI automation."), "Unable to schedule AI automation");
+      return;
+    }
+
+    try {
+      const response = await buildBatchAutomation.mutateAsync({
+        testCaseIds: selectedManualAutomationCases.map((testCase) => testCase.id)
+      });
+      showSuccess(`Batch AI automation scheduled as ${response.transaction_id.slice(0, 8)}. TestOps will process the manual cases one by one.`);
+      await refreshCases();
+    } catch (error) {
+      showError(error, "Unable to schedule AI automation");
     }
   };
 
@@ -2593,57 +2614,6 @@ export function TestCasesPage() {
       await refreshCases();
     } catch (error) {
       showError(error, "Unable to finish recorder session");
-    }
-  };
-
-  const handleRunAutomationTargets = async () => {
-    if (!session?.user.id) {
-      showError(new Error("You need an active session before handing cases to the Test Engine."), "Unable to hand off test cases");
-      return;
-    }
-
-    if (!projectId || !appTypeId || !automationTargetCaseIds.length) {
-      showError(new Error("Select one or more test cases before handing them to the Test Engine."), "Unable to hand off test cases");
-      return;
-    }
-
-    if (!testEngineIntegration) {
-      showError(new Error("Configure an active Test Engine integration before handing cases to the engine."), "Unable to hand off test cases");
-      return;
-    }
-
-    if (automationTargetManualCount > 0) {
-      showError(new Error("Build automation for the selected manual cases before handing them to the Test Engine."), "Unable to hand off test cases");
-      return;
-    }
-
-    if (!selectedExecutionEnvironmentId || !selectedExecutionDataSetId) {
-      showError(new Error("Select a test environment and test data before handing cases to the Test Engine."), "Unable to hand off test cases");
-      return;
-    }
-
-    try {
-      const response = await createExecution.mutateAsync({
-        project_id: projectId,
-        app_type_id: appTypeId,
-        test_case_ids: automationTargetCaseIds,
-        test_environment_id: selectedExecutionEnvironmentId,
-        test_configuration_id: selectedExecutionConfigurationId || undefined,
-        test_data_set_id: selectedExecutionDataSetId,
-        assigned_to: selectedExecutionAssigneeId || undefined,
-        name: `${automationTargetCases.length === 1 ? automationTargetCases[0]?.title || "Test case" : `${automationTargetCases.length} Test Cases`} Engine Run`,
-        created_by: session.user.id
-      });
-      const startResponse = await startExecution.mutateAsync(response.id);
-
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["executions"] }),
-        queryClient.invalidateQueries({ queryKey: ["executions", projectId] })
-      ]);
-      showSuccess(summarizeExecutionStart(startResponse, "Test Engine handoff started."));
-      navigate(`/executions?view=test-case-runs&execution=${response.id}`);
-    } catch (error) {
-      showError(error, "Unable to hand off test cases");
     }
   };
 
@@ -4408,8 +4378,8 @@ export function TestCasesPage() {
       ? "No draft steps added yet."
       : "No steps added yet for this test case.";
   const automationSectionSummary = automationTargetCaseIds.length
-    ? `${automationTargetCaseIds.length} case${automationTargetCaseIds.length === 1 ? "" : "s"} selected for AI build, recorder, or Test Engine handoff.`
-    : "Select a saved case to build automation or hand it to the Test Engine.";
+    ? `${automationTargetCaseIds.length} case${automationTargetCaseIds.length === 1 ? "" : "s"} selected for AI automation or recorder capture.`
+    : "Select a saved case to automate with AI or recorder capture.";
   const automationTargetManualCount = automationTargetCases.filter((testCase) => testCase.automated !== "yes").length;
   const historySectionSummary = selectedHistory.length
     ? "Review the latest recorded outcomes and preserved run evidence for this reusable test case."
@@ -5359,6 +5329,15 @@ export function TestCasesPage() {
               </button>
               <button
                 className="ghost-button"
+                disabled={!appTypeId || !selectedManualAutomationCases.length || buildBatchAutomation.isPending}
+                onClick={() => void handleScheduleSelectedManualAutomation()}
+                type="button"
+              >
+                <TestCaseSparkIcon />
+                <span>{buildBatchAutomation.isPending ? "Scheduling..." : `Schedule AI automation${selectedManualAutomationCases.length ? ` (${selectedManualAutomationCases.length})` : ""}`}</span>
+              </button>
+              <button
+                className="ghost-button"
                 disabled={!projectId || !appTypeId || !selectedActionTestCaseIds.length || !session?.user.id}
                 onClick={() => setIsCreateExecutionModalOpen(true)}
                 type="button"
@@ -5383,7 +5362,7 @@ export function TestCasesPage() {
             {selectedActionTestCaseIds.length ? (
               <div className="detail-summary test-case-selection-summary">
                 <strong>{selectedActionTestCaseIds.length} test case{selectedActionTestCaseIds.length === 1 ? "" : "s"} selected for bulk actions</strong>
-                <span>Use the checked cases to create a suite, create a run, or bulk delete them. Open any tile body to keep editing one case at a time.</span>
+                <span>Use the checked cases to create a suite, create a run, schedule manual cases for AI automation, or bulk delete them. Open any tile body to keep editing one case at a time.</span>
               </div>
             ) : null}
 
@@ -6007,20 +5986,11 @@ export function TestCasesPage() {
                             <TestCaseSparkIcon />
                             <span>
                               {buildSingleAutomation.isPending || buildBatchAutomation.isPending
-                                ? "Building..."
+                                ? "Automating..."
                                 : automationTargetCaseIds.length > 1
-                                  ? "Queue selected build"
-                                  : "Build this case"}
+                                  ? "Queue AI automation"
+                                  : "Automate case with AI"}
                             </span>
-                          </button>
-                          <button
-                            className="ghost-button"
-                            disabled={!automationTargetCaseIds.length || automationTargetManualCount > 0 || !testEngineIntegration || !selectedExecutionEnvironmentId || !selectedExecutionDataSetId || createExecution.isPending || startExecution.isPending}
-                            onClick={() => void handleRunAutomationTargets()}
-                            type="button"
-                          >
-                            <ActivityIcon size={16} />
-                            <span>{createExecution.isPending || startExecution.isPending ? "Handing off..." : "Run in Test Engine"}</span>
                           </button>
                         </div>
 
@@ -6037,7 +6007,7 @@ export function TestCasesPage() {
                                 onClick={() => void handleStartRecorder()}
                                 type="button"
                               >
-                                <PlayIcon size={16} />
+                                <MousePointerIcon size={16} />
                                 <span>{startRecorder.isPending ? "Starting..." : "Start recorder"}</span>
                               </button>
                               <button

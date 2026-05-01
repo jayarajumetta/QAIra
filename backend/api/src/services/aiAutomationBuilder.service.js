@@ -19,6 +19,7 @@ const MAX_CACHE_ROWS = 40;
 const MAX_CAPTURED_ACTIONS = 180;
 const MAX_CAPTURED_NETWORK = 80;
 const DEFAULT_BATCH_FAILURE_THRESHOLD = Math.max(1, Number(process.env.AUTOMATION_BUILDER_BATCH_FAILURE_THRESHOLD || 3));
+const RECORDER_ORPHAN_TTL_MS = Math.max(60_000, Number(process.env.RECORDER_ORPHAN_TTL_MS || 3 * 60_000));
 
 const selectCaseWithScope = db.prepare(`
   SELECT
@@ -58,12 +59,14 @@ const updateCaseAutomated = db.prepare(`
   WHERE id = ?
 `);
 
-const selectLearningCache = db.prepare(`
+const selectStaleRecorderTransactions = db.prepare(`
   SELECT *
-  FROM automation_learning_cache
-  WHERE (? IS NULL OR project_id = ?)
-    AND (? IS NULL OR app_type_id = ?)
-  ORDER BY hit_count DESC, updated_at DESC
+  FROM workspace_transactions
+  WHERE action = 'test_case_recorder'
+    AND status = 'running'
+    AND started_at IS NOT NULL
+    AND started_at < ?
+  ORDER BY started_at ASC
   LIMIT ?
 `);
 
@@ -126,6 +129,30 @@ const clampNumber = (value, fallback = 0) => {
 };
 
 const safeJson = (value, fallback) => parseJsonValue(value, fallback);
+
+const listLearningCacheRows = async ({ projectId, appTypeId, limit = MAX_CACHE_ROWS } = {}) => {
+  let query = `
+    SELECT *
+    FROM automation_learning_cache
+    WHERE 1 = 1
+  `;
+  const params = [];
+
+  if (projectId) {
+    query += ` AND project_id = ?`;
+    params.push(projectId);
+  }
+
+  if (appTypeId) {
+    query += ` AND app_type_id = ?`;
+    params.push(appTypeId);
+  }
+
+  query += ` ORDER BY hit_count DESC, updated_at DESC LIMIT ?`;
+  params.push(Math.max(1, Math.min(200, Number(limit) || MAX_CACHE_ROWS)));
+
+  return db.prepare(query).all(...params);
+};
 
 const summarizeVariables = (variables = []) =>
   (Array.isArray(variables) ? variables : [])
@@ -615,6 +642,282 @@ const buildRecorderStepCandidates = (actions = []) => {
   return candidates;
 };
 
+const tokenizeMappingText = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9@._-]+/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 2 && !["the", "and", "for", "with", "into", "from"].includes(token));
+
+const scoreRecorderMapping = (manualStep, candidate) => {
+  const manualTokens = new Set(tokenizeMappingText(`${manualStep.action || ""} ${manualStep.expected_result || ""}`));
+  const candidateTokens = tokenizeMappingText(`${candidate.action || ""} ${candidate.automation_code || ""}`);
+
+  if (!manualTokens.size || !candidateTokens.length) {
+    return 0;
+  }
+
+  const overlap = candidateTokens.filter((token) => manualTokens.has(token)).length;
+  return overlap / Math.max(candidateTokens.length, manualTokens.size);
+};
+
+const buildFallbackRecorderMappings = (manualSteps = [], stepCandidates = []) => {
+  if (!manualSteps.length || !stepCandidates.length) {
+    return [];
+  }
+
+  const groups = manualSteps.map((step) => ({
+    step,
+    candidates: [],
+    mapping_source: "fallback"
+  }));
+
+  stepCandidates.forEach((candidate, index) => {
+    let targetIndex = Math.min(groups.length - 1, Math.floor((index * groups.length) / stepCandidates.length));
+    let bestScore = 0;
+
+    groups.forEach((group, groupIndex) => {
+      const score = scoreRecorderMapping(group.step, candidate);
+
+      if (score > bestScore) {
+        bestScore = score;
+        targetIndex = groupIndex;
+      }
+    });
+
+    groups[targetIndex].candidates.push(candidate);
+  });
+
+  return groups.filter((group) => group.candidates.length);
+};
+
+const mergeRecorderMappingGroups = (groups = []) => {
+  const byStepId = new Map();
+
+  groups.forEach((group) => {
+    if (!group?.step?.id || !Array.isArray(group.candidates) || !group.candidates.length) {
+      return;
+    }
+
+    const current = byStepId.get(group.step.id) || {
+      ...group,
+      candidates: [],
+      confidence: group.confidence || 0
+    };
+
+    current.candidates.push(...group.candidates);
+    current.confidence = Math.max(Number(current.confidence || 0), Number(group.confidence || 0));
+    current.mapping_source =
+      current.mapping_source && current.mapping_source !== group.mapping_source
+        ? "mixed"
+        : current.mapping_source || group.mapping_source;
+    byStepId.set(group.step.id, current);
+  });
+
+  return [...byStepId.values()].sort((left, right) => Number(left.step.step_order || 0) - Number(right.step.step_order || 0));
+};
+
+const buildRecorderMappingPrompt = ({
+  testCase,
+  manualSteps,
+  stepCandidates,
+  capturedActions,
+  additionalContext
+}) => [
+  "Map recorded browser automation snippets onto the existing QAira manual test steps.",
+  "",
+  "Rules:",
+  "- Preserve the manual step rows, manual action text, and expected result text.",
+  "- Attach one or more recorded automation snippets to the manual step they best satisfy.",
+  "- Prefer semantic flow order, but use action/target meaning when the recording and manual text differ.",
+  "- Do not invent new business assertions or new manual steps.",
+  "- It is valid to map multiple recorded snippets to one manual step.",
+  "",
+  "Return strict JSON only with this shape:",
+  "{",
+  '  "summary": "string",',
+  '  "mappings": [',
+  "    {",
+  '      "manual_step_id": "existing step id",',
+  '      "source_action_indexes": [1, 2],',
+  '      "confidence": 0.8',
+  "    }",
+  "  ]",
+  "}",
+  "",
+  `Case: ${testCase.title}`,
+  `Description: ${testCase.description || "No description provided."}`,
+  "",
+  "Manual steps:",
+  JSON.stringify(manualSteps.map(summarizeStep), null, 2),
+  "",
+  "Recorded automation snippets:",
+  JSON.stringify(stepCandidates.map((candidate) => ({
+    source_action_index: candidate.source_action_index,
+    generated_order: candidate.step_order,
+    action: candidate.action,
+    expected_result: candidate.expected_result,
+    automation_code: candidate.automation_code
+  })), null, 2),
+  "",
+  "Raw recorder actions:",
+  JSON.stringify(capturedActions.slice(0, MAX_CAPTURED_ACTIONS), null, 2),
+  additionalContext ? `\nAdditional guidance:\n${additionalContext}` : ""
+].filter(Boolean).join("\n");
+
+const normalizeRecorderAiMappings = (payload, manualSteps = [], stepCandidates = []) => {
+  const stepsById = new Map(manualSteps.map((step) => [step.id, step]));
+  const stepsByOrder = new Map(manualSteps.map((step) => [Number(step.step_order || 0), step]));
+  const candidatesBySourceIndex = new Map(stepCandidates.map((candidate) => [Number(candidate.source_action_index), candidate]));
+  const candidatesByGeneratedOrder = new Map(stepCandidates.map((candidate) => [Number(candidate.step_order), candidate]));
+  const usedSourceIndexes = new Set();
+  const groupsByStepId = new Map();
+  const mappings = Array.isArray(payload?.mappings) ? payload.mappings : [];
+
+  mappings.forEach((mapping) => {
+    if (!isPlainObject(mapping)) {
+      return;
+    }
+
+    const stepId = normalizeText(mapping.manual_step_id || mapping.step_id || mapping.id);
+    const stepOrder = Number(mapping.manual_step_order || mapping.step_order || mapping.order);
+    const step = stepId ? stepsById.get(stepId) : stepsByOrder.get(stepOrder);
+
+    if (!step) {
+      return;
+    }
+
+    const rawReferences = [
+      ...(Array.isArray(mapping.source_action_indexes) ? mapping.source_action_indexes : []),
+      ...(Array.isArray(mapping.source_action_indices) ? mapping.source_action_indices : []),
+      ...(Array.isArray(mapping.recorder_action_indexes) ? mapping.recorder_action_indexes : []),
+      ...(Array.isArray(mapping.action_indexes) ? mapping.action_indexes : []),
+      ...(Array.isArray(mapping.candidate_orders) ? mapping.candidate_orders : []),
+      ...(Array.isArray(mapping.generated_orders) ? mapping.generated_orders : [])
+    ];
+    const candidates = rawReferences
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value))
+      .map((value) => candidatesBySourceIndex.get(value) || candidatesByGeneratedOrder.get(value))
+      .filter(Boolean)
+      .filter((candidate) => {
+        const sourceIndex = Number(candidate.source_action_index);
+
+        if (usedSourceIndexes.has(sourceIndex)) {
+          return false;
+        }
+
+        usedSourceIndexes.add(sourceIndex);
+        return true;
+      });
+
+    if (!candidates.length) {
+      return;
+    }
+
+    const current = groupsByStepId.get(step.id) || {
+      step,
+      candidates: [],
+      mapping_source: "ai",
+      confidence: 0
+    };
+
+    current.candidates.push(...candidates);
+    current.confidence = Math.max(current.confidence, Math.max(0, Math.min(1, clampNumber(mapping.confidence, 0))));
+    groupsByStepId.set(step.id, current);
+  });
+
+  return {
+    summary: normalizeRichText(payload?.summary) || "Recorder automation mapped to existing manual steps.",
+    mappings: [...groupsByStepId.values()]
+  };
+};
+
+const buildAiRecorderMappings = async ({
+  testCase,
+  manualSteps,
+  stepCandidates,
+  capturedActions,
+  integrationId,
+  additionalContext,
+  transactionId
+}) => {
+  let integration = null;
+
+  try {
+    integration = await resolveLlmIntegration(integrationId);
+  } catch (error) {
+    return {
+      mappings: [],
+      summary: null,
+      integration: null,
+      fallback_reason: error instanceof Error ? error.message : "Unable to resolve LLM integration"
+    };
+  }
+
+  if (!integration) {
+    return {
+      mappings: [],
+      summary: null,
+      integration: null,
+      fallback_reason: "No active LLM integration is configured"
+    };
+  }
+
+  try {
+    const content = await requestChatCompletion({
+      integration,
+      prompt: buildRecorderMappingPrompt({
+        testCase,
+        manualSteps,
+        stepCandidates,
+        capturedActions,
+        additionalContext: normalizeRichText(additionalContext)
+      })
+    });
+    const normalized = normalizeRecorderAiMappings(extractJsonPayload(content), manualSteps, stepCandidates);
+
+    if (!normalized.mappings.length && stepCandidates.length) {
+      throw new Error("LLM did not return usable recorder step mappings");
+    }
+
+    await appendEvent(transactionId, {
+      phase: "recorder.ai.mapping.completed",
+      message: `AI mapped recorder automation onto ${normalized.mappings.length} manual step${normalized.mappings.length === 1 ? "" : "s"}.`,
+      details: {
+        integration_id: integration.id,
+        model: integration.model,
+        mapped_steps: normalized.mappings.length,
+        mapped_interactions: normalized.mappings.reduce((total, group) => total + group.candidates.length, 0)
+      }
+    });
+
+    return {
+      mappings: normalized.mappings,
+      summary: normalized.summary,
+      integration,
+      fallback_reason: null
+    };
+  } catch (error) {
+    return {
+      mappings: [],
+      summary: null,
+      integration,
+      fallback_reason: error instanceof Error ? error.message : "LLM recorder mapping failed"
+    };
+  }
+};
+
+const createRecorderAutomationCode = (candidates = []) =>
+  candidates
+    .map((candidate) => [
+      `// Recorded: ${candidate.action || "browser interaction"}`,
+      candidate.automation_code
+    ].filter(Boolean).join("\n"))
+    .filter(Boolean)
+    .join("\n");
+
 const buildPrompt = ({
   testCase,
   steps,
@@ -1021,13 +1324,11 @@ const buildCaseCore = async ({
     throw new Error("Add manual steps before building automation");
   }
 
-  const cacheRows = await selectLearningCache.all(
-    testCase.project_id || null,
-    testCase.project_id || null,
-    testCase.app_type_id || null,
-    testCase.app_type_id || null,
-    MAX_CACHE_ROWS
-  );
+  const cacheRows = await listLearningCacheRows({
+    projectId: testCase.project_id || null,
+    appTypeId: testCase.app_type_id || null,
+    limit: MAX_CACHE_ROWS
+  });
   const capturedActions = normalizeCapturedActions(captured_actions);
   const capturedNetwork = normalizeCapturedNetwork(captured_network);
   const buildContext = await resolveBuildContext({
@@ -1174,43 +1475,55 @@ const buildCaseCore = async ({
   };
 };
 
-const applyRecorderSteps = async ({ testCase, stepCandidates, createdBy }) => {
+const applyRecorderSteps = async ({ testCase, stepCandidates, recorderMappings = [], createdBy }) => {
   const existingSteps = await selectStepsForCase.all(testCase.id);
   const applied = [];
-  let candidateIndex = 0;
   let createdCount = 0;
 
-  for (const step of existingSteps) {
-    const candidate = stepCandidates[candidateIndex];
+  if (existingSteps.length) {
+    const mappings = mergeRecorderMappingGroups(recorderMappings.length
+      ? recorderMappings
+      : buildFallbackRecorderMappings(existingSteps, stepCandidates));
 
-    if (!candidate) {
-      break;
+    for (const mapping of mappings) {
+      const automationCode = createRecorderAutomationCode(mapping.candidates);
+
+      if (!automationCode) {
+        continue;
+      }
+
+      await testStepService.updateTestStep(mapping.step.id, {
+        step_type: "web",
+        automation_code: automationCode,
+        api_request: null
+      });
+      applied.push({
+        step_id: mapping.step.id,
+        step_order: mapping.step.step_order,
+        step_type: "web",
+        action: mapping.step.action || "",
+        expected_result: mapping.step.expected_result || "",
+        automation_code: automationCode,
+        operation: "updated",
+        mapping_source: mapping.mapping_source || "fallback",
+        mapping_confidence: Number(mapping.confidence || 0) || null,
+        source_action_index: mapping.candidates[0]?.source_action_index || null,
+        source_action_indexes: mapping.candidates.map((candidate) => candidate.source_action_index).filter(Boolean),
+        has_code: true,
+        has_api_request: false
+      });
     }
 
-    await testStepService.updateTestStep(step.id, {
-      action: normalizeText(step.action) ? undefined : candidate.action,
-      step_type: "web",
-      automation_code: candidate.automation_code,
-      api_request: null
-    });
-    applied.push({
-      step_id: step.id,
-      step_order: step.step_order,
-      step_type: "web",
-      action: normalizeText(step.action) || candidate.action,
-      expected_result: step.expected_result || "",
-      automation_code: candidate.automation_code,
-      operation: "updated",
-      source_action_index: candidate.source_action_index,
-      has_code: true,
-      has_api_request: false
-    });
-    candidateIndex += 1;
+    if (applied.length) {
+      await updateCaseAutomated.run(createdBy || null, testCase.id);
+    }
+
+    return applied;
   }
 
-  for (; candidateIndex < stepCandidates.length; candidateIndex += 1) {
+  for (let candidateIndex = 0; candidateIndex < stepCandidates.length; candidateIndex += 1) {
     const candidate = stepCandidates[candidateIndex];
-    const stepOrder = existingSteps.length + createdCount + 1;
+    const stepOrder = createdCount + 1;
     const created = await testStepService.createTestStep({
       test_case_id: testCase.id,
       step_order: stepOrder,
@@ -1230,6 +1543,8 @@ const applyRecorderSteps = async ({ testCase, stepCandidates, createdBy }) => {
       automation_code: candidate.automation_code,
       operation: "created",
       source_action_index: candidate.source_action_index,
+      source_action_indexes: [candidate.source_action_index].filter(Boolean),
+      mapping_source: "created",
       has_code: true,
       has_api_request: false
     });
@@ -1249,24 +1564,85 @@ const finalizeRecorderBuild = async ({
   createdBy,
   transactionId,
   capturedActions,
-  capturedNetwork
+  capturedNetwork,
+  integrationId,
+  additionalContext
 }) => {
   const stepCandidates = buildRecorderStepCandidates(capturedActions);
+  const existingSteps = await selectStepsForCase.all(testCase.id);
+  let recorderMappings = [];
+  let mappingSource = existingSteps.length ? "fallback" : "created";
+  let aiMappingFallbackReason = null;
 
   await appendEvent(transactionId, {
     phase: "recorder.steps.mapping",
-    message: `Mapped ${stepCandidates.length} recorder interaction${stepCandidates.length === 1 ? "" : "s"} to QAira web keyword step code.`,
+    message: existingSteps.length
+      ? `Preparing to map ${stepCandidates.length} recorder interaction${stepCandidates.length === 1 ? "" : "s"} onto ${existingSteps.length} existing manual step${existingSteps.length === 1 ? "" : "s"}.`
+      : `Preparing to create manual step rows from ${stepCandidates.length} recorder interaction${stepCandidates.length === 1 ? "" : "s"}.`,
     details: {
       recorder_session_id: session.id,
+      manual_step_count: existingSteps.length,
       captured_actions: capturedActions.length,
       captured_network: capturedNetwork.length,
       generated_step_candidates: stepCandidates.length
     }
   });
 
+  if (existingSteps.length && stepCandidates.length) {
+    const aiMappings = await buildAiRecorderMappings({
+      testCase,
+      manualSteps: existingSteps,
+      stepCandidates,
+      capturedActions,
+      integrationId,
+      additionalContext,
+      transactionId
+    });
+
+    if (aiMappings.mappings.length) {
+      const mappedActionIndexes = new Set(
+        aiMappings.mappings.flatMap((group) => group.candidates.map((candidate) => candidate.source_action_index))
+      );
+      const unmappedCandidates = stepCandidates.filter((candidate) => !mappedActionIndexes.has(candidate.source_action_index));
+      const fallbackMappings = unmappedCandidates.length
+        ? buildFallbackRecorderMappings(existingSteps, unmappedCandidates)
+        : [];
+
+      recorderMappings = mergeRecorderMappingGroups([...aiMappings.mappings, ...fallbackMappings]);
+      mappingSource = fallbackMappings.length ? "mixed" : "ai";
+
+      if (fallbackMappings.length) {
+        await appendEvent(transactionId, {
+          level: "warning",
+          phase: "recorder.ai.mapping.partial",
+          message: "AI mapped part of the recorder flow; QAira mapped the remaining recorded interactions with deterministic flow matching.",
+          details: {
+            ai_mapped_steps: aiMappings.mappings.length,
+            fallback_mapped_steps: fallbackMappings.length,
+            fallback_interactions: unmappedCandidates.length
+          }
+        });
+      }
+    } else {
+      aiMappingFallbackReason = aiMappings.fallback_reason;
+      recorderMappings = mergeRecorderMappingGroups(buildFallbackRecorderMappings(existingSteps, stepCandidates));
+      await appendEvent(transactionId, {
+        level: "warning",
+        phase: "recorder.ai.mapping.fallback",
+        message: "AI recorder mapping was unavailable, so QAira mapped recorded automation to the existing manual steps using deterministic flow matching.",
+        details: {
+          fallback_reason: aiMappingFallbackReason,
+          mapped_steps: recorderMappings.length,
+          mapped_interactions: recorderMappings.reduce((total, group) => total + group.candidates.length, 0)
+        }
+      });
+    }
+  }
+
   const appliedSteps = await applyRecorderSteps({
     testCase,
     stepCandidates,
+    recorderMappings,
     createdBy
   });
   const learnedCount = await persistLearning({
@@ -1301,10 +1677,15 @@ const finalizeRecorderBuild = async ({
     level: appliedSteps.length ? "success" : "warning",
     phase: "recorder.completed",
     message: appliedSteps.length
-      ? `Recorder created or updated ${appliedSteps.length} web keyword step${appliedSteps.length === 1 ? "" : "s"} for "${testCase.title}".`
+      ? existingSteps.length
+        ? `Recorder associated automation with ${appliedSteps.length} existing manual step${appliedSteps.length === 1 ? "" : "s"} for "${testCase.title}".`
+        : `Recorder created ${appliedSteps.length} web keyword step${appliedSteps.length === 1 ? "" : "s"} for "${testCase.title}".`
       : `Recorder stopped for "${testCase.title}", but no supported interactions were available to create web keyword steps.`,
     details: {
       recorder_session_id: session.id,
+      mapping_source: mappingSource,
+      ai_mapping_fallback_reason: aiMappingFallbackReason,
+      manual_step_count: existingSteps.length,
       updated_steps: appliedSteps.filter((step) => step.operation === "updated").length,
       created_steps: appliedSteps.filter((step) => step.operation === "created").length,
       learned_locator_count: learnedCount,
@@ -1315,13 +1696,18 @@ const finalizeRecorderBuild = async ({
   await updateTransaction(transactionId, {
     status: "completed",
     description: appliedSteps.length
-      ? `Recorder generated web keyword automation for ${appliedSteps.length} step${appliedSteps.length === 1 ? "" : "s"}.`
+      ? existingSteps.length
+        ? `Recorder mapped web keyword automation onto ${appliedSteps.length} existing manual step${appliedSteps.length === 1 ? "" : "s"}.`
+        : `Recorder generated web keyword automation for ${appliedSteps.length} step${appliedSteps.length === 1 ? "" : "s"}.`
       : "Recorder stopped without supported interactions to convert.",
     metadata: {
       current_phase: "recorder.completed",
       progress_percent: 100,
       processed_items: appliedSteps.length,
       generated_steps: appliedSteps.length,
+      mapped_manual_steps: appliedSteps.filter((step) => step.operation === "updated").length,
+      mapping_source: mappingSource,
+      ai_mapping_fallback_reason: aiMappingFallbackReason,
       learned_locator_count: learnedCount,
       artifact_id: artifact?.id || null
     },
@@ -1337,11 +1723,13 @@ const finalizeRecorderBuild = async ({
     updated_step_count: appliedSteps.filter((step) => step.operation === "updated").length,
     learned_locator_count: learnedCount,
     cache_hits: 0,
-    fallback_used: false,
-    fallback_reason: null,
+    fallback_used: Boolean(aiMappingFallbackReason),
+    fallback_reason: aiMappingFallbackReason,
     integration: null,
     summary: appliedSteps.length
-      ? "Recorder interactions were converted into QAira web keyword automation steps."
+      ? existingSteps.length
+        ? "Recorder interactions were mapped onto the existing manual test steps without replacing the manual text."
+        : "Recorder interactions were converted into QAira web keyword automation steps."
       : "Recorder stopped cleanly, but no supported interactions were captured.",
     artifact_id: artifact?.id || null,
     step_updates: appliedSteps.map(({ automation_code, operation, source_action_index, ...step }) => ({
@@ -1385,8 +1773,8 @@ exports.buildAutomationForCase = async ({
         category: "automation_build",
         action: "single_case_automation_build",
         status: "running",
-        title: `Automation build for ${testCase.title}`,
-        description: "Building step automation from the manual web case.",
+        title: `AI automation for ${testCase.title}`,
+        description: "Automating the manual web case with AI-assisted step mapping.",
         metadata: {
           current_phase: "automation.context",
           progress_percent: 10,
@@ -1405,8 +1793,8 @@ exports.buildAutomationForCase = async ({
         category: "automation_build",
         action: "single_case_automation_build",
         status: "running",
-        title: `Automation build for ${testCase.title}`,
-        description: "Building step automation from the manual web case.",
+        title: `AI automation for ${testCase.title}`,
+        description: "Automating the manual web case with AI-assisted step mapping.",
         metadata: {
           current_phase: "automation.context",
           progress_percent: 10,
@@ -1523,8 +1911,8 @@ exports.buildAutomationBatch = async ({
       category: "automation_build",
       action: "batch_case_automation_build",
       status: "running",
-      title: "Batch web automation build",
-      description: `Building automation for ${targetIds.length} manual web case${targetIds.length === 1 ? "" : "s"}.`,
+      title: "Batch AI automation",
+      description: `Automating ${targetIds.length} manual web case${targetIds.length === 1 ? "" : "s"} with AI.`,
       metadata: {
         current_phase: "queued",
         total_items: targetIds.length,
@@ -1655,13 +2043,11 @@ exports.buildAutomationBatch = async ({
 
 exports.listLearningCache = async ({ project_id, app_type_id, limit } = {}) => {
   const boundedLimit = Math.max(1, Math.min(200, Number(limit) || 50));
-  return selectLearningCache.all(
-    normalizeText(project_id),
-    normalizeText(project_id),
-    normalizeText(app_type_id),
-    normalizeText(app_type_id),
-    boundedLimit
-  );
+  return listLearningCacheRows({
+    projectId: normalizeText(project_id),
+    appTypeId: normalizeText(app_type_id),
+    limit: boundedLimit
+  });
 };
 
 const resolveTestEngineIntegration = async (testCase) => {
@@ -1703,6 +2089,106 @@ const buildEngineUrl = (baseUrl, value) => {
   } catch {
     return new URL(normalized, `${String(baseUrl || "").replace(/\/+$/, "")}/`).toString();
   }
+};
+
+const parseTransactionMetadata = (transaction) => safeJson(transaction?.metadata, {});
+
+const isRecorderSessionPastOrphanTtl = (session, transaction) => {
+  const metadata = parseTransactionMetadata(transaction);
+  const lastActivity = Date.parse(
+    session?.last_activity_at
+    || session?.started_at
+    || metadata.recorder_started_at
+    || transaction?.started_at
+    || transaction?.created_at
+    || ""
+  );
+
+  if (!Number.isFinite(lastActivity)) {
+    return true;
+  }
+
+  return Date.now() - lastActivity > RECORDER_ORPHAN_TTL_MS;
+};
+
+exports.cleanupOrphanRecorderSessions = async ({ limit = 25 } = {}) => {
+  const cutoff = new Date(Date.now() - RECORDER_ORPHAN_TTL_MS).toISOString();
+  const transactions = await selectStaleRecorderTransactions.all(cutoff, Math.max(1, Math.min(100, Number(limit) || 25)));
+  let stopped = 0;
+  let checked = 0;
+
+  for (const transaction of transactions) {
+    const metadata = parseTransactionMetadata(transaction);
+    const sessionId = normalizeText(metadata.recorder_session_id);
+    const baseUrl = normalizeText(metadata.engine_base_url);
+
+    if (!sessionId || !baseUrl) {
+      continue;
+    }
+
+    checked += 1;
+
+    try {
+      const session = await readEngineJson(`${baseUrl}/api/v1/recorder/sessions/${encodeURIComponent(sessionId)}`);
+      const shouldStop = session?.status === "running" && isRecorderSessionPastOrphanTtl(session, transaction);
+
+      if (!shouldStop && session?.status === "running") {
+        continue;
+      }
+
+      if (shouldStop) {
+        await readEngineJson(`${baseUrl}/api/v1/recorder/sessions/${encodeURIComponent(sessionId)}/stop`, {
+          method: "POST"
+        }).catch(() => null);
+        stopped += 1;
+      }
+
+      const message = shouldStop
+        ? "Recorder session was auto-stopped after more than 3 minutes without live-view or input activity."
+        : "Recorder session was already stopped while QAira still had the process marked as running.";
+
+      await appendEvent(transaction.id, {
+        level: "warning",
+        phase: "recorder.orphan.cleaned",
+        message,
+        details: {
+          recorder_session_id: sessionId,
+          engine_base_url: baseUrl,
+          last_activity_at: session?.last_activity_at || null,
+          recorder_status: shouldStop ? "auto-stopped" : session?.status || "unknown",
+          orphan_ttl_ms: RECORDER_ORPHAN_TTL_MS
+        }
+      });
+      await updateTransaction(transaction.id, {
+        status: "failed",
+        description: message,
+        metadata: {
+          current_phase: "recorder.orphan.cleaned",
+          progress_percent: 100,
+          recorder_status: shouldStop ? "auto-stopped" : session?.status || "unknown",
+          last_activity_at: session?.last_activity_at || null,
+          orphan_ttl_ms: RECORDER_ORPHAN_TTL_MS
+        },
+        completed_at: new Date().toISOString()
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to inspect recorder session";
+      await appendEvent(transaction.id, {
+        level: "warning",
+        phase: "recorder.orphan.inspect_failed",
+        message,
+        details: {
+          recorder_session_id: sessionId,
+          engine_base_url: baseUrl
+        }
+      }).catch(() => null);
+    }
+  }
+
+  return {
+    checked,
+    stopped
+  };
 };
 
 exports.startRecorderSession = async ({
@@ -1766,6 +2252,8 @@ exports.startRecorderSession = async ({
       test_configuration_id: buildContext.configuration?.id || null,
       test_data_set_id: buildContext.data_set?.id || null,
       recorder_session_id: session.id,
+      recorder_started_at: session.started_at || new Date().toISOString(),
+      recorder_last_activity_at: session.last_activity_at || session.started_at || null,
       engine_base_url: baseUrl
     },
     related_kind: "test_case",
@@ -1804,6 +2292,8 @@ exports.finishRecorderSession = async ({
   test_case_id,
   recorder_session_id,
   transaction_id,
+  integration_id,
+  additional_context,
   created_by
 } = {}) => {
   const testCaseId = normalizeText(test_case_id);
@@ -1835,7 +2325,9 @@ exports.finishRecorderSession = async ({
     createdBy: created_by,
     transactionId: transaction_id,
     capturedActions,
-    capturedNetwork
+    capturedNetwork,
+    integrationId: integration_id,
+    additionalContext: additional_context
   });
 
   return {

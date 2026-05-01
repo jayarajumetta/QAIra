@@ -26,4 +26,5 @@ module.exports = async function (fastify) {
     fastify.register(require("./testEngineCallbacks.routes"));
     fastify.register(require("./testEngineInternal.routes"));
     fastify.register(require("./workspaceTransactions.routes"));
+    fastify.register(require("./opsTelemetry.routes"));
   };

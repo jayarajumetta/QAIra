@@ -90,4 +90,8 @@ module.exports = async function (fastify) {
 
     return artifact.content || "";
   });
+
+  fastify.delete("/workspace-transactions/:id", { preHandler: [fastify.requireAdmin] }, async (req) => {
+    return workspaceTransactionService.deleteTransaction(req.params.id);
+  });
 };

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 const DEFAULT_EVENTS_PATH = "/api/v1/events";
 const DEFAULT_BOARD_PATH = "/ops-telemetry";
@@ -827,6 +827,24 @@ export const createOpsTelemetry = async (logger) => {
             items: [...summary.values()].sort((left, right) => right.count - left.count || left.service_name.localeCompare(right.service_name))
         };
     };
+    const clearEvents = async () => {
+        const deleted = events.length;
+        events.splice(0, events.length);
+        writeQueue = writeQueue
+            .then(() => writeFile(config.storePath, "", "utf8"))
+            .catch((error) => {
+            logger.error({ error, storePath: config.storePath }, "Unable to clear OPS telemetry event store");
+        });
+        await writeQueue;
+        logger.warn({
+            ops_telemetry: true,
+            deleted
+        }, "OPS telemetry events cleared");
+        return {
+            ok: true,
+            deleted
+        };
+    };
     const getHealthSnapshot = () => ({
         enabled: config.enabled,
         service_name: config.serviceName,
@@ -881,6 +899,21 @@ export const createOpsTelemetry = async (logger) => {
             };
         });
         app.get(routePath, async (request) => listEvents(request.query));
+        app.delete(routePath, async (request, reply) => {
+            if (!config.enabled) {
+                reply.code(503);
+                return {
+                    message: "OPS telemetry is disabled"
+                };
+            }
+            if (!authorizeRequest(request.headers)) {
+                reply.code(401);
+                return {
+                    message: "Unauthorized OPS telemetry request"
+                };
+            }
+            return clearEvents();
+        });
     };
     return {
         async register(app) {

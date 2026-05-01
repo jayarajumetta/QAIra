@@ -11,7 +11,9 @@ const REMOTE_TEXT_LIMIT = Math.max(1, Number.parseInt(process.env.RECORDER_REMOT
 const VIEWPORT_WIDTH = Math.max(640, Number.parseInt(process.env.RECORDER_VIEWPORT_WIDTH || "1365", 10));
 const VIEWPORT_HEIGHT = Math.max(480, Number.parseInt(process.env.RECORDER_VIEWPORT_HEIGHT || "768", 10));
 const SCREENCAST_QUALITY = Math.max(20, Math.min(85, Number.parseInt(process.env.RECORDER_SCREENCAST_QUALITY || "45", 10)));
-const SCREENCAST_EVERY_NTH_FRAME = Math.max(1, Math.min(6, Number.parseInt(process.env.RECORDER_SCREENCAST_EVERY_NTH_FRAME || "2", 10)));
+const SCREENCAST_EVERY_NTH_FRAME = Math.max(1, Math.min(6, Number.parseInt(process.env.RECORDER_SCREENCAST_EVERY_NTH_FRAME || "1", 10)));
+const RECORDER_ORPHAN_TTL_MS = Math.max(60_000, Number.parseInt(process.env.RECORDER_ORPHAN_TTL_MS || String(3 * 60_000), 10));
+const RECORDER_CLEANUP_INTERVAL_MS = Math.max(15_000, Number.parseInt(process.env.RECORDER_CLEANUP_INTERVAL_MS || "30000", 10));
 const recorderPageIds = new WeakMap();
 const recorderAttachedPages = new WeakSet();
 const LIVE_VIEW_HTML_CACHE_SECONDS = 0;
@@ -104,6 +106,9 @@ const pushBounded = (items, item, max) => {
         items.splice(0, items.length - max);
     }
 };
+const touchSession = (session) => {
+    session.last_activity_at = new Date().toISOString();
+};
 const pushRecorderAction = (session, action) => {
     const entry = {
         index: action.index || session.actions.length + 1,
@@ -152,6 +157,7 @@ const serializeSession = (session, options = {}) => ({
     status: session.status,
     started_at: session.started_at,
     stopped_at: session.stopped_at,
+    last_activity_at: session.last_activity_at,
     start_url: session.start_url,
     display_mode: session.display_mode,
     live_view_path: options.includeLiveViewPath ? buildLiveViewPath(session) : null,
@@ -563,6 +569,7 @@ const renderLiveViewHtml = (session) => {
       display: grid;
       place-items: center;
       padding: 12px;
+      position: relative;
     }
     #screen {
       display: block;
@@ -572,8 +579,26 @@ const renderLiveViewHtml = (session) => {
       border-radius: 8px;
       background: #fff;
       box-shadow: 0 14px 40px rgba(0, 0, 0, 0.32);
-      cursor: crosshair;
+      cursor: pointer;
       user-select: none;
+      touch-action: none;
+    }
+    .click-marker {
+      position: fixed;
+      width: 22px;
+      height: 22px;
+      margin: -11px 0 0 -11px;
+      border: 2px solid #f4ad55;
+      border-radius: 999px;
+      pointer-events: none;
+      opacity: 0;
+      transform: scale(0.7);
+      transition: opacity 180ms ease, transform 180ms ease;
+      z-index: 5;
+    }
+    .click-marker.is-visible {
+      opacity: 1;
+      transform: scale(1);
     }
     .inputbar {
       display: flex;
@@ -646,6 +671,7 @@ const renderLiveViewHtml = (session) => {
   <main>
     <div class="viewport">
       <canvas id="screen" aria-label="Recorder browser viewport" role="img"></canvas>
+      <span class="click-marker" id="clickMarker"></span>
     </div>
     <div class="inputbar">
       <input id="textInput" autocomplete="off" placeholder="Text to type into the focused field" />
@@ -658,6 +684,7 @@ const renderLiveViewHtml = (session) => {
     const token = new URLSearchParams(window.location.search).get("token") || "";
     const screen = document.getElementById("screen");
     const screenContext = screen.getContext("2d", { alpha: false });
+    const clickMarker = document.getElementById("clickMarker");
     const statusText = document.getElementById("statusText");
     const dimensionText = document.getElementById("dimensionText");
     const address = document.getElementById("address");
@@ -667,6 +694,7 @@ const renderLiveViewHtml = (session) => {
     let wheelDeltaX = 0;
     let wheelDeltaY = 0;
     let frameSequence = 0;
+    let clickMarkerTimer = null;
 
     const withToken = (path) => path + "?token=" + encodeURIComponent(token);
     const streamUrl = () => withToken("/api/v1/recorder/sessions/" + encodeURIComponent(sessionId) + "/stream");
@@ -742,6 +770,17 @@ const renderLiveViewHtml = (session) => {
       image.src = "data:image/jpeg;base64," + frame.data;
     };
 
+    const showClickMarker = (clientX, clientY) => {
+      if (!clickMarker) return;
+      if (clickMarkerTimer) {
+        window.clearTimeout(clickMarkerTimer);
+      }
+      clickMarker.style.left = clientX + "px";
+      clickMarker.style.top = clientY + "px";
+      clickMarker.classList.add("is-visible");
+      clickMarkerTimer = window.setTimeout(() => clickMarker.classList.remove("is-visible"), 180);
+    };
+
     const connectStream = () => {
       if (!window.EventSource || !token) {
         setStatus("Live stream unavailable", true);
@@ -772,11 +811,14 @@ const renderLiveViewHtml = (session) => {
       });
     };
 
-    screen.addEventListener("click", (event) => {
+    screen.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
       if (!screen.width || !screen.height) return;
+      event.preventDefault();
       const rect = screen.getBoundingClientRect();
       const x = Math.round((event.clientX - rect.left) * (screen.width / rect.width));
       const y = Math.round((event.clientY - rect.top) * (screen.height / rect.height));
+      showClickMarker(event.clientX, event.clientY);
       send({ type: "click", x, y });
     });
 
@@ -836,7 +878,33 @@ const stopSession = async (session) => {
     await session.context.close().catch(() => undefined);
     await rm(session.user_data_dir, { recursive: true, force: true }).catch(() => undefined);
 };
+const stopOrphanedSessions = async (logger) => {
+    const now = Date.now();
+    for (const session of sessions.values()) {
+        if (session.status !== "running") {
+            continue;
+        }
+        const lastActivity = Date.parse(session.last_activity_at || session.started_at);
+        if (Number.isFinite(lastActivity) && now - lastActivity <= RECORDER_ORPHAN_TTL_MS) {
+            continue;
+        }
+        session.error = "Recorder session auto-stopped after more than 3 minutes without live-view or input activity.";
+        logger.warn({
+            sessionId: session.id,
+            started_at: session.started_at,
+            last_activity_at: session.last_activity_at,
+            orphan_ttl_ms: RECORDER_ORPHAN_TTL_MS
+        }, "Recorder orphan session auto-stopped");
+        await stopSession(session);
+    }
+};
 export const registerRecorderRoutes = async (app) => {
+    const cleanupTimer = setInterval(() => {
+        void stopOrphanedSessions(app.log);
+    }, RECORDER_CLEANUP_INTERVAL_MS);
+    app.addHook("onClose", async () => {
+        clearInterval(cleanupTimer);
+    });
     app.get("/api/v1/recorder/sessions", async () => ({
         items: [...sessions.values()].map((session) => serializeSession(session))
     }));
@@ -860,6 +928,7 @@ export const registerRecorderRoutes = async (app) => {
             reply.code(403);
             return { message: "Recorder live view token is invalid or expired" };
         }
+        touchSession(session);
         reply
             .header("Cache-Control", `private, max-age=${LIVE_VIEW_HTML_CACHE_SECONDS}`)
             .type("text/html; charset=utf-8");
@@ -903,6 +972,7 @@ export const registerRecorderRoutes = async (app) => {
         };
         try {
             const page = await resolveActivePage(session);
+            touchSession(session);
             client = await session.context.newCDPSession(page);
             reply.hijack();
             reply.raw.writeHead(200, {
@@ -917,6 +987,7 @@ export const registerRecorderRoutes = async (app) => {
             });
             keepAlive = setInterval(() => {
                 if (!closed && !reply.raw.destroyed && !reply.raw.writableEnded) {
+                    touchSession(session);
                     reply.raw.write(": keep-alive\n\n");
                 }
             }, 15_000);
@@ -929,6 +1000,7 @@ export const registerRecorderRoutes = async (app) => {
                     data: frame.data,
                     metadata: frame.metadata || {}
                 });
+                touchSession(session);
                 void client?.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => undefined);
             });
             await client.send("Page.startScreencast", {
@@ -973,6 +1045,7 @@ export const registerRecorderRoutes = async (app) => {
         }
         try {
             const page = await resolveActivePage(session);
+            touchSession(session);
             const screenshot = await page.screenshot({
                 type: "jpeg",
                 quality: SCREENCAST_QUALITY,
@@ -1010,6 +1083,7 @@ export const registerRecorderRoutes = async (app) => {
         const type = normalizeText(body?.type);
         try {
             const page = await resolveActivePage(session);
+            touchSession(session);
             if (type === "click") {
                 const x = normalizePositiveNumber(body?.x);
                 const y = normalizePositiveNumber(body?.y);
@@ -1035,7 +1109,7 @@ export const registerRecorderRoutes = async (app) => {
             else if (type === "type") {
                 const text = clipRawText(body?.text, REMOTE_TEXT_LIMIT);
                 if (text) {
-                    await page.keyboard.type(text, { delay: 12 });
+                    await page.keyboard.type(text, { delay: 2 });
                 }
             }
             else if (type === "press") {
@@ -1077,9 +1151,21 @@ export const registerRecorderRoutes = async (app) => {
                     reply.code(400);
                     return { message: "goto input requires a valid absolute URL" };
                 }
-                await page.goto(url, {
+                pushRecorderAction(session, {
+                    type: "navigation",
+                    locator: "location",
+                    text: url,
+                    value: null,
+                    url,
+                    page_id: getRecorderPageId(page),
+                    page_title: await resolvePageTitle(page),
+                    source: "remote-control"
+                });
+                void page.goto(url, {
                     waitUntil: "domcontentloaded",
-                    timeout: 60_000
+                    timeout: 30_000
+                }).catch((error) => {
+                    app.log.warn({ error, sessionId: session.id, url }, "Recorder URL navigation failed");
                 });
             }
             else {
@@ -1148,6 +1234,7 @@ export const registerRecorderRoutes = async (app) => {
                 user_data_dir: userDataDir,
                 live_token: randomUUID(),
                 display_mode: headless ? "browser-live-view" : "local-browser-with-live-view",
+                last_activity_at: new Date().toISOString(),
                 context,
                 actions: [],
                 network: [],
@@ -1194,6 +1281,7 @@ export const registerRecorderRoutes = async (app) => {
                 id,
                 status: session.status,
                 started_at: session.started_at,
+                last_activity_at: session.last_activity_at,
                 start_url: startUrl,
                 display_mode: session.display_mode,
                 live_view_path: buildLiveViewPath(session),

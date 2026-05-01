@@ -133,6 +133,14 @@ export function PlayIcon({ size, strokeWidth }: IconProps) {
   );
 }
 
+export function MousePointerIcon({ size, strokeWidth }: IconProps) {
+  return (
+    <IconFrame size={size} strokeWidth={strokeWidth}>
+      <path d="m5 3 14 9-6.3 1.2 3.5 6.1-3.1 1.8-3.5-6.1L5 19z" />
+    </IconFrame>
+  );
+}
+
 export function CalendarIcon({ size, strokeWidth }: IconProps) {
   return (
     <IconFrame size={size} strokeWidth={strokeWidth}>

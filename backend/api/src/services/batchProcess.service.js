@@ -364,10 +364,10 @@ exports.queueAutomationBuild = async ({
     app_type_id,
     category: "automation_build",
     action: "batch_case_automation_build",
-    title: "Batch web automation build",
+    title: "Batch AI automation",
     description: selectedCaseCount
-      ? `Queued ${selectedCaseCount} selected manual web case${selectedCaseCount === 1 ? "" : "s"} for automation build.`
-      : "Queued manual web cases for automation build.",
+      ? `Queued ${selectedCaseCount} selected manual web case${selectedCaseCount === 1 ? "" : "s"} to automate with AI.`
+      : "Queued manual web cases to automate with AI.",
     metadata: {
       selected_case_count: selectedCaseCount,
       total_items: selectedCaseCount,

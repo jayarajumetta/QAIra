@@ -675,7 +675,15 @@ export const api = {
     artifacts: (id: string) =>
       request<WorkspaceTransactionArtifact[]>(`/workspace-transactions/${id}/artifacts`),
     downloadArtifact: (transactionId: string, artifactId: string) =>
-      requestBlob(`/workspace-transactions/${transactionId}/artifacts/${artifactId}/download`)
+      requestBlob(`/workspace-transactions/${transactionId}/artifacts/${artifactId}/download`),
+    delete: (id: string) =>
+      request<{ deleted: boolean }>(`/workspace-transactions/${id}`, { method: "DELETE" })
+  },
+  opsTelemetry: {
+    clearLogs: (query?: { project_id?: string }) =>
+      request<{ cleared: boolean; deleted: number; events_path: string }>(`/ops-telemetry/logs${toQueryString(query)}`, {
+        method: "DELETE"
+      })
   }
 };
 

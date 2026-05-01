@@ -43,6 +43,7 @@ type RecorderSession = {
   user_data_dir: string;
   live_token: string;
   display_mode: "browser-live-view" | "local-browser-with-live-view";
+  last_activity_at: string;
   context: BrowserContext;
   actions: RecorderAction[];
   network: RecorderNetworkEntry[];
@@ -67,7 +68,9 @@ const REMOTE_TEXT_LIMIT = Math.max(1, Number.parseInt(process.env.RECORDER_REMOT
 const VIEWPORT_WIDTH = Math.max(640, Number.parseInt(process.env.RECORDER_VIEWPORT_WIDTH || "1365", 10));
 const VIEWPORT_HEIGHT = Math.max(480, Number.parseInt(process.env.RECORDER_VIEWPORT_HEIGHT || "768", 10));
 const SCREENCAST_QUALITY = Math.max(20, Math.min(85, Number.parseInt(process.env.RECORDER_SCREENCAST_QUALITY || "45", 10)));
-const SCREENCAST_EVERY_NTH_FRAME = Math.max(1, Math.min(6, Number.parseInt(process.env.RECORDER_SCREENCAST_EVERY_NTH_FRAME || "2", 10)));
+const SCREENCAST_EVERY_NTH_FRAME = Math.max(1, Math.min(6, Number.parseInt(process.env.RECORDER_SCREENCAST_EVERY_NTH_FRAME || "1", 10)));
+const RECORDER_ORPHAN_TTL_MS = Math.max(60_000, Number.parseInt(process.env.RECORDER_ORPHAN_TTL_MS || String(3 * 60_000), 10));
+const RECORDER_CLEANUP_INTERVAL_MS = Math.max(15_000, Number.parseInt(process.env.RECORDER_CLEANUP_INTERVAL_MS || "30000", 10));
 const recorderPageIds = new WeakMap<Page, string>();
 const recorderAttachedPages = new WeakSet<Page>();
 
@@ -186,6 +189,10 @@ const pushBounded = <T>(items: T[], item: T, max: number) => {
   }
 };
 
+const touchSession = (session: RecorderSession) => {
+  session.last_activity_at = new Date().toISOString();
+};
+
 const pushRecorderAction = (
   session: RecorderSession,
   action: Omit<RecorderAction, "index" | "timestamp"> & Partial<Pick<RecorderAction, "index" | "timestamp">>
@@ -245,6 +252,7 @@ const serializeSession = (session: RecorderSession, options: { includeLiveViewPa
   status: session.status,
   started_at: session.started_at,
   stopped_at: session.stopped_at,
+  last_activity_at: session.last_activity_at,
   start_url: session.start_url,
   display_mode: session.display_mode,
   live_view_path: options.includeLiveViewPath ? buildLiveViewPath(session) : null,
@@ -703,6 +711,7 @@ const renderLiveViewHtml = (session: RecorderSession) => {
       display: grid;
       place-items: center;
       padding: 12px;
+      position: relative;
     }
     #screen {
       display: block;
@@ -712,8 +721,26 @@ const renderLiveViewHtml = (session: RecorderSession) => {
       border-radius: 8px;
       background: #fff;
       box-shadow: 0 14px 40px rgba(0, 0, 0, 0.32);
-      cursor: crosshair;
+      cursor: pointer;
       user-select: none;
+      touch-action: none;
+    }
+    .click-marker {
+      position: fixed;
+      width: 22px;
+      height: 22px;
+      margin: -11px 0 0 -11px;
+      border: 2px solid #f4ad55;
+      border-radius: 999px;
+      pointer-events: none;
+      opacity: 0;
+      transform: scale(0.7);
+      transition: opacity 180ms ease, transform 180ms ease;
+      z-index: 5;
+    }
+    .click-marker.is-visible {
+      opacity: 1;
+      transform: scale(1);
     }
     .inputbar {
       display: flex;
@@ -786,6 +813,7 @@ const renderLiveViewHtml = (session: RecorderSession) => {
   <main>
     <div class="viewport">
       <canvas id="screen" aria-label="Recorder browser viewport" role="img"></canvas>
+      <span class="click-marker" id="clickMarker"></span>
     </div>
     <div class="inputbar">
       <input id="textInput" autocomplete="off" placeholder="Text to type into the focused field" />
@@ -798,6 +826,7 @@ const renderLiveViewHtml = (session: RecorderSession) => {
     const token = new URLSearchParams(window.location.search).get("token") || "";
     const screen = document.getElementById("screen");
     const screenContext = screen.getContext("2d", { alpha: false });
+    const clickMarker = document.getElementById("clickMarker");
     const statusText = document.getElementById("statusText");
     const dimensionText = document.getElementById("dimensionText");
     const address = document.getElementById("address");
@@ -807,6 +836,7 @@ const renderLiveViewHtml = (session: RecorderSession) => {
     let wheelDeltaX = 0;
     let wheelDeltaY = 0;
     let frameSequence = 0;
+    let clickMarkerTimer = null;
 
     const withToken = (path) => path + "?token=" + encodeURIComponent(token);
     const streamUrl = () => withToken("/api/v1/recorder/sessions/" + encodeURIComponent(sessionId) + "/stream");
@@ -882,6 +912,17 @@ const renderLiveViewHtml = (session: RecorderSession) => {
       image.src = "data:image/jpeg;base64," + frame.data;
     };
 
+    const showClickMarker = (clientX, clientY) => {
+      if (!clickMarker) return;
+      if (clickMarkerTimer) {
+        window.clearTimeout(clickMarkerTimer);
+      }
+      clickMarker.style.left = clientX + "px";
+      clickMarker.style.top = clientY + "px";
+      clickMarker.classList.add("is-visible");
+      clickMarkerTimer = window.setTimeout(() => clickMarker.classList.remove("is-visible"), 180);
+    };
+
     const connectStream = () => {
       if (!window.EventSource || !token) {
         setStatus("Live stream unavailable", true);
@@ -912,11 +953,14 @@ const renderLiveViewHtml = (session: RecorderSession) => {
       });
     };
 
-    screen.addEventListener("click", (event) => {
+    screen.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
       if (!screen.width || !screen.height) return;
+      event.preventDefault();
       const rect = screen.getBoundingClientRect();
       const x = Math.round((event.clientX - rect.left) * (screen.width / rect.width));
       const y = Math.round((event.clientY - rect.top) * (screen.height / rect.height));
+      showClickMarker(event.clientX, event.clientY);
       send({ type: "click", x, y });
     });
 
@@ -979,7 +1023,43 @@ const stopSession = async (session: RecorderSession) => {
   await rm(session.user_data_dir, { recursive: true, force: true }).catch(() => undefined);
 };
 
+const stopOrphanedSessions = async (logger: FastifyBaseLogger) => {
+  const now = Date.now();
+
+  for (const session of sessions.values()) {
+    if (session.status !== "running") {
+      continue;
+    }
+
+    const lastActivity = Date.parse(session.last_activity_at || session.started_at);
+
+    if (Number.isFinite(lastActivity) && now - lastActivity <= RECORDER_ORPHAN_TTL_MS) {
+      continue;
+    }
+
+    session.error = "Recorder session auto-stopped after more than 3 minutes without live-view or input activity.";
+    logger.warn(
+      {
+        sessionId: session.id,
+        started_at: session.started_at,
+        last_activity_at: session.last_activity_at,
+        orphan_ttl_ms: RECORDER_ORPHAN_TTL_MS
+      },
+      "Recorder orphan session auto-stopped"
+    );
+    await stopSession(session);
+  }
+};
+
 export const registerRecorderRoutes = async (app: FastifyInstance) => {
+  const cleanupTimer = setInterval(() => {
+    void stopOrphanedSessions(app.log);
+  }, RECORDER_CLEANUP_INTERVAL_MS);
+
+  app.addHook("onClose", async () => {
+    clearInterval(cleanupTimer);
+  });
+
   app.get("/api/v1/recorder/sessions", async () => ({
     items: [...sessions.values()].map((session) => serializeSession(session))
   }));
@@ -1010,6 +1090,7 @@ export const registerRecorderRoutes = async (app: FastifyInstance) => {
       return { message: "Recorder live view token is invalid or expired" };
     }
 
+    touchSession(session);
     reply
       .header("Cache-Control", `private, max-age=${LIVE_VIEW_HTML_CACHE_SECONDS}`)
       .type("text/html; charset=utf-8");
@@ -1065,6 +1146,7 @@ export const registerRecorderRoutes = async (app: FastifyInstance) => {
 
     try {
       const page = await resolveActivePage(session);
+      touchSession(session);
       client = await session.context.newCDPSession(page);
 
       reply.hijack();
@@ -1082,6 +1164,7 @@ export const registerRecorderRoutes = async (app: FastifyInstance) => {
 
       keepAlive = setInterval(() => {
         if (!closed && !reply.raw.destroyed && !reply.raw.writableEnded) {
+          touchSession(session);
           reply.raw.write(": keep-alive\n\n");
         }
       }, 15_000);
@@ -1109,6 +1192,7 @@ export const registerRecorderRoutes = async (app: FastifyInstance) => {
           data: frame.data,
           metadata: frame.metadata || {}
         });
+        touchSession(session);
         void client?.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => undefined);
       });
 
@@ -1158,6 +1242,7 @@ export const registerRecorderRoutes = async (app: FastifyInstance) => {
 
     try {
       const page = await resolveActivePage(session);
+      touchSession(session);
       const screenshot = await page.screenshot({
         type: "jpeg",
         quality: SCREENCAST_QUALITY,
@@ -1210,6 +1295,7 @@ export const registerRecorderRoutes = async (app: FastifyInstance) => {
 
     try {
       const page = await resolveActivePage(session);
+      touchSession(session);
 
       if (type === "click") {
         const x = normalizePositiveNumber(body?.x);
@@ -1238,7 +1324,7 @@ export const registerRecorderRoutes = async (app: FastifyInstance) => {
         const text = clipRawText(body?.text, REMOTE_TEXT_LIMIT);
 
         if (text) {
-          await page.keyboard.type(text, { delay: 12 });
+          await page.keyboard.type(text, { delay: 2 });
         }
       } else if (type === "press") {
         const key = normalizeText(body?.key);
@@ -1281,9 +1367,21 @@ export const registerRecorderRoutes = async (app: FastifyInstance) => {
           return { message: "goto input requires a valid absolute URL" };
         }
 
-        await page.goto(url, {
+        pushRecorderAction(session, {
+          type: "navigation",
+          locator: "location",
+          text: url,
+          value: null,
+          url,
+          page_id: getRecorderPageId(page),
+          page_title: await resolvePageTitle(page),
+          source: "remote-control"
+        });
+        void page.goto(url, {
           waitUntil: "domcontentloaded",
-          timeout: 60_000
+          timeout: 30_000
+        }).catch((error) => {
+          app.log.warn({ error, sessionId: session.id, url }, "Recorder URL navigation failed");
         });
       } else {
         reply.code(400);
@@ -1359,6 +1457,7 @@ export const registerRecorderRoutes = async (app: FastifyInstance) => {
         user_data_dir: userDataDir,
         live_token: randomUUID(),
         display_mode: headless ? "browser-live-view" : "local-browser-with-live-view",
+        last_activity_at: new Date().toISOString(),
         context,
         actions: [],
         network: [],
@@ -1412,6 +1511,7 @@ export const registerRecorderRoutes = async (app: FastifyInstance) => {
         id,
         status: session.status,
         started_at: session.started_at,
+        last_activity_at: session.last_activity_at,
         start_url: startUrl,
         display_mode: session.display_mode,
         live_view_path: buildLiveViewPath(session),

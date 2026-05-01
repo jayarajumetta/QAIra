@@ -15,6 +15,7 @@ const db = require("./db");
 const { ensureRuntimeSchema } = require("./db/bootstrap");
 const executionScheduleService = require("./services/executionSchedule.service");
 const aiTestCaseGenerationService = require("./services/aiTestCaseGeneration.service");
+const aiAutomationBuilderService = require("./services/aiAutomationBuilder.service");
 const projectSyncService = require("./services/projectSync.service");
 const batchProcessService = require("./services/batchProcess.service");
 const { verifyToken, generateRequestId } = require("./utils/token");
@@ -209,6 +210,7 @@ let scheduleProcessorTimer = null;
 let aiGenerationProcessorTimer = null;
 let projectSyncTimer = null;
 let batchProcessTimer = null;
+let recorderCleanupTimer = null;
 
 fastify.addHook("onReady", async () => {
   const runDueSchedules = async () => {
@@ -263,6 +265,18 @@ fastify.addHook("onReady", async () => {
   batchProcessTimer = setInterval(runBatchProcesses, 10 * 1000);
 });
 
+fastify.addHook("onReady", async () => {
+  const cleanupRecorderSessions = async () => {
+    try {
+      await aiAutomationBuilderService.cleanupOrphanRecorderSessions();
+    } catch (error) {
+      fastify.log.error(error, "Unable to clean up orphan recorder sessions");
+    }
+  };
+
+  recorderCleanupTimer = setInterval(cleanupRecorderSessions, 60 * 1000);
+});
+
 fastify.addHook("onClose", async () => {
   if (scheduleProcessorTimer) {
     clearInterval(scheduleProcessorTimer);
@@ -282,6 +296,11 @@ fastify.addHook("onClose", async () => {
   if (batchProcessTimer) {
     clearInterval(batchProcessTimer);
     batchProcessTimer = null;
+  }
+
+  if (recorderCleanupTimer) {
+    clearInterval(recorderCleanupTimer);
+    recorderCleanupTimer = null;
   }
 });
 

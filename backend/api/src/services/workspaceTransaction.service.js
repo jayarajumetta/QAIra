@@ -131,6 +131,26 @@ const selectTransactionArtifact = db.prepare(`
   WHERE id = ?
 `);
 
+const deleteTransactionEvents = db.prepare(`
+  DELETE FROM workspace_transaction_events
+  WHERE transaction_id = ?
+`);
+
+const deleteTransactionArtifacts = db.prepare(`
+  DELETE FROM workspace_transaction_artifacts
+  WHERE transaction_id = ?
+`);
+
+const deleteBatchJob = db.prepare(`
+  DELETE FROM batch_process_jobs
+  WHERE transaction_id = ?
+`);
+
+const deleteTransactionById = db.prepare(`
+  DELETE FROM workspace_transactions
+  WHERE id = ?
+`);
+
 const normalizeText = (value) => {
   if (value === undefined) {
     return undefined;
@@ -355,6 +375,24 @@ exports.getTransactionArtifact = async (artifactId) => {
   }
 
   return artifact;
+};
+
+exports.deleteTransaction = async (id) => {
+  const existing = await exports.getTransaction(id);
+
+  if (existing.status === "queued" || existing.status === "running") {
+    throw new Error("Active batch process logs cannot be deleted until the process finishes.");
+  }
+
+  const transaction = db.transaction(async () => {
+    await deleteTransactionEvents.run(id);
+    await deleteTransactionArtifacts.run(id);
+    await deleteBatchJob.run(id);
+    await deleteTransactionById.run(id);
+  });
+
+  await transaction();
+  return { deleted: true };
 };
 
 exports.listTransactions = async ({
