@@ -204,6 +204,7 @@ CREATE TABLE shared_step_groups (
   name TEXT NOT NULL,
   description TEXT,
   steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+  parameter_values JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (app_type_id) REFERENCES app_types(id) ON DELETE CASCADE

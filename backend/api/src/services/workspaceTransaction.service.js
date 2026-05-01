@@ -380,10 +380,6 @@ exports.getTransactionArtifact = async (artifactId) => {
 exports.deleteTransaction = async (id) => {
   const existing = await exports.getTransaction(id);
 
-  if (existing.status === "queued" || existing.status === "running") {
-    throw new Error("Active batch process logs cannot be deleted until the process finishes.");
-  }
-
   const transaction = db.transaction(async () => {
     await deleteTransactionEvents.run(id);
     await deleteTransactionArtifacts.run(id);

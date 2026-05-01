@@ -1234,8 +1234,6 @@ exports.startQueuedJob = async ({ job_id, worker_id } = {}) => {
     logs: JSON.stringify(logs),
     executed_by: job.created_by || null
   });
-  const attachedArtifacts = await attachInlineArtifacts(job.transaction_id, nextRuntimeState.artifact_bundle);
-
   if (job.transaction_id) {
     await appendQueueTransactionEvent(job.transaction_id, {
       level: "info",
@@ -1646,6 +1644,7 @@ exports.completeQueuedJob = async ({
     patch_proposals: normalizedPatchProposals.length ? normalizedPatchProposals : runtimeState.patch_proposals || []
   };
   const completedAt = nowIso();
+  const attachedArtifacts = await attachInlineArtifacts(job.transaction_id, nextRuntimeState.artifact_bundle);
 
   await finalizeJobState.run(
     resultStatusToJobStatus(finalStatus),

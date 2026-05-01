@@ -16005,14 +16005,73 @@ html {
 
 .step-card-parameterized {
   display: inline-flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 0.22rem;
   align-items: center;
   justify-content: flex-end;
   min-width: 0;
+  max-width: min(100%, 36rem);
   margin-left: auto;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.ai-studio-requirement-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.72rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  min-width: 0;
+}
+
+.ai-studio-requirement-summary > div {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.ai-studio-requirement-summary strong,
+.ai-studio-requirement-summary span {
   overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ai-studio-requirement-summary span {
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+}
+
+.ai-requirement-dialog-button svg {
+  flex: 0 0 auto;
+}
+
+.nested-modal-backdrop {
+  z-index: 80;
+}
+
+.requirement-selection-dialog {
+  width: min(58rem, calc(100vw - 2rem));
+  max-height: min(46rem, calc(100vh - 2rem));
+  display: flex;
+  flex-direction: column;
+}
+
+.requirement-selection-dialog-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  padding-bottom: 0.75rem;
+}
+
+.requirement-selection-dialog-list {
+  min-height: 0;
+  overflow: auto;
 }
 
 .step-parameter-summary {
@@ -17382,6 +17441,20 @@ html {
 
 .testops-recorder-actions {
   justify-content: flex-end;
+}
+
+.testops-recorder-actions .primary-button,
+.testops-recorder-actions .primary-button span,
+.automation-recorder-stack .primary-button,
+.automation-recorder-stack .primary-button span {
+  color: #ffffff;
+}
+
+.testops-recorder-actions .ghost-button,
+.testops-recorder-actions .ghost-button span,
+.automation-recorder-stack .ghost-button,
+.automation-recorder-stack .ghost-button span {
+  color: var(--text-primary);
 }
 
 .recorder-live-frame {

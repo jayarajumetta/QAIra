@@ -242,7 +242,7 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
     [transactionsQuery.data]
   );
   const deletableBatchTransactions = useMemo(
-    () => batchTransactions.filter((transaction) => transaction.status !== "queued" && transaction.status !== "running"),
+    () => batchTransactions,
     [batchTransactions]
   );
   const selectedTransaction = batchTransactions.find((transaction) => transaction.id === selectedTransactionId) || null;
@@ -255,6 +255,38 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
   const activeCase = testCases.find((testCase) => testCase.id === selectedCaseId) || manualCases[0] || null;
   const learningCache = learningCacheQuery.data || [];
   const recorderLiveUrl = recorderSession?.live_view_url || "";
+
+  useEffect(() => {
+    if (!recorderSession?.status_url || recorderSession.status !== "running") {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const refreshRecorderSession = async () => {
+      try {
+        const response = await fetch(recorderSession.status_url as string, { cache: "no-store" });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const next = await response.json() as Partial<RecorderSessionResponse>;
+
+        if (!cancelled) {
+          setRecorderSession((current) => current?.id === recorderSession.id ? { ...current, ...next } : current);
+        }
+      } catch {
+        // Live recorder counters are best-effort and should not interrupt the recorder.
+      }
+    };
+    const timer = window.setInterval(() => void refreshRecorderSession(), 1000);
+
+    void refreshRecorderSession();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [recorderSession?.id, recorderSession?.status, recorderSession?.status_url]);
 
   const invalidateAutomationViews = () => {
     void queryClient.invalidateQueries({ queryKey: ["test-cases"] });
@@ -392,7 +424,7 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
   };
 
   const handleDeleteVisibleBatchLogs = async () => {
-    if (!deletableBatchTransactions.length || !window.confirm(`Delete ${deletableBatchTransactions.length} finished batch process log${deletableBatchTransactions.length === 1 ? "" : "s"}?`)) {
+    if (!deletableBatchTransactions.length || !window.confirm(`Delete ${deletableBatchTransactions.length} batch process log${deletableBatchTransactions.length === 1 ? "" : "s"}?`)) {
       return;
     }
 
@@ -408,7 +440,7 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
       }
     }
 
-    setBuilderMessage(`${deleted} finished batch process log${deleted === 1 ? "" : "s"} deleted.`);
+    setBuilderMessage(`${deleted} batch process log${deleted === 1 ? "" : "s"} deleted.`);
   };
 
   return (
@@ -676,7 +708,7 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
                   type="button"
                 >
                   <TrashIcon size={16} />
-                  <span>{deleteBatchLog.isPending ? "Deleting..." : "Delete finished logs"}</span>
+                  <span>{deleteBatchLog.isPending ? "Deleting..." : "Delete logs"}</span>
                 </button>
               ) : undefined
             }
@@ -731,7 +763,7 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
               isAdmin && selectedTransaction ? (
                 <button
                   className="ghost-button danger"
-                  disabled={deleteBatchLog.isPending || selectedTransaction.status === "queued" || selectedTransaction.status === "running"}
+                  disabled={deleteBatchLog.isPending}
                   onClick={() => void handleDeleteSelectedBatchLog()}
                   type="button"
                 >

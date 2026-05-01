@@ -501,6 +501,7 @@ export type SharedStepGroup = {
   name: string;
   description: string | null;
   steps: SharedStepGroupStep[];
+  parameter_values?: Record<string, string>;
   step_count?: number;
   usage_count?: number;
   used_test_cases?: Array<{

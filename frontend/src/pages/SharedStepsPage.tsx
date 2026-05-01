@@ -41,7 +41,7 @@ import {
   normalizeStepType,
   stepHasAutomation
 } from "../lib/stepAutomation";
-import { collectStepParameters, filterStepParameterValues, type StepParameterDefinition } from "../lib/stepParameters";
+import { collectStepParameters, filterStepParameterValues, normalizeStepParameterValues, type StepParameterDefinition } from "../lib/stepParameters";
 import { TEST_AUTHORING_SECTION_ITEMS } from "../lib/workspaceSections";
 import type { ExecutionResult, SharedStepGroup, TestCase, User } from "../types";
 
@@ -391,6 +391,7 @@ export function SharedStepsPage() {
 
     if (selectedGroup) {
       setGroupDraft(draftFromGroup(selectedGroup));
+      setSharedParameterValues(normalizeStepParameterValues(selectedGroup.parameter_values || {}));
       resetStepComposer();
       return;
     }
@@ -908,6 +909,7 @@ export function SharedStepsPage() {
     }
 
     const steps = normalizeGroupSteps(groupDraft.steps);
+    const parameterValues = filterStepParameterValues(normalizeStepParameterValues(sharedParameterValues), detectedSharedParameters);
 
     try {
       if (isCreating) {
@@ -915,6 +917,7 @@ export function SharedStepsPage() {
           app_type_id: appTypeId,
           name: groupDraft.name.trim(),
           description: groupDraft.description.trim() || undefined,
+          parameter_values: parameterValues,
           steps
         });
         const createdGroup = await api.sharedStepGroups.get(response.id);
@@ -932,6 +935,7 @@ export function SharedStepsPage() {
             app_type_id: appTypeId,
             name: groupDraft.name.trim(),
             description: groupDraft.description.trim(),
+            parameter_values: parameterValues,
             steps
           }
         });

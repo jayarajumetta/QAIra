@@ -15,12 +15,39 @@ const readFileAsDataUrl = (file: File) =>
     reader.readAsDataURL(file);
   });
 
+const loadImage = (url: string) =>
+  new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Unable to load image for compression."));
+    image.src = url;
+  });
+
+const compressImageDataUrl = async (dataUrl: string, maxEdge = 720, quality = 0.35) => {
+  const image = await loadImage(dataUrl);
+  const scale = Math.min(1, maxEdge / Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height, 1));
+  const width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
+  const height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+
+  if (!context) {
+    return dataUrl;
+  }
+
+  canvas.width = width;
+  canvas.height = height;
+  context.drawImage(image, 0, 0, width, height);
+  return canvas.toDataURL("image/jpeg", quality);
+};
+
 export const readImageFiles = async (files: FileList | null) => {
   const collection = Array.from(files || []);
   const images = await Promise.all(
     collection.map(async (file) => ({
       name: file.name,
-      url: await readFileAsDataUrl(file)
+      url: await compressImageDataUrl(await readFileAsDataUrl(file))
     }))
   );
 

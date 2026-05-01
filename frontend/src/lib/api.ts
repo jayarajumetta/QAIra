@@ -568,9 +568,9 @@ export const api = {
       request<SharedStepGroup[]>(`/shared-step-groups${toQueryString(query)}`),
     get: (id: string) =>
       request<SharedStepGroup>(`/shared-step-groups/${id}`),
-    create: (input: { app_type_id: string; name: string; description?: string; steps?: Array<{ step_order?: number; action?: string; expected_result?: string; step_type?: TestStep["step_type"]; automation_code?: string; api_request?: TestStep["api_request"] }> }) =>
+    create: (input: { app_type_id: string; name: string; description?: string; parameter_values?: Record<string, string>; steps?: Array<{ step_order?: number; action?: string; expected_result?: string; step_type?: TestStep["step_type"]; automation_code?: string; api_request?: TestStep["api_request"] }> }) =>
       request<{ id: string }>("/shared-step-groups", { method: "POST", body: JSON.stringify(input) }),
-    update: (id: string, input: Partial<{ app_type_id: string; name: string; description: string; steps: Array<{ step_order?: number; action?: string; expected_result?: string; step_type?: TestStep["step_type"]; automation_code?: string; api_request?: TestStep["api_request"] }> }>) =>
+    update: (id: string, input: Partial<{ app_type_id: string; name: string; description: string; parameter_values: Record<string, string>; steps: Array<{ step_order?: number; action?: string; expected_result?: string; step_type?: TestStep["step_type"]; automation_code?: string; api_request?: TestStep["api_request"] }> }>) =>
       request<{ updated: boolean }>(`/shared-step-groups/${id}`, { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => request<{ deleted: boolean }>(`/shared-step-groups/${id}`, { method: "DELETE" })
   },

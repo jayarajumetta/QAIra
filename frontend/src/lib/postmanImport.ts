@@ -473,8 +473,16 @@ export function parsePostmanCollectionTestCases(text: string): ParsedPostmanColl
 
   if (!topLevelItems.length) {
     return {
-      rows: [],
-      warnings: ["No requests were found in the selected Postman collection."]
+      rows: [{
+        title: collectionName,
+        description: "Imported from a Postman collection with no request items yet. Add API steps after import.",
+        suite: collectionName,
+        automated: "yes",
+        priority: 3,
+        status: "draft",
+        steps: []
+      }],
+      warnings: ["No requests were found in the selected Postman collection, so an editable draft case was prepared."]
     };
   }
 
@@ -483,8 +491,16 @@ export function parsePostmanCollectionTestCases(text: string): ParsedPostmanColl
 
   if (!rows.length) {
     return {
-      rows: [],
-      warnings: warnings.length ? warnings : ["No importable requests were found in the selected Postman collection."]
+      rows: [{
+        title: collectionName,
+        description: "Imported from a Postman collection without importable request items. Add API steps after import.",
+        suite: collectionName,
+        automated: "yes",
+        priority: 3,
+        status: "draft",
+        steps: []
+      }],
+      warnings: warnings.length ? warnings : ["No importable requests were found in the selected Postman collection, so an editable draft case was prepared."]
     };
   }
 

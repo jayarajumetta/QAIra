@@ -1369,6 +1369,39 @@ export function TestCasesPage() {
   const testEngineIntegration = resolveScopedIntegration(testEngineIntegrations, "testengine", projectId);
   const automationLearningCache = automationLearningCacheQuery.data || [];
   const recorderLiveUrl = recorderSession?.live_view_url || "";
+
+  useEffect(() => {
+    if (!recorderSession?.status_url || recorderSession.status !== "running") {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const refreshRecorderSession = async () => {
+      try {
+        const response = await fetch(recorderSession.status_url as string, { cache: "no-store" });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const next = await response.json() as Partial<RecorderSessionResponse>;
+
+        if (!cancelled) {
+          setRecorderSession((current) => current?.id === recorderSession.id ? { ...current, ...next } : current);
+        }
+      } catch {
+        // Live recorder stats are best-effort; the stream remains the source of truth for interaction.
+      }
+    };
+    const timer = window.setInterval(() => void refreshRecorderSession(), 1000);
+
+    void refreshRecorderSession();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [recorderSession?.id, recorderSession?.status, recorderSession?.status_url]);
+
   const executionsById = useMemo(
     () =>
       executions.reduce<Record<string, Execution>>((map, execution) => {
@@ -1383,6 +1416,10 @@ export function TestCasesPage() {
   );
   const selectedManualAutomationCases = useMemo(
     () => selectedActionCases.filter((item) => item.automated !== "yes"),
+    [selectedActionCases]
+  );
+  const selectedPendingGeneratedCases = useMemo(
+    () => selectedActionCases.filter((item) => item.ai_generation_source === "scheduler" && item.ai_generation_review_status === "pending"),
     [selectedActionCases]
   );
 
@@ -4043,6 +4080,47 @@ export function TestCasesPage() {
     }
   };
 
+  const handleReviewSelectedGeneratedCases = async (action: "accept" | "reject") => {
+    if (!selectedPendingGeneratedCases.length) {
+      showError(new Error("Select one or more pending generated cases first."), action === "accept" ? "Unable to accept generated cases" : "Unable to reject generated cases");
+      return;
+    }
+
+    if (action === "reject" && !window.confirm(`Reject and permanently delete ${selectedPendingGeneratedCases.length} generated test case${selectedPendingGeneratedCases.length === 1 ? "" : "s"}?`)) {
+      return;
+    }
+
+    setSchedulerActionCaseId("bulk");
+    setSchedulerActionKind(action);
+
+    try {
+      for (const testCase of selectedPendingGeneratedCases) {
+        if (action === "accept") {
+          await acceptGeneratedCase.mutateAsync(testCase.id);
+        } else {
+          await rejectGeneratedCase.mutateAsync(testCase.id);
+
+          if (selectedTestCaseId === testCase.id) {
+            closeCaseWorkspace();
+          }
+        }
+      }
+
+      if (action === "reject") {
+        const rejectedIds = new Set(selectedPendingGeneratedCases.map((testCase) => testCase.id));
+        setSelectedActionTestCaseIds((current) => current.filter((id) => !rejectedIds.has(id)));
+      }
+
+      showSuccess(`${action === "accept" ? "Accepted" : "Rejected"} ${selectedPendingGeneratedCases.length} generated test case${selectedPendingGeneratedCases.length === 1 ? "" : "s"}.`);
+      await refreshCases();
+    } catch (error) {
+      showError(error, action === "accept" ? "Unable to accept generated cases" : "Unable to reject generated cases");
+    } finally {
+      setSchedulerActionCaseId("");
+      setSchedulerActionKind("");
+    }
+  };
+
   const coverageMetrics = useMemo(() => {
     const covered = testCases.filter((testCase) => (testCase.requirement_ids || [testCase.requirement_id]).filter(Boolean).length).length;
     const automated = testCases.filter((testCase) => testCase.automated === "yes").length;
@@ -5338,6 +5416,24 @@ export function TestCasesPage() {
               </button>
               <button
                 className="ghost-button"
+                disabled={!selectedPendingGeneratedCases.length || schedulerActionCaseId === "bulk"}
+                onClick={() => void handleReviewSelectedGeneratedCases("accept")}
+                type="button"
+              >
+                <TestCaseAcceptIcon />
+                <span>{schedulerActionCaseId === "bulk" && schedulerActionKind === "accept" ? "Accepting..." : `Accept generated${selectedPendingGeneratedCases.length ? ` (${selectedPendingGeneratedCases.length})` : ""}`}</span>
+              </button>
+              <button
+                className="ghost-button danger"
+                disabled={!selectedPendingGeneratedCases.length || schedulerActionCaseId === "bulk"}
+                onClick={() => void handleReviewSelectedGeneratedCases("reject")}
+                type="button"
+              >
+                <TestCaseRejectIcon />
+                <span>{schedulerActionCaseId === "bulk" && schedulerActionKind === "reject" ? "Rejecting..." : `Reject generated${selectedPendingGeneratedCases.length ? ` (${selectedPendingGeneratedCases.length})` : ""}`}</span>
+              </button>
+              <button
+                className="ghost-button"
                 disabled={!projectId || !appTypeId || !selectedActionTestCaseIds.length || !session?.user.id}
                 onClick={() => setIsCreateExecutionModalOpen(true)}
                 type="button"
@@ -5386,6 +5482,68 @@ export function TestCasesPage() {
                     const isRunningCase = schedulerActionCaseId === testCase.id && schedulerActionKind === "run";
                     const isAcceptingCase = schedulerActionCaseId === testCase.id && schedulerActionKind === "accept";
                     const isRejectingCase = schedulerActionCaseId === testCase.id && schedulerActionKind === "reject";
+                    const tileActions = [
+                      {
+                        label: "Open case",
+                        description: "Open this test case in the workspace.",
+                        icon: <OpenIcon />,
+                        onClick: () => openLibraryCase(testCase.id)
+                      },
+                      ...(isPendingSchedulerCase
+                        ? [
+                          {
+                            label: "Accept generated case",
+                            description: "Approve the scheduler-generated test case and keep it.",
+                            icon: <TestCaseAcceptIcon />,
+                            onClick: () => void handleReviewGeneratedCase(testCase.id, "accept"),
+                            disabled: isAcceptingCase || isRejectingCase || isRunningCase,
+                            tone: "primary" as const
+                          },
+                          {
+                            label: "Reject generated case",
+                            description: "Reject and permanently delete this scheduler-generated case.",
+                            icon: <TestCaseRejectIcon />,
+                            onClick: () => void handleReviewGeneratedCase(testCase.id, "reject"),
+                            disabled: isAcceptingCase || isRejectingCase || isRunningCase,
+                            tone: "danger" as const
+                          }
+                        ]
+                        : [
+                          {
+                            label: "Clone case",
+                            description: "Create a copy with the same steps and test data.",
+                            icon: <CopyIcon />,
+                            onClick: () => void handleCloneCase(testCase),
+                            disabled: createTestCase.isPending
+                          },
+                          {
+                            label: "Export case",
+                            description: "Download this test case as a CSV file.",
+                            icon: <ExportIcon />,
+                            onClick: () => void exportCasesToCsv([testCase], {
+                              fileLabel: testCase.title,
+                              successMessage: `Exported "${testCase.title}" to CSV.`
+                            })
+                          },
+                          {
+                            label: "Move to suite",
+                            description: "Create or pick a suite, then link this case into it.",
+                            icon: <MoveIcon />,
+                            onClick: () => {
+                              setSelectedActionTestCaseIds([testCase.id]);
+                              setIsCreateSuiteModalOpen(true);
+                            }
+                          },
+                          {
+                            label: "Delete case",
+                            description: "Remove this test case while preserving run history.",
+                            icon: <TrashIcon />,
+                            onClick: () => void handleDeleteCaseItem(testCase),
+                            disabled: deleteTestCase.isPending,
+                            tone: "danger" as const
+                          }
+                        ])
+                    ];
 
                     return (
                       <div
@@ -5461,6 +5619,9 @@ export function TestCasesPage() {
                               >
                                 <TestCaseRunIcon />
                               </TestCaseTileActionButton>
+                              <div onClick={(event) => event.stopPropagation()}>
+                                <CatalogActionMenu actions={tileActions} label={`${testCase.title} actions`} />
+                              </div>
                             </div>
                           </div>
                           <div className="tile-card-header">

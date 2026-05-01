@@ -101,6 +101,7 @@ export function AiDesignStudioModal({
 }) {
   const dialogRef = useDialogFocus<HTMLDivElement>();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isRequirementDialogOpen, setIsRequirementDialogOpen] = useState(false);
 
   const handleRequirementToggle = (requirementId: string, checked: boolean) => {
     if (allowMultipleRequirements) {
@@ -114,6 +115,11 @@ export function AiDesignStudioModal({
 
     onRequirementSelectionChange(checked ? [requirementId] : []);
   };
+
+  const selectedRequirementCount = selectedRequirementIds.length;
+  const selectedRequirementLabel = allowMultipleRequirements
+    ? `${selectedRequirementCount} selected`
+    : requirements.find((requirement) => requirement.id === selectedRequirementIds[0])?.title || "No requirement selected";
 
   return (
     <div className="modal-backdrop" onClick={() => !closeDisabled && onClose()} role="presentation">
@@ -143,22 +149,21 @@ export function AiDesignStudioModal({
               <div className="ai-studio-sidebar-panels">
                 <section className="ai-studio-panel">
                   {allowMultipleRequirements ? (
-                    <div className="modal-case-picker ai-studio-requirement-picker">
-                      {requirements.map((requirement) => (
-                        <label className="modal-case-option requirement-link-option" key={requirement.id}>
-                          <input
-                            checked={selectedRequirementIds.includes(requirement.id)}
-                            data-autofocus={requirements[0]?.id === requirement.id ? "true" : undefined}
-                            onChange={(event) => handleRequirementToggle(requirement.id, event.target.checked)}
-                            type="checkbox"
-                          />
-                          <div>
-                            <strong>{requirement.title}</strong>
-                            <span>{requirement.description || "No description available."}</span>
-                            <span className="requirement-link-option-meta">Priority P{requirement.priority ?? 3} · {requirement.status || "open"}</span>
-                          </div>
-                        </label>
-                      ))}
+                    <div className="ai-studio-requirement-summary">
+                      <div>
+                        <strong>{requirementLabel}</strong>
+                        <span>{selectedRequirementLabel}</span>
+                      </div>
+                      <button
+                        className="ghost-button compact ai-requirement-dialog-button"
+                        data-autofocus="true"
+                        onClick={() => setIsRequirementDialogOpen(true)}
+                        title="Expand requirement selection"
+                        type="button"
+                      >
+                        <AiExpandIcon />
+                        <span>Choose</span>
+                      </button>
                     </div>
                   ) : (
                     <FormField label={requirementLabel}>
@@ -434,7 +439,82 @@ export function AiDesignStudioModal({
           </div>
         </div>
       </div>
+      {isRequirementDialogOpen ? (
+        <div
+          className="modal-backdrop nested-modal-backdrop"
+          onClick={(event) => {
+            event.stopPropagation();
+            setIsRequirementDialogOpen(false);
+          }}
+          role="presentation"
+        >
+          <div
+            aria-label="Select requirements"
+            aria-modal="true"
+            className="modal-card requirement-selection-dialog"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="ai-studio-header">
+              <div className="ai-studio-header-copy">
+                <p className="eyebrow">Requirements</p>
+                <h3>{requirementLabel}</h3>
+                <p>{selectedRequirementCount} of {requirements.length} selected</p>
+              </div>
+              <button className="ghost-button" onClick={() => setIsRequirementDialogOpen(false)} type="button">
+                Done
+              </button>
+            </div>
+            <div className="requirement-selection-dialog-actions">
+              <button className="ghost-button compact" onClick={() => onRequirementSelectionChange(requirements.map((requirement) => requirement.id))} type="button">
+                Select all
+              </button>
+              <button className="ghost-button compact" onClick={() => onRequirementSelectionChange([])} type="button">
+                Clear
+              </button>
+            </div>
+            <div className="modal-case-picker ai-studio-requirement-picker requirement-selection-dialog-list">
+              {requirements.map((requirement) => (
+                <label className="modal-case-option requirement-link-option" key={requirement.id}>
+                  <input
+                    checked={selectedRequirementIds.includes(requirement.id)}
+                    onChange={(event) => handleRequirementToggle(requirement.id, event.target.checked)}
+                    type="checkbox"
+                  />
+                  <div>
+                    <strong>{requirement.title}</strong>
+                    <span>{requirement.description || "No description available."}</span>
+                    <span className="requirement-link-option-meta">Priority P{requirement.priority ?? 3} · {requirement.status || "open"}</span>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <div className="action-row ai-studio-footer">
+              <button className="ghost-button" onClick={() => onRequirementSelectionChange(requirements.map((requirement) => requirement.id))} type="button">
+                Select all
+              </button>
+              <button className="ghost-button" onClick={() => onRequirementSelectionChange([])} type="button">
+                Clear
+              </button>
+              <button className="primary-button" onClick={() => setIsRequirementDialogOpen(false)} type="button">
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function AiExpandIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
+      <path d="M8 3H3v5" />
+      <path d="M3 3l7 7" />
+      <path d="M16 21h5v-5" />
+      <path d="M21 21l-7-7" />
+    </svg>
   );
 }
 

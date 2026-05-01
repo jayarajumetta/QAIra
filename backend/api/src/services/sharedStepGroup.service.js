@@ -22,13 +22,13 @@ const selectSharedStepGroup = db.prepare(`
 `);
 
 const insertSharedStepGroup = db.prepare(`
-  INSERT INTO shared_step_groups (id, display_id, app_type_id, name, description, steps, created_by, updated_by)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO shared_step_groups (id, display_id, app_type_id, name, description, steps, parameter_values, created_by, updated_by)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const updateSharedStepGroup = db.prepare(`
   UPDATE shared_step_groups
-  SET app_type_id = ?, name = ?, description = ?, steps = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+  SET app_type_id = ?, name = ?, description = ?, steps = ?, parameter_values = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
   WHERE id = ?
 `);
 
@@ -82,6 +82,23 @@ const normalizeSteps = (steps = []) => {
     }));
 };
 
+const normalizeParameterValues = (values = {}) => {
+  if (!values || typeof values !== "object" || Array.isArray(values)) {
+    return {};
+  }
+
+  return Object.entries(values).reduce((next, [key, value]) => {
+    const normalizedKey = normalizeText(key);
+
+    if (!normalizedKey) {
+      return next;
+    }
+
+    next[normalizedKey] = value === null || value === undefined ? "" : String(value);
+    return next;
+  }, {});
+};
+
 const buildUsageMap = (rows = []) => {
   return rows.reduce((map, row) => {
     map[row.shared_step_group_id] = map[row.shared_step_group_id] || [];
@@ -101,11 +118,13 @@ const hydrateSharedStepGroup = (group, usageMap = {}) => {
   }
 
   const steps = normalizeSteps(parseJsonValue(group.steps, []));
+  const parameterValues = normalizeParameterValues(parseJsonValue(group.parameter_values, {}));
   const usedTestCases = usageMap[group.id] || [];
 
   return {
     ...group,
     steps,
+    parameter_values: parameterValues,
     step_count: steps.length,
     usage_count: usedTestCases.length,
     used_test_cases: usedTestCases
@@ -162,7 +181,7 @@ exports.getSharedStepGroup = async (id) => {
   return hydrateSharedStepGroup(group, usageMap);
 };
 
-exports.createSharedStepGroup = async ({ app_type_id, name, description, steps = [], created_by }) => {
+exports.createSharedStepGroup = async ({ app_type_id, name, description, steps = [], parameter_values = {}, created_by }) => {
   const appType = await ensureAppTypeExists(app_type_id);
   const resolvedName = normalizeText(name);
 
@@ -181,6 +200,7 @@ exports.createSharedStepGroup = async ({ app_type_id, name, description, steps =
     resolvedName,
     normalizeText(description),
     normalizedSteps,
+    normalizeParameterValues(parameter_values),
     normalizeText(created_by),
     normalizeText(created_by)
   );
@@ -202,6 +222,7 @@ exports.updateSharedStepGroup = async (id, data = {}) => {
     resolvedName,
     data.description !== undefined ? normalizeText(data.description) : existing.description,
     data.steps !== undefined ? normalizeSteps(data.steps) : existing.steps,
+    data.parameter_values !== undefined ? normalizeParameterValues(data.parameter_values) : existing.parameter_values,
     normalizeText(data.updated_by) || existing.updated_by || existing.created_by || null,
     id
   );

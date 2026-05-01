@@ -7,7 +7,7 @@ const fastify = require("fastify")({
   requestIdLogLabel: "reqId",
   disableRequestLogging: false,
   requestTimeout: 120000,
-  bodyLimit: 32 * 1024 * 1024
+  bodyLimit: 128 * 1024 * 1024
 });
 
 const cors = require("@fastify/cors");
