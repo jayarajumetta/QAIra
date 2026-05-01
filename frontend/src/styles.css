@@ -11590,7 +11590,9 @@ button.execution-activity-card {
 :root[data-theme="dark"] .execution-detail-card,
 :root[data-theme="dark"] .execution-context-card,
 :root[data-theme="dark"] .execution-overview-orb-shell,
-:root[data-theme="dark"] .execution-timeline-item {
+:root[data-theme="dark"] .execution-timeline-item,
+:root[data-theme="dark"] .execution-ai-analysis-response,
+:root[data-theme="dark"] .execution-structured-log-row--ai {
   background: rgba(17, 31, 54, 0.92);
   border-color: rgba(180, 199, 231, 0.14);
 }
@@ -11778,6 +11780,67 @@ button.execution-activity-card {
 
 .execution-assignment-panel--case {
   align-items: center;
+}
+
+.execution-reference-section,
+.execution-ai-analysis-section {
+  border-radius: 20px;
+}
+
+.execution-reference-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.execution-reference-grid .form-field {
+  flex: 1 1 16rem;
+  min-width: min(16rem, 100%);
+}
+
+.execution-reference-grid .ghost-button {
+  flex: 0 0 auto;
+}
+
+.execution-ai-analysis-panel {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.execution-ai-analysis-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.execution-ai-analysis-response {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 16px;
+  border: 1px solid rgba(33, 104, 243, 0.12);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.execution-ai-analysis-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.execution-ai-analysis-response pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.5;
+  color: var(--text-primary);
 }
 
 .execution-mode-switch {
@@ -13473,6 +13536,14 @@ button.execution-activity-card {
 .execution-structured-log-row--group {
   padding-top: 0.2rem;
   border-top: 1px solid rgba(33, 104, 243, 0.1);
+}
+
+.execution-structured-log-row--ai {
+  align-items: flex-start;
+  padding: 0.7rem 0.8rem;
+  border-radius: 14px;
+  border: 1px solid rgba(33, 104, 243, 0.12);
+  background: rgba(245, 248, 255, 0.86);
 }
 
 .execution-structured-note {

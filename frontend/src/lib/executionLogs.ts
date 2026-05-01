@@ -58,6 +58,16 @@ export type ExecutionStepWebDetail = {
 
 export type ExecutionStepCaptureMap = Record<string, string>;
 
+export type ExecutionAiAnalysis = {
+  response: string;
+  generatedAt?: string;
+  integration?: {
+    id?: string;
+    name?: string;
+    model?: string | null;
+  };
+};
+
 export type ExecutionLogsPayload = {
   stepStatuses?: Record<string, ExecutionStepStatus>;
   stepNotes?: Record<string, string>;
@@ -65,6 +75,7 @@ export type ExecutionLogsPayload = {
   stepApiDetails?: Record<string, ExecutionStepApiDetail>;
   stepWebDetails?: Record<string, ExecutionStepWebDetail>;
   stepCaptures?: Record<string, ExecutionStepCaptureMap>;
+  aiAnalysis?: ExecutionAiAnalysis | null;
 };
 
 const isExecutionEvidenceDataUrl = (value: string) =>
@@ -132,6 +143,44 @@ const normalizeStepCaptures = (value: unknown): Record<string, ExecutionStepCapt
   }, {});
 };
 
+const normalizeAiAnalysis = (value: unknown): ExecutionAiAnalysis | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const response = typeof (value as { response?: unknown }).response === "string"
+    ? String((value as { response?: string }).response || "").trim()
+    : "";
+
+  if (!response) {
+    return null;
+  }
+
+  const integrationValue = (value as { integration?: unknown }).integration;
+  const integration =
+    integrationValue && typeof integrationValue === "object" && !Array.isArray(integrationValue)
+      ? {
+          id: typeof (integrationValue as { id?: unknown }).id === "string"
+            ? String((integrationValue as { id?: string }).id || "").trim() || undefined
+            : undefined,
+          name: typeof (integrationValue as { name?: unknown }).name === "string"
+            ? String((integrationValue as { name?: string }).name || "").trim() || undefined
+            : undefined,
+          model: typeof (integrationValue as { model?: unknown }).model === "string"
+            ? String((integrationValue as { model?: string }).model || "").trim() || null
+            : null
+        }
+      : undefined;
+
+  return {
+    response,
+    generatedAt: typeof (value as { generatedAt?: unknown }).generatedAt === "string"
+      ? String((value as { generatedAt?: string }).generatedAt || "").trim() || undefined
+      : undefined,
+    integration
+  };
+};
+
 export function parseExecutionLogs(logs: string | null): ExecutionLogsPayload {
   if (!logs?.trim()) {
     return {};
@@ -154,7 +203,8 @@ export function parseExecutionLogs(logs: string | null): ExecutionLogsPayload {
       stepWebDetails: typeof payload.stepWebDetails === "object" && payload.stepWebDetails && !Array.isArray(payload.stepWebDetails)
         ? payload.stepWebDetails
         : {},
-      stepCaptures: normalizeStepCaptures(payload.stepCaptures)
+      stepCaptures: normalizeStepCaptures(payload.stepCaptures),
+      aiAnalysis: normalizeAiAnalysis(payload.aiAnalysis)
     };
   } catch {
     return {};
@@ -168,7 +218,8 @@ export function stringifyExecutionLogs(payload: ExecutionLogsPayload): string {
     stepEvidence: payload.stepEvidence || {},
     stepApiDetails: payload.stepApiDetails || {},
     stepWebDetails: payload.stepWebDetails || {},
-    stepCaptures: payload.stepCaptures || {}
+    stepCaptures: payload.stepCaptures || {},
+    aiAnalysis: payload.aiAnalysis || null
   });
 }
 

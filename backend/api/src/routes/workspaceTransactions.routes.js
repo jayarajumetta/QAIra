@@ -84,11 +84,20 @@ module.exports = async function (fastify) {
       throw createError("Artifact does not belong to this transaction.", 404);
     }
 
+    const content = artifact.content || "";
+    const dataUrlMatch = typeof content === "string"
+      ? content.match(/^data:([^;,]+)?(?:;[^,]*)?;base64,(.*)$/s)
+      : null;
+    const responseBody = dataUrlMatch
+      ? Buffer.from(dataUrlMatch[2] || "", "base64")
+      : content;
+    const responseMimeType = dataUrlMatch?.[1] || artifact.mime_type || "application/octet-stream";
+
     reply
-      .header("Content-Type", artifact.mime_type || "application/octet-stream")
+      .header("Content-Type", responseMimeType)
       .header("Content-Disposition", `attachment; filename="${String(artifact.file_name || "artifact.txt").replace(/"/g, "")}"`);
 
-    return artifact.content || "";
+    return responseBody;
   });
 
   fastify.delete("/workspace-transactions/:id", { preHandler: [fastify.requireAdmin] }, async (req) => {

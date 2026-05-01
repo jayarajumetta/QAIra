@@ -1,5 +1,6 @@
 const service = require("../services/execution.service");
 const executionPlanningService = require("../services/executionPlanning.service");
+const executionAiAnalysisService = require("../services/executionAiAnalysis.service");
 const executionReportService = require("../services/executionReport.service");
 const appTypeService = require("../services/appType.service");
 const projectService = require("../services/project.service");
@@ -160,6 +161,19 @@ module.exports = async function (fastify) {
 
     return service.runExecutionApiStep(req.params.id, req.params.testCaseId, req.params.stepId, {
       executed_by: req.user.id
+    });
+  });
+
+  fastify.post("/executions/:id/cases/:testCaseId/ai-analysis", async (req) => {
+    await fastify.authenticate(req);
+
+    const execution = await service.getExecution(req.params.id);
+    await projectService.getProject(execution.project_id, req.user.id);
+
+    return executionAiAnalysisService.analyzeExecutionCase({
+      execution,
+      testCaseId: req.params.testCaseId,
+      requestedBy: req.user.id
     });
   });
 

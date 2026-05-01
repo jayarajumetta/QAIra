@@ -72,6 +72,14 @@ export type EngineRunArtifactPolicy = {
   capture_console: boolean;
   capture_network: boolean;
   artifact_retention_days: number;
+  max_video_attachment_mb?: number;
+};
+
+export type EngineRunTimeoutPolicy = {
+  navigation_timeout_ms?: number;
+  action_timeout_ms?: number;
+  assertion_timeout_ms?: number;
+  recovery_wait_ms?: number;
 };
 
 export type EngineInlineEvidenceImage = {
@@ -162,6 +170,9 @@ export type EngineArtifactRef = {
   path?: string | null;
   url?: string | null;
   content_type?: string | null;
+  file_name?: string | null;
+  content_base64?: string | null;
+  size_bytes?: number | null;
 };
 
 export type EngineStepOutcome = {
@@ -206,6 +217,7 @@ export type EngineRunEnvelope = {
   headless: boolean;
   max_repair_attempts: number;
   run_timeout_seconds: number;
+  timeouts?: EngineRunTimeoutPolicy | null;
   web_engine?: {
     active: EngineWebEngineProvider;
   } | null;

@@ -139,6 +139,43 @@ function syncCapturedValuesToWebContext(
   });
 }
 
+function mergeArtifactBundle(
+  base: Record<string, unknown> | undefined,
+  patch: Record<string, unknown> | undefined
+) {
+  if (!patch || !Object.keys(patch).length) {
+    return base;
+  }
+
+  const baseRefs = Array.isArray(base?.artifact_refs) ? base.artifact_refs : [];
+  const patchRefs = Array.isArray(patch.artifact_refs) ? patch.artifact_refs : [];
+  const mergedRefs = [...baseRefs, ...patchRefs].reduce<unknown[]>((items, ref) => {
+    if (!ref || typeof ref !== "object") {
+      return items;
+    }
+
+    const key = `${(ref as { kind?: unknown }).kind || ""}:${(ref as { path?: unknown }).path || ""}:${(ref as { file_name?: unknown }).file_name || ""}`;
+    const existingIndex = items.findIndex((item) => {
+      const existing = item as { kind?: unknown; path?: unknown; file_name?: unknown };
+      return `${existing.kind || ""}:${existing.path || ""}:${existing.file_name || ""}` === key;
+    });
+
+    if (existingIndex >= 0) {
+      items[existingIndex] = ref;
+      return items;
+    }
+
+    items.push(ref);
+    return items;
+  }, []);
+
+  return {
+    ...(base || {}),
+    ...patch,
+    artifact_refs: mergedRefs
+  };
+}
+
 async function executeQueuedJob(
   job: EngineQueuedJob,
   workerId: string,
@@ -156,6 +193,20 @@ async function executeQueuedJob(
   let healingAttempted = Boolean(job.runtime_state?.healing_attempted);
   let healingSucceeded = Boolean(job.runtime_state?.healing_succeeded);
   const patchProposals: Array<Record<string, unknown>> = [];
+  let webRunSessionStopped = false;
+  const stopWebRunSession = async (finalStatus?: "passed" | "failed" | "blocked") => {
+    if (!webRunSession || webRunSessionStopped) {
+      return {};
+    }
+
+    webRunSessionStopped = true;
+    try {
+      return await webRunSession.stop(finalStatus);
+    } catch (error) {
+      logger.error({ error, jobId: job.id }, "Unable to finalize web automation artifacts");
+      return {};
+    }
+  };
 
   try {
     await startQueuedJob(job.id, workerId);
@@ -213,6 +264,7 @@ async function executeQueuedJob(
 
         if (result.status === "failed") {
           const failureSummary = result.note || `${job.test_case_title} failed on step ${step.order}.`;
+          const artifactBundle = mergeArtifactBundle(accepted.artifact_bundle, await stopWebRunSession("failed"));
           updateRunState(accepted.id, "failed", failureSummary);
           await completeQueuedJobWithMetadata(job.id, {
             status: "failed",
@@ -220,7 +272,8 @@ async function executeQueuedJob(
             summary: failureSummary,
             deterministic_attempted: true,
             healing_attempted: healingAttempted,
-            healing_succeeded: healingSucceeded
+            healing_succeeded: healingSucceeded,
+            artifact_bundle: artifactBundle
           });
           emitTelemetry(telemetry, buildJobTelemetry(job, workerId, {
             event_type: "testengine.queue.job.failed",
@@ -240,6 +293,7 @@ async function executeQueuedJob(
 
       if (step.step_type !== "web" || !webRunSession) {
         const message = `${job.test_case_title} includes unsupported step type ${step.step_type}.`;
+        const artifactBundle = mergeArtifactBundle(accepted.artifact_bundle, await stopWebRunSession("failed"));
         updateRunState(accepted.id, "failed", message);
         await completeQueuedJobWithMetadata(job.id, {
           status: "failed",
@@ -247,7 +301,8 @@ async function executeQueuedJob(
           summary: message,
           deterministic_attempted: true,
           healing_attempted: healingAttempted,
-          healing_succeeded: healingSucceeded
+          healing_succeeded: healingSucceeded,
+          artifact_bundle: artifactBundle
         });
         emitTelemetry(telemetry, buildJobTelemetry(job, workerId, {
           event_type: "testengine.queue.job.failed",
@@ -290,6 +345,7 @@ async function executeQueuedJob(
 
       if (stepResult.status === "failed") {
         const failureSummary = stepResult.note || `${job.test_case_title} failed on step ${step.order}.`;
+        const artifactBundle = mergeArtifactBundle(accepted.artifact_bundle, await stopWebRunSession("failed"));
         updateRunState(accepted.id, "failed", failureSummary);
         await completeQueuedJobWithMetadata(job.id, {
           status: "failed",
@@ -298,6 +354,7 @@ async function executeQueuedJob(
           deterministic_attempted: true,
           healing_attempted: healingAttempted,
           healing_succeeded: healingSucceeded,
+          artifact_bundle: artifactBundle,
           patch_proposals: patchProposals
         });
         emitTelemetry(telemetry, buildJobTelemetry(job, workerId, {
@@ -315,12 +372,14 @@ async function executeQueuedJob(
     }
 
     const completionSummary = `${job.test_case_title} completed successfully.`;
+    const artifactBundle = mergeArtifactBundle(accepted.artifact_bundle, await stopWebRunSession("passed"));
     await completeQueuedJobWithMetadata(job.id, {
       status: "passed",
       summary: completionSummary,
       deterministic_attempted: true,
       healing_attempted: healingAttempted,
       healing_succeeded: healingSucceeded,
+      artifact_bundle: artifactBundle,
       patch_proposals: patchProposals
     });
     updateRunState(accepted.id, "completed", completionSummary);
@@ -341,6 +400,7 @@ async function executeQueuedJob(
     }));
 
     try {
+      const artifactBundle = mergeArtifactBundle(accepted.artifact_bundle, await stopWebRunSession("failed"));
       await completeQueuedJobWithMetadata(job.id, {
         status: "failed",
         error: message,
@@ -348,6 +408,7 @@ async function executeQueuedJob(
         deterministic_attempted: true,
         healing_attempted: healingAttempted,
         healing_succeeded: healingSucceeded,
+        artifact_bundle: artifactBundle,
         patch_proposals: patchProposals
       });
     } catch (reportError) {
@@ -360,9 +421,9 @@ async function executeQueuedJob(
       }));
     }
   } finally {
-    if (webRunSession) {
+    if (webRunSession && !webRunSessionStopped) {
       try {
-        await webRunSession.stop();
+        await stopWebRunSession();
       } catch (stopError) {
         logger.error({ error: stopError, jobId: job.id }, "Unable to stop web automation session cleanly");
         emitTelemetry(telemetry, buildJobTelemetry(job, workerId, {

@@ -93,6 +93,37 @@ function buildWebKeywordSnippet(option: WebKeywordOption, locator: string, data:
   }
 }
 
+function mergeSuggestedApiAutomation(
+  request: StepApiRequest,
+  suggestions?: ApiRequestPreview["ai_suggestions"]
+): StepApiRequest {
+  if (!suggestions) {
+    return request;
+  }
+
+  const existingValidations = request.validations || [];
+  const suggestedValidations = (suggestions.assertions || []).filter((suggestion) =>
+    !existingValidations.some((validation) =>
+      validation.kind === suggestion.kind
+      && (validation.target || "") === (suggestion.target || "")
+      && (validation.expected || "") === (suggestion.expected || "")
+    )
+  );
+  const existingCaptures = request.captures || [];
+  const suggestedCaptures = (suggestions.captures || []).filter((suggestion) =>
+    !existingCaptures.some((capture) =>
+      (capture.path || "") === (suggestion.path || "")
+      || (capture.parameter || "") === (suggestion.parameter || "")
+    )
+  );
+
+  return {
+    ...request,
+    validations: [...existingValidations, ...suggestedValidations],
+    captures: [...existingCaptures, ...suggestedCaptures]
+  };
+}
+
 function IconFrame({
   children,
   size = 16,
@@ -1173,10 +1204,21 @@ export function StepAutomationDialog({
       const result = await api.testSteps.runApiRequest({
         api_request: resolvedApiRequest
       });
+      const suggestionSummary = result.ai_suggestions?.summary || "";
+      const suggestionAssertionCount = result.ai_suggestions?.assertions.length || 0;
+      const suggestionCaptureCount = result.ai_suggestions?.captures.length || 0;
 
       setApiPreview(result);
+      setApiRequest((current) => mergeSuggestedApiAutomation(current, result.ai_suggestions));
       setSelectedJsonPath(null);
-      setApiPreviewMessage(`Captured response ${result.response.status} in ${result.response.duration_ms} ms.`);
+      setApiPreviewMessage(
+        [
+          `Captured response ${result.response.status} in ${result.response.duration_ms} ms.`,
+          suggestionSummary
+            ? `${suggestionSummary} Applied ${suggestionAssertionCount} assertion suggestion${suggestionAssertionCount === 1 ? "" : "s"} and ${suggestionCaptureCount} parser suggestion${suggestionCaptureCount === 1 ? "" : "s"}.`
+            : ""
+        ].filter(Boolean).join(" ")
+      );
     } catch (error) {
       setApiPreview(null);
       setSelectedJsonPath(null);
@@ -1445,6 +1487,30 @@ export function StepAutomationDialog({
                           {apiPreview.response.content_type || "Unknown content type"}
                         </span>
                       </div>
+
+                      {apiPreview.ai_suggestions ? (
+                        <div className="automation-response-meta">
+                          <strong>AI response review</strong>
+                          <span>{apiPreview.ai_suggestions.summary}</span>
+                          <div className="automation-response-headers">
+                            {(apiPreview.ai_suggestions.assertions || []).map((assertion, index) => (
+                              <span className="automation-response-header-chip" key={`ai-assertion-${index}`}>
+                                <strong>{assertion.kind}</strong>
+                                <span>{assertion.target || "status"} {assertion.expected ? `= ${assertion.expected}` : ""}</span>
+                              </span>
+                            ))}
+                            {(apiPreview.ai_suggestions.captures || []).map((capture, index) => (
+                              <span className="automation-response-header-chip" key={`ai-capture-${index}`}>
+                                <strong>{capture.parameter}</strong>
+                                <span>{capture.path}</span>
+                              </span>
+                            ))}
+                          </div>
+                          {(apiPreview.ai_suggestions.notes || []).length ? (
+                            <span>{apiPreview.ai_suggestions.notes?.join(" ")}</span>
+                          ) : null}
+                        </div>
+                      ) : null}
 
                       {responseHeaderEntries.length ? (
                         <div className="automation-response-meta">

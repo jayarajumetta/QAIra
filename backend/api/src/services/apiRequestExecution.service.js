@@ -486,6 +486,143 @@ const evaluateApiAssertions = (preview, validations = []) => {
   });
 };
 
+const appendJsonPathSegment = (basePath, key) => {
+  if (typeof key === "number") {
+    return `${basePath}[${key}]`;
+  }
+
+  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key)) {
+    return `${basePath}.${key}`;
+  }
+
+  return `${basePath}[${JSON.stringify(key)}]`;
+};
+
+const collectJsonScalars = (value, path = "$", key = "") => {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return [{ path, key, value }];
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 5).flatMap((entry, index) => collectJsonScalars(entry, appendJsonPathSegment(path, index), key));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.entries(value).slice(0, 80).flatMap(([entryKey, entryValue]) =>
+      collectJsonScalars(entryValue, appendJsonPathSegment(path, entryKey), entryKey)
+    );
+  }
+
+  return [];
+};
+
+const toParameterToken = (path, key) => {
+  const rawName = normalizeText(key)
+    || normalizeText(String(path || "").split(/[.[\]]/).filter(Boolean).pop())
+    || "responseValue";
+  const words = rawName
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const camel = words
+    .map((word, index) => {
+      const lower = word.toLowerCase();
+      return index === 0 ? lower : `${lower.slice(0, 1).toUpperCase()}${lower.slice(1)}`;
+    })
+    .join("");
+
+  return `@t.${camel || "responseValue"}`;
+};
+
+const isLikelyCapture = ({ key, path, value }) => {
+  const label = `${key || ""} ${path || ""}`.toLowerCase();
+  const compactLabel = label.replace(/[^a-z0-9]/g, "");
+
+  if (value === null || value === undefined || typeof value === "object") {
+    return false;
+  }
+
+  return /\b(id|uuid|token|access[_-]?token|refresh[_-]?token|session|reference|number|email|url)\b/.test(label)
+    || /(^|[._-])(id|uuid|token|email|url)$/.test(label)
+    || /(id|uuid|token|email|url|reference|number)$/.test(compactLabel);
+};
+
+const isLikelyAssertion = ({ key, path, value }) => {
+  const label = `${key || ""} ${path || ""}`.toLowerCase();
+
+  if (value === null || value === undefined || typeof value === "object") {
+    return false;
+  }
+
+  return /\b(status|state|success|enabled|active|type|code|message|result)\b/.test(label);
+};
+
+const buildAiResponseSuggestions = (preview) => {
+  const assertions = [
+    {
+      kind: "status",
+      target: null,
+      expected: String(preview.response.status)
+    }
+  ];
+  const captures = [];
+  const notes = [];
+
+  if (preview.response.body_json !== null && preview.response.body_json !== undefined) {
+    const scalars = collectJsonScalars(preview.response.body_json);
+    const assertionCandidates = scalars
+      .filter(isLikelyAssertion)
+      .filter((candidate) => candidate.path !== "$")
+      .slice(0, 4);
+    const captureCandidates = scalars
+      .filter(isLikelyCapture)
+      .filter((candidate) => candidate.path !== "$")
+      .filter((candidate, index, all) => all.findIndex((entry) => entry.path === candidate.path) === index)
+      .slice(0, 6);
+
+    assertionCandidates.forEach((candidate) => {
+      assertions.push({
+        kind: "json_path",
+        target: candidate.path,
+        expected: stringifyValue(candidate.value)
+      });
+    });
+
+    captureCandidates.forEach((candidate) => {
+      captures.push({
+        path: candidate.path,
+        parameter: toParameterToken(candidate.path, candidate.key)
+      });
+    });
+
+    notes.push(
+      captureCandidates.length
+        ? `Suggested ${captureCandidates.length} likely reusable response value${captureCandidates.length === 1 ? "" : "s"}.`
+        : "No obvious dynamic IDs, tokens, or references were promoted as output parameters."
+    );
+  } else {
+    const snippet = normalizeText(String(preview.response.body_text || "").replace(/\s+/g, " ").slice(0, 120));
+
+    if (snippet) {
+      assertions.push({
+        kind: "body_contains",
+        target: null,
+        expected: snippet
+      });
+      notes.push("Suggested a focused body text assertion because the response is not JSON.");
+    }
+  }
+
+  return {
+    summary: `AI response review suggested ${assertions.length} assertion${assertions.length === 1 ? "" : "s"} and ${captures.length} output parameter${captures.length === 1 ? "" : "s"}.`,
+    assertions,
+    captures,
+    notes
+  };
+};
+
 const extractCaptures = (request, preview) => {
   const captures = {};
 
@@ -590,7 +727,8 @@ exports.runApiRequestPreview = async (input, options = {}) => {
       body_text: preview.response.body_text,
       body_json: preview.response.body_json,
       duration_ms: preview.response.duration_ms
-    }
+    },
+    ai_suggestions: buildAiResponseSuggestions(preview)
   };
 };
 

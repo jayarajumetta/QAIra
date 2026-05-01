@@ -38,6 +38,7 @@ import type {
   WorkspaceTransactionEvent
 } from "../types";
 import type { ExecutionStartResponse } from "./executionStartSummary";
+import type { ExecutionAiAnalysis } from "./executionLogs";
 
 declare global {
   interface Window {
@@ -630,6 +631,11 @@ export const api = {
         active_web_engine?: "playwright" | "selenium" | string;
         live_view_url?: string | null;
       }>(`/executions/${executionId}/cases/${testCaseId}/steps/${stepId}/run`, { method: "POST" }),
+    analyzeCase: (executionId: string, testCaseId: string) =>
+      request<{ recorded: boolean; execution_result_id?: string; analysis?: ExecutionAiAnalysis }>(
+        `/executions/${executionId}/cases/${testCaseId}/ai-analysis`,
+        { method: "POST" }
+      ),
     updateCaseAssignment: (executionId: string, testCaseId: string, input: { assigned_to?: string }) =>
       request<{ updated: boolean }>(`/executions/${executionId}/cases/${testCaseId}/assignment`, { method: "PUT", body: JSON.stringify(input) }),
     rerun: (id: string, input: { failed_only?: boolean; created_by: string; name?: string }) =>

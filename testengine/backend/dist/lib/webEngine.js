@@ -1,7 +1,10 @@
+import { mkdir, readFile, stat } from "node:fs/promises";
+import path from "node:path";
 import { Builder, By, Key, until } from "selenium-webdriver";
 import { chromium, firefox, webkit } from "playwright";
 import { buildInitialContext, interpolateText, normalizeKey, normalizeText, registerContextValue, stringifyValue, toParameterValuesRecord } from "./runtimeContext.js";
 const DEFAULT_SELENIUM_GRID_URL = String(process.env.SELENIUM_GRID_URL || "http://127.0.0.1:4444/wd/hub").trim();
+const ARTIFACT_ROOT = process.env.ARTIFACT_ROOT || "/artifacts";
 const SELENIUM_BROWSER_MAP = {
     chromium: "chrome",
     firefox: "firefox",
@@ -16,6 +19,60 @@ const PLAYWRIGHT_BROWSER_MAP = {
     webkit
 };
 const normalizeProvider = (value) => value === "selenium" ? "selenium" : "playwright";
+const normalizePositiveInteger = (value, fallback, min, max) => {
+    const parsed = typeof value === "number" && Number.isFinite(value)
+        ? Math.trunc(value)
+        : typeof value === "string" && value.trim()
+            ? Number.parseInt(value.trim(), 10)
+            : Number.NaN;
+    const next = Number.isFinite(parsed) ? parsed : fallback;
+    return Math.max(min, Math.min(max, next));
+};
+const resolveTimeoutPolicy = (envelope) => ({
+    navigation: normalizePositiveInteger(envelope.timeouts?.navigation_timeout_ms, 30_000, 1_000, 600_000),
+    action: normalizePositiveInteger(envelope.timeouts?.action_timeout_ms, 5_000, 250, 120_000),
+    assertion: normalizePositiveInteger(envelope.timeouts?.assertion_timeout_ms, 10_000, 250, 120_000),
+    recoveryWait: normalizePositiveInteger(envelope.timeouts?.recovery_wait_ms, 750, 100, 30_000)
+});
+const shouldRecordVideo = (envelope) => envelope.artifact_policy?.video_mode !== "off";
+const shouldAttachVideo = (envelope, finalStatus) => {
+    const mode = envelope.artifact_policy?.video_mode || "off";
+    if (mode === "off") {
+        return false;
+    }
+    if (mode === "retain-on-failure") {
+        return finalStatus === "failed" || finalStatus === "blocked";
+    }
+    return true;
+};
+const maxVideoAttachmentBytes = (envelope) => normalizePositiveInteger(envelope.artifact_policy?.max_video_attachment_mb, 25, 1, 250) * 1024 * 1024;
+const liveViewSessions = new Map();
+export const getLiveSessionStatus = (provider = "playwright") => {
+    const sessions = [...liveViewSessions.values()].filter((entry) => entry.provider === provider);
+    const latest = sessions[sessions.length - 1] || null;
+    return {
+        provider,
+        available: Boolean(latest),
+        session_id: latest?.id || null,
+        started_at: latest?.startedAt || null
+    };
+};
+export const captureLiveSessionScreenshot = async (provider = "playwright") => {
+    const sessions = [...liveViewSessions.values()].filter((entry) => entry.provider === provider);
+    const latest = sessions[sessions.length - 1] || null;
+    if (!latest) {
+        return null;
+    }
+    return latest.screenshot();
+};
+const registerLiveViewSession = (entry) => {
+    liveViewSessions.set(entry.id, entry);
+};
+const unregisterLiveViewSession = (id) => {
+    if (id) {
+        liveViewSessions.delete(id);
+    }
+};
 const normalizeBrowser = (value) => {
     const normalized = normalizeText(value)?.toLowerCase() || "chromium";
     if (normalized === "firefox") {
@@ -50,6 +107,16 @@ const extractUrlCandidate = (value) => {
 };
 const titleCaseLabel = (value) => value.replace(/\s+/g, " ").trim();
 const buildExpectApi = () => {
+    const getLocatorText = async (actual) => {
+        const maybeLocator = actual;
+        if (maybeLocator && typeof maybeLocator.textContent === "function") {
+            return maybeLocator.textContent();
+        }
+        if (maybeLocator && typeof maybeLocator.innerText === "function") {
+            return maybeLocator.innerText();
+        }
+        return stringifyValue(actual);
+    };
     const api = ((actual) => ({
         toBe(expected) {
             if (actual !== expected) {
@@ -64,6 +131,47 @@ const buildExpectApi = () => {
         toBeTruthy() {
             if (!actual) {
                 throw new Error(`Expected ${stringifyValue(actual)} to be truthy`);
+            }
+        },
+        async toBeVisible() {
+            const maybeLocator = actual;
+            if (!maybeLocator || typeof maybeLocator.isVisible !== "function") {
+                throw new Error("Expected a page locator for toBeVisible().");
+            }
+            if (!await maybeLocator.isVisible()) {
+                throw new Error("Expected locator to be visible.");
+            }
+        },
+        async toContainText(expected) {
+            const actualText = await getLocatorText(actual);
+            if (!actualText.includes(String(expected ?? ""))) {
+                throw new Error(`Expected ${stringifyValue(actualText)} to contain ${stringifyValue(expected)}`);
+            }
+        },
+        async toHaveText(expected) {
+            const actualText = await getLocatorText(actual);
+            if (actualText !== String(expected ?? "")) {
+                throw new Error(`Expected ${stringifyValue(actualText)} to equal ${stringifyValue(expected)}`);
+            }
+        },
+        async toHaveValue(expected) {
+            const maybeLocator = actual;
+            const actualValue = maybeLocator && typeof maybeLocator.inputValue === "function"
+                ? await maybeLocator.inputValue()
+                : stringifyValue(actual);
+            if (actualValue !== String(expected ?? "")) {
+                throw new Error(`Expected ${stringifyValue(actualValue)} to equal ${stringifyValue(expected)}`);
+            }
+        },
+        async toHaveURL(expected) {
+            const maybePage = actual;
+            const actualUrl = maybePage && typeof maybePage.url === "function"
+                ? await maybePage.url()
+                : stringifyValue(actual);
+            const matcher = expected instanceof RegExp ? expected : null;
+            const passed = matcher ? matcher.test(actualUrl) : actualUrl.includes(String(expected ?? ""));
+            if (!passed) {
+                throw new Error(`Expected URL ${stringifyValue(actualUrl)} to match ${stringifyValue(expected)}`);
             }
         }
     }));
@@ -214,6 +322,14 @@ const createPlaywrightLocatorFacade = (resolver, target) => ({
         const locator = await resolver(target);
         return (await locator.textContent()) || "";
     },
+    innerText: async () => {
+        const locator = await resolver(target);
+        return (await locator.innerText()) || "";
+    },
+    inputValue: async () => {
+        const locator = await resolver(target);
+        return await locator.inputValue();
+    },
     isVisible: async () => {
         const locator = await resolver(target);
         return locator.isVisible();
@@ -221,6 +337,19 @@ const createPlaywrightLocatorFacade = (resolver, target) => ({
     getAttribute: async (name) => {
         const locator = await resolver(target);
         return locator.getAttribute(name);
+    },
+    waitFor: async (options) => {
+        const locator = await resolver(target);
+        await locator.waitFor({
+            state: options?.state || "visible",
+            timeout: options?.timeout
+        });
+    },
+    first: () => createPlaywrightLocatorFacade(resolver, target),
+    nth: (index) => createPlaywrightLocatorFacade(async (value) => (await resolver(value)).nth(index), target),
+    count: async () => {
+        const locator = await resolver(target);
+        return locator.count();
     }
 });
 class PlaywrightWebSession {
@@ -231,8 +360,11 @@ class PlaywrightWebSession {
     browserPage = null;
     consoleEntries = [];
     networkEntries = [];
+    liveSessionId = null;
+    timeouts;
     constructor(envelope) {
         this.envelope = envelope;
+        this.timeouts = resolveTimeoutPolicy(envelope);
     }
     get pageOrThrow() {
         if (!this.browserPage) {
@@ -249,9 +381,42 @@ class PlaywrightWebSession {
             headless: this.envelope.headless !== false
         });
         this.browserContext = await this.browser.newContext({
-            ignoreHTTPSErrors: true
+            ignoreHTTPSErrors: true,
+            ...(shouldRecordVideo(this.envelope)
+                ? {
+                    recordVideo: {
+                        dir: path.join(ARTIFACT_ROOT, "playwright-videos", this.envelope.engine_run_id),
+                        size: {
+                            width: 960,
+                            height: 540
+                        }
+                    }
+                }
+                : {})
         });
         this.browserPage = await this.browserContext.newPage();
+        this.liveSessionId = `${this.envelope.engine_run_id}:playwright`;
+        registerLiveViewSession({
+            id: this.liveSessionId,
+            provider: this.provider,
+            startedAt: new Date().toISOString(),
+            url: async () => this.browserPage?.url() || "",
+            screenshot: async () => {
+                if (!this.browserPage || this.browserPage.isClosed()) {
+                    return null;
+                }
+                try {
+                    return await this.browserPage.screenshot({
+                        type: "jpeg",
+                        quality: 45,
+                        fullPage: false
+                    });
+                }
+                catch {
+                    return null;
+                }
+            }
+        });
         this.browserPage.on("console", (message) => {
             const location = message.location();
             this.consoleEntries.push({
@@ -282,12 +447,44 @@ class PlaywrightWebSession {
             });
         });
     }
-    async stop() {
+    async stop(finalStatus) {
+        const video = this.browserPage?.video() || null;
+        const shouldAttach = shouldAttachVideo(this.envelope, finalStatus);
+        const artifactPath = `artifacts/${this.envelope.engine_run_id}/video.webm`;
+        const artifactFullPath = path.join(ARTIFACT_ROOT, artifactPath);
+        const artifacts = {};
+        unregisterLiveViewSession(this.liveSessionId);
         await this.browserContext?.close();
+        if (video && shouldAttach) {
+            try {
+                await mkdir(path.dirname(artifactFullPath), { recursive: true });
+                await video.saveAs(artifactFullPath);
+                const videoStats = await stat(artifactFullPath);
+                artifacts.video_path = artifactPath;
+                artifacts.artifact_refs = [
+                    {
+                        kind: "video",
+                        label: "Compressed browser run video",
+                        path: artifactPath,
+                        file_name: "video.webm",
+                        content_type: "video/webm",
+                        size_bytes: videoStats.size,
+                        ...(videoStats.size <= maxVideoAttachmentBytes(this.envelope)
+                            ? { content_base64: (await readFile(artifactFullPath)).toString("base64") }
+                            : {})
+                    }
+                ];
+            }
+            catch {
+                artifacts.video_path = null;
+            }
+        }
         await this.browser?.close();
         this.browserContext = null;
         this.browser = null;
         this.browserPage = null;
+        this.liveSessionId = null;
+        return artifacts;
     }
     async resolveLocator(target) {
         const page = this.pageOrThrow;
@@ -313,7 +510,7 @@ class PlaywrightWebSession {
         for (const candidate of fallbackCandidates) {
             try {
                 const locator = candidate();
-                await locator.waitFor({ state: "visible", timeout: 1500 });
+                await locator.waitFor({ state: "visible", timeout: this.timeouts.action });
                 return locator;
             }
             catch (error) {
@@ -325,7 +522,7 @@ class PlaywrightWebSession {
     async goto(target) {
         await this.pageOrThrow.goto(target, {
             waitUntil: "domcontentloaded",
-            timeout: Math.max(30_000, this.envelope.run_timeout_seconds * 1000)
+            timeout: Math.min(Math.max(1_000, this.envelope.run_timeout_seconds * 1000), this.timeouts.navigation)
         });
     }
     async click(target) {
@@ -350,7 +547,7 @@ class PlaywrightWebSession {
     async waitForUrl(expected) {
         const resolved = stripWrappingQuotes(expected);
         await this.pageOrThrow.waitForURL((url) => url.toString().includes(resolved), {
-            timeout: 10_000
+            timeout: this.timeouts.assertion
         });
     }
     async expectVisible(target) {
@@ -362,7 +559,7 @@ class PlaywrightWebSession {
     }
     async expectText(target, expected) {
         if (!target) {
-            await this.pageOrThrow.getByText(expected, { exact: false }).first().waitFor({ state: "visible", timeout: 5_000 });
+            await this.pageOrThrow.getByText(expected, { exact: false }).first().waitFor({ state: "visible", timeout: this.timeouts.assertion });
             return;
         }
         const actual = await this.text(target);
@@ -417,9 +614,28 @@ class PlaywrightWebSession {
             press: (target, key) => this.press(target, key),
             waitForTimeout: (ms) => this.waitForTimeout(ms),
             waitForURL: (expected) => this.waitForUrl(expected),
+            waitForLoadState: async (state) => {
+                const supportedState = state === "networkidle" || state === "load" || state === "domcontentloaded" ? state : "load";
+                await this.pageOrThrow.waitForLoadState(supportedState, { timeout: this.timeouts.assertion });
+            },
+            waitForSelector: async (target, options) => {
+                const locator = createPlaywrightLocatorFacade((value) => this.resolveLocator(value), target);
+                await locator.waitFor(options);
+                return locator;
+            },
             url: async () => this.pageOrThrow.url(),
             textContent: (target) => this.text(target),
-            locator: (target) => createPlaywrightLocatorFacade((value) => this.resolveLocator(value), target)
+            locator: (target) => createPlaywrightLocatorFacade((value) => this.resolveLocator(value), target),
+            getByText: (target) => createPlaywrightLocatorFacade((value) => Promise.resolve(this.pageOrThrow.getByText(value, { exact: false }).first()), target),
+            getByLabel: (target) => createPlaywrightLocatorFacade((value) => Promise.resolve(this.pageOrThrow.getByLabel(value, { exact: false }).first()), target),
+            getByPlaceholder: (target) => createPlaywrightLocatorFacade((value) => Promise.resolve(this.pageOrThrow.getByPlaceholder(value, { exact: false }).first()), target),
+            getByRole: (role, options) => {
+                const target = options?.name === undefined ? role : String(options.name);
+                return createPlaywrightLocatorFacade(() => Promise.resolve(this.pageOrThrow.getByRole(role, options).first()), target);
+            },
+            keyboard: {
+                press: (key) => this.press(null, key)
+            }
         };
         return {
             page: pageFacade,
@@ -445,6 +661,14 @@ const createSeleniumLocatorFacade = (resolveElement, target) => ({
         const element = await resolveElement(target);
         return (await element.getText()) || "";
     },
+    innerText: async () => {
+        const element = await resolveElement(target);
+        return (await element.getText()) || "";
+    },
+    inputValue: async () => {
+        const element = await resolveElement(target);
+        return (await element.getAttribute("value")) || "";
+    },
     isVisible: async () => {
         const element = await resolveElement(target);
         return element.isDisplayed();
@@ -452,6 +676,20 @@ const createSeleniumLocatorFacade = (resolveElement, target) => ({
     getAttribute: async (name) => {
         const element = await resolveElement(target);
         return element.getAttribute(name);
+    },
+    waitFor: async () => {
+        await resolveElement(target);
+    },
+    first: () => createSeleniumLocatorFacade(resolveElement, target),
+    nth: () => createSeleniumLocatorFacade(resolveElement, target),
+    count: async () => {
+        try {
+            await resolveElement(target);
+            return 1;
+        }
+        catch {
+            return 0;
+        }
     }
 });
 class SeleniumWebSession {
@@ -459,8 +697,10 @@ class SeleniumWebSession {
     provider = "selenium";
     driverInstance = null;
     networkEntries = [];
+    timeouts;
     constructor(envelope) {
         this.envelope = envelope;
+        this.timeouts = resolveTimeoutPolicy(envelope);
     }
     get driverOrThrow() {
         if (!this.driverInstance) {
@@ -478,14 +718,15 @@ class SeleniumWebSession {
             .forBrowser(seleniumBrowser)
             .build();
         await this.driverInstance.manage().setTimeouts({
-            implicit: 1_500,
-            pageLoad: Math.max(30_000, this.envelope.run_timeout_seconds * 1000),
-            script: 10_000
+            implicit: this.timeouts.action,
+            pageLoad: Math.min(Math.max(1_000, this.envelope.run_timeout_seconds * 1000), this.timeouts.navigation),
+            script: this.timeouts.action
         });
     }
-    async stop() {
+    async stop(_finalStatus) {
         await this.driverInstance?.quit();
         this.driverInstance = null;
+        return {};
     }
     byStrategies(target) {
         const tokens = candidateTokens(target);
@@ -503,6 +744,10 @@ class SeleniumWebSession {
         }
         if (tokens.raw.startsWith("name=")) {
             return [By.name(tokens.raw.slice(5))];
+        }
+        if (tokens.raw.startsWith("text=")) {
+            const escapedText = escapeXPathLiteral(tokens.raw.slice(5));
+            return [By.xpath(`//*[contains(normalize-space(.), ${escapedText})]`)];
         }
         const escaped = escapeXPathLiteral(tokens.text);
         return [
@@ -562,7 +807,7 @@ class SeleniumWebSession {
         await this.driverOrThrow.sleep(Math.max(0, ms));
     }
     async waitForUrl(expected) {
-        await this.driverOrThrow.wait(until.urlContains(stripWrappingQuotes(expected)), 10_000);
+        await this.driverOrThrow.wait(until.urlContains(stripWrappingQuotes(expected)), this.timeouts.assertion);
     }
     async expectVisible(target) {
         const element = await this.resolveElement(target);
@@ -640,9 +885,27 @@ class SeleniumWebSession {
             press: (target, key) => this.press(target, key),
             waitForTimeout: (ms) => this.waitForTimeout(ms),
             waitForURL: (expected) => this.waitForUrl(expected),
+            waitForLoadState: async () => {
+                await this.waitForTimeout(250);
+            },
+            waitForSelector: async (target) => {
+                const locator = createSeleniumLocatorFacade((value) => this.resolveElement(value), target);
+                await locator.waitFor();
+                return locator;
+            },
             url: () => this.driverOrThrow.getCurrentUrl(),
             textContent: (target) => this.text(target),
-            locator: (target) => createSeleniumLocatorFacade((value) => this.resolveElement(value), target)
+            locator: (target) => createSeleniumLocatorFacade((value) => this.resolveElement(value), target),
+            getByText: (target) => createSeleniumLocatorFacade((value) => this.resolveElement(`text=${value}`), target),
+            getByLabel: (target) => createSeleniumLocatorFacade((value) => this.resolveElement(value), target),
+            getByPlaceholder: (target) => createSeleniumLocatorFacade((value) => this.resolveElement(value), target),
+            getByRole: (_role, options) => {
+                const target = options?.name instanceof RegExp ? options.name.source : options?.name ? String(options.name) : _role;
+                return createSeleniumLocatorFacade((value) => this.resolveElement(value), target);
+            },
+            keyboard: {
+                press: (key) => this.press(null, key)
+            }
         };
         return {
             page: pageFacade,
@@ -718,9 +981,21 @@ const buildBindings = (session, context, captures, envelope) => {
         press: async (target, key) => providerBindings.page.press(interpolateText(target, context), interpolateText(key, context)),
         waitForTimeout: (ms) => providerBindings.page.waitForTimeout(ms),
         waitForURL: async (expected) => providerBindings.page.waitForURL(interpolateText(expected, context)),
+        waitForLoadState: (state) => providerBindings.page.waitForLoadState(state),
+        waitForSelector: async (target, options) => providerBindings.page.waitForSelector(interpolateText(target, context), options),
         url: () => providerBindings.page.url(),
         textContent: async (target) => providerBindings.page.textContent(interpolateText(target, context)),
-        locator: (target) => providerBindings.page.locator(interpolateText(target, context))
+        locator: (target) => providerBindings.page.locator(interpolateText(target, context)),
+        getByText: (target) => providerBindings.page.getByText(interpolateText(target, context)),
+        getByLabel: (target) => providerBindings.page.getByLabel(interpolateText(target, context)),
+        getByPlaceholder: (target) => providerBindings.page.getByPlaceholder(interpolateText(target, context)),
+        getByRole: (role, options) => providerBindings.page.getByRole(role, {
+            ...options,
+            name: typeof options?.name === "string" ? interpolateText(options.name, context) : options?.name
+        }),
+        keyboard: {
+            press: (key) => providerBindings.page.keyboard.press(interpolateText(key, context))
+        }
     };
     const web = {
         step: async (_title, fn) => fn(),
@@ -753,8 +1028,44 @@ const buildBindings = (session, context, captures, envelope) => {
         capture
     };
 };
+const stripTrailingTestWrapper = (source) => {
+    const trimmed = source.trim();
+    const testCall = trimmed.match(/(?:^|\n)\s*(?:test|it)\s*\(\s*["'`][\s\S]*?["'`]\s*,\s*async\s*\(\s*\{?\s*page\s*\}?\s*\)\s*=>\s*\{/);
+    if (!testCall || testCall.index === undefined) {
+        return source;
+    }
+    const bodyStart = testCall.index + testCall[0].length;
+    let depth = 1;
+    for (let index = bodyStart; index < trimmed.length; index += 1) {
+        const char = trimmed[index];
+        if (char === "{") {
+            depth += 1;
+        }
+        else if (char === "}") {
+            depth -= 1;
+            if (depth === 0) {
+                return trimmed.slice(bodyStart, index).trim();
+            }
+        }
+    }
+    return source;
+};
+const normalizeAutomationSource = (source) => {
+    const withoutImports = source
+        .split(/\r?\n/)
+        .filter((line) => {
+        const trimmed = line.trim();
+        return !/^import\s+/.test(trimmed)
+            && !/^const\s+\{?\s*(test|expect)\b.*require\(/.test(trimmed)
+            && !/^test\.describe\s*\(/.test(trimmed)
+            && trimmed !== "});";
+    })
+        .join("\n");
+    return stripTrailingTestWrapper(withoutImports);
+};
 const executeAutomationCode = async (source, bindings) => {
-    const fn = new AsyncFunction("page", "web", "expect", "params", "capture", "playwrightPage", "driver", `${source}\nreturn undefined;`);
+    const executableSource = normalizeAutomationSource(source);
+    const fn = new AsyncFunction("page", "web", "expect", "params", "capture", "playwrightPage", "driver", `${executableSource}\nreturn undefined;`);
     return fn(bindings.page, bindings.web, bindings.expect, bindings.params, bindings.capture, bindings.playwrightPage, bindings.driver);
 };
 const executeStepAttempt = async (session, options, captures) => {
@@ -799,7 +1110,7 @@ export const createWebRunSession = (envelope, capturedValues = {}) => {
                 await session.goto(baseUrl);
             }
         },
-        stop: async () => session.stop(),
+        stop: async (finalStatus) => session.stop(finalStatus),
         runStep: async (step) => {
             const captures = {};
             let recoveryAttempted = false;
@@ -832,7 +1143,7 @@ export const createWebRunSession = (envelope, capturedValues = {}) => {
             for (let attempt = 1; attempt <= maxRepairAttempts; attempt += 1) {
                 recoveryAttempted = true;
                 try {
-                    await session.waitForTimeout(750 * attempt);
+                    await session.waitForTimeout(resolveTimeoutPolicy(envelope).recoveryWait * attempt);
                     await executeStepAttempt(session, { step, context, envelope }, captures);
                     recoverySucceeded = true;
                     return {

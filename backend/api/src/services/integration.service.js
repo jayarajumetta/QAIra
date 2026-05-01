@@ -68,6 +68,18 @@ const normalizeTestEnginePollIntervalMinutes = (value, fallback = 5) => {
   return Math.max(1, Math.min(1440, parsed ?? normalizedFallback));
 };
 
+const normalizeTestEngineTimeoutMs = (value, fallback, { min = 100, max = 300000 } = {}) => {
+  const parsed = normalizeInteger(value);
+  const normalizedFallback = Math.max(min, normalizeInteger(fallback) || min);
+  return Math.max(min, Math.min(max, parsed ?? normalizedFallback));
+};
+
+const normalizeTestEngineAttachmentLimitMb = (value, fallback = 25) => {
+  const parsed = normalizeInteger(value);
+  const normalizedFallback = Math.max(1, normalizeInteger(fallback) || 25);
+  return Math.max(1, Math.min(250, parsed ?? normalizedFallback));
+};
+
 const TESTENGINE_CONNECTION_TIMEOUT_MS = Math.max(
   1500,
   normalizeInteger(process.env.TESTENGINE_CONNECTION_TIMEOUT_MS) || 5000
@@ -448,6 +460,30 @@ const normalizeConfig = (type, input, username) => {
       capture_network: raw.capture_network !== false,
       artifact_retention_days: normalizeInteger(raw.artifact_retention_days) ?? Number(integrationTypeConfig.artifact_retention_days ?? 7),
       run_timeout_seconds: normalizeInteger(raw.run_timeout_seconds) ?? Number(integrationTypeConfig.run_timeout_seconds ?? 1800),
+      navigation_timeout_ms: normalizeTestEngineTimeoutMs(
+        raw.navigation_timeout_ms,
+        integrationTypeConfig.navigation_timeout_ms ?? 30000,
+        { min: 1000, max: 600000 }
+      ),
+      action_timeout_ms: normalizeTestEngineTimeoutMs(
+        raw.action_timeout_ms,
+        integrationTypeConfig.action_timeout_ms ?? 5000,
+        { min: 250, max: 120000 }
+      ),
+      assertion_timeout_ms: normalizeTestEngineTimeoutMs(
+        raw.assertion_timeout_ms,
+        integrationTypeConfig.assertion_timeout_ms ?? 10000,
+        { min: 250, max: 120000 }
+      ),
+      recovery_wait_ms: normalizeTestEngineTimeoutMs(
+        raw.recovery_wait_ms,
+        integrationTypeConfig.recovery_wait_ms ?? 750,
+        { min: 100, max: 30000 }
+      ),
+      max_video_attachment_mb: normalizeTestEngineAttachmentLimitMb(
+        raw.max_video_attachment_mb,
+        integrationTypeConfig.max_video_attachment_mb ?? 25
+      ),
       queue_poll_interval_minutes: normalizeTestEnginePollIntervalMinutes(
         raw.queue_poll_interval_minutes,
         integrationTypeConfig.queue_poll_interval_minutes ?? 5

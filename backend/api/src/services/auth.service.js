@@ -103,14 +103,24 @@ const ensureMemberRole = async () => {
 
 const assignDefaultProjectMemberships = async (userId) => {
   const memberRoleId = await ensureMemberRole();
-  const firstProject = await db.prepare(`
+  const defaultProject = await db.prepare(`
     SELECT id
     FROM projects
-    ORDER BY created_at ASC
+    WHERE id = 'project-16'
+       OR LOWER(COALESCE(display_id, '')) = 'project-16'
+       OR LOWER(name) = 'qaira'
+    ORDER BY
+      CASE
+        WHEN id = 'project-16' THEN 0
+        WHEN LOWER(COALESCE(display_id, '')) = 'project-16' THEN 1
+        WHEN LOWER(name) = 'qaira' THEN 2
+        ELSE 3
+      END,
+      created_at ASC
     LIMIT 1
   `).get();
 
-  if (!firstProject) {
+  if (!defaultProject) {
     return;
   }
 
@@ -124,8 +134,8 @@ const assignDefaultProjectMemberships = async (userId) => {
     VALUES (?, ?, ?, ?)
   `);
 
-  if (!await existing.get(firstProject.id, userId)) {
-    await insertMembership.run(crypto.randomUUID(), firstProject.id, userId, memberRoleId);
+  if (!await existing.get(defaultProject.id, userId)) {
+    await insertMembership.run(crypto.randomUUID(), defaultProject.id, userId, memberRoleId);
   }
 };
 

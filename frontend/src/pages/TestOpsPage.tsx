@@ -345,13 +345,6 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
       ]);
     }
   });
-  const clearOpsLogs = useMutation({
-    mutationFn: () => api.opsTelemetry.clearLogs({ project_id: projectId || undefined }),
-    onSuccess: (response) => {
-      setBuilderMessage(`OPS telemetry logs cleared${response.deleted ? ` (${response.deleted})` : ""}.`);
-    },
-    onError: (error) => setBuilderMessage(error instanceof Error ? error.message : "Unable to clear OPS telemetry logs.")
-  });
 
   const handleDownloadArtifact = async (artifact: WorkspaceTransactionArtifact) => {
     if (!selectedTransaction) {
@@ -843,26 +836,11 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
           title="OPS telemetry"
           subtitle={opsIntegration ? `Using ${opsIntegration.name}` : "Configure an active OPS telemetry integration and Test Engine host to load the board."}
           actions={
-            opsBoardUrl || isAdmin ? (
-              <>
-                {opsBoardUrl ? (
-                  <a className="ghost-button" href={opsBoardUrl} rel="noreferrer" target="_blank">
-                    <OpenIcon />
-                    <span>Open board</span>
-                  </a>
-                ) : null}
-                {isAdmin ? (
-                  <button
-                    className="ghost-button danger"
-                    disabled={!opsBoardUrl || clearOpsLogs.isPending}
-                    onClick={() => clearOpsLogs.mutate()}
-                    type="button"
-                  >
-                    <TrashIcon size={16} />
-                    <span>{clearOpsLogs.isPending ? "Clearing..." : "Delete telemetry logs"}</span>
-                  </button>
-                ) : null}
-              </>
+            opsBoardUrl ? (
+              <a className="ghost-button" href={opsBoardUrl} rel="noreferrer" target="_blank">
+                <OpenIcon />
+                <span>Open board</span>
+              </a>
             ) : undefined
           }
         >

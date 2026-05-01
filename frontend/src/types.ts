@@ -477,6 +477,12 @@ export type ApiRequestPreview = {
     body_json?: unknown;
     duration_ms: number;
   };
+  ai_suggestions?: {
+    summary: string;
+    assertions: StepApiValidation[];
+    captures: StepApiResponseCapture[];
+    notes?: string[];
+  };
 };
 
 export type SharedStepGroupStep = {

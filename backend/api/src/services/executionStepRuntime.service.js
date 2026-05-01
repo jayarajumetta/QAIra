@@ -92,7 +92,8 @@ exports.parseStructuredLogs = (value) => {
       stepEvidence: {},
       stepApiDetails: {},
       stepWebDetails: {},
-      stepCaptures: {}
+      stepCaptures: {},
+      aiAnalysis: null
     };
   }
 
@@ -114,7 +115,10 @@ exports.parseStructuredLogs = (value) => {
     stepWebDetails: parsed.stepWebDetails && typeof parsed.stepWebDetails === "object" && !Array.isArray(parsed.stepWebDetails)
       ? { ...parsed.stepWebDetails }
       : {},
-    stepCaptures: normalizedStepCaptures
+    stepCaptures: normalizedStepCaptures,
+    aiAnalysis: parsed.aiAnalysis && typeof parsed.aiAnalysis === "object" && !Array.isArray(parsed.aiAnalysis)
+      ? { ...parsed.aiAnalysis }
+      : null
   };
 };
 

@@ -217,6 +217,46 @@ const normalizeEngineBrowser = (value, fallback = "chromium") => {
   return normalized ? TESTENGINE_BROWSER_ALIASES.get(normalized) || fallback : fallback;
 };
 
+const buildProviderLiveViewUrl = (integration, provider) => {
+  const configured = normalizeText(integration?.config?.live_view_url || integration?.config?.vnc_url);
+
+  if (
+    configured
+    && !(
+      provider === "playwright"
+      && (configured.includes(":7900/") || configured.toLowerCase().includes("vnc"))
+    )
+    && !(provider === "selenium" && configured.includes("/api/v1/live-session"))
+  ) {
+    return configured;
+  }
+
+  const baseUrl = normalizeText(integration?.base_url);
+
+  if (!baseUrl) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(baseUrl);
+
+    if (provider === "selenium") {
+      parsed.port = "7900";
+      parsed.pathname = "/";
+      parsed.search = "?autoconnect=1&resize=scale";
+      parsed.hash = "";
+      return parsed.toString();
+    }
+
+    parsed.pathname = "/api/v1/live-session";
+    parsed.search = "?provider=playwright";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+};
+
 const normalizeInlineEvidence = (value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -257,6 +297,50 @@ const normalizeArtifactBundle = (value) => {
   }
 
   return value;
+};
+
+const normalizeInlineArtifactRefs = (artifactBundle) => {
+  const refs = Array.isArray(artifactBundle?.artifact_refs) ? artifactBundle.artifact_refs : [];
+
+  return refs
+    .filter((ref) => ref && typeof ref === "object" && !Array.isArray(ref))
+    .map((ref) => {
+      const fileName = normalizeText(ref.file_name || ref.fileName)
+        || normalizeText(ref.path)?.split("/").pop()
+        || `${normalizeText(ref.kind) || "artifact"}.bin`;
+      const contentType = normalizeText(ref.content_type || ref.mime_type || ref.mimeType) || "application/octet-stream";
+      const contentBase64 = normalizeText(ref.content_base64 || ref.contentBase64);
+      const dataUrl = normalizeText(ref.data_url || ref.dataUrl);
+      const content = dataUrl || (contentBase64 ? `data:${contentType};base64,${contentBase64}` : null);
+
+      return content
+        ? {
+            file_name: fileName,
+            mime_type: contentType,
+            content
+          }
+        : null;
+    })
+    .filter(Boolean);
+};
+
+const attachInlineArtifacts = async (transactionId, artifactBundle) => {
+  if (!transactionId) {
+    return [];
+  }
+
+  const refs = normalizeInlineArtifactRefs(artifactBundle);
+  const created = [];
+
+  for (const ref of refs) {
+    try {
+      created.push(await workspaceTransactionService.createTransactionArtifact(transactionId, ref));
+    } catch {
+      // Artifact attachment is evidence, not execution truth. Keep completion resilient.
+    }
+  }
+
+  return created;
 };
 
 const normalizePatchProposals = (value) => {
@@ -471,8 +555,14 @@ const buildEngineEnvelope = ({
         ? 0
         : Math.max(0, normalizeInteger(integrationConfig.max_repair_attempts, 1) ?? 1),
     run_timeout_seconds: Math.max(60, normalizeInteger(integrationConfig.run_timeout_seconds, 1800) ?? 1800),
+    timeouts: {
+      navigation_timeout_ms: Math.max(1000, normalizeInteger(integrationConfig.navigation_timeout_ms, 30000) ?? 30000),
+      action_timeout_ms: Math.max(250, normalizeInteger(integrationConfig.action_timeout_ms, 5000) ?? 5000),
+      assertion_timeout_ms: Math.max(250, normalizeInteger(integrationConfig.assertion_timeout_ms, 10000) ?? 10000),
+      recovery_wait_ms: Math.max(100, normalizeInteger(integrationConfig.recovery_wait_ms, 750) ?? 750)
+    },
     web_engine: {
-      active: normalizeTestEngineWebEngine(integrationConfig.active_web_engine, "selenium")
+      active: normalizeTestEngineWebEngine(integrationConfig.active_web_engine, "playwright")
     },
     manual_spec: buildManualSpec({ caseSnapshot, steps, execution }),
     steps,
@@ -511,7 +601,8 @@ const buildEngineEnvelope = ({
       screenshot_on_failure: true,
       capture_console: integrationConfig.capture_console !== false,
       capture_network: integrationConfig.capture_network !== false,
-      artifact_retention_days: Math.max(1, normalizeInteger(integrationConfig.artifact_retention_days, 7) ?? 7)
+      artifact_retention_days: Math.max(1, normalizeInteger(integrationConfig.artifact_retention_days, 7) ?? 7),
+      max_video_attachment_mb: Math.max(1, normalizeInteger(integrationConfig.max_video_attachment_mb, 25) ?? 25)
     },
     callback: null
   };
@@ -844,7 +935,8 @@ async function queueExecutionDispatch({ plan, integration, initiatedBy }) {
         test_case_id: item.case_snapshot.test_case_id,
         engine_host: normalizeEngineHostUrl(integration.base_url),
         queue_mode: "qaira-pull",
-        active_web_engine: envelope.web_engine?.active || "playwright"
+        active_web_engine: envelope.web_engine?.active || "playwright",
+        live_view_url: buildProviderLiveViewUrl(integration, envelope.web_engine?.active || "playwright")
       },
       related_kind: "testengine_run",
       related_id: item.engine_run_id,
@@ -955,6 +1047,8 @@ async function queueSingleStepDispatch({
     steps: [step],
     integration
   });
+  const activeWebEngine = envelope.web_engine?.active || "playwright";
+  const liveViewUrl = buildProviderLiveViewUrl(integration, activeWebEngine);
   const transaction = await workspaceTransactionService.createTransaction({
     project_id: execution.project_id,
     app_type_id: execution.app_type_id || null,
@@ -972,8 +1066,8 @@ async function queueSingleStepDispatch({
       step_id: step.id,
       engine_host: normalizeEngineHostUrl(integration.base_url),
       queue_mode: "qaira-pull",
-      active_web_engine: envelope.web_engine?.active || "playwright",
-      live_view_url: normalizeText(integration.config?.live_view_url)
+      active_web_engine: activeWebEngine,
+      live_view_url: liveViewUrl
     },
     related_kind: "testengine_run",
     related_id: engineRunId,
@@ -1028,8 +1122,8 @@ async function queueSingleStepDispatch({
     job_id: jobId,
     engine_run_id: engineRunId,
     transaction_id: transaction.id,
-    active_web_engine: envelope.web_engine?.active || "playwright",
-    live_view_url: normalizeText(integration.config?.live_view_url)
+    active_web_engine: activeWebEngine,
+    live_view_url: liveViewUrl
   };
 }
 
@@ -1140,6 +1234,7 @@ exports.startQueuedJob = async ({ job_id, worker_id } = {}) => {
     logs: JSON.stringify(logs),
     executed_by: job.created_by || null
   });
+  const attachedArtifacts = await attachInlineArtifacts(job.transaction_id, nextRuntimeState.artifact_bundle);
 
   if (job.transaction_id) {
     await appendQueueTransactionEvent(job.transaction_id, {
@@ -1584,7 +1679,8 @@ exports.completeQueuedJob = async ({
         healing_attempted: nextRuntimeState.healing_attempted,
         healing_succeeded: nextRuntimeState.healing_succeeded,
         artifact_bundle: nextRuntimeState.artifact_bundle,
-        patch_proposals: nextRuntimeState.patch_proposals
+        patch_proposals: nextRuntimeState.patch_proposals,
+        attached_artifacts: attachedArtifacts
       },
       status: finalStatus === "passed" ? "completed" : "failed",
       description: normalizedSummary,

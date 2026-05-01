@@ -1293,7 +1293,7 @@ exports.runExecutionApiStep = async (executionId, testCaseId, stepId, { executed
       capturedValues,
       existingLogs
     });
-    const queuedNote = `Queued web step ${stepSnapshot.step_order} for Test Engine execution. Open the live viewer while Selenium runs, or keep working manually until the engine reports back.`;
+    const queuedNote = `Queued web step ${stepSnapshot.step_order} for Test Engine execution with ${queued.active_web_engine || "the configured web engine"}. Open the provider live viewer while the engine reports step progress.`;
     const mergedLogs = {
       ...existingLogs,
       stepNotes: {

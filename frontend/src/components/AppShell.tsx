@@ -312,6 +312,12 @@ export function AppShell() {
           </button>
         </div>
       )}
+      {!error && hasNoProjects ? (
+        <div className="global-alert" role="status">
+          <p>No default QAira project is available for your account. Create a project from the Projects page to start working.</p>
+          <NavLink className="ghost-button" to="/projects">Create project</NavLink>
+        </div>
+      ) : null}
       
       <aside className={sidebarClassName} id="app-sidebar" role="navigation">
         <div className="sidebar-top">

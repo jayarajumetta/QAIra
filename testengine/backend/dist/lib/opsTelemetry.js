@@ -196,6 +196,8 @@ const renderBoardHtml = (config) => {
         --accent: #1767c2;
         --accent-soft: rgba(23, 103, 194, 0.10);
         --warn: #9a5b00;
+        --danger: #b42318;
+        --danger-soft: rgba(180, 35, 24, 0.10);
         --shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
       }
       * { box-sizing: border-box; }
@@ -316,6 +318,13 @@ const renderBoardHtml = (config) => {
         color: white;
         font-weight: 700;
         cursor: pointer;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.58;
+      }
+      .button-danger {
+        background: var(--danger);
       }
       .toggle {
         display: inline-flex;
@@ -451,6 +460,14 @@ const renderBoardHtml = (config) => {
         color: var(--warn);
         display: none;
       }
+      .notice {
+        margin-top: 12px;
+        padding: 12px 14px;
+        border-radius: 8px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        display: none;
+      }
       @media (max-width: 720px) {
         .shell {
           width: min(100vw - 20px, 1320px);
@@ -516,11 +533,13 @@ const renderBoardHtml = (config) => {
           </div>
           <div class="actions">
             <button id="refreshButton" type="button">Refresh Board</button>
+            <button class="button-danger" id="clearButton" type="button">Delete Telemetry Logs</button>
             <label class="toggle">
               <input id="autoRefreshToggle" checked type="checkbox" />
               Auto refresh every 5 seconds
             </label>
           </div>
+          <div class="notice" id="noticeBox"></div>
           <div class="error" id="errorBox"></div>
         </section>
 
@@ -550,10 +569,12 @@ const renderBoardHtml = (config) => {
       const searchFilter = document.getElementById("searchFilter");
       const limitFilter = document.getElementById("limitFilter");
       const refreshButton = document.getElementById("refreshButton");
+      const clearButton = document.getElementById("clearButton");
       const autoRefreshToggle = document.getElementById("autoRefreshToggle");
       const summaryGrid = document.getElementById("summaryGrid");
       const eventList = document.getElementById("eventList");
       const eventsMeta = document.getElementById("eventsMeta");
+      const noticeBox = document.getElementById("noticeBox");
       const errorBox = document.getElementById("errorBox");
 
       const initialService = SEARCH.get("service_name") || "";
@@ -603,6 +624,17 @@ const renderBoardHtml = (config) => {
 
         errorBox.style.display = "block";
         errorBox.textContent = message;
+      }
+
+      function setNotice(message) {
+        if (!message) {
+          noticeBox.style.display = "none";
+          noticeBox.textContent = "";
+          return;
+        }
+
+        noticeBox.style.display = "block";
+        noticeBox.textContent = message;
       }
 
       function renderSummary(eventsPayload, servicesPayload) {
@@ -704,7 +736,40 @@ const renderBoardHtml = (config) => {
         }
       }
 
+      async function clearTelemetryLogs() {
+        if (!window.confirm("Delete all captured OPS telemetry logs from this Test Engine host?")) {
+          return;
+        }
+
+        setError("");
+        setNotice("");
+        clearButton.disabled = true;
+        clearButton.textContent = "Deleting...";
+
+        try {
+          const response = await fetch(EVENTS_PATH, {
+            method: "DELETE",
+            headers: { accept: "application/json" }
+          });
+          const payload = await response.json().catch(() => null);
+
+          if (!response.ok) {
+            throw new Error((payload && payload.message) || "Delete failed with status " + response.status);
+          }
+
+          const deleted = Number((payload && payload.deleted) || 0);
+          setNotice("Deleted " + deleted + " telemetry log" + (deleted === 1 ? "" : "s") + ".");
+          await loadBoard();
+        } catch (error) {
+          setError(error instanceof Error ? error.message : "Unable to delete telemetry logs.");
+        } finally {
+          clearButton.disabled = false;
+          clearButton.textContent = "Delete Telemetry Logs";
+        }
+      }
+
       refreshButton.addEventListener("click", () => { void loadBoard(); });
+      clearButton.addEventListener("click", () => { void clearTelemetryLogs(); });
 
       [serviceFilter, eventTypeFilter, statusFilter, executionFilter, searchFilter, limitFilter].forEach((element) => {
         element.addEventListener("change", () => { void loadBoard(); });

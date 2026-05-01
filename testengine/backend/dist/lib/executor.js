@@ -318,6 +318,29 @@ const buildLogsPayload = (stepOutcomes, stepSummaries = [], stepCaptures = {}) =
         return accumulator;
     }, {})
 });
+const mergeArtifactBundle = (base, patch) => {
+    if (!patch || !Object.keys(patch).length) {
+        return base;
+    }
+    const mergedRefs = [
+        ...(base.artifact_refs || []),
+        ...(patch.artifact_refs || [])
+    ].reduce((items, ref) => {
+        const key = `${ref.kind || ""}:${ref.path || ""}:${ref.file_name || ""}`;
+        const existingIndex = items.findIndex((item) => `${item.kind || ""}:${item.path || ""}:${item.file_name || ""}` === key);
+        if (existingIndex >= 0) {
+            items[existingIndex] = ref;
+            return items;
+        }
+        items.push(ref);
+        return items;
+    }, []);
+    return {
+        ...base,
+        ...patch,
+        artifact_refs: mergedRefs
+    };
+};
 const syncCapturedValues = (context, captures) => {
     Object.entries(captures || {}).forEach(([key, value]) => {
         registerContextValue(context, key, value);
@@ -613,6 +636,20 @@ async function executeRun(envelope, run, logger) {
     const webRunSession = hasWebSteps ? createWebRunSession(envelope, context.values) : null;
     let healingAttempted = false;
     let healingSucceeded = false;
+    let webRunSessionStopped = false;
+    const stopWebRunSession = async (status) => {
+        if (!webRunSession || webRunSessionStopped) {
+            return {};
+        }
+        webRunSessionStopped = true;
+        try {
+            return await webRunSession.stop(status);
+        }
+        catch (error) {
+            logger.error({ error, engineRunId: run.id }, "Unable to finalize web automation artifacts");
+            return {};
+        }
+    };
     try {
         if (webRunSession) {
             await webRunSession.start();
@@ -684,7 +721,8 @@ async function executeRun(envelope, run, logger) {
                 }
             }
             if (result.outcome.status === "failed") {
-                const failedRun = markRunState(run.id, "failed", `${envelope.qaira_test_case_title} failed on step ${step.order}.`);
+                const artifactBundle = mergeArtifactBundle(running.artifact_bundle, await stopWebRunSession("failed"));
+                const failedRun = markRunState(run.id, "failed", `${envelope.qaira_test_case_title} failed on step ${step.order}.`, { artifact_bundle: artifactBundle });
                 if (!failedRun) {
                     return;
                 }
@@ -713,7 +751,8 @@ async function executeRun(envelope, run, logger) {
                 return;
             }
         }
-        const completedRun = markRunState(run.id, "completed", `${envelope.qaira_test_case_title} completed successfully.`);
+        const artifactBundle = mergeArtifactBundle(running.artifact_bundle, await stopWebRunSession("passed"));
+        const completedRun = markRunState(run.id, "completed", `${envelope.qaira_test_case_title} completed successfully.`, { artifact_bundle: artifactBundle });
         if (!completedRun) {
             return;
         }
@@ -740,7 +779,8 @@ async function executeRun(envelope, run, logger) {
         }));
     }
     catch (error) {
-        const failedRun = markRunState(run.id, "failed", error instanceof Error ? error.message : `${envelope.qaira_test_case_title} failed during execution.`);
+        const artifactBundle = mergeArtifactBundle(running.artifact_bundle, await stopWebRunSession("failed"));
+        const failedRun = markRunState(run.id, "failed", error instanceof Error ? error.message : `${envelope.qaira_test_case_title} failed during execution.`, { artifact_bundle: artifactBundle });
         if (!failedRun) {
             return;
         }
@@ -773,9 +813,9 @@ async function executeRun(envelope, run, logger) {
         }
     }
     finally {
-        if (webRunSession) {
+        if (webRunSession && !webRunSessionStopped) {
             try {
-                await webRunSession.stop();
+                await stopWebRunSession();
             }
             catch (stopError) {
                 logger.error({ error: stopError, engineRunId: run.id }, "Unable to stop web automation session cleanly");

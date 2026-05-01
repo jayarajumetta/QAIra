@@ -61,6 +61,11 @@ type IntegrationDraft = {
   engine_capture_network: boolean;
   engine_artifact_retention_days: string;
   engine_run_timeout_seconds: string;
+  engine_navigation_timeout_ms: string;
+  engine_action_timeout_ms: string;
+  engine_assertion_timeout_ms: string;
+  engine_recovery_wait_ms: string;
+  engine_max_video_attachment_mb: string;
   engine_queue_poll_interval_minutes: string;
   engine_live_view_url: string;
   ops_project_id: string;
@@ -138,7 +143,7 @@ const buildEmptyDraft = (
     engine_qaira_api_base_url: "",
     engine_callback_url: "",
     engine_callback_secret: "",
-    engine_active_web_engine: (typeof testEngineDefaults.active_web_engine === "string" ? testEngineDefaults.active_web_engine : "selenium") as IntegrationDraft["engine_active_web_engine"],
+    engine_active_web_engine: (typeof testEngineDefaults.active_web_engine === "string" ? testEngineDefaults.active_web_engine : "playwright") as IntegrationDraft["engine_active_web_engine"],
     engine_browser: (typeof testEngineDefaults.browser === "string" ? testEngineDefaults.browser : "chromium") as IntegrationDraft["engine_browser"],
     engine_headless: testEngineDefaults.headless === true,
     engine_healing_enabled: testEngineDefaults.healing_enabled !== false,
@@ -149,6 +154,11 @@ const buildEmptyDraft = (
     engine_capture_network: testEngineDefaults.capture_network !== false,
     engine_artifact_retention_days: String(testEngineDefaults.artifact_retention_days ?? "14"),
     engine_run_timeout_seconds: String(testEngineDefaults.run_timeout_seconds ?? "1800"),
+    engine_navigation_timeout_ms: String(testEngineDefaults.navigation_timeout_ms ?? "30000"),
+    engine_action_timeout_ms: String(testEngineDefaults.action_timeout_ms ?? "5000"),
+    engine_assertion_timeout_ms: String(testEngineDefaults.assertion_timeout_ms ?? "10000"),
+    engine_recovery_wait_ms: String(testEngineDefaults.recovery_wait_ms ?? "750"),
+    engine_max_video_attachment_mb: String(testEngineDefaults.max_video_attachment_mb ?? "25"),
     engine_queue_poll_interval_minutes: String(testEngineDefaults.queue_poll_interval_minutes ?? "5"),
     engine_live_view_url: "",
     ops_project_id: "",
@@ -263,6 +273,52 @@ function buildReadableIntegrationUrl(baseUrl?: string | null, path?: string | nu
   }
 }
 
+function buildTestEngineLiveViewUrl(baseUrl: string, provider: IntegrationDraft["engine_active_web_engine"]) {
+  const normalizedBaseUrl = String(baseUrl || "").trim();
+
+  if (!normalizedBaseUrl) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(normalizedBaseUrl);
+
+    if (provider === "selenium") {
+      parsed.port = "7900";
+      parsed.pathname = "/";
+      parsed.search = "?autoconnect=1&resize=scale";
+      parsed.hash = "";
+      return parsed.toString();
+    }
+
+    parsed.pathname = "/api/v1/live-session";
+    parsed.search = "?provider=playwright";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+function isAutoDerivedLiveViewUrl(value: string) {
+  const normalized = value.trim();
+  return !normalized || normalized.includes(":7900/") || normalized.includes("/api/v1/live-session");
+}
+
+function isLiveViewUrlCompatible(value: string, provider: IntegrationDraft["engine_active_web_engine"]) {
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return false;
+  }
+
+  if (provider === "playwright") {
+    return !normalized.includes(":7900/") && !normalized.toLowerCase().includes("vnc");
+  }
+
+  return !normalized.includes("/api/v1/live-session");
+}
+
 function applyDraftDefaultsForType(type: Integration["type"], current: IntegrationDraft, definitions: IntegrationTypeDefinition[]): IntegrationDraft {
   const llmDefaults = getIntegrationTypeDefinition("llm", definitions)?.defaults || {};
   const emailDefaults = getIntegrationTypeDefinition("email", definitions)?.defaults || {};
@@ -316,7 +372,7 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
       ...current,
       type,
       base_url: nextBaseUrl,
-      engine_active_web_engine: (current.engine_active_web_engine || String(testEngineDefaults.active_web_engine || "selenium")) as IntegrationDraft["engine_active_web_engine"],
+      engine_active_web_engine: (current.engine_active_web_engine || String(testEngineDefaults.active_web_engine || "playwright")) as IntegrationDraft["engine_active_web_engine"],
       engine_browser: (current.engine_browser || String(testEngineDefaults.browser || "chromium")) as IntegrationDraft["engine_browser"],
       engine_headless: current.engine_headless,
       engine_healing_enabled: current.engine_healing_enabled,
@@ -327,6 +383,11 @@ function applyDraftDefaultsForType(type: Integration["type"], current: Integrati
       engine_capture_network: current.engine_capture_network,
       engine_artifact_retention_days: current.engine_artifact_retention_days || String(testEngineDefaults.artifact_retention_days ?? "14"),
       engine_run_timeout_seconds: current.engine_run_timeout_seconds || String(testEngineDefaults.run_timeout_seconds ?? "1800"),
+      engine_navigation_timeout_ms: current.engine_navigation_timeout_ms || String(testEngineDefaults.navigation_timeout_ms ?? "30000"),
+      engine_action_timeout_ms: current.engine_action_timeout_ms || String(testEngineDefaults.action_timeout_ms ?? "5000"),
+      engine_assertion_timeout_ms: current.engine_assertion_timeout_ms || String(testEngineDefaults.assertion_timeout_ms ?? "10000"),
+      engine_recovery_wait_ms: current.engine_recovery_wait_ms || String(testEngineDefaults.recovery_wait_ms ?? "750"),
+      engine_max_video_attachment_mb: current.engine_max_video_attachment_mb || String(testEngineDefaults.max_video_attachment_mb ?? "25"),
       engine_queue_poll_interval_minutes: current.engine_queue_poll_interval_minutes || String(testEngineDefaults.queue_poll_interval_minutes ?? "5")
     };
   }
@@ -367,6 +428,8 @@ function getDraftFromIntegration(
 ): IntegrationDraft {
   const config: Record<string, unknown> = integration.config || {};
   const emptyDraft = buildEmptyDraft(definitions, preferredType);
+  const storedEngineProvider = (typeof config.active_web_engine === "string" ? config.active_web_engine : emptyDraft.engine_active_web_engine) as IntegrationDraft["engine_active_web_engine"];
+  const storedLiveViewUrl = typeof config.live_view_url === "string" ? config.live_view_url : "";
 
   return applyDraftDefaultsForType(integration.type, {
     ...emptyDraft,
@@ -402,7 +465,7 @@ function getDraftFromIntegration(
     engine_qaira_api_base_url: typeof config.qaira_api_base_url === "string" ? config.qaira_api_base_url : "",
     engine_callback_url: typeof config.callback_url === "string" ? config.callback_url : "",
     engine_callback_secret: typeof config.callback_secret === "string" ? config.callback_secret : "",
-    engine_active_web_engine: (typeof config.active_web_engine === "string" ? config.active_web_engine : emptyDraft.engine_active_web_engine) as IntegrationDraft["engine_active_web_engine"],
+    engine_active_web_engine: storedEngineProvider,
     engine_browser: (typeof config.browser === "string" ? config.browser : emptyDraft.engine_browser) as IntegrationDraft["engine_browser"],
     engine_headless: typeof config.headless === "boolean" ? config.headless : emptyDraft.engine_headless,
     engine_healing_enabled: typeof config.healing_enabled === "boolean" ? config.healing_enabled : emptyDraft.engine_healing_enabled,
@@ -428,13 +491,45 @@ function getDraftFromIntegration(
         : typeof config.run_timeout_seconds === "string"
           ? config.run_timeout_seconds
           : emptyDraft.engine_run_timeout_seconds,
+    engine_navigation_timeout_ms:
+      typeof config.navigation_timeout_ms === "number"
+        ? String(config.navigation_timeout_ms)
+        : typeof config.navigation_timeout_ms === "string"
+          ? config.navigation_timeout_ms
+          : emptyDraft.engine_navigation_timeout_ms,
+    engine_action_timeout_ms:
+      typeof config.action_timeout_ms === "number"
+        ? String(config.action_timeout_ms)
+        : typeof config.action_timeout_ms === "string"
+          ? config.action_timeout_ms
+          : emptyDraft.engine_action_timeout_ms,
+    engine_assertion_timeout_ms:
+      typeof config.assertion_timeout_ms === "number"
+        ? String(config.assertion_timeout_ms)
+        : typeof config.assertion_timeout_ms === "string"
+          ? config.assertion_timeout_ms
+          : emptyDraft.engine_assertion_timeout_ms,
+    engine_recovery_wait_ms:
+      typeof config.recovery_wait_ms === "number"
+        ? String(config.recovery_wait_ms)
+        : typeof config.recovery_wait_ms === "string"
+          ? config.recovery_wait_ms
+          : emptyDraft.engine_recovery_wait_ms,
+    engine_max_video_attachment_mb:
+      typeof config.max_video_attachment_mb === "number"
+        ? String(config.max_video_attachment_mb)
+        : typeof config.max_video_attachment_mb === "string"
+          ? config.max_video_attachment_mb
+          : emptyDraft.engine_max_video_attachment_mb,
     engine_queue_poll_interval_minutes:
       typeof config.queue_poll_interval_minutes === "number"
         ? String(config.queue_poll_interval_minutes)
         : typeof config.queue_poll_interval_minutes === "string"
           ? config.queue_poll_interval_minutes
           : emptyDraft.engine_queue_poll_interval_minutes,
-    engine_live_view_url: typeof config.live_view_url === "string" ? config.live_view_url : "",
+    engine_live_view_url: isLiveViewUrlCompatible(storedLiveViewUrl, storedEngineProvider)
+      ? storedLiveViewUrl
+      : buildTestEngineLiveViewUrl(integration.base_url || "", storedEngineProvider),
     ops_project_id: typeof config.project_id === "string" ? config.project_id : "",
     ops_events_path: typeof config.events_path === "string" ? config.events_path : emptyDraft.ops_events_path,
     ops_health_path: typeof config.health_path === "string" ? config.health_path : emptyDraft.ops_health_path,
@@ -518,6 +613,11 @@ function buildIntegrationConfig(draft: IntegrationDraft, definitions: Integratio
       capture_network: draft.engine_capture_network,
       artifact_retention_days: Number.parseInt(draft.engine_artifact_retention_days, 10) || 7,
       run_timeout_seconds: Number.parseInt(draft.engine_run_timeout_seconds, 10) || 1800,
+      navigation_timeout_ms: Number.parseInt(draft.engine_navigation_timeout_ms, 10) || 30000,
+      action_timeout_ms: Number.parseInt(draft.engine_action_timeout_ms, 10) || 5000,
+      assertion_timeout_ms: Number.parseInt(draft.engine_assertion_timeout_ms, 10) || 10000,
+      recovery_wait_ms: Number.parseInt(draft.engine_recovery_wait_ms, 10) || 750,
+      max_video_attachment_mb: Number.parseInt(draft.engine_max_video_attachment_mb, 10) || 25,
       queue_poll_interval_minutes: Number.parseInt(draft.engine_queue_poll_interval_minutes, 10) || 5,
       live_view_url: draft.engine_live_view_url.trim() || null,
       promote_healed_patches: "review"
@@ -606,7 +706,7 @@ function getIntegrationSummary(integration: Integration, definitions: Integratio
 
     return {
       primary: integration.base_url || "Engine host not set",
-      secondary: `${typeof config.project_id === "string" && config.project_id.trim() ? "project-specific" : "all projects"} · queue pull every ${pollIntervalMinutes} min · ${String(activeWebEngine).toUpperCase()} web${qairaApiBaseUrl ? ` · QAira API ${qairaApiBaseUrl}` : ""}`
+      secondary: `${typeof config.project_id === "string" && config.project_id.trim() ? "project-specific" : "all projects"} · queue pull every ${pollIntervalMinutes} min · ${String(activeWebEngine).toUpperCase()} web · video ${String(config.video_mode || "off")}${qairaApiBaseUrl ? ` · QAira API ${qairaApiBaseUrl}` : ""}`
     };
   }
 
@@ -747,6 +847,10 @@ export function IntegrationsPage() {
       return "";
     }
   }, [draft.base_url]);
+  const derivedTestEngineLiveViewUrl = useMemo(
+    () => buildTestEngineLiveViewUrl(draft.base_url, draft.engine_active_web_engine),
+    [draft.base_url, draft.engine_active_web_engine]
+  );
   const testEngineHealthUrl = useMemo(
     () => buildReadableIntegrationUrl(draft.base_url, "/health"),
     [draft.base_url]
@@ -1307,7 +1411,16 @@ export function IntegrationsPage() {
                         <input
                           placeholder="https://testengine.company.internal"
                           value={draft.base_url}
-                          onChange={(event) => setDraft((current) => ({ ...current, base_url: event.target.value }))}
+                          onChange={(event) => {
+                            const baseUrl = event.target.value;
+                            setDraft((current) => ({
+                              ...current,
+                              base_url: baseUrl,
+                              engine_live_view_url: isAutoDerivedLiveViewUrl(current.engine_live_view_url)
+                                ? buildTestEngineLiveViewUrl(baseUrl, current.engine_active_web_engine)
+                                : current.engine_live_view_url
+                            }));
+                          }}
                         />
                       </FormField>
 
@@ -1336,13 +1449,125 @@ export function IntegrationsPage() {
                     </div>
 
                     <div className="record-grid">
+                      <FormField label="Run Timeout (sec)">
+                        <input
+                          inputMode="numeric"
+                          placeholder="1800"
+                          value={draft.engine_run_timeout_seconds}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_run_timeout_seconds: event.target.value }))}
+                        />
+                      </FormField>
+                      <FormField label="Navigation Wait (ms)">
+                        <input
+                          inputMode="numeric"
+                          placeholder="30000"
+                          value={draft.engine_navigation_timeout_ms}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_navigation_timeout_ms: event.target.value }))}
+                        />
+                      </FormField>
+                      <FormField label="Action Wait (ms)">
+                        <input
+                          inputMode="numeric"
+                          placeholder="5000"
+                          value={draft.engine_action_timeout_ms}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_action_timeout_ms: event.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Assertion Wait (ms)">
+                        <input
+                          inputMode="numeric"
+                          placeholder="10000"
+                          value={draft.engine_assertion_timeout_ms}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_assertion_timeout_ms: event.target.value }))}
+                        />
+                      </FormField>
+                      <FormField label="Recovery Wait (ms)">
+                        <input
+                          inputMode="numeric"
+                          placeholder="750"
+                          value={draft.engine_recovery_wait_ms}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_recovery_wait_ms: event.target.value }))}
+                        />
+                      </FormField>
+                      <div className="empty-state compact integration-helper">
+                        Wait timings are passed into every queued web run and honored by both Playwright and Selenium locators, navigation, assertions, and repair retries.
+                      </div>
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Trace Mode">
+                        <select
+                          value={draft.engine_trace_mode}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_trace_mode: event.target.value as IntegrationDraft["engine_trace_mode"] }))}
+                        >
+                          <option value="off">Off</option>
+                          <option value="on">On</option>
+                          <option value="on-first-retry">On first retry</option>
+                          <option value="retain-on-failure">Retain on failure</option>
+                        </select>
+                      </FormField>
+                      <FormField label="Record Video">
+                        <select
+                          value={draft.engine_video_mode}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_video_mode: event.target.value as IntegrationDraft["engine_video_mode"] }))}
+                        >
+                          <option value="off">Off</option>
+                          <option value="on">On</option>
+                          <option value="retain-on-failure">Retain on failure</option>
+                        </select>
+                      </FormField>
+                      <FormField label="Max Video Attachment (MB)">
+                        <input
+                          inputMode="numeric"
+                          placeholder="25"
+                          value={draft.engine_max_video_attachment_mb}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_max_video_attachment_mb: event.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+
+                    <div className="record-grid">
+                      <FormField label="Artifact Retention (days)">
+                        <input
+                          inputMode="numeric"
+                          placeholder="14"
+                          value={draft.engine_artifact_retention_days}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_artifact_retention_days: event.target.value }))}
+                        />
+                      </FormField>
+                      <label className="checkbox-field">
+                        <input
+                          checked={draft.engine_capture_console}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_capture_console: event.target.checked }))}
+                          type="checkbox"
+                        />
+                        <span>Capture console output</span>
+                      </label>
+                      <label className="checkbox-field">
+                        <input
+                          checked={draft.engine_capture_network}
+                          onChange={(event) => setDraft((current) => ({ ...current, engine_capture_network: event.target.checked }))}
+                          type="checkbox"
+                        />
+                        <span>Capture network events</span>
+                      </label>
+                    </div>
+
+                    <div className="record-grid">
                       <FormField label="Active Web Engine">
                         <select
                           value={draft.engine_active_web_engine}
                           onChange={(event) =>
                             setDraft((current) => ({
                               ...current,
-                              engine_active_web_engine: event.target.value as IntegrationDraft["engine_active_web_engine"]
+                              engine_active_web_engine: event.target.value as IntegrationDraft["engine_active_web_engine"],
+                              engine_live_view_url: buildTestEngineLiveViewUrl(
+                                current.base_url,
+                                event.target.value as IntegrationDraft["engine_active_web_engine"]
+                              )
                             }))
                           }
                         >
@@ -1361,7 +1586,7 @@ export function IntegrationsPage() {
                           )
                           : (
                             <>
-                              Playwright runs inside the Test Engine service container with QAira-managed queue orchestration and result updates.
+                              Playwright runs inside the Test Engine service container with QAira-managed queue orchestration, result updates, and the provider-aware live session endpoint.
                             </>
                           )}
                       </div>
@@ -1370,14 +1595,17 @@ export function IntegrationsPage() {
                     <div className="record-grid">
                       <FormField label="Live Viewer URL">
                         <input
-                          placeholder="http://localhost:7900/?autoconnect=1&resize=scale"
+                          placeholder={draft.engine_active_web_engine === "selenium" ? "http://localhost:7900/?autoconnect=1&resize=scale" : "http://localhost:4301/api/v1/live-session?provider=playwright"}
                           value={draft.engine_live_view_url}
                           onChange={(event) => setDraft((current) => ({ ...current, engine_live_view_url: event.target.value }))}
                         />
                       </FormField>
 
                       <div className="empty-state compact integration-helper">
-                        Selenium runs expose noVNC on port 7900 by default. Leave this blank when the engine can derive it from its public host, or set the hosted viewer URL here for remote stacks.
+                        {draft.engine_active_web_engine === "selenium"
+                          ? "Selenium runs expose noVNC on port 7900 by default. QAira derives that URL from the engine host unless you override it."
+                          : "Playwright runs use the Test Engine live-session endpoint. QAira auto-populates this URL when Playwright is selected."}
+                        {derivedTestEngineLiveViewUrl ? <strong>{derivedTestEngineLiveViewUrl}</strong> : null}
                       </div>
                     </div>
 

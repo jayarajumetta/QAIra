@@ -72,7 +72,7 @@ const INTEGRATION_TYPE_OPTIONS = freezeOptions([
     icon: "TE",
     defaults: {
       runner: "hybrid",
-      active_web_engine: "selenium",
+      active_web_engine: "playwright",
       browser: "chromium",
       headless: false,
       healing_enabled: true,
@@ -83,6 +83,11 @@ const INTEGRATION_TYPE_OPTIONS = freezeOptions([
       capture_network: true,
       artifact_retention_days: 14,
       run_timeout_seconds: 1800,
+      navigation_timeout_ms: 30000,
+      action_timeout_ms: 5000,
+      assertion_timeout_ms: 10000,
+      recovery_wait_ms: 750,
+      max_video_attachment_mb: 25,
       queue_poll_interval_minutes: 5,
       qaira_api_base_url: "",
       promote_healed_patches: "review"

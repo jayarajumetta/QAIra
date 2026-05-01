@@ -498,6 +498,36 @@ const buildLogsPayload = (
     }
   );
 
+const mergeArtifactBundle = (
+  base: EngineRunRecord["artifact_bundle"],
+  patch: Partial<EngineRunRecord["artifact_bundle"]> | undefined
+) => {
+  if (!patch || !Object.keys(patch).length) {
+    return base;
+  }
+  const mergedRefs = [
+    ...(base.artifact_refs || []),
+    ...(patch.artifact_refs || [])
+  ].reduce<NonNullable<EngineRunRecord["artifact_bundle"]["artifact_refs"]>>((items, ref) => {
+    const key = `${ref.kind || ""}:${ref.path || ""}:${ref.file_name || ""}`;
+    const existingIndex = items.findIndex((item) => `${item.kind || ""}:${item.path || ""}:${item.file_name || ""}` === key);
+
+    if (existingIndex >= 0) {
+      items[existingIndex] = ref;
+      return items;
+    }
+
+    items.push(ref);
+    return items;
+  }, []);
+
+  return {
+    ...base,
+    ...patch,
+    artifact_refs: mergedRefs
+  };
+};
+
 const syncCapturedValues = (context: ExecutionContext | { values: Record<string, string> }, captures: Record<string, string>) => {
   Object.entries(captures || {}).forEach(([key, value]) => {
     registerContextValue(context, key, value);
@@ -921,6 +951,20 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
   const webRunSession = hasWebSteps ? createWebRunSession(envelope, context.values) : null;
   let healingAttempted = false;
   let healingSucceeded = false;
+  let webRunSessionStopped = false;
+  const stopWebRunSession = async (status?: "passed" | "failed" | "blocked") => {
+    if (!webRunSession || webRunSessionStopped) {
+      return {};
+    }
+
+    webRunSessionStopped = true;
+    try {
+      return await webRunSession.stop(status);
+    } catch (error) {
+      logger.error({ error, engineRunId: run.id }, "Unable to finalize web automation artifacts");
+      return {};
+    }
+  };
 
   try {
     if (webRunSession) {
@@ -1005,10 +1049,12 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
       }
 
       if (result.outcome.status === "failed") {
+        const artifactBundle = mergeArtifactBundle(running.artifact_bundle, await stopWebRunSession("failed"));
         const failedRun = markRunState(
           run.id,
           "failed",
-          `${envelope.qaira_test_case_title} failed on step ${step.order}.`
+          `${envelope.qaira_test_case_title} failed on step ${step.order}.`,
+          { artifact_bundle: artifactBundle }
         );
 
         if (!failedRun) {
@@ -1046,7 +1092,13 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
       }
     }
 
-    const completedRun = markRunState(run.id, "completed", `${envelope.qaira_test_case_title} completed successfully.`);
+    const artifactBundle = mergeArtifactBundle(running.artifact_bundle, await stopWebRunSession("passed"));
+    const completedRun = markRunState(
+      run.id,
+      "completed",
+      `${envelope.qaira_test_case_title} completed successfully.`,
+      { artifact_bundle: artifactBundle }
+    );
 
     if (!completedRun) {
       return;
@@ -1078,10 +1130,12 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
       })
     );
   } catch (error) {
+    const artifactBundle = mergeArtifactBundle(running.artifact_bundle, await stopWebRunSession("failed"));
     const failedRun = markRunState(
       run.id,
       "failed",
-      error instanceof Error ? error.message : `${envelope.qaira_test_case_title} failed during execution.`
+      error instanceof Error ? error.message : `${envelope.qaira_test_case_title} failed during execution.`,
+      { artifact_bundle: artifactBundle }
     );
 
     if (!failedRun) {
@@ -1119,9 +1173,9 @@ async function executeRun(envelope: EngineRunEnvelope, run: EngineRunRecord, log
       logger.error({ error: callbackError, engineRunId: run.id }, "Unable to emit QAira callback after execution failure");
     }
   } finally {
-    if (webRunSession) {
+    if (webRunSession && !webRunSessionStopped) {
       try {
-        await webRunSession.stop();
+        await stopWebRunSession();
       } catch (stopError) {
         logger.error({ error: stopError, engineRunId: run.id }, "Unable to stop web automation session cleanly");
       }

@@ -41,6 +41,7 @@ import {
   parseExecutionLogs,
   stringifyExecutionLogs,
   type ExecutionStepApiDetail,
+  type ExecutionAiAnalysis,
   type ExecutionStepCaptureMap,
   type ExecutionStepEvidence,
   type ExecutionStepStatus,
@@ -735,7 +736,7 @@ function describeWorkspaceTransaction(
           ? `Lane: ${queueLane}`
           : currentPhase
             ? `Phase: ${currentPhase}`
-            : "Playwright engine dispatch and execution";
+            : "Test Engine dispatch and execution";
 
     return {
       icon: <PlayIcon />,
@@ -973,14 +974,19 @@ function mergeExecutionStepCaptures(
   return merged;
 }
 
-function deriveSeleniumLiveViewUrl(integration?: Integration | null) {
+function deriveTestEngineLiveViewUrl(integration?: Integration | null) {
   if (!integration) {
     return "";
   }
 
   const configured = String(integration.config?.live_view_url || integration.config?.vnc_url || "").trim();
+  const provider = String(integration.config?.active_web_engine || "playwright").trim().toLowerCase();
 
-  if (configured) {
+  if (
+    configured
+    && !(provider === "playwright" && (configured.includes(":7900/") || configured.toLowerCase().includes("vnc")))
+    && !(provider === "selenium" && configured.includes("/api/v1/live-session"))
+  ) {
     return configured;
   }
 
@@ -990,9 +996,15 @@ function deriveSeleniumLiveViewUrl(integration?: Integration | null) {
 
   try {
     const parsed = new URL(integration.base_url);
-    parsed.port = "7900";
-    parsed.pathname = "/";
-    parsed.search = "?autoconnect=1&resize=scale";
+    if (provider === "selenium") {
+      parsed.port = "7900";
+      parsed.pathname = "/";
+      parsed.search = "?autoconnect=1&resize=scale";
+    } else {
+      parsed.pathname = "/api/v1/live-session";
+      parsed.search = "?provider=playwright";
+    }
+
     parsed.hash = "";
     return parsed.toString();
   } catch {
@@ -1056,6 +1068,8 @@ export function ExecutionsPage() {
   const [isExecutionSupportExpanded, setIsExecutionSupportExpanded] = useState(true);
   const [isExecutionInputParamsExpanded, setIsExecutionInputParamsExpanded] = useState(true);
   const [isExecutionOutputParamsExpanded, setIsExecutionOutputParamsExpanded] = useState(true);
+  const [isExecutionReferencesExpanded, setIsExecutionReferencesExpanded] = useState(false);
+  const [isExecutionAiAnalysisExpanded, setIsExecutionAiAnalysisExpanded] = useState(false);
   const [executionStatusFilter, setExecutionStatusFilter] = useState<ExecutionStatus | "all">("all");
   const [executionIssueFilter, setExecutionIssueFilter] = useState<ExecutionIssueFilter>("all");
   const [executionEvidenceFilter, setExecutionEvidenceFilter] = useState<ExecutionEvidenceFilter>("all");
@@ -1222,6 +1236,10 @@ export function ExecutionsPage() {
   const runExecutionApiStep = useMutation({
     mutationFn: ({ executionId, testCaseId, stepId }: { executionId: string; testCaseId: string; stepId: string }) =>
       api.executions.runApiStep(executionId, testCaseId, stepId)
+  });
+  const runExecutionAiAnalysis = useMutation({
+    mutationFn: ({ executionId, testCaseId }: { executionId: string; testCaseId: string }) =>
+      api.executions.analyzeCase(executionId, testCaseId)
   });
   const downloadExecutionReport = useMutation({
     mutationFn: (executionId: string) => api.executions.downloadReportPdf(executionId)
@@ -1728,7 +1746,7 @@ export function ExecutionsPage() {
 
     return projectScoped || testEngineIntegrations.find((integration) => !String(integration.config?.project_id || "").trim()) || null;
   }, [selectedExecution, testEngineIntegrations]);
-  const seleniumLiveViewUrl = selectedTestEngineIntegration ? deriveSeleniumLiveViewUrl(selectedTestEngineIntegration) : "";
+  const testEngineLiveViewUrl = selectedTestEngineIntegration ? deriveTestEngineLiveViewUrl(selectedTestEngineIntegration) : "";
   const isExecutionScopeReadOnly = isExecutionRunsView(testRunsView) && Boolean(selectedExecution);
   const isExecutionStarted = currentExecutionStatus === "running";
   const isExecutionLocked =
@@ -1799,6 +1817,8 @@ export function ExecutionsPage() {
   useEffect(() => {
     setIsExecutionInputParamsExpanded(true);
     setIsExecutionOutputParamsExpanded(true);
+    setIsExecutionReferencesExpanded(false);
+    setIsExecutionAiAnalysisExpanded(false);
   }, [selectedExecutionId, selectedTestCaseId]);
 
   const executionSuites = useMemo<ExecutionSuiteNode[]>(
@@ -1943,6 +1963,7 @@ export function ExecutionsPage() {
     () => parseExecutionLogs(resultByCaseId[selectedTestCaseId]?.logs || null),
     [resultByCaseId, selectedTestCaseId]
   );
+  const selectedCaseAiAnalysis = selectedCaseLogs.aiAnalysis || null;
 
   const stepStatuses = selectedCaseLogs.stepStatuses || {};
   const stepNotes = selectedCaseLogs.stepNotes || {};
@@ -2829,6 +2850,27 @@ export function ExecutionsPage() {
       showError(error, "Unable to run step");
     } finally {
       setRunningExecutionApiStepId((current) => (current === step.id ? "" : current));
+    }
+  };
+
+  const handleRunExecutionAiAnalysis = async () => {
+    if (!selectedExecution || !selectedExecutionCase) {
+      return;
+    }
+
+    try {
+      const response = await runExecutionAiAnalysis.mutateAsync({
+        executionId: selectedExecution.id,
+        testCaseId: selectedExecutionCase.id
+      });
+
+      if (response.recorded) {
+        await refreshExecutionScope(selectedExecution.id);
+        setIsExecutionAiAnalysisExpanded(true);
+        showSuccess("AI analysis recorded.");
+      }
+    } catch {
+      // AI analysis is best-effort for the execution console.
     }
   };
 
@@ -4250,12 +4292,14 @@ export function ExecutionsPage() {
                         </div>
                       </div>
 
-                      <div className="execution-assignment-panel execution-assignment-panel--case">
-                        <div className="execution-assignment-copy">
-                          <strong>Run references</strong>
-                          <span>Track external tickets and defects for this execution case.</span>
-                        </div>
-                        <div className="record-grid execution-reference-grid">
+                      <ExecutionAccordionSection
+                        className="execution-reference-section"
+                        isExpanded={isExecutionReferencesExpanded}
+                        onToggle={() => setIsExecutionReferencesExpanded((current) => !current)}
+                        summary={hasCaseReferenceChange ? "Unsaved changes" : selectedExecutionCaseReferenceText || selectedExecutionCaseDefectText || "No references recorded"}
+                        title="Run references"
+                      >
+                        <div className="execution-reference-grid">
                           <FormField label="Reference">
                             <input
                               disabled={!isExecutionStarted || isExecutionLocked || createResult.isPending || updateResult.isPending}
@@ -4281,7 +4325,21 @@ export function ExecutionsPage() {
                             <span>{createResult.isPending || updateResult.isPending ? "Saving…" : "Save references"}</span>
                           </button>
                         </div>
-                      </div>
+                      </ExecutionAccordionSection>
+
+                      <ExecutionAccordionSection
+                        className="execution-ai-analysis-section"
+                        isExpanded={isExecutionAiAnalysisExpanded}
+                        onToggle={() => setIsExecutionAiAnalysisExpanded((current) => !current)}
+                        summary={selectedCaseAiAnalysis?.generatedAt ? `Recorded ${formatExecutionTimestamp(selectedCaseAiAnalysis.generatedAt)}` : "No analysis recorded"}
+                        title="AI analysis"
+                      >
+                        <ExecutionAiAnalysisPanel
+                          analysis={selectedCaseAiAnalysis}
+                          isRunning={runExecutionAiAnalysis.isPending}
+                          onRun={() => void handleRunExecutionAiAnalysis()}
+                        />
+                      </ExecutionAccordionSection>
                     </div>
 
                     <SubnavTabs
@@ -4750,12 +4808,12 @@ export function ExecutionsPage() {
                           <span>Email report</span>
                         </button>
                         <a
-                          aria-disabled={!seleniumLiveViewUrl || currentExecutionStatus !== "running"}
-                          className={!seleniumLiveViewUrl || currentExecutionStatus !== "running" ? "ghost-button is-disabled" : "ghost-button"}
-                          href={seleniumLiveViewUrl || undefined}
+                          aria-disabled={!testEngineLiveViewUrl || currentExecutionStatus !== "running"}
+                          className={!testEngineLiveViewUrl || currentExecutionStatus !== "running" ? "ghost-button is-disabled" : "ghost-button"}
+                          href={testEngineLiveViewUrl || undefined}
                           rel="noreferrer"
                           target="_blank"
-                          title={seleniumLiveViewUrl ? "View live browser session" : "Configure a Test Engine live viewer URL to open the browser session"}
+                          title={testEngineLiveViewUrl ? "View live browser session" : "Configure a Test Engine live viewer URL to open the browser session"}
                         >
                           <LiveRunIcon />
                           <span>View live run</span>
@@ -6736,6 +6794,44 @@ function ExecutionParameterPanel({
   );
 }
 
+function ExecutionAiAnalysisPanel({
+  analysis,
+  isRunning,
+  onRun
+}: {
+  analysis: ExecutionAiAnalysis | null;
+  isRunning: boolean;
+  onRun: () => void;
+}) {
+  return (
+    <div className="execution-ai-analysis-panel">
+      <div className="execution-ai-analysis-actions">
+        <button className="ghost-button" disabled={isRunning} onClick={onRun} type="button">
+          <SparkIcon />
+          <span>{isRunning ? "Analyzing…" : analysis ? "Refresh analysis" : "Run AI analysis"}</span>
+        </button>
+        {analysis?.integration?.name ? (
+          <span className="count-pill">
+            {analysis.integration.model ? `${analysis.integration.name} · ${analysis.integration.model}` : analysis.integration.name}
+          </span>
+        ) : null}
+      </div>
+
+      {analysis ? (
+        <div className="execution-ai-analysis-response">
+          <div className="execution-ai-analysis-meta">
+            <SparkIcon />
+            <span>{formatExecutionTimestamp(analysis.generatedAt, "Timestamp unavailable")}</span>
+          </div>
+          <pre>{analysis.response}</pre>
+        </div>
+      ) : (
+        <div className="empty-state compact">No AI analysis has been recorded yet.</div>
+      )}
+    </div>
+  );
+}
+
 function ExecutionStructuredLogView({
   logsJson,
   steps,
@@ -6752,8 +6848,9 @@ function ExecutionStructuredLogView({
   const hasEvidence = parsed.stepEvidence && Object.keys(parsed.stepEvidence).length > 0;
   const hasCaptures = Object.keys(stepCaptures).length > 0;
   const hasWebDetails = parsed.stepWebDetails && Object.keys(parsed.stepWebDetails).length > 0;
+  const hasAiAnalysis = Boolean(parsed.aiAnalysis?.response);
 
-  if (!hasNotes && !hasStatuses && !hasEvidence && !hasCaptures && !hasWebDetails && !logsJson?.trim()) {
+  if (!hasNotes && !hasStatuses && !hasEvidence && !hasCaptures && !hasWebDetails && !hasAiAnalysis && !logsJson?.trim()) {
     return <span className="execution-log-empty">No structured step data recorded yet.</span>;
   }
 
@@ -6827,8 +6924,17 @@ function ExecutionStructuredLogView({
 
   return (
     <div className="execution-structured-log">
+      {parsed.aiAnalysis ? (
+        <div className="execution-structured-log-row execution-structured-log-row--ai">
+          <strong>AI analysis</strong>
+          <span className="execution-structured-note">
+            {formatExecutionTimestamp(parsed.aiAnalysis.generatedAt, "Timestamp unavailable")}
+          </span>
+          <span className="execution-structured-note">{parsed.aiAnalysis.response}</span>
+        </div>
+      ) : null}
       {rows.length ? rows : null}
-      {!rows.length && logsJson?.trim() ? <pre className="execution-log-raw">{logsJson}</pre> : null}
+      {!rows.length && !parsed.aiAnalysis && logsJson?.trim() ? <pre className="execution-log-raw">{logsJson}</pre> : null}
     </div>
   );
 }
@@ -6840,8 +6946,9 @@ function ExecutionStructuredLogSummary({ logsJson }: { logsJson: string | null }
   const statusCount = parsed.stepStatuses ? Object.keys(parsed.stepStatuses).length : 0;
   const evidenceCount = parsed.stepEvidence ? Object.keys(parsed.stepEvidence).length : 0;
   const webTraceCount = parsed.stepWebDetails ? Object.keys(parsed.stepWebDetails).length : 0;
+  const aiAnalysisCount = parsed.aiAnalysis ? 1 : 0;
   const captureCount = Object.values(stepCaptures).reduce((count, captures) => count + Object.keys(captures || {}).length, 0);
-  if (!noteCount && !statusCount && !evidenceCount && !captureCount && !webTraceCount) {
+  if (!noteCount && !statusCount && !evidenceCount && !captureCount && !webTraceCount && !aiAnalysisCount) {
     return <span className="execution-log-summary-muted">No step details</span>;
   }
   const parts = [
@@ -6849,7 +6956,8 @@ function ExecutionStructuredLogSummary({ logsJson }: { logsJson: string | null }
     noteCount ? `${noteCount} note${noteCount === 1 ? "" : "s"}` : null,
     evidenceCount ? `${evidenceCount} image${evidenceCount === 1 ? "" : "s"}` : null,
     captureCount ? `${captureCount} captured value${captureCount === 1 ? "" : "s"}` : null,
-    webTraceCount ? `${webTraceCount} web trace${webTraceCount === 1 ? "" : "s"}` : null
+    webTraceCount ? `${webTraceCount} web trace${webTraceCount === 1 ? "" : "s"}` : null,
+    aiAnalysisCount ? "AI analysis" : null
   ].filter(Boolean);
 
   return (

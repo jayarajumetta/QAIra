@@ -51,6 +51,17 @@ export function buildAcceptedRun(envelope: EngineRunEnvelope): EngineRunRecord {
       dom_snapshot_path: `${artifactRoot}/dom.html`,
       summary_path: `${artifactRoot}/engine-summary.json`,
       artifact_refs: [
+        ...(envelope.artifact_policy.video_mode === "off" || isApiOnlyRun
+          ? []
+          : [
+              {
+                kind: "video" as const,
+                label: "Compressed browser run video",
+                path: `${artifactRoot}/video.webm`,
+                file_name: "video.webm",
+                content_type: "video/webm"
+              }
+            ]),
         {
           kind: "script",
           label: "Generated automation spec",
@@ -86,6 +97,7 @@ export function buildCapabilities() {
     execution_scope: "api+web",
     supported_step_types: ["api", "web"],
     supported_web_engines: ["playwright", "selenium"],
+    live_view_providers: ["playwright", "selenium"],
     qaira_result_log_compatibility: "execution_results.logs.v1",
     qaira_inline_step_evidence: true,
     healing_scope: ["locator", "wait", "popup", "navigation"],

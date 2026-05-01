@@ -93,6 +93,49 @@ const normalizeStepCaptures = (value) => {
   }, {});
 };
 
+const normalizeInlineArtifactRefs = (artifactBundle) => {
+  const refs = Array.isArray(artifactBundle?.artifact_refs) ? artifactBundle.artifact_refs : [];
+
+  return refs
+    .filter((ref) => ref && typeof ref === "object" && !Array.isArray(ref))
+    .map((ref) => {
+      const fileName = normalizeText(ref.file_name || ref.fileName)
+        || normalizeText(ref.path)?.split("/").pop()
+        || `${normalizeText(ref.kind) || "artifact"}.bin`;
+      const contentType = normalizeText(ref.content_type || ref.mime_type || ref.mimeType) || "application/octet-stream";
+      const contentBase64 = normalizeText(ref.content_base64 || ref.contentBase64);
+      const dataUrl = normalizeText(ref.data_url || ref.dataUrl);
+      const content = dataUrl || (contentBase64 ? `data:${contentType};base64,${contentBase64}` : null);
+
+      return content
+        ? {
+            file_name: fileName,
+            mime_type: contentType,
+            content
+          }
+        : null;
+    })
+    .filter(Boolean);
+};
+
+const attachInlineArtifacts = async (transactionId, artifactBundle) => {
+  if (!transactionId) {
+    return [];
+  }
+
+  const created = [];
+
+  for (const ref of normalizeInlineArtifactRefs(artifactBundle)) {
+    try {
+      created.push(await workspaceTransactionService.createTransactionArtifact(transactionId, ref));
+    } catch {
+      // Evidence attachment should never reject an otherwise valid engine callback.
+    }
+  }
+
+  return created;
+};
+
 const parseStructuredLogs = (value) => {
   if (!value) {
     return {
@@ -527,6 +570,9 @@ exports.handleRunCallback = async ({ headers, payload, rawPayload }) => {
 
   const transactionStatus = mapEngineEventToTransactionStatus(event, normalizeText(payload.state));
   const emittedAt = normalizeText(payload.emitted_at);
+  const attachedArtifacts = FINAL_ENGINE_EVENTS.has(event)
+    ? await attachInlineArtifacts(transaction.id, payload.artifact_bundle)
+    : [];
   const metadataPatch = {
     source: "testengine",
     engine_run_id: engineRunId,
@@ -537,7 +583,8 @@ exports.handleRunCallback = async ({ headers, payload, rawPayload }) => {
     healing_succeeded: Boolean(payload.healing_succeeded),
     deterministic_attempted: Boolean(payload.deterministic_attempted),
     artifact_bundle: isPlainObject(payload.artifact_bundle) ? payload.artifact_bundle : {},
-    patch_proposals: Array.isArray(payload.patch_proposals) ? payload.patch_proposals : []
+    patch_proposals: Array.isArray(payload.patch_proposals) ? payload.patch_proposals : [],
+    attached_artifacts: attachedArtifacts
   };
 
   await workspaceTransactionService.appendTransactionEvent(transaction.id, {
