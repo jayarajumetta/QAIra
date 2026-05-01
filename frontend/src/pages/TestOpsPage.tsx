@@ -315,7 +315,11 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
       });
     },
     onSuccess: (response) => {
-      setBuilderMessage(`Recorder actions converted into ${response.generated_step_count} automated step${response.generated_step_count === 1 ? "" : "s"}.`);
+      setBuilderMessage(
+        response.generated_step_count
+          ? `Recorder stopped. Created ${response.created_step_count || 0} and updated ${response.updated_step_count || 0} web step${response.generated_step_count === 1 ? "" : "s"}.`
+          : "Recorder stopped. No supported interactions were captured for step creation."
+      );
       setRecorderSession(null);
       invalidateAutomationViews();
     },
@@ -530,7 +534,7 @@ export function TestOpsPage({ initialView = "batch-process" }: { initialView?: T
                       type="button"
                     >
                       <SparkIcon size={16} />
-                      <span>{finishRecorder.isPending ? "Converting…" : "Finish and build"}</span>
+                      <span>{finishRecorder.isPending ? "Stopping…" : "Stop and create steps"}</span>
                     </button>
                   </div>
                 </div>

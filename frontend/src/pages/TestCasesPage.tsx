@@ -2585,7 +2585,11 @@ export function TestCasesPage() {
       });
       setRecorderSession(null);
       setRecorderSessionCaseId("");
-      showSuccess(`Recorder actions converted into ${response.generated_step_count} automated step${response.generated_step_count === 1 ? "" : "s"}.`);
+      showSuccess(
+        response.generated_step_count
+          ? `Recorder stopped. Created ${response.created_step_count || 0} and updated ${response.updated_step_count || 0} web step${response.generated_step_count === 1 ? "" : "s"}.`
+          : "Recorder stopped. No supported interactions were captured for step creation."
+      );
       await refreshCases();
     } catch (error) {
       showError(error, "Unable to finish recorder session");
@@ -6043,7 +6047,7 @@ export function TestCasesPage() {
                                 type="button"
                               >
                                 <AutomationCodeIcon />
-                                <span>{finishRecorder.isPending ? "Converting..." : "Finish and build"}</span>
+                                <span>{finishRecorder.isPending ? "Stopping..." : "Stop and create steps"}</span>
                               </button>
                             </div>
                           </div>

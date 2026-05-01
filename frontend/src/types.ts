@@ -395,6 +395,8 @@ export type AutomationBuildResponse = {
   title: string;
   automated: "yes" | "no";
   generated_step_count: number;
+  created_step_count?: number;
+  updated_step_count?: number;
   learned_locator_count: number;
   cache_hits: number;
   fallback_used: boolean;
@@ -426,6 +428,7 @@ export type RecorderSessionResponse = {
     extension_ready?: boolean;
     remote_control?: boolean;
     screenshot_stream?: boolean;
+    screencast_stream?: boolean;
   };
 };
 

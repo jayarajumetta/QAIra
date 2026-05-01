@@ -381,6 +381,9 @@ const normalizeCapturedActions = (actions = []) =>
       value: normalizeText(action?.value),
       page_id: normalizeText(action?.page_id || action?.pageId),
       page_title: normalizeText(action?.page_title || action?.pageTitle),
+      x: Number.isFinite(Number(action?.x)) ? Number(action.x) : null,
+      y: Number.isFinite(Number(action?.y)) ? Number(action.y) : null,
+      source: normalizeText(action?.source),
       timestamp: normalizeText(action?.timestamp)
     }))
     .filter((action) => action.type || action.locator || action.text || action.value)
@@ -401,6 +404,216 @@ const normalizeCapturedNetwork = (network = []) =>
     }))
     .filter((entry) => entry.url && ["fetch", "xhr"].includes(String(entry.resource_type || "").toLowerCase()))
     .slice(-MAX_CAPTURED_NETWORK);
+
+const parseActionTimestamp = (value) => {
+  const parsed = Date.parse(value || "");
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const stripRecorderLocatorPrefix = (locator) => {
+  const normalized = normalizeText(locator);
+
+  if (!normalized) {
+    return null;
+  }
+
+  const match = normalized.match(/^(label|placeholder)=(.+)$/i);
+  return match ? normalizeText(match[2]) : normalized;
+};
+
+const resolveRecorderTarget = (action) => {
+  const locator = stripRecorderLocatorPrefix(action.locator);
+
+  if (locator && !["browser.tab", "location", "keyboard", "viewport"].includes(locator)) {
+    return locator;
+  }
+
+  return normalizeText(action.text);
+};
+
+const quoteCodeString = (value) => JSON.stringify(String(value || ""));
+
+const inferRecorderFillValue = (action) => {
+  const targetText = `${action.locator || ""} ${action.text || ""}`.toLowerCase();
+  const value = normalizeRichText(action.value);
+
+  if (/\b(password|secret|token|otp|passcode)\b/.test(targetText)) {
+    return "@t.password";
+  }
+
+  if (/\b(email)\b/.test(targetText)) {
+    return value || "@t.email";
+  }
+
+  if (/\b(user|username|login)\b/.test(targetText)) {
+    return value || "@t.username";
+  }
+
+  if (/\b(search|query)\b/.test(targetText)) {
+    return value || "@t.search";
+  }
+
+  return value || "@t.value";
+};
+
+const describeRecorderTarget = (action, fallback) =>
+  normalizeText(action.text)
+  || stripRecorderLocatorPrefix(action.locator)
+  || fallback;
+
+const buildRecorderStepCandidate = (action, order) => {
+  const type = String(action.type || "").toLowerCase();
+  const target = resolveRecorderTarget(action);
+  const targetLabel = describeRecorderTarget(action, "recorded target");
+  const url = normalizeText(action.url);
+  const key = normalizeText(action.text || action.value);
+
+  if (type === "navigation") {
+    if (!url || url === "about:blank") {
+      return null;
+    }
+
+    return {
+      source_action_index: action.index,
+      step_order: order,
+      action: `Open ${url}`,
+      expected_result: "",
+      step_type: "web",
+      automation_code: `await web.goto(${quoteCodeString(url)});`
+    };
+  }
+
+  if (type === "click" || type === "submit") {
+    if (target) {
+      return {
+        source_action_index: action.index,
+        step_order: order,
+        action: type === "submit" ? `Submit ${targetLabel}` : `Click ${targetLabel}`,
+        expected_result: "",
+        step_type: "web",
+        automation_code: `await web.click(${quoteCodeString(target)});`
+      };
+    }
+
+    const position = Number.isFinite(Number(action.x)) && Number.isFinite(Number(action.y))
+      ? ` at ${Math.round(Number(action.x))}, ${Math.round(Number(action.y))}`
+      : "";
+
+    return {
+      source_action_index: action.index,
+      step_order: order,
+      action: `Click recorded screen position${position}`,
+      expected_result: "Review the locator before running this step.",
+      step_type: "web",
+      automation_code: [
+        `// TODO: Replace this fallback with a stable locator for the recorded click${position}.`,
+        `await web.click("body");`
+      ].join("\n")
+    };
+  }
+
+  if (type === "fill" || type === "change") {
+    const value = inferRecorderFillValue(action);
+
+    if (target) {
+      return {
+        source_action_index: action.index,
+        step_order: order,
+        action: `Fill ${targetLabel}`,
+        expected_result: "",
+        step_type: "web",
+        automation_code: `await web.fill(${quoteCodeString(target)}, ${quoteCodeString(value)});`
+      };
+    }
+
+    return {
+      source_action_index: action.index,
+      step_order: order,
+      action: "Fill recorded field",
+      expected_result: "Review the locator before running this step.",
+      step_type: "web",
+      automation_code: [
+        "// TODO: Replace this fallback with a stable locator for the recorded field.",
+        `await web.fill("body", ${quoteCodeString(value)});`
+      ].join("\n")
+    };
+  }
+
+  if (type === "press") {
+    const normalizedKey = key || "Enter";
+
+    return {
+      source_action_index: action.index,
+      step_order: order,
+      action: `Press ${normalizedKey}`,
+      expected_result: "",
+      step_type: "web",
+      automation_code: `await web.press("", ${quoteCodeString(normalizedKey)});`
+    };
+  }
+
+  return null;
+};
+
+const isRecorderActionSuperseded = (action, actions, index) => {
+  const type = String(action.type || "").toLowerCase();
+
+  if (type === "click" && action.source === "remote-control") {
+    const timestamp = parseActionTimestamp(action.timestamp);
+    return actions.slice(index + 1, index + 4).some((candidate) =>
+      String(candidate.type || "").toLowerCase() === "click"
+      && (candidate.locator || candidate.text)
+      && candidate.source !== "remote-control"
+      && (!timestamp || Math.abs(parseActionTimestamp(candidate.timestamp) - timestamp) < 2_000)
+    );
+  }
+
+  if ((type === "change" || type === "fill") && action.locator) {
+    return actions.slice(0, index).some((candidate) =>
+      ["fill", "change"].includes(String(candidate.type || "").toLowerCase())
+      && candidate.locator === action.locator
+      && candidate.value === action.value
+      && Math.abs(parseActionTimestamp(candidate.timestamp) - parseActionTimestamp(action.timestamp)) < 1_500
+    );
+  }
+
+  if (type === "navigation") {
+    const url = normalizeText(action.url);
+
+    if (!url || url === "about:blank") {
+      return true;
+    }
+
+    return actions.slice(0, index).some((candidate) =>
+      String(candidate.type || "").toLowerCase() === "navigation"
+      && normalizeText(candidate.url) === url
+      && Math.abs(parseActionTimestamp(candidate.timestamp) - parseActionTimestamp(action.timestamp)) < 1_500
+    );
+  }
+
+  return false;
+};
+
+const buildRecorderStepCandidates = (actions = []) => {
+  const allowedTypes = new Set(["navigation", "click", "fill", "change", "submit", "press"]);
+  const candidates = [];
+
+  actions.forEach((action, index) => {
+    const type = String(action.type || "").toLowerCase();
+
+    if (!allowedTypes.has(type) || isRecorderActionSuperseded(action, actions, index)) {
+      return;
+    }
+
+    const candidate = buildRecorderStepCandidate(action, candidates.length + 1);
+
+    if (candidate) {
+      candidates.push(candidate);
+    }
+  });
+
+  return candidates;
+};
 
 const buildPrompt = ({
   testCase,
@@ -961,6 +1174,184 @@ const buildCaseCore = async ({
   };
 };
 
+const applyRecorderSteps = async ({ testCase, stepCandidates, createdBy }) => {
+  const existingSteps = await selectStepsForCase.all(testCase.id);
+  const applied = [];
+  let candidateIndex = 0;
+  let createdCount = 0;
+
+  for (const step of existingSteps) {
+    const candidate = stepCandidates[candidateIndex];
+
+    if (!candidate) {
+      break;
+    }
+
+    await testStepService.updateTestStep(step.id, {
+      action: normalizeText(step.action) ? undefined : candidate.action,
+      step_type: "web",
+      automation_code: candidate.automation_code,
+      api_request: null
+    });
+    applied.push({
+      step_id: step.id,
+      step_order: step.step_order,
+      step_type: "web",
+      action: normalizeText(step.action) || candidate.action,
+      expected_result: step.expected_result || "",
+      automation_code: candidate.automation_code,
+      operation: "updated",
+      source_action_index: candidate.source_action_index,
+      has_code: true,
+      has_api_request: false
+    });
+    candidateIndex += 1;
+  }
+
+  for (; candidateIndex < stepCandidates.length; candidateIndex += 1) {
+    const candidate = stepCandidates[candidateIndex];
+    const stepOrder = existingSteps.length + createdCount + 1;
+    const created = await testStepService.createTestStep({
+      test_case_id: testCase.id,
+      step_order: stepOrder,
+      action: candidate.action,
+      expected_result: candidate.expected_result,
+      step_type: "web",
+      automation_code: candidate.automation_code,
+      api_request: null
+    });
+
+    applied.push({
+      step_id: created.id,
+      step_order: stepOrder,
+      step_type: "web",
+      action: candidate.action,
+      expected_result: candidate.expected_result,
+      automation_code: candidate.automation_code,
+      operation: "created",
+      source_action_index: candidate.source_action_index,
+      has_code: true,
+      has_api_request: false
+    });
+    createdCount += 1;
+  }
+
+  if (applied.length) {
+    await updateCaseAutomated.run(createdBy || null, testCase.id);
+  }
+
+  return applied;
+};
+
+const finalizeRecorderBuild = async ({
+  testCase,
+  session,
+  createdBy,
+  transactionId,
+  capturedActions,
+  capturedNetwork
+}) => {
+  const stepCandidates = buildRecorderStepCandidates(capturedActions);
+
+  await appendEvent(transactionId, {
+    phase: "recorder.steps.mapping",
+    message: `Mapped ${stepCandidates.length} recorder interaction${stepCandidates.length === 1 ? "" : "s"} to QAira web keyword step code.`,
+    details: {
+      recorder_session_id: session.id,
+      captured_actions: capturedActions.length,
+      captured_network: capturedNetwork.length,
+      generated_step_candidates: stepCandidates.length
+    }
+  });
+
+  const appliedSteps = await applyRecorderSteps({
+    testCase,
+    stepCandidates,
+    createdBy
+  });
+  const learnedCount = await persistLearning({
+    testCase,
+    learnedLocators: [],
+    capturedActions,
+    capturedNetwork,
+    transactionId
+  });
+  let artifact = null;
+
+  if (transactionId && appliedSteps.length) {
+    artifact = await workspaceTransactionService.createTransactionArtifact(transactionId, {
+      file_name: `${String(testCase.display_id || testCase.id).replace(/[^A-Za-z0-9_-]+/g, "-")}-recorder-keywords.spec.js`,
+      mime_type: "text/javascript; charset=utf-8",
+      content: createArtifactContent({
+        testCase,
+        updates: appliedSteps.map((step) => ({
+          step: {
+            id: step.step_id,
+            step_order: step.step_order,
+            action: step.action
+          },
+          automation_code: step.automation_code,
+          api_request: null
+        }))
+      })
+    });
+  }
+
+  await appendEvent(transactionId, {
+    level: appliedSteps.length ? "success" : "warning",
+    phase: "recorder.completed",
+    message: appliedSteps.length
+      ? `Recorder created or updated ${appliedSteps.length} web keyword step${appliedSteps.length === 1 ? "" : "s"} for "${testCase.title}".`
+      : `Recorder stopped for "${testCase.title}", but no supported interactions were available to create web keyword steps.`,
+    details: {
+      recorder_session_id: session.id,
+      updated_steps: appliedSteps.filter((step) => step.operation === "updated").length,
+      created_steps: appliedSteps.filter((step) => step.operation === "created").length,
+      learned_locator_count: learnedCount,
+      artifact_id: artifact?.id || null
+    }
+  });
+
+  await updateTransaction(transactionId, {
+    status: "completed",
+    description: appliedSteps.length
+      ? `Recorder generated web keyword automation for ${appliedSteps.length} step${appliedSteps.length === 1 ? "" : "s"}.`
+      : "Recorder stopped without supported interactions to convert.",
+    metadata: {
+      current_phase: "recorder.completed",
+      progress_percent: 100,
+      processed_items: appliedSteps.length,
+      generated_steps: appliedSteps.length,
+      learned_locator_count: learnedCount,
+      artifact_id: artifact?.id || null
+    },
+    completed_at: new Date().toISOString()
+  });
+
+  return {
+    test_case_id: testCase.id,
+    title: testCase.title,
+    automated: appliedSteps.length ? "yes" : testCase.automated || "no",
+    generated_step_count: appliedSteps.length,
+    created_step_count: appliedSteps.filter((step) => step.operation === "created").length,
+    updated_step_count: appliedSteps.filter((step) => step.operation === "updated").length,
+    learned_locator_count: learnedCount,
+    cache_hits: 0,
+    fallback_used: false,
+    fallback_reason: null,
+    integration: null,
+    summary: appliedSteps.length
+      ? "Recorder interactions were converted into QAira web keyword automation steps."
+      : "Recorder stopped cleanly, but no supported interactions were captured.",
+    artifact_id: artifact?.id || null,
+    step_updates: appliedSteps.map(({ automation_code, operation, source_action_index, ...step }) => ({
+      ...step,
+      operation,
+      source_action_index
+    }))
+  };
+};
+
 exports.buildAutomationForCase = async ({
   test_case_id,
   integration_id,
@@ -1413,12 +1804,7 @@ exports.finishRecorderSession = async ({
   test_case_id,
   recorder_session_id,
   transaction_id,
-  integration_id,
-  created_by,
-  additional_context,
-  test_environment_id,
-  test_configuration_id,
-  test_data_set_id
+  created_by
 } = {}) => {
   const testCaseId = normalizeText(test_case_id);
   const sessionId = normalizeText(recorder_session_id);
@@ -1436,31 +1822,28 @@ exports.finishRecorderSession = async ({
   const engineIntegration = await resolveTestEngineIntegration(testCase);
   const baseUrl = String(engineIntegration.base_url || "").replace(/\/+$/, "");
   const session = await readEngineJson(`${baseUrl}/api/v1/recorder/sessions/${sessionId}`);
+  const capturedActions = normalizeCapturedActions(session.actions || []);
+  const capturedNetwork = normalizeCapturedNetwork(session.network || []);
 
   await readEngineJson(`${baseUrl}/api/v1/recorder/sessions/${sessionId}/stop`, {
     method: "POST"
   }).catch(() => null);
 
-  const result = await exports.buildAutomationForCase({
-    test_case_id: testCaseId,
-    integration_id,
-    created_by,
-    start_url: session.start_url,
-    test_environment_id,
-    test_configuration_id,
-    test_data_set_id,
-    captured_actions: session.actions || [],
-    captured_network: session.network || [],
-    additional_context,
-    transaction_id
+  const result = await finalizeRecorderBuild({
+    testCase,
+    session,
+    createdBy: created_by,
+    transactionId: transaction_id,
+    capturedActions,
+    capturedNetwork
   });
 
   return {
     ...result,
     recorder_session: {
       id: session.id,
-      action_count: Array.isArray(session.actions) ? session.actions.length : 0,
-      network_count: Array.isArray(session.network) ? session.network.length : 0
+      action_count: capturedActions.length,
+      network_count: capturedNetwork.length
     }
   };
 };

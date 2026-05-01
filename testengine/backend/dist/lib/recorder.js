@@ -10,6 +10,8 @@ const BODY_SAMPLE_LIMIT = Math.max(2000, Number.parseInt(process.env.RECORDER_BO
 const REMOTE_TEXT_LIMIT = Math.max(1, Number.parseInt(process.env.RECORDER_REMOTE_TEXT_LIMIT || "500", 10));
 const VIEWPORT_WIDTH = Math.max(640, Number.parseInt(process.env.RECORDER_VIEWPORT_WIDTH || "1365", 10));
 const VIEWPORT_HEIGHT = Math.max(480, Number.parseInt(process.env.RECORDER_VIEWPORT_HEIGHT || "768", 10));
+const SCREENCAST_QUALITY = Math.max(20, Math.min(85, Number.parseInt(process.env.RECORDER_SCREENCAST_QUALITY || "45", 10)));
+const SCREENCAST_EVERY_NTH_FRAME = Math.max(1, Math.min(6, Number.parseInt(process.env.RECORDER_SCREENCAST_EVERY_NTH_FRAME || "2", 10)));
 const recorderPageIds = new WeakMap();
 const recorderAttachedPages = new WeakSet();
 const LIVE_VIEW_HTML_CACHE_SECONDS = 0;
@@ -101,6 +103,24 @@ const pushBounded = (items, item, max) => {
     if (items.length > max) {
         items.splice(0, items.length - max);
     }
+};
+const pushRecorderAction = (session, action) => {
+    const entry = {
+        index: action.index || session.actions.length + 1,
+        type: action.type,
+        locator: action.locator ?? null,
+        text: action.text ?? null,
+        value: action.value ?? null,
+        url: action.url ?? null,
+        page_id: action.page_id ?? null,
+        page_title: action.page_title ?? null,
+        x: action.x ?? null,
+        y: action.y ?? null,
+        source: action.source,
+        timestamp: action.timestamp || new Date().toISOString()
+    };
+    pushBounded(session.actions, entry, MAX_ACTIONS);
+    return entry;
 };
 const getRecorderPageId = (page) => {
     if (!page) {
@@ -206,10 +226,13 @@ const recorderInitScript = `
     if (text && text.length <= 80) return "text=" + text;
     return cssPath(element);
   };
+  window.__qairaRecorderLocatorFor = locatorFor;
+  window.__qairaRecorderVisibleTextFor = visibleText;
   const emit = (event) => {
     if (typeof window.__qairaRecorderEmit === "function") {
       window.__qairaRecorderEmit({
         ...event,
+        source: "page-recorder",
         url: window.location.href,
         timestamp: new Date().toISOString()
       }).catch(() => {});
@@ -310,8 +333,7 @@ const attachPageCapture = (session, page, logger) => {
     recorderAttachedPages.add(page);
     const pageId = getRecorderPageId(page);
     void (async () => {
-        pushBounded(session.actions, {
-            index: session.actions.length + 1,
+        pushRecorderAction(session, {
             type: "tab",
             locator: "browser.tab",
             text: "Tab opened",
@@ -319,12 +341,11 @@ const attachPageCapture = (session, page, logger) => {
             url: page.url(),
             page_id: pageId,
             page_title: await resolvePageTitle(page),
-            timestamp: new Date().toISOString()
-        }, MAX_ACTIONS);
+            source: "browser"
+        });
     })();
     page.on("close", () => {
-        pushBounded(session.actions, {
-            index: session.actions.length + 1,
+        pushRecorderAction(session, {
             type: "tab",
             locator: "browser.tab",
             text: "Tab closed",
@@ -332,16 +353,15 @@ const attachPageCapture = (session, page, logger) => {
             url: page.url(),
             page_id: pageId,
             page_title: null,
-            timestamp: new Date().toISOString()
-        }, MAX_ACTIONS);
+            source: "browser"
+        });
     });
     page.on("framenavigated", (frame) => {
         if (frame !== page.mainFrame()) {
             return;
         }
         void (async () => {
-            pushBounded(session.actions, {
-                index: session.actions.length + 1,
+            pushRecorderAction(session, {
                 type: "navigation",
                 locator: "location",
                 text: page.url(),
@@ -349,8 +369,8 @@ const attachPageCapture = (session, page, logger) => {
                 url: page.url(),
                 page_id: pageId,
                 page_title: await resolvePageTitle(page),
-                timestamp: new Date().toISOString()
-            }, MAX_ACTIONS);
+                source: "browser"
+            });
         })();
     });
     page.on("requestfinished", (request) => {
@@ -409,6 +429,40 @@ const attachPageCapture = (session, page, logger) => {
 const resolveActivePage = async (session) => {
     const page = session.context.pages().filter((candidate) => !candidate.isClosed()).at(-1);
     return page || session.context.newPage();
+};
+const enrichRemoteClickAction = async (session, page, actionIndex, x, y, logger) => {
+    try {
+        const target = await page.evaluate(({ x: clientX, y: clientY }) => {
+            const element = document.elementFromPoint(clientX, clientY);
+            const recorderWindow = window;
+            const locator = typeof recorderWindow.__qairaRecorderLocatorFor === "function"
+                ? recorderWindow.__qairaRecorderLocatorFor(element)
+                : null;
+            const text = typeof recorderWindow.__qairaRecorderVisibleTextFor === "function"
+                ? recorderWindow.__qairaRecorderVisibleTextFor(element)
+                : String(element?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 120);
+            return {
+                locator: locator || null,
+                text: text || null,
+                url: window.location.href,
+                title: document.title || null
+            };
+        }, { x, y }).catch(() => null);
+        if (!target?.locator && !target?.text) {
+            return;
+        }
+        const action = session.actions.find((item) => item.index === actionIndex);
+        if (!action) {
+            return;
+        }
+        action.locator = normalizeText(target.locator) || action.locator || null;
+        action.text = normalizeText(target.text) || action.text || null;
+        action.url = normalizeText(target.url) || action.url || page.url();
+        action.page_title = normalizeText(target.title) || action.page_title || null;
+    }
+    catch (error) {
+        logger.debug({ error, sessionId: session.id, actionIndex }, "Unable to enrich remote recorder click action");
+    }
 };
 const readRecorderToken = (request) => {
     const query = request.query;
@@ -591,7 +645,7 @@ const renderLiveViewHtml = (session) => {
   </div>
   <main>
     <div class="viewport">
-      <img id="screen" alt="Recorder browser viewport" draggable="false" />
+      <canvas id="screen" aria-label="Recorder browser viewport" role="img"></canvas>
     </div>
     <div class="inputbar">
       <input id="textInput" autocomplete="off" placeholder="Text to type into the focused field" />
@@ -603,31 +657,41 @@ const renderLiveViewHtml = (session) => {
     const sessionId = ${sessionId};
     const token = new URLSearchParams(window.location.search).get("token") || "";
     const screen = document.getElementById("screen");
+    const screenContext = screen.getContext("2d", { alpha: false });
     const statusText = document.getElementById("statusText");
     const dimensionText = document.getElementById("dimensionText");
     const address = document.getElementById("address");
     const textInput = document.getElementById("textInput");
-    let refreshTimer = null;
-    let inFlight = false;
+    let pendingInputs = 0;
+    let wheelTimer = null;
+    let wheelDeltaX = 0;
+    let wheelDeltaY = 0;
+    let frameSequence = 0;
 
     const withToken = (path) => path + "?token=" + encodeURIComponent(token);
-    const screenshotUrl = () => withToken("/api/v1/recorder/sessions/" + encodeURIComponent(sessionId) + "/screenshot") + "&t=" + Date.now();
+    const streamUrl = () => withToken("/api/v1/recorder/sessions/" + encodeURIComponent(sessionId) + "/stream");
     const inputUrl = () => withToken("/api/v1/recorder/sessions/" + encodeURIComponent(sessionId) + "/input");
 
-    const scheduleRefresh = (delay = 350) => {
-      window.clearTimeout(refreshTimer);
-      refreshTimer = window.setTimeout(refresh, delay);
+    const setStatus = (text, isError = false) => {
+      statusText.textContent = text;
+      statusText.classList.toggle("error", Boolean(isError));
     };
 
-    const refresh = () => {
-      screen.src = screenshotUrl();
+    const markInputStarted = () => {
+      pendingInputs += 1;
+      setStatus("Sending");
+    };
+
+    const markInputFinished = () => {
+      pendingInputs = Math.max(0, pendingInputs - 1);
+      if (!pendingInputs) {
+        setStatus("Live");
+      }
     };
 
     const send = async (payload) => {
-      if (!token || inFlight) return;
-      inFlight = true;
-      statusText.textContent = "Sending";
-      statusText.classList.remove("error");
+      if (!token) return;
+      markInputStarted();
 
       try {
         const response = await fetch(inputUrl(), {
@@ -641,39 +705,94 @@ const renderLiveViewHtml = (session) => {
           throw new Error(body?.message || "Recorder input failed");
         }
 
-        statusText.textContent = "Live";
-        scheduleRefresh();
+        markInputFinished();
       } catch (error) {
-        statusText.textContent = error instanceof Error ? error.message : "Input failed";
-        statusText.classList.add("error");
-      } finally {
-        inFlight = false;
+        pendingInputs = Math.max(0, pendingInputs - 1);
+        setStatus(error instanceof Error ? error.message : "Input failed", true);
       }
     };
 
-    screen.addEventListener("load", () => {
-      statusText.textContent = "Live";
-      statusText.classList.remove("error");
-      dimensionText.textContent = screen.naturalWidth && screen.naturalHeight ? screen.naturalWidth + " x " + screen.naturalHeight : "";
-    });
+    const renderFrame = (frame) => {
+      if (!frame?.data || !screenContext) return;
+      const sequence = ++frameSequence;
+      const image = new Image();
 
-    screen.addEventListener("error", () => {
-      statusText.textContent = "Waiting for browser";
-      statusText.classList.add("error");
-      scheduleRefresh(1200);
-    });
+      image.addEventListener("load", () => {
+        if (sequence !== frameSequence) return;
+        const width = Math.round(frame.metadata?.deviceWidth || image.naturalWidth || image.width || 0);
+        const height = Math.round(frame.metadata?.deviceHeight || image.naturalHeight || image.height || 0);
+
+        if (width && height && (screen.width !== width || screen.height !== height)) {
+          screen.width = width;
+          screen.height = height;
+        }
+
+        screenContext.drawImage(image, 0, 0, screen.width || image.width, screen.height || image.height);
+        dimensionText.textContent = screen.width && screen.height ? screen.width + " x " + screen.height : "";
+
+        if (!pendingInputs) {
+          setStatus("Live");
+        }
+      }, { once: true });
+
+      image.addEventListener("error", () => {
+        setStatus("Stream frame failed", true);
+      }, { once: true });
+
+      image.src = "data:image/jpeg;base64," + frame.data;
+    };
+
+    const connectStream = () => {
+      if (!window.EventSource || !token) {
+        setStatus("Live stream unavailable", true);
+        return;
+      }
+
+      const source = new EventSource(streamUrl());
+
+      source.addEventListener("open", () => {
+        setStatus("Live");
+      });
+
+      source.addEventListener("ready", () => {
+        setStatus("Live");
+      });
+
+      source.addEventListener("frame", (event) => {
+        try {
+          const frame = JSON.parse(event.data);
+          renderFrame(frame);
+        } catch {
+          setStatus("Stream frame failed", true);
+        }
+      });
+
+      source.addEventListener("error", () => {
+        setStatus("Reconnecting live stream", true);
+      });
+    };
 
     screen.addEventListener("click", (event) => {
-      if (!screen.naturalWidth || !screen.naturalHeight) return;
+      if (!screen.width || !screen.height) return;
       const rect = screen.getBoundingClientRect();
-      const x = Math.round((event.clientX - rect.left) * (screen.naturalWidth / rect.width));
-      const y = Math.round((event.clientY - rect.top) * (screen.naturalHeight / rect.height));
+      const x = Math.round((event.clientX - rect.left) * (screen.width / rect.width));
+      const y = Math.round((event.clientY - rect.top) * (screen.height / rect.height));
       send({ type: "click", x, y });
     });
 
     screen.addEventListener("wheel", (event) => {
       event.preventDefault();
-      send({ type: "scroll", delta_x: event.deltaX, delta_y: event.deltaY });
+      wheelDeltaX += event.deltaX;
+      wheelDeltaY += event.deltaY;
+      if (wheelTimer) return;
+      wheelTimer = window.setTimeout(() => {
+        const deltaX = wheelDeltaX;
+        const deltaY = wheelDeltaY;
+        wheelDeltaX = 0;
+        wheelDeltaY = 0;
+        wheelTimer = null;
+        send({ type: "scroll", delta_x: deltaX, delta_y: deltaY });
+      }, 80);
     }, { passive: false });
 
     document.getElementById("goButton").addEventListener("click", () => {
@@ -704,8 +823,7 @@ const renderLiveViewHtml = (session) => {
       button.addEventListener("click", () => send({ type: "press", key: button.getAttribute("data-key") }));
     });
 
-    window.setInterval(refresh, 1000);
-    refresh();
+    connectStream();
   </script>
 </body>
 </html>`;
@@ -747,6 +865,101 @@ export const registerRecorderRoutes = async (app) => {
             .type("text/html; charset=utf-8");
         return renderLiveViewHtml(session);
     });
+    app.get("/api/v1/recorder/sessions/:id/stream", async (request, reply) => {
+        const params = request.params;
+        const session = sessions.get(params.id);
+        if (!session) {
+            reply.code(404);
+            return { message: "Recorder session not found" };
+        }
+        if (!requireRecorderToken(request, session)) {
+            reply.code(403);
+            return { message: "Recorder live view token is invalid or expired" };
+        }
+        if (session.status !== "running") {
+            reply.code(409);
+            return { message: "Recorder session is not running" };
+        }
+        let client = null;
+        let closed = false;
+        let keepAlive = null;
+        const writeEvent = (event, payload) => {
+            if (closed || reply.raw.destroyed || reply.raw.writableEnded) {
+                return;
+            }
+            reply.raw.write(`event: ${event}\n`);
+            reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+        };
+        const cleanup = async () => {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            if (keepAlive) {
+                clearInterval(keepAlive);
+            }
+            await client?.send("Page.stopScreencast").catch(() => undefined);
+            await client?.detach().catch(() => undefined);
+        };
+        try {
+            const page = await resolveActivePage(session);
+            client = await session.context.newCDPSession(page);
+            reply.hijack();
+            reply.raw.writeHead(200, {
+                "Content-Type": "text/event-stream; charset=utf-8",
+                "Cache-Control": "no-store, no-transform",
+                Connection: "keep-alive",
+                "X-Accel-Buffering": "no"
+            });
+            reply.raw.write(": connected\n\n");
+            request.raw.on("close", () => {
+                void cleanup();
+            });
+            keepAlive = setInterval(() => {
+                if (!closed && !reply.raw.destroyed && !reply.raw.writableEnded) {
+                    reply.raw.write(": keep-alive\n\n");
+                }
+            }, 15_000);
+            client.on("Page.screencastFrame", (event) => {
+                const frame = event;
+                if (!frame.data || frame.sessionId === undefined) {
+                    return;
+                }
+                writeEvent("frame", {
+                    data: frame.data,
+                    metadata: frame.metadata || {}
+                });
+                void client?.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => undefined);
+            });
+            await client.send("Page.startScreencast", {
+                format: "jpeg",
+                quality: SCREENCAST_QUALITY,
+                everyNthFrame: SCREENCAST_EVERY_NTH_FRAME
+            });
+            writeEvent("ready", {
+                format: "jpeg",
+                quality: SCREENCAST_QUALITY,
+                everyNthFrame: SCREENCAST_EVERY_NTH_FRAME
+            });
+        }
+        catch (error) {
+            if (reply.sent) {
+                const message = error instanceof Error ? error.message : "Unable to start recorder stream";
+                if (!reply.raw.destroyed && !reply.raw.writableEnded) {
+                    reply.raw.write(`event: error\n`);
+                    reply.raw.write(`data: ${JSON.stringify({ message })}\n\n`);
+                }
+                await cleanup();
+                reply.raw.end();
+                return;
+            }
+            await cleanup();
+            reply.code(409);
+            return {
+                message: error instanceof Error ? error.message : "Unable to start recorder stream"
+            };
+        }
+    });
     app.get("/api/v1/recorder/sessions/:id/screenshot", async (request, reply) => {
         const params = request.params;
         const session = sessions.get(params.id);
@@ -761,13 +974,14 @@ export const registerRecorderRoutes = async (app) => {
         try {
             const page = await resolveActivePage(session);
             const screenshot = await page.screenshot({
-                type: "png",
+                type: "jpeg",
+                quality: SCREENCAST_QUALITY,
                 fullPage: false,
                 timeout: 5_000
             });
             reply
                 .header("Cache-Control", "no-store")
-                .type("image/png");
+                .type("image/jpeg");
             return screenshot;
         }
         catch (error) {
@@ -803,6 +1017,19 @@ export const registerRecorderRoutes = async (app) => {
                     reply.code(400);
                     return { message: "click input requires non-negative x and y coordinates" };
                 }
+                const action = pushRecorderAction(session, {
+                    type: "click",
+                    locator: null,
+                    text: `Click at ${x}, ${y}`,
+                    value: null,
+                    url: page.url(),
+                    page_id: getRecorderPageId(page),
+                    page_title: null,
+                    x,
+                    y,
+                    source: "remote-control"
+                });
+                void enrichRemoteClickAction(session, page, action.index, x, y, app.log);
                 await page.mouse.click(x, y);
             }
             else if (type === "type") {
@@ -818,8 +1045,7 @@ export const registerRecorderRoutes = async (app) => {
                     return { message: "press input requires a key" };
                 }
                 await page.keyboard.press(key);
-                pushBounded(session.actions, {
-                    index: session.actions.length + 1,
+                pushRecorderAction(session, {
                     type: "press",
                     locator: "keyboard",
                     text: key,
@@ -827,11 +1053,23 @@ export const registerRecorderRoutes = async (app) => {
                     url: page.url(),
                     page_id: getRecorderPageId(page),
                     page_title: await resolvePageTitle(page),
-                    timestamp: new Date().toISOString()
-                }, MAX_ACTIONS);
+                    source: "remote-control"
+                });
             }
             else if (type === "scroll") {
-                await page.mouse.wheel(Number(body?.delta_x) || 0, Number(body?.delta_y) || 0);
+                const deltaX = Number(body?.delta_x) || 0;
+                const deltaY = Number(body?.delta_y) || 0;
+                pushRecorderAction(session, {
+                    type: "scroll",
+                    locator: "viewport",
+                    text: "Scroll",
+                    value: JSON.stringify({ delta_x: deltaX, delta_y: deltaY }),
+                    url: page.url(),
+                    page_id: getRecorderPageId(page),
+                    page_title: await resolvePageTitle(page),
+                    source: "remote-control"
+                });
+                await page.mouse.wheel(deltaX, deltaY);
             }
             else if (type === "goto") {
                 const url = normalizeUrl(body?.url);
@@ -898,7 +1136,8 @@ export const registerRecorderRoutes = async (app) => {
                 injection: recorderExtensionDir ? "chrome-extension + playwright-init-script" : "playwright-init-script",
                 extension_ready: Boolean(recorderExtensionDir),
                 remote_control: true,
-                screenshot_stream: true
+                screenshot_stream: false,
+                screencast_stream: true
             };
             const session = {
                 id,
@@ -921,10 +1160,9 @@ export const registerRecorderRoutes = async (app) => {
                 }
                 const payload = event;
                 const type = normalizeText(payload.type) || "click";
-                const normalizedType = type === "fill" || type === "change" || type === "submit" || type === "navigation" || type === "press" || type === "tab" ? type : "click";
+                const normalizedType = type === "fill" || type === "change" || type === "submit" || type === "navigation" || type === "press" || type === "tab" || type === "scroll" ? type : "click";
                 const sourcePage = source.page || null;
-                pushBounded(session.actions, {
-                    index: session.actions.length + 1,
+                pushRecorderAction(session, {
                     type: normalizedType,
                     locator: normalizeText(payload.locator),
                     text: normalizeText(payload.text),
@@ -932,8 +1170,11 @@ export const registerRecorderRoutes = async (app) => {
                     url: normalizeText(payload.url) || sourcePage?.url() || null,
                     page_id: getRecorderPageId(sourcePage),
                     page_title: await resolvePageTitle(sourcePage),
+                    x: normalizePositiveNumber(payload.x),
+                    y: normalizePositiveNumber(payload.y),
+                    source: normalizeText(payload.source) === "page-recorder" ? "page-recorder" : "browser",
                     timestamp: normalizeText(payload.timestamp) || new Date().toISOString()
-                }, MAX_ACTIONS);
+                });
             });
             await context.addInitScript(recorderInitScript);
             context.on("page", (page) => attachPageCapture(session, page, app.log));
@@ -941,7 +1182,7 @@ export const registerRecorderRoutes = async (app) => {
             attachPageCapture(session, page, app.log);
             sessions.set(id, session);
             if (startUrl) {
-                await page.goto(startUrl, {
+                void page.goto(startUrl, {
                     waitUntil: "domcontentloaded",
                     timeout: 60_000
                 }).catch((error) => {
